@@ -17,7 +17,12 @@ export default defineConfig({
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/matchers.ts",
+    "src/assertions/index.ts",
     "src/predicates/index.ts",
+    // Versioned evaluation contract (score definitions/results + pinned
+    // cross-runtime hashing) shared by the SDK, the CLI gate engine, the
+    // inspector client, and the backend's hand-mirrored validators.
+    "src/contract/index.ts",
     "src/host-config/index.ts",
     // Low-level first-party entry used by the backend and SDK tooling.
     "src/host-config/internal.ts",
@@ -34,6 +39,9 @@ export default defineConfig({
     "src/host-compat/index.ts",
     // Pure OpenAI plugin bundle parser shared with the backend importer.
     "src/plugin-bundle/index.ts",
+    // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
+    // transport) for backend actions that must not load the whole SDK graph.
+    "src/oauth/node.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

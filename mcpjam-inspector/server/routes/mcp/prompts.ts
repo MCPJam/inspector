@@ -1,30 +1,61 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { logger } from "../../utils/logger";
+import {
+  reportRouteFailure,
+  reportRouteFailureForResponse,
+} from "../../utils/route-error-report.js";
 import {
   listPrompts,
   listPromptsMulti,
   getPrompt,
 } from "../../utils/route-handlers.js";
+import { jsonError } from "../../utils/mcp-error-serialize.js";
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const prompts = new Hono();
 
 // List prompts endpoint
 prompts.post("/list", async (c) => {
   try {
-    const body = (await c.req.json()) as { serverId?: string };
+    const body = (await c.req.json()) as {
+      serverId?: string;
+      cursor?: string;
+      refresh?: boolean;
+    };
     if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    return c.json(
-      await listPrompts(c.mcpClientManager, body as { serverId: string }),
+    // Cursor is optional — omitted, this returns the full aggregate (the
+    // official beta.4 client auto-pages no-cursor list calls). Passing a
+    // cursor returns exactly one raw page, matching the tools/resources
+    // routes' cursor parity.
+    const { result, events } = await withCacheEventCapture(() =>
+      listPrompts(c.mcpClientManager, {
+        serverId: body.serverId!,
+        cursor: body.cursor,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
+      }),
     );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
-    logger.error("Error fetching prompts", error, { serverId: "unknown" });
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error fetching prompts",
+      error,
+      { source: "mcp.prompts.list", hop: "user_server_hop" },
+    );
     return c.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );
@@ -52,10 +83,14 @@ prompts.post("/list-multi", async (c) => {
         result.errors as Record<string, string>,
       )) {
         if (!msg.includes("Unknown MCP server")) {
-          logger.error(
+          reportRouteFailure(
             `Error fetching prompts for server ${serverId}`,
             new Error(msg),
-            { serverId },
+            {
+              source: "mcp.prompts.batch.perServer",
+              hop: "user_server_hop",
+              context: { serverId },
+            },
           );
         }
       }
@@ -63,11 +98,17 @@ prompts.post("/list-multi", async (c) => {
 
     return c.json(result);
   } catch (error) {
-    logger.error("Error fetching batch prompts", error);
+    const { normalized, origin } = reportRouteFailureForResponse(
+      "Error fetching batch prompts",
+      error,
+      { source: "mcp.prompts.batch", hop: "user_server_hop" },
+    );
     return c.json(
       {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
+        normalized,
+        origin,
       },
       500,
     );
@@ -97,14 +138,15 @@ prompts.post("/get", async (c) => {
       }),
     );
   } catch (error) {
-    logger.error("Error getting prompt", error);
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
+    // Before `jsonError`, so the envelope sees an already-classified error.
+    reportRouteFailure("Error getting prompt", error, {
+      source: "mcp.prompts.get",
+      hop: "user_server_hop",
+    });
+    // SEP-2350: surface a 403 `insufficient_scope` challenge (on
+    // `mcpError.insufficientScope`) so the client can drive the union-scope
+    // step-up re-authorization; ordinary errors keep the 500 fallback.
+    return jsonError(c, error, 500);
   }
 });
 

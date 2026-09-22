@@ -22,14 +22,21 @@ import type {
   BrowserActionResult,
   BrowserActionSpec,
   McpAppBrowserHarness,
+  ScriptedStepResult,
+  WidgetSnapshot,
+  WidgetToolCall,
 } from "../utils/mcp-app-browser-harness";
+import type { ScriptedStep } from "@/shared/scripted-steps";
 import { logger } from "../utils/logger";
 
 /** The harness surface the registry drives. A real McpAppBrowserHarness
  *  satisfies it; tests pass a fake. */
 export type SessionHarness = Pick<
   McpAppBrowserHarness,
-  "executeAction" | "dispose"
+  // `captureSnapshot` and `runScriptedStep` join the Pick so a text-only
+  // caller can drive a widget at all: `executeAction` alone is coordinate-based
+  // and silently assumes the caller can see pixels.
+  "executeAction" | "captureSnapshot" | "runScriptedStep" | "dispose"
 >;
 
 /** Public (serializable) view of a session — never exposes the harness. */
@@ -288,13 +295,7 @@ export class WidgetRenderSessionRegistry {
     sessionId: string,
     action: BrowserActionSpec,
   ): Promise<{ result: BrowserActionResult; expiresAt: number }> {
-    const session = this.sessions.get(sessionId);
-    if (!session || this.isIdleExpired(session)) {
-      if (session) void this.disposeSession(sessionId, "idle");
-      throw new WidgetSessionNotFoundError(
-        `Widget session "${sessionId}" not found or expired.`,
-      );
-    }
+    const session = this.requireLiveSession(sessionId);
     // The harness is a single page — overlapping actions would interleave input
     // and corrupt the result. Serialize by rejecting while one is in flight.
     if (session.inFlight > 0) {
@@ -334,6 +335,112 @@ export class WidgetRenderSessionRegistry {
     } finally {
       session.inFlight -= 1;
     }
+  }
+
+  /**
+   * Capture a text view of the session's mounted widget.
+   *
+   * TAKES THE IN-FLIGHT LOCK for the whole capture, exactly as the action
+   * paths do. Checking `inFlight` and then not claiming it looked safe — a
+   * snapshot only reads — and was not: an action arriving after the check
+   * still saw `inFlight === 0` and drove the same page, so the tree and the
+   * element enrichment could describe two different DOM states. Worse, an
+   * unmarked capture is not protected from the idle sweep, which could dispose
+   * the page mid-read.
+   *
+   * It does NOT consume the widget's step budget. Looking is not acting, and a
+   * caller forced to spend interaction steps on looking would interact blind
+   * to save them.
+   */
+  async captureSnapshot(
+    sessionId: string,
+  ): Promise<{ snapshot: WidgetSnapshot; expiresAt: number }> {
+    const session = this.requireLiveSession(sessionId);
+    if (session.inFlight > 0) {
+      throw new WidgetSessionBusyError(
+        `Widget session "${sessionId}" is already running an action.`,
+      );
+    }
+    session.inFlight += 1;
+    try {
+      const snapshot = await session.harness.captureSnapshot(
+        session.mountedWidgetId,
+      );
+      if (this.sessions.get(sessionId) !== session) {
+        throw new WidgetSessionNotFoundError(
+          `Widget session "${sessionId}" was closed during the snapshot.`,
+        );
+      }
+      session.expiresAt = this.now() + this.idleTimeoutMs;
+      return { snapshot, expiresAt: session.expiresAt };
+    } finally {
+      session.inFlight -= 1;
+    }
+  }
+
+  /**
+   * Replay one SEMANTIC step (`click`/`type`/`assert`/…) against the mounted
+   * widget.
+   *
+   * The sibling of `executeAction`, and the one a text-only caller can
+   * actually use: it targets by role/name/testId — the same vocabulary
+   * `captureSnapshot` hands back — instead of by pixel coordinate. Serialized
+   * against actions for the same reason actions are serialized against each
+   * other: one page, one input stream.
+   */
+  async runScriptedStep(
+    sessionId: string,
+    step: ScriptedStep,
+    priorWidgetToolCalls?: WidgetToolCall[],
+  ): Promise<{ result: ScriptedStepResult; expiresAt: number }> {
+    const session = this.requireLiveSession(sessionId);
+    if (session.inFlight > 0) {
+      throw new WidgetSessionBusyError(
+        `Widget session "${sessionId}" is already running an action.`,
+      );
+    }
+    session.inFlight += 1;
+    try {
+      const result = await session.harness.runScriptedStep({
+        toolCallId: session.mountedWidgetId,
+        step,
+        ...(priorWidgetToolCalls ? { priorWidgetToolCalls } : {}),
+      });
+      if (this.sessions.get(sessionId) !== session) {
+        throw new WidgetSessionNotFoundError(
+          `Widget session "${sessionId}" was closed during the step.`,
+        );
+      }
+      // Same terminal-note handling as `executeAction`: a widget that is gone
+      // has nothing left to step, and a client retrying against it would hold
+      // Chromium indefinitely.
+      if (result.note && TERMINAL_ACTION_NOTES.has(result.note)) {
+        void this.disposeSession(sessionId, "terminal");
+        return { result, expiresAt: session.expiresAt };
+      }
+      session.expiresAt = this.now() + this.idleTimeoutMs;
+      return { result, expiresAt: session.expiresAt };
+    } finally {
+      session.inFlight -= 1;
+    }
+  }
+
+  /**
+   * Resolve a live session or throw, disposing one that expired while idle.
+   *
+   * Extracted so the three entry points cannot drift on WHEN a session counts
+   * as gone — the check that sweeps an idle session is the same check that
+   * refuses to act on it.
+   */
+  private requireLiveSession(sessionId: string): RegisteredSession {
+    const session = this.sessions.get(sessionId);
+    if (!session || this.isIdleExpired(session)) {
+      if (session) void this.disposeSession(sessionId, "idle");
+      throw new WidgetSessionNotFoundError(
+        `Widget session "${sessionId}" not found or expired.`,
+      );
+    }
+    return session;
   }
 
   /** Dispose + remove a session. Returns false if it didn't exist. */

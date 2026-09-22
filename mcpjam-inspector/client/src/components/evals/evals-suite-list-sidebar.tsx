@@ -284,7 +284,7 @@ function SuiteTableHeader({
   const gridClass = batchDeleteEnabled
     ? cn(
         SUITE_ROW_GRID,
-        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]"
+        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]",
       )
     : SUITE_ROW_GRID;
 
@@ -325,7 +325,7 @@ function SuiteTableHeader({
               size="sm"
               className={cn(
                 "h-6 shrink-0 px-2 text-[11px]",
-                EVAL_DESTRUCTIVE_BUTTON_CLASS
+                EVAL_DESTRUCTIVE_BUTTON_CLASS,
               )}
               onClick={onDeleteSelected}
               disabled={selectionBlocked}
@@ -383,7 +383,7 @@ function SuiteOverviewRow({
   const statusLabel = suiteRowStatusLabel(entry);
   const latestRun = entry.latestRun;
   const lastRunTimestamp = latestRun
-    ? latestRun.completedAt ?? latestRun.createdAt
+    ? (latestRun.completedAt ?? latestRun.createdAt)
     : undefined;
   const statusStripeClass = evalOverviewEntryMiniBarClass(entry);
 
@@ -397,7 +397,7 @@ function SuiteOverviewRow({
   const gridClass = batchDeleteEnabled
     ? cn(
         SUITE_ROW_GRID,
-        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]"
+        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]",
       )
     : SUITE_ROW_GRID;
 
@@ -408,13 +408,13 @@ function SuiteOverviewRow({
         "group/row relative overflow-hidden rounded-md border transition-colors",
         isSelected
           ? "border-primary/35 bg-primary/[0.05]"
-          : "border-transparent hover:border-border/60 hover:bg-muted/25"
+          : "border-transparent hover:border-border/60 hover:bg-muted/25",
       )}
     >
       <div
         className={cn(
           "absolute bottom-0 left-0 top-0 w-0.5",
-          statusStripeClass
+          statusStripeClass,
         )}
         aria-hidden
       />
@@ -443,7 +443,7 @@ function SuiteOverviewRow({
           <span className="min-w-0 truncate text-sm font-medium text-foreground">
             {suiteTitle}
           </span>
-          <SuiteSourceBadge source={suite.source} />
+          <SuiteSourceBadge suite={suite} />
         </button>
 
         <button
@@ -454,7 +454,7 @@ function SuiteOverviewRow({
             METRIC_CELL_CLASS,
             entry.passRateTrend && entry.passRateTrend.length >= 3
               ? "min-h-8 flex-col items-end justify-center gap-0.5 text-right"
-              : "justify-end text-right"
+              : "justify-end text-right",
           )}
           onClick={() => onSelectSuite(suite._id)}
         >
@@ -572,7 +572,7 @@ export function EvalsSuiteListSidebar({
   useTick();
 
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(
-    () => new Set()
+    () => new Set(),
   );
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -583,7 +583,24 @@ export function EvalsSuiteListSidebar({
 
   const batchDeleteEnabled = Boolean(canDeleteSuites && onDeleteSuitesBatch);
   const selectionBlocked = deleteInProgress || isBatchDeleting;
-  const allTags = useMemo(() => collectSuiteTags(suites), [suites]);
+  const allTags = useMemo(
+    () =>
+      [
+        ...new Set([
+          ...(filterTag ? [filterTag] : []),
+          ...collectSuiteTags(
+            suites.filter(
+              (entry) =>
+                (!failuresOnly || entry.latestRun?.result === "failed") &&
+                (entry.suite.name || "")
+                  .toLowerCase()
+                  .includes(suiteSearch.trim().toLowerCase()),
+            ),
+          ),
+        ]),
+      ].sort(),
+    [suites, filterTag, failuresOnly, suiteSearch],
+  );
 
   const visibleSuites = useMemo(() => {
     let list = [...suites];
@@ -595,7 +612,7 @@ export function EvalsSuiteListSidebar({
     if (suiteSearch.trim()) {
       const query = suiteSearch.trim().toLowerCase();
       list = list.filter((entry) =>
-        (entry.suite.name || "").toLowerCase().includes(query)
+        (entry.suite.name || "").toLowerCase().includes(query),
       );
     }
 
@@ -662,9 +679,9 @@ export function EvalsSuiteListSidebar({
 
   const runAllBlocked = Boolean(
     rerunningSuiteId ||
-      replayingRunId != null ||
-      runningTestCaseId != null ||
-      runAllDisabledReason
+    replayingRunId != null ||
+    runningTestCaseId != null ||
+    runAllDisabledReason,
   );
 
   return (
@@ -724,7 +741,7 @@ export function EvalsSuiteListSidebar({
               allVisibleSelected={
                 visibleSuites.length > 0 &&
                 visibleSuites.every((entry) =>
-                  selectedForBatch.has(entry.suite._id)
+                  selectedForBatch.has(entry.suite._id),
                 )
               }
               visibleCount={visibleSuites.length}

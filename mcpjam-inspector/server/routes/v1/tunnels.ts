@@ -4,7 +4,7 @@
  *
  * POST /projects/:projectId/tunnels mints a relay grant for a (created-if-
  * missing) `servers` record and PERSISTS the bearer URL (`?k=` plaintext
- * secret) onto `servers.url` so evals/chatboxes can target the tunnel like
+ * secret) onto `servers.url` so evals/scenarios can target the tunnel like
  * any remote server. That persistence is a deliberate MVP trade-off — the
  * backend otherwise stores only the secret hash, and the hosted web flow
  * keeps the plaintext URL in inspector memory. Mitigations: every create

@@ -399,7 +399,15 @@ export const OAuthFlowProgressSimple = ({
                 connection. These tokens will be used automatically for server
                 requests.
               </p>
-              <pre className="mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]">
+              {/* Renders the raw token set verbatim — the highest-value
+                  credential surface in the app. `ph-no-capture rr-block` +
+                  `data-ph-no-capture` is this repo's one annotation for that
+                  (see docs/session-replay-masking.md): autocapture skips it,
+                  rrweb blocks it, and replay masks its text. */}
+              <pre
+                className="ph-no-capture rr-block mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]"
+                data-ph-no-capture
+              >
                 {JSON.stringify(flowState.oauthTokens, null, 2)}
               </pre>
             </details>

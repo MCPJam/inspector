@@ -32,6 +32,7 @@ export const PLUGIN_ISSUE_CODES = [
   // Manifest
   "MANIFEST_MISSING",
   "MANIFEST_DUPLICATE",
+  "MANIFEST_UNSUPPORTED_SCHEMA",
   "MANIFEST_INVALID_JSON",
   "MANIFEST_INVALID_NAME",
   "MANIFEST_INVALID_VERSION",
@@ -72,7 +73,13 @@ export const PLUGIN_ISSUE_CODES = [
   "MCP_SECRET_FIELD_OMITTED",
   "MCP_UNKNOWN_FIELD",
   "MCP_ABSOLUTE_WORKING_DIRECTORY",
+  "MCP_INVALID_WORKING_DIRECTORY",
+  "MCP_UNSUPPORTED_SCHEMA",
+  "MCP_RESERVED_ENV_KEY",
+  "MCP_PLACEHOLDER_IN_COMMAND",
   "MCP_CONFIG_IGNORED",
+  // Failure isolation (Agent Plugins: one bad component never kills the bundle)
+  "COMPONENT_SKIPPED",
   // App configuration
   "APP_INVALID_CONFIG",
   "APP_MISSING_ID",
@@ -160,6 +167,25 @@ export class PluginIssueCollector {
       throw new PluginBundleError(this.issues());
     }
   }
+
+  /**
+   * Failure isolation (Agent Plugins): absorb a component-scoped collector's
+   * issues with every error DEMOTED to a warning. The component is being
+   * skipped, not the bundle — its problems must survive into the preview
+   * without becoming bundle-fatal.
+   */
+  absorbDemoted(child: PluginIssueCollector): void {
+    for (const issue of child.issues()) {
+      this.all.push(
+        issue.severity === "error" ? { ...issue, severity: "warning" } : issue
+      );
+    }
+  }
+
+  /** First error-severity message, for skip reasons. */
+  firstErrorMessage(): string | undefined {
+    return this.all.find((issue) => issue.severity === "error")?.message;
+  }
 }
 
 /**
@@ -182,12 +208,23 @@ export const SECRET_FIELD_NAME =
 
 /**
  * String VALUES that look like credentials regardless of their key name:
- * bearer tokens, PEM blocks, common key-prefix formats, or long opaque
- * token runs. Closes the `{"auth": "Bearer sk-live-..."}` alias hole that a
- * key-name denylist alone cannot.
+ * bearer tokens, PEM blocks, common key-prefix formats, URLs embedding
+ * `user:password@` basic-auth userinfo, or long opaque token runs. Closes
+ * the `{"auth": "Bearer sk-live-..."}` alias hole that a key-name denylist
+ * alone cannot, and the short-password connection-string hole
+ * (`postgres://user:hunter2@db/app`) that the token-run heuristic misses.
  */
 const SECRET_LIKE_VALUE =
-  /(bearer\s+\S|-----BEGIN|\b(?:sk|pk|rk|xox[a-z])-[A-Za-z0-9]|[A-Za-z0-9+/_-]{40,})/i;
+  /(bearer\s+\S|-----BEGIN|\b(?:sk|pk|rk|xox[a-z])-[A-Za-z0-9]|[a-z][a-z0-9+.-]*:\/\/[^/\s:@]*:[^/\s@]+@|[A-Za-z0-9+/_-]{40,})/i;
+
+/**
+ * Does a string VALUE look like a credential? Shared by the recursive
+ * sanitizer and the MCP config normalizer's literal env/header screen, so
+ * "what counts as secret-looking" has exactly one definition.
+ */
+export function isSecretLikeValue(value: string): boolean {
+  return SECRET_LIKE_VALUE.test(value);
+}
 
 const DROP: unique symbol = Symbol("drop");
 

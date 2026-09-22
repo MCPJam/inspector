@@ -49,7 +49,6 @@ import type {
   EnsureServersReadyResult,
   ServerWithName,
 } from "@/hooks/use-app-state";
-import { useSidebar } from "@/components/ui/sidebar";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -75,9 +74,14 @@ import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
 const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
+// Upper bound on the full-screen first-run skeleton. If onboarding connect /
+// remote provisioning never resolves (e.g. a guest whose Convex deployment
+// can't authenticate them, so no project is ever provisioned), fall through to
+// the usable Playground instead of spinning forever. See issue #3352.
+const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
 export const PLAYGROUND_FIRST_RUN_PROMPT =
-  "Draw me an MCP architecture diagram";
+  "What can this server do?";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
@@ -105,7 +109,12 @@ export interface UsePlaygroundStateOptions {
   isWorkOsAuthLoading?: boolean;
   isConvexAuthenticated?: boolean;
   isProjectProvisioned?: boolean;
+  isClientConfigSyncPending?: boolean;
+  /** False while the Convex servers query is still in flight. */
+  areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  /** Whether this caller retains the legacy auto-connect onboarding path. */
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -176,7 +185,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isWorkOsAuthLoading = false,
     isConvexAuthenticated = false,
     isProjectProvisioned = true,
+    isClientConfigSyncPending = false,
+    areServersHydrated = true,
     hasSeenFirstRunOnboarding,
+    autoConnectFirstRun,
     isServerSyncing = false,
     onConnect,
     onOnboardingChange,
@@ -205,6 +217,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     hasSeenOnboarding: hasSeenFirstRunOnboarding === true,
     canPersistRemoteOnboarding: isConvexAuthenticated,
     isProjectProvisioned,
+    isClientConfigSyncPending,
+    areServersHydrated,
+    autoConnectFirstRun,
   });
 
   const firstRunComposerSeed =
@@ -237,12 +252,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   } = useUIPlaygroundStore();
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
 
-  const { setOpen: setMcpSidebarOpen } = useSidebar();
-
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
-    setMcpSidebarOpen(true);
-  }, [onOnboardingChange, setMcpSidebarOpen]);
+  }, [onOnboardingChange]);
 
   useLayoutEffect(() => {
     // NUX: collapse the tools sidebar for the whole first-run connect + guided
@@ -259,13 +271,17 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     }
   }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
 
+  // Whether the APP sidebar is open is not this surface's call: entering and
+  // leaving Playground is one of the transitions `SidebarAutoCollapse` owns,
+  // and forcing it open here re-expanded the rail a commit after the policy
+  // had collapsed it (this route mounts lazily, after the policy's effect).
+  // Only the playground-local tools sidebar is restored.
   useLayoutEffect(() => {
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
-      setMcpSidebarOpen(true);
     };
-  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
+  }, [onOnboardingChange, setSidebarVisible]);
 
   // Event name `app_builder_tab_viewed` is kept for analytics continuity
   // (the only surface that still mounts this hook is the Playground tab).
@@ -462,13 +478,23 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
           Object.assign(aggregatedTools, dictionary);
           Object.assign(aggregatedMetadata, data.toolsMetadata ?? {});
-          cursor = data.nextCursor;
+          // The response body is untyped, so a non-string `nextCursor` is not
+          // a cursor and must not be forwarded as one. A REPEATED cursor is
+          // not an ending either — the value is opaque, and a server may
+          // legally reissue one constant token for every page; `maxPages`
+          // below is the bound, and hitting it raises a visible error rather
+          // than passing off a partial list as complete.
+          cursor =
+            typeof data.nextCursor === "string" ? data.nextCursor : undefined;
           pages += 1;
 
+          // Presence, not truthiness: MCP 2026-07-28
+          // `server/utilities/pagination` makes `""` a valid cursor that MUST
+          // NOT be read as the end of results.
           if (
             toolName &&
             !aggregatedTools[toolName] &&
-            cursor &&
+            cursor !== undefined &&
             pages >= maxPages
           ) {
             const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
@@ -479,7 +505,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
             );
           }
 
-          if (!toolName || aggregatedTools[toolName] || !cursor) {
+          if (!toolName || aggregatedTools[toolName] || cursor === undefined) {
             break;
           }
         } while (true);
@@ -956,6 +982,37 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     onboarding.isBootstrappingFirstRunConnection && !!onConnect;
   const isWaitingForServerSync =
     !serverConfig && isServerSyncing && !syncTimedOut;
+
+  // The full-screen first-run skeleton must never be a dead end. Track whether
+  // anything currently wants it, then time-bound it: if the underlying connect
+  // / provisioning never resolves the skeleton falls through to a usable
+  // Playground rather than hanging forever with no escape. See issue #3352.
+  const wantsFirstRunSkeleton =
+    isResolvingRemoteCompletion ||
+    onboarding.isAwaitingFirstRunServers ||
+    isConnectingFirstRunExcalidraw ||
+    isBootstrappingFirstRunConnection ||
+    isWaitingForServerSync;
+  const [firstRunSkeletonTimedOut, setFirstRunSkeletonTimedOut] =
+    useState(false);
+  useEffect(() => {
+    if (!wantsFirstRunSkeleton) {
+      setFirstRunSkeletonTimedOut(false);
+      return;
+    }
+    const id = setTimeout(
+      () => setFirstRunSkeletonTimedOut(true),
+      FIRST_RUN_SKELETON_TIMEOUT_MS,
+    );
+    return () => clearTimeout(id);
+  }, [wantsFirstRunSkeleton]);
+
+  // Holds the first message until the guided server is up. It lifts once that
+  // happened, so a different offline server can't strand the user, and once the
+  // skeleton gives up, so the timeout above stays a real escape.
+  const firstRunSubmitBlocked =
+    onboarding.phase === "connecting_excalidraw" && !firstRunSkeletonTimedOut;
+
   const shouldMarkFirstRunNuxShown =
     firstRunComposerSeed &&
     onboarding.isGuidedPostConnect &&
@@ -964,6 +1021,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     !isWaitingForServerSync &&
     !!serverConfig;
 
+  // Kept in an effect rather than the send handler so the remote half retries
+  // when Convex auth settles — `markOnboardingShown`'s identity changes then.
   useEffect(() => {
     if (shouldMarkFirstRunNuxShown) {
       onboarding.markOnboardingShown();
@@ -971,10 +1030,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
 
   const loadingState: PlaygroundLoadingState =
-    isResolvingRemoteCompletion ||
-    isConnectingFirstRunExcalidraw ||
-    isBootstrappingFirstRunConnection ||
-    isWaitingForServerSync
+    wantsFirstRunSkeleton && !firstRunSkeletonTimedOut
       ? { kind: "skeleton" }
       : !serverConfig && isServerSyncing && syncTimedOut
       ? { kind: "sync-timed-out" }
@@ -1017,12 +1073,16 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
     // onboarding
     firstRunComposerSeed,
+    firstRunSubmitBlocked,
     onboarding,
 
     // multi-server
     activeServerNames,
 
     // misc
+    // Surfaces that connect a server in place (the Tools rail's empty state)
+    // need the handler, not just the connection status.
+    onConnect,
     hostStyle,
     prefersReducedMotion,
   };

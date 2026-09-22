@@ -6,7 +6,8 @@
  * preserved Agent-Skills-spec fields (`license` / `compatibility` /
  * `allowed-tools` / `metadata`), so an adapter-written SKILL.md silently drops
  * them (an imported marketplace skill would lose its `allowed-tools` semantics
- * on the box). This pass rewrites `~/.claude/skills/<name>/SKILL.md` for every
+ * on the box). This pass rewrites `<runtime skills root>/<name>/SKILL.md` (the
+ * adapter's own root — `HarnessRuntimeAdapter.skillsBaseDir`) for every
  * delivered skill that HAS extras, with the full SKILL.md whose frontmatter
  * byte-mirrors the backend's `generateSkillMd` (the same bytes the Computer-FS
  * materializer and the adoption round-trip see).
@@ -27,9 +28,8 @@
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import type { SkillExtraFrontmatterInput } from "../computers/convex-skills-client.js";
 import type { RuntimeSkill } from "./runtime-skills.js";
+import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
-
-const SKILLS_BASE = "/home/user/.claude/skills";
 
 /** Minimal live-session surface: the text write that replaces SKILL.md. */
 export interface FrontmatterSession {
@@ -101,8 +101,12 @@ function hasExtras(
 export async function materializeSkillFrontmatter(args: {
   session: FrontmatterSession;
   skills: RuntimeSkill[];
+  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
+   *  to Claude Code's for legacy callers. */
+  skillsBase?: string;
   signal?: AbortSignal;
 }): Promise<{ rewritten: number; skipped: number }> {
+  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
   let rewritten = 0;
   let skipped = 0;
   for (const skill of args.skills) {
@@ -118,7 +122,7 @@ export async function materializeSkillFrontmatter(args: {
     }
     try {
       await args.session.writeTextFile({
-        path: `${SKILLS_BASE}/${skill.name}/SKILL.md`,
+        path: `${skillsBase}/${skill.name}/SKILL.md`,
         content: generateSkillMdWithExtras({
           name: skill.name,
           description: skill.description,

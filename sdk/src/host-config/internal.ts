@@ -17,12 +17,19 @@
  * the low-level canonicalizer.
  */
 
-export { canonicalizeHostConfigV2 } from "./canonicalize.js";
+export {
+  canonicalizeHostConfigV2,
+  canonicalizeOAuthProfile,
+} from "./canonicalize.js";
 export { sha256Hex, computeHostConfigHashV2 } from "./hash.js";
 export {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
+  OAUTH_AUTH_MODELS,
+  OAUTH_PROFILE_EVIDENCE_STATUSES,
+  OAUTH_SCOPE_REQUEST_MODES,
+  OAUTH_TOKEN_ENDPOINT_AUTH_METHODS,
   SEP_1865_PERMISSION_FEATURES,
 } from "./types.js";
 export type { Harness } from "./types.js";
@@ -34,9 +41,25 @@ export type {
   HostConfigInputV2,
   CanonicalHostConfigV2,
   CanonicalHostConfigSkillSelection,
+  CanonicalHostConfigBrowserToolPolicy,
+  HostConfigBrowserToolPolicy,
+  HostConfigBrowserToolPolicyMode,
   HostConfigSkillSelection,
   HostConfigComputer,
   HostConfigMcpProfileV1,
+  HostConfigOAuthProfile,
+  HostConfigOAuthProfileV1,
+  HostConfigOAuthProfileV2,
+  OAuthAuthModel,
+  OAuthDcrIdentity,
+  OAuthProfileEvidence,
+  OAuthProfileEvidenceStatus,
+  OAuthProtocolVersionPinning,
+  OAuthScopeRequest,
+  OAuthScopeRequestMode,
+  OAuthSpecRevision,
+  OAuthSpecVersionClaim,
+  OAuthTokenEndpointAuthMethod,
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,
@@ -55,6 +78,7 @@ export { isAppOnlyTool } from "./app-only-tool.js";
 export {
   filterAppOnlyTools,
   applyVisibilityPolicyAndCountSignals,
+  applyToolDescriptionOverrides,
 } from "./tool-visibility.js";
 export type { ToolMetadataSource } from "./tool-visibility.js";
 export {
@@ -72,8 +96,10 @@ export { hostConnectionProfile } from "./host-connection.js";
 export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,
+  readOpenAiAppsOverrides,
   compatPresetForHostStyle,
   resolveOpenAiCompatForHostConfig,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
 } from "./compat-runtime.js";
 
 // Stage 5 (Step 1): SDK→backend eval ingestion wire normalizer. Strips

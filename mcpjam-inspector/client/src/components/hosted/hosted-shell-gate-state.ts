@@ -1,24 +1,19 @@
 import type { HostedShellGateState } from "./HostedShellGate";
-import { isAllowedEmployeeEmail } from "@/lib/config";
 
 interface ResolveHostedShellGateStateOptions {
   hostedMode: boolean;
-  nonProdLockdown: boolean;
   isConvexAuthLoading: boolean;
   isConvexAuthenticated: boolean;
   isWorkOsLoading: boolean;
   hasWorkOsUser: boolean;
-  workOsUserEmail?: string | null;
 }
 
 export function resolveHostedShellGateState({
   hostedMode,
-  nonProdLockdown,
   isConvexAuthLoading,
   isConvexAuthenticated,
   isWorkOsLoading,
   hasWorkOsUser,
-  workOsUserEmail,
 }: ResolveHostedShellGateStateOptions): HostedShellGateState {
   if (!hostedMode) {
     return "ready";
@@ -30,20 +25,6 @@ export function resolveHostedShellGateState({
     (hasWorkOsUser && !isConvexAuthenticated);
   if (isAuthSettling) {
     return "auth-loading";
-  }
-
-  if (nonProdLockdown) {
-    if (!hasWorkOsUser || !isConvexAuthenticated) {
-      return "logged-out";
-    }
-
-    if (!isAllowedEmployeeEmail(workOsUserEmail)) {
-      return "restricted";
-    }
-  }
-
-  if (!hasWorkOsUser && !isConvexAuthenticated) {
-    return "ready";
   }
 
   return "ready";

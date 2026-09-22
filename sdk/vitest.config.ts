@@ -17,7 +17,14 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    include: ["tests/**/*.test.ts"],
+    // The root CI job runs this suite beside nine other package lanes. Limit
+    // Vitest's workers so its RPC stays responsive under runner contention.
+    maxWorkers: process.env.CI ? 2 : undefined,
+    // `src/**/__tests__` as well as `tests/`: contract-shaped suites that
+    // must live beside the module they pin (the permalink route registry, the
+    // tool-policy table) were invisible to the runner while only `tests/` was
+    // included — they compiled, and never ran.
+    include: ["tests/**/*.test.ts", "src/**/__tests__/**/*.test.ts"],
     setupFiles: ["./tests/vitest.setup.ts"],
     coverage: {
       provider: "v8",

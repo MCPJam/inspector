@@ -1,6 +1,7 @@
 /**
- * Manifest validation — `.codex-plugin/plugin.json` field rules, unknown-field
- * preservation, and the execution-ambiguous reject list.
+ * Manifest validation — root `plugin.json` per Agent Plugins 1.0: `$schema`
+ * gate, name charset, closed-object unknown-field handling, the `com.mcpjam`
+ * extension namespace, and the execution-ambiguous reject list.
  */
 
 import { describe, expect, it } from "vitest";
@@ -13,72 +14,120 @@ import {
   minimalBundle,
 } from "./fixtures.js";
 
-const MANIFEST = ".codex-plugin/plugin.json";
-
 describe("plugin manifest validation", () => {
   it("parses a minimal manifest and hashes it", async () => {
     const parsed = await parsePluginBundle(minimalBundle());
     expect(parsed.manifest).toMatchObject({
+      schemaVersion: "1.0.0",
       name: "demo-plugin",
       version: "1.2.3",
       description: "A demo plugin for parser tests.",
       extensions: {},
     });
+    expect(parsed.schemaVersion).toBe("1.0.0");
     expect(parsed.manifestHash).toMatch(/^[0-9a-f]{64}$/);
     expect(parsed.bundleHash).toMatch(/^[0-9a-f]{64}$/);
     expect(parsed.warnings).toEqual([]);
+    expect(parsed.skipped).toEqual([]);
   });
 
-  it("requires the manifest to exist", async () => {
+  it("requires the manifest to exist at the bundle root", async () => {
     await expectParseError(
       bundle({ "README.md": "no manifest here" }),
       "MANIFEST_MISSING"
     );
   });
 
-  it("requires the manifest to exist exactly once", async () => {
+  it("treats a manifest under .codex-plugin/ as missing (Codex format is not supported)", async () => {
     await expectParseError(
-      bundle({
-        [MANIFEST]: manifestJson(),
-        [`vendored/${MANIFEST}`]: manifestJson({ name: "other-plugin" }),
-      }),
-      "MANIFEST_DUPLICATE"
+      bundle({ ".codex-plugin/plugin.json": manifestJson() }),
+      "MANIFEST_MISSING"
+    );
+  });
+
+  it("ignores nested plugin.json files — only the root is the manifest", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({
+        "vendored/plugin.json": JSON.stringify({ name: "other-plugin" }),
+      })
+    );
+    expect(parsed.manifest.name).toBe("demo-plugin");
+  });
+
+  it("requires $schema", async () => {
+    await expectParseError(
+      minimalBundle({}, { $schema: undefined }),
+      "MANIFEST_UNSUPPORTED_SCHEMA"
+    );
+  });
+
+  it("rejects an unsupported $schema without fetching it", async () => {
+    await expectParseError(
+      minimalBundle(
+        {},
+        { $schema: "https://agent-plugins.org/schemas/9.0.0/plugin.schema.json" }
+      ),
+      "MANIFEST_UNSUPPORTED_SCHEMA"
     );
   });
 
   it("rejects malformed JSON", async () => {
     await expectParseError(
-      bundle({ [MANIFEST]: "{ not json" }),
+      bundle({ "plugin.json": "{ not json" }),
       "MANIFEST_INVALID_JSON"
     );
   });
 
   it("rejects invalid UTF-8 in the manifest", async () => {
     await expectParseError(
-      bundle({ [MANIFEST]: new Uint8Array([0xff, 0xfe, 0x00, 0xc0]) }),
+      bundle({ "plugin.json": new Uint8Array([0xff, 0xfe, 0x00, 0xc0]) }),
       "FILE_INVALID_UTF8"
     );
   });
 
-  it.each(["Demo Plugin", "demo_plugin", "-demo", "demo-", "DEMO", ""])(
-    "rejects non-kebab-case name %j",
-    async (name) => {
-      await expectParseError(
-        minimalBundle({}, { name }),
-        "MANIFEST_INVALID_NAME"
-      );
+  it.each([
+    "com.example.plugin",
+    "a",
+    "deploy.tools-2",
+    "demo-plugin",
+    // The canonical schema pattern excludes only same-character doubles
+    // ("--", ".."); mixed adjacent separators are spec-VALID names and
+    // must not be rejected.
+    "foo.-bar",
+    "foo-.bar",
+  ])("accepts Agent Plugins name %j", async (name) => {
+    const parsed = await parsePluginBundle(minimalBundle({}, { name }));
+    expect(parsed.manifest.name).toBe(name);
+  });
+
+  it.each([
+    "Demo Plugin",
+    "demo_plugin",
+    "-demo",
+    "demo-",
+    ".demo",
+    "demo.",
+    "demo--plugin",
+    "demo..plugin",
+    "DEMO",
+    "",
+  ])("rejects invalid name %j", async (name) => {
+    await expectParseError(
+      minimalBundle({}, { name }),
+      "MANIFEST_INVALID_NAME"
+    );
+  });
+
+  it.each(["1.2", "v1.2.3", "latest", "2024.1", "2.0.0-beta.4+build.7"])(
+    "accepts free-form version string %j",
+    async (version) => {
+      const parsed = await parsePluginBundle(minimalBundle({}, { version }));
+      expect(parsed.manifest.version).toBe(version);
     }
   );
 
-  it("accepts semver with prerelease and build metadata", async () => {
-    const parsed = await parsePluginBundle(
-      minimalBundle({}, { version: "2.0.0-beta.4+build.7" })
-    );
-    expect(parsed.manifest.version).toBe("2.0.0-beta.4+build.7");
-  });
-
-  it.each(["1.2", "v1.2.3", "1.2.3.4", "latest"])(
-    "rejects invalid semver %j",
+  it.each([42, "", { major: 1 }])(
+    "rejects non-string version %j",
     async (version) => {
       await expectParseError(
         minimalBundle({}, { version }),
@@ -87,64 +136,71 @@ describe("plugin manifest validation", () => {
     }
   );
 
-  it("requires HTTPS for install-metadata URLs", async () => {
+  it("requires HTTPS for metadata URLs", async () => {
     await expectParseError(
       minimalBundle({}, { homepage: "http://example.com" }),
       "MANIFEST_INSECURE_URL"
     );
   });
 
-  it("rejects unresolved [TODO: ...] placeholders anywhere in the manifest", async () => {
+  it("rejects unresolved [TODO: ...] placeholders in fields it keeps", async () => {
     await expectParseError(
       minimalBundle({}, { description: "[TODO: describe the plugin]" }),
       "MANIFEST_PLACEHOLDER"
     );
   });
 
-  it("requires referenced icon files to exist in the bundle", async () => {
+  it("does not reject a [TODO: ...] inside an unknown, ignored field", async () => {
+    // Ignored means ignored: unknown-field content must never be fatal.
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { future_field: "[TODO: fill this in]" })
+    );
+    expect(parsed.manifest.name).toBe("demo-plugin");
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MANIFEST_UNKNOWN_FIELD")
+    ).toBe(true);
+  });
+
+  it("requires author to be an object", async () => {
     await expectParseError(
-      minimalBundle({}, { icon: "assets/missing.png" }),
-      "MANIFEST_MISSING_FILE"
+      minimalBundle({}, { author: "Demo Corp" }),
+      "MANIFEST_INVALID_FIELD"
     );
   });
 
-  it("rejects icon references escaping the bundle root", async () => {
-    await expectParseError(
-      minimalBundle({}, { icon: "../outside.png" }),
-      "PATH_ESCAPES_ROOT"
-    );
-  });
-
-  it("resolves ./-prefixed icon references", async () => {
+  it("normalizes the author object", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle(
-        { "assets/icon.png": PNG_BYTES },
-        { icon: "./assets/icon.png" }
+        {},
+        { author: { name: "Demo Corp", url: "https://demo.example" } }
       )
     );
-    expect(parsed.manifest.icon).toBe("assets/icon.png");
-    expect(parsed.assets).toEqual([
-      expect.objectContaining({
-        path: "assets/icon.png",
-        kind: "icon",
-        contentType: "image/png",
-      }),
-    ]);
+    expect(parsed.manifest.author).toEqual({
+      name: "Demo Corp",
+      url: "https://demo.example",
+    });
   });
 
-  it("preserves unknown optional fields in extensions with a warning", async () => {
+  it("reports and ignores unknown top-level fields (closed manifest)", async () => {
     const parsed = await parsePluginBundle(
-      minimalBundle({}, { future_field: { nested: true } })
+      minimalBundle({}, { future_field: { nested: true }, display_name: "X" })
     );
-    expect(parsed.manifest.extensions).toEqual({
-      future_field: { nested: true },
-    });
-    expect(parsed.warnings).toEqual([
-      expect.objectContaining({
-        code: "MANIFEST_UNKNOWN_FIELD",
-        severity: "warning",
-      }),
-    ]);
+    expect(parsed.manifest.extensions).toEqual({});
+    expect(parsed.manifest.displayName).toBeUndefined();
+    const codes = parsed.warnings.map((issue) => issue.code);
+    expect(codes.filter((code) => code === "MANIFEST_UNKNOWN_FIELD")).toHaveLength(
+      2
+    );
+  });
+
+  it("reports and ignores a non-object extensions field (non-fatal per spec)", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { extensions: "not-an-object" })
+    );
+    expect(parsed.manifest.extensions).toEqual({});
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MANIFEST_INVALID_FIELD")
+    ).toBe(true);
   });
 
   it("rejects execution-ambiguous unknown fields", async () => {
@@ -154,72 +210,111 @@ describe("plugin manifest validation", () => {
     );
   });
 
-  it("normalizes display_name and author", async () => {
+  it("reads displayName, icon, and logo from the com.mcpjam namespace", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle(
-        {},
+        { "assets/icon.png": PNG_BYTES, "assets/logo.png": PNG_BYTES },
         {
-          display_name: "Demo Plugin",
-          author: { name: "Demo Corp", url: "https://demo.example" },
+          extensions: {
+            "com.mcpjam": {
+              display_name: "Demo Plugin",
+              icon: "./assets/icon.png",
+              logo: "assets/logo.png",
+            },
+            "com.example.other": { anything: true },
+          },
         }
       )
     );
     expect(parsed.manifest.displayName).toBe("Demo Plugin");
-    expect(parsed.manifest.author).toEqual({
-      name: "Demo Corp",
-      url: "https://demo.example",
+    expect(parsed.manifest.icon).toBe("assets/icon.png");
+    expect(parsed.manifest.logo).toBe("assets/logo.png");
+    expect(parsed.manifest.extensions["com.example.other"]).toEqual({
+      anything: true,
     });
+    expect(parsed.assets).toEqual([
+      expect.objectContaining({ path: "assets/icon.png", kind: "icon" }),
+      expect.objectContaining({ path: "assets/logo.png", kind: "logo" }),
+    ]);
   });
 
-  it("records unsupported manifest component fields without executing them", async () => {
+  it("keeps long asset paths readable despite the secret-value screen", async () => {
+    // 40+ chars of [A-Za-z0-9-] trips the shared opaque-token heuristic; the
+    // com.mcpjam presentation fields are read from the RAW namespace with
+    // their own validation, so a long path still resolves.
+    const longPath =
+      "assets/brand-name-banner-icon-desktop-retina-display-final.png";
     const parsed = await parsePluginBundle(
-      minimalBundle({}, { hooks: { on_start: "hooks/start.sh" } })
+      minimalBundle(
+        { [longPath]: PNG_BYTES },
+        { extensions: { "com.mcpjam": { icon: longPath } } }
+      )
     );
-    expect(parsed.unsupported).toEqual([
-      expect.objectContaining({ kind: "hooks", key: "hooks" }),
-    ]);
-    expect(parsed.warnings).toEqual([
-      expect.objectContaining({ code: "UNSUPPORTED_COMPONENT" }),
-    ]);
-    expect(parsed.manifest.extensions).toEqual({});
+    expect(parsed.manifest.icon).toBe(longPath);
+  });
+
+  it("warns (never fails) when a com.mcpjam icon reference is missing or escapes", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle(
+        {},
+        { extensions: { "com.mcpjam": { icon: "assets/missing.png" } } }
+      )
+    );
+    expect(parsed.manifest.icon).toBeUndefined();
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MANIFEST_MISSING_FILE")
+    ).toBe(true);
+
+    const escaping = await parsePluginBundle(
+      minimalBundle(
+        {},
+        { extensions: { "com.mcpjam": { icon: "../outside.png" } } }
+      )
+    );
+    expect(escaping.manifest.icon).toBeUndefined();
+    expect(
+      escaping.warnings.some((issue) => issue.code === "PATH_ESCAPES_ROOT")
+    ).toBe(true);
   });
 
   it("rejects icons whose bytes do not match the extension", async () => {
     await expectParseError(
       minimalBundle(
         { "assets/icon.png": "definitely not a png" },
-        { icon: "assets/icon.png" }
+        { extensions: { "com.mcpjam": { icon: "assets/icon.png" } } }
       ),
       "ASSET_CONTENT_MISMATCH"
     );
   });
 });
 
-describe("manifest hardening (review fixes)", () => {
-  it("fails deeply nested manifest values with VALUE_TOO_DEEP, not a RangeError", async () => {
+describe("manifest hardening", () => {
+  it("fails deeply nested extension values with VALUE_TOO_DEEP, not a RangeError", async () => {
     let nested: unknown = "leaf";
     for (let i = 0; i < 200; i++) nested = { deeper: nested };
     await expectParseError(
-      minimalBundle({}, { future_field: nested }),
+      minimalBundle({}, { extensions: { "com.example.deep": nested } }),
       "VALUE_TOO_DEEP"
     );
   });
 
-  it("drops secret-looking values from preserved unknown fields", async () => {
+  it("drops secret-looking values from extension namespaces", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle(
         {},
         {
-          integration: {
-            endpoint: "https://api.example.com",
-            auth: "Bearer sk-live-manifest-leak",
-            nested: { api_key: "sk_live_nested_leak" },
+          extensions: {
+            "com.example.integration": {
+              endpoint: "https://api.example.com",
+              auth: "Bearer sk-live-manifest-leak",
+              nested: { api_key: "sk_live_nested_leak" },
+            },
           },
         }
       )
     );
     expect(parsed.manifest.extensions).toEqual({
-      integration: {
+      "com.example.integration": {
         endpoint: "https://api.example.com",
         nested: {},
       },

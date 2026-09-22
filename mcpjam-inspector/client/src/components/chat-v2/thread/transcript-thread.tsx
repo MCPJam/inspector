@@ -250,6 +250,7 @@ export function TranscriptThread({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   focusMessageId = null,
@@ -259,9 +260,12 @@ export function TranscriptThread({
   transcriptRef,
   contentClassName,
   isLoading = false,
+  renderAssistantTurnFooter,
   lastRenderableMessageId = null,
   getMessageWrapperProps,
   renderUserMessageActions,
+  onEditUserMessage,
+  editDisabled,
   showSenderAvatars = false,
   resolveSenderAvatar,
   recorder,
@@ -570,11 +574,22 @@ export function TranscriptThread({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
               claudeFooterMode={claudeFooterMode}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
+              // Per-turn ratings (inherited from MessageView's props), minus
+              // the message that is actively streaming: rating a half-written
+              // answer rates something the tester has not read yet.
+              renderAssistantTurnFooter={
+                isLatestAssistantMessage && isLoading
+                  ? undefined
+                  : renderAssistantTurnFooter
+              }
+              onEditUserMessage={onEditUserMessage}
+              editDisabled={editDisabled}
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}
               recorder={recorder}

@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "../../hooks/useWebmcpInspectorEnabled";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
-  getEvalsSubnavItems,
   getHostedNavigationSections,
-  resolveHostedSkillsNav,
+  navigationSections,
+  SIDEBAR_RESOLVED_FLAG_KEYS,
 } from "../mcp-sidebar";
-import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 const FakeIcon = () => null;
 
@@ -17,7 +17,7 @@ const makeSections = () => [
       { title: "Always Visible", url: "#always", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
       },
     ],
@@ -115,43 +115,20 @@ describe("filterByFeatureFlags", () => {
     expect(result[0].items[0].title).toBe("Plain");
   });
 
-  it("keeps Evaluate item visible when evaluate-ci is off", () => {
-    const result = filterByFeatureFlags(
-      [
-        {
-          id: "mcp-apps",
-          items: [
-            { title: "Views", url: "#views", icon: FakeIcon },
-            {
-              title: "Evaluate",
-              url: "#evals",
-              icon: FakeIcon,
-              billingFeature: "evals" as const,
-              evalsSubnav: true,
-            },
-          ],
-        },
-      ],
-      { "evaluate-ci": false },
-    );
-    const titles = result[0].items.map((i) => i.title);
-    expect(titles).toEqual(["Views", "Evaluate"]);
-  });
-
-  it("renders no subnav when evaluate-ci is off (Evaluate is a flat link)", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: false }).map(
-        (item) => item.title,
-      ),
-    ).toEqual([]);
-  });
-
-  it("shows Runs as the only subnav item when evaluate-ci is on", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: true }).map(
-        (item) => item.title,
-      ),
-    ).toEqual(["Runs"]);
+  it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
+    // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
+    // now live under one Evaluate entry and switch in the page header, so the
+    // sidebar carries no eval sub-items and no eval flag.
+    const evalsItems = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.url.startsWith("/evaluate"));
+    expect(evalsItems).toHaveLength(1);
+    expect(evalsItems[0]).toMatchObject({
+      title: "Evaluate",
+      url: "/evaluate",
+      billingFeature: "evals",
+    });
+    expect(evalsItems[0].featureFlag).toBeUndefined();
   });
 
   it("hides Conformance when the feature flag is off", () => {
@@ -182,17 +159,17 @@ describe("filterByFeatureFlags", () => {
     ]);
   });
 
-  it("keeps Chatboxes behind the existing sandboxes flag", () => {
+  it("keeps Scenarios behind the existing sandboxes flag", () => {
     const sections = [
       {
         id: "connection",
         items: [
           {
-            title: "Chatboxes",
-            url: "#chatboxes",
+            title: "Scenarios",
+            url: "#scenarios",
             icon: FakeIcon,
             featureFlag: "sandboxes-enabled",
-            billingFeature: "chatboxes" as const,
+            billingFeature: "scenarios" as const,
           },
         ],
       },
@@ -202,11 +179,11 @@ describe("filterByFeatureFlags", () => {
       filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
     ).toEqual([
       {
-        title: "Chatboxes",
-        url: "#chatboxes",
+        title: "Scenarios",
+        url: "#scenarios",
         icon: FakeIcon,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
     ]);
     expect(
@@ -214,29 +191,111 @@ describe("filterByFeatureFlags", () => {
     ).toHaveLength(0);
   });
 
-  it("marks Chatboxes disabled when billing enforcement denies chatboxes", () => {
+  it("marks Scenarios disabled when billing enforcement denies scenarios", () => {
     const result = applyBillingGateNavState(
       [
         {
           id: "connection",
           items: [
             {
-              title: "Chatboxes",
-              url: "/chatboxes",
+              title: "Scenarios",
+              url: "/scenarios",
               icon: FakeIcon,
-              billingFeature: "chatboxes",
+              billingFeature: "scenarios",
             },
           ],
         },
       ],
       {
         billingUiEnabled: true,
-        gateDenied: { chatboxes: true },
+        gateDenied: { scenarios: true },
         enforcementActive: true,
       },
     );
 
     expect(result[0].items[0].disabled).toBe(true);
+  });
+});
+
+describe("declared nav flags are actually resolved", () => {
+  it("WebMCP uses the deployment Browser flag, not the legacy flag", () => {
+    const titles = (flags: Record<string, boolean>) =>
+      filterByFeatureFlags(navigationSections, flags)
+        .flatMap((section) => section.items)
+        .map((item) => item.title);
+    expect(titles({ "webmcp-inspector-enabled": true })).not.toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: true })).toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: false })).not.toContain(
+      "WebMCP",
+    );
+  });
+  // The bug this guards: a nav item can declare `featureFlag: "x"` while the
+  // sidebar's `featureFlags` map never sets `x`. `filterByFeatureFlags` then
+  // reads `undefined`, hides the item permanently, and — because nothing ever
+  // calls the flag — PostHog reports it as never evaluated, which reads like a
+  // rollout/targeting problem instead of a missing map entry. Sessions shipped
+  // that way and was invisible in production with a correctly-configured flag.
+  it("every featureFlag / hiddenByFlag key in navigationSections is in SIDEBAR_RESOLVED_FLAG_KEYS", () => {
+    const declared = new Set<string>();
+    for (const section of navigationSections) {
+      for (const item of section.items) {
+        if (item.featureFlag) declared.add(item.featureFlag);
+        if (item.hiddenByFlag) declared.add(item.hiddenByFlag);
+      }
+    }
+
+    const resolved = new Set<string>(SIDEBAR_RESOLVED_FLAG_KEYS);
+    const missing = [...declared].filter((key) => !resolved.has(key)).sort();
+
+    expect(missing).toEqual([]);
+  });
+
+  it("Sessions is gated by unified-sessions-enabled and appears when it is on", () => {
+    const sessionsItem = navigationSections
+      .flatMap((section) => section.items)
+      .find((item) => item.url === "/sessions");
+
+    expect(sessionsItem).toMatchObject({
+      title: "Sessions",
+      featureFlag: "unified-sessions-enabled",
+    });
+
+    const off = filterByFeatureFlags(navigationSections, {})
+      .flatMap((s) => s.items)
+      .map((i) => i.title);
+    expect(off).not.toContain("Sessions");
+
+    const on = filterByFeatureFlags(navigationSections, {
+      "unified-sessions-enabled": true,
+    })
+      .flatMap((s) => s.items)
+      .map((i) => i.title);
+    expect(on).toContain("Sessions");
+  });
+
+  it("shows Evaluate publicly and gates only Evaluate (Legacy)", () => {
+    const items = navigationSections.flatMap((section) => section.items);
+    expect(items.find((item) => item.url === "/evaluate")).toMatchObject({
+      title: "Evaluate", billingFeature: "evals",
+    });
+    expect(items.find((item) => item.url === "/evaluate")?.featureFlag).toBeUndefined();
+    expect(items.find((item) => item.url === "/evals")).toMatchObject({
+      title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
+    });
+    for (const enabled of [undefined, false, true]) {
+      const titles = filterByFeatureFlags(
+        navigationSections,
+        enabled === undefined ? {} : { "evaluate-enabled": enabled },
+      )
+        .flatMap((section) => section.items).map((item) => item.title);
+      expect(titles).toContain("Evaluate");
+      expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
+      expect(titles).not.toContain("Ding Dong");
+    }
   });
 });
 
@@ -249,7 +308,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -274,7 +333,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -301,16 +360,19 @@ describe("applyBillingGateNavState", () => {
 });
 
 describe("getHostedNavigationSections", () => {
-  it("keeps hosted-blocked local tabs visible as disabled hosted-only items", () => {
+  it("drops hosted-blocked tabs and keeps hosted-capable ones", () => {
     const result = getHostedNavigationSections([
       {
         id: "others",
         items: [
-          { title: "Skills", url: "#skills", icon: FakeIcon },
+          // Tracing is the one surface hosted cannot serve (its live feed
+          // comes from the local Inspector's RPC bus), so it is the one item
+          // dropped here.
+          { title: "Tracing", url: "#tracing", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
             billingFeature: "evals",
           },
@@ -328,16 +390,12 @@ describe("getHostedNavigationSections", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].items).toEqual([
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: FakeIcon,
-        disabled: true,
-        disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
-      },
+      // Everything else survives: the filter is a block list now, so a tab
+      // nobody thought to list is reachable rather than silently missing.
+      { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
         billingFeature: "evals",
       },
@@ -367,7 +425,7 @@ describe("getHostedNavigationSections", () => {
         items: [
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
           },
         ],
@@ -381,7 +439,7 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("keeps Evaluate subnav entry with #evals in hosted mode", () => {
+  it("keeps the Evaluate entry in hosted mode", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
@@ -391,7 +449,6 @@ describe("getHostedNavigationSections", () => {
             url: "#evals",
             icon: FakeIcon,
             billingFeature: "evals",
-            evalsSubnav: true,
           },
         ],
       },
@@ -403,37 +460,26 @@ describe("getHostedNavigationSections", () => {
         url: "#evals",
         icon: FakeIcon,
         billingFeature: "evals",
-        evalsSubnav: true,
       },
     ]);
   });
 });
 
-describe("resolveHostedSkillsNav (skills-enabled gate)", () => {
-  const hostedSections = () =>
-    getHostedNavigationSections([
-      {
-        id: "others",
-        items: [
-          { title: "Skills", url: "#skills", icon: FakeIcon },
-          { title: "Tools", url: "#tools", icon: FakeIcon },
-        ],
-      },
-    ]);
+describe("Skills is no longer a sidebar item", () => {
+  // Skills moved into Connect as a fourth tab (Servers | Client | Computer |
+  // Skills); the sidebar has no Skills entry in either mode, and the hosted
+  // filter must not resurrect one.
+  it("has no /skills item in any section, local or hosted", () => {
+    const skillsItems = (sections: typeof navigationSections) =>
+      sections.flatMap((section) =>
+        section.items.filter(
+          (item) => item.url.replace(/^[#/]+/, "") === "skills",
+        ),
+      );
 
-  it("enables the Skills item when the flag is on", () => {
-    const result = resolveHostedSkillsNav(hostedSections(), true);
-    const skills = result[0].items.find((i) => i.title === "Skills");
-    expect(skills).toBeDefined();
-    expect(skills?.disabled).toBe(false);
-    expect(skills?.disabledTooltip).toBeUndefined();
-  });
-
-  it("drops the Skills item entirely when the flag is off", () => {
-    const result = resolveHostedSkillsNav(hostedSections(), false);
-    expect(result[0].items.find((i) => i.title === "Skills")).toBeUndefined();
-    // Sibling items are untouched.
-    expect(result[0].items.find((i) => i.title === "Tools")).toBeDefined();
+    const hosted = getHostedNavigationSections(navigationSections);
+    expect(skillsItems(navigationSections)).toEqual([]);
+    expect(skillsItems(hosted)).toEqual([]);
   });
 });
 
@@ -474,5 +520,87 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
       "hosts-enabled": false,
     });
     expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+  });
+
+  it("real navigationSections: exactly one /servers item is visible per flag state, never both", () => {
+    const authed = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": true,
+    });
+    const signedOut = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": false,
+    });
+
+    const serversTitles = (sections: typeof navigationSections) =>
+      sections
+        .flatMap((s) => s.items)
+        .filter((i) => i.url.replace(/^[#/]+/, "") === "servers")
+        .map((i) => i.title);
+
+    expect(serversTitles(authed)).toEqual(["Connect"]);
+    expect(serversTitles(signedOut)).toEqual(["Servers"]);
+  });
+});
+
+/**
+ * Swarms and User Testing roll out on `sandboxes-enabled` in PostHog. The flag
+ * decides whether the items exist; REEV-6's route gate then decides what a
+ * visitor gets — a guest the preview, a member the real tab.
+ *
+ * The flag is deliberately NOT combined with sign-in here. Before REEV-6 the
+ * sidebar resolved it as `flag && isAuthenticated`, which would hide the items
+ * from exactly the signed-out visitors the preview was built for.
+ */
+describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", () => {
+  const MEASURE_ITEMS = ["User Testing", "Swarms"];
+
+  it("gates both items on sandboxes-enabled", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.featureFlag).toBe("sandboxes-enabled");
+    }
+  });
+
+  it("hides both when the flag is off", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": false,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).not.toContain(title);
+    }
+  });
+
+  it("shows both when the flag is on", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": true,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).toContain(title);
+    }
+  });
+
+  it("resolves the flag key before the nav renders", () => {
+    expect(SIDEBAR_RESOLVED_FLAG_KEYS).toContain("sandboxes-enabled");
+  });
+
+  // They stay CLICKABLE for a plan-locked org rather than disabled: the tab
+  // shows the upsell, which is a better answer than a greyed-out row.
+  it("keeps its billingFeature, so the upsell still knows what to sell", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    for (const item of items) {
+      expect(item.billingFeature).toBe("scenarios");
+    }
   });
 });

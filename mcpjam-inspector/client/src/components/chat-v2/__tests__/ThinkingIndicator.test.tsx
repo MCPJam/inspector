@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
 import type { ModelDefinition } from "@/shared/types";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
@@ -55,11 +55,11 @@ describe("ThinkingIndicator", () => {
     expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
   });
 
-  it("hides the leading assistant avatar in chatbox host-style contexts", () => {
+  it("hides the leading assistant avatar in scenario host-style contexts", () => {
     renderThinkingIndicator(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <ThinkingIndicator model={openaiModel} />
-      </ChatboxHostStyleProvider>,
+      </ScenarioHostStyleProvider>,
     );
 
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
@@ -86,11 +86,11 @@ describe("ThinkingIndicator", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the animated Claude mark inside a Claude chatbox host context", () => {
+  it("renders the animated Claude mark inside a Claude scenario host context", () => {
     renderThinkingIndicator(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <ThinkingIndicator model={openaiModel} />
-      </ChatboxHostStyleProvider>,
+      </ScenarioHostStyleProvider>,
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();

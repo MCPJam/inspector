@@ -1,11 +1,16 @@
+import { useBrowserChatHandoff } from "@/lib/browser-shell/chat-handoff";
+import { useState } from "react";
+import { useConversationTargetRestoration } from "../use-conversation-target-restoration";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 
 const mockState = vi.hoisted(() => ({
+  appState: null as any,
   sendMessage: vi.fn(),
   stop: vi.fn(),
   setMessages: vi.fn(),
@@ -24,6 +29,9 @@ const mockState = vi.hoisted(() => ({
   setSelectedModelId: vi.fn(),
   useSharedChatWidgetCapture: vi.fn(),
   latestOnData: undefined as ((part: unknown) => void) | undefined,
+  latestOnToolCall: undefined as
+    ((options: { toolCall: unknown }) => Promise<void> | void) | undefined,
+  addToolOutput: vi.fn(),
   convexAuth: {
     isAuthenticated: true,
     isLoading: false,
@@ -40,6 +48,10 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   selectedModelId: "anthropic/claude-haiku-4.5",
+}));
+vi.mock("@/state/app-state-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/app-state-context")>()),
+  useOptionalSharedAppState: () => mockState.appState,
 }));
 let lastTransportOptions: any;
 
@@ -110,7 +122,7 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
   isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
-    String(model.id).includes("/")
+    String(model.id).includes("/"),
   ),
 }));
 
@@ -179,7 +191,7 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames,
       oauthTokens,
       accessScope,
-      chatboxId,
+      scenarioId,
       accessVersion,
     }: {
       projectId: string;
@@ -187,7 +199,7 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames: string[];
       oauthTokens?: Record<string, string>;
       accessScope?: string;
-      chatboxId?: string;
+      scenarioId?: string;
       accessVersion?: number;
     }) => ({
       projectId,
@@ -195,9 +207,11 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames,
       ...(oauthTokens ? { oauthTokens } : {}),
       ...(accessScope ? { accessScope } : {}),
-      ...(chatboxId ? { chatboxId } : {}),
-      ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
-    })
+      ...(scenarioId ? { scenarioId } : {}),
+      ...(scenarioId && Number.isFinite(accessVersion)
+        ? { accessVersion }
+        : {}),
+    }),
   ),
   getApiContextRevision: vi.fn(() => 0),
   subscribeApiContext: vi.fn(() => () => {}),
@@ -228,16 +242,19 @@ vi.mock("@ai-sdk/react", async () => {
         id,
         transport,
         onData,
+        onToolCall,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
         onData?: (part: unknown) => void;
+        onToolCall?: (options: { toolCall: unknown }) => Promise<void> | void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
         mockState.latestOnData = onData;
+        mockState.latestOnToolCall = onToolCall;
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -272,13 +289,15 @@ vi.mock("@ai-sdk/react", async () => {
           error: undefined,
           setMessages: mockState.setMessages,
           addToolApprovalResponse: mockState.addToolApprovalResponse,
+          addToolOutput: mockState.addToolOutput,
         };
-      }
+      },
     ),
   };
 });
 
-vi.mock("ai", () => ({
+vi.mock("ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("ai")>()),
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;
@@ -318,14 +337,52 @@ describe("useChatSession hosted mode", () => {
     mockState.setMessages.mockReset();
     mockState.buildServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
+    mockState.appState = null;
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
     mockState.latestOnData = undefined;
+    mockState.latestOnToolCall = undefined;
+    mockState.addToolOutput.mockReset();
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
+  });
+
+  it("waits for browser control before dispatching the next user message", async () => {
+    let finish!: (ok: boolean) => void;
+    const release = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { result, unmount } = renderHook(() => {
+      const chat = useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "handoff-test", selectedServerIds: [] },
+      });
+      useBrowserChatHandoff({
+        projectId: "handoff-test",
+        sessionId: chat.chatSessionId,
+        holding: true,
+        release,
+      });
+      return chat;
+    });
+    let send!: Promise<boolean>;
+    act(() => {
+      send = result.current.sendMessage({ text: "continue" });
+    });
+    expect(release).toHaveBeenCalledOnce();
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+    await act(async () => {
+      finish(true);
+      await send;
+    });
+    await waitFor(() => expect(mockState.authFetch).toHaveBeenCalledOnce());
+    unmount();
   });
 
   it("announces the hosted-elicitation handshake", async () => {
@@ -340,11 +397,31 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     expect(lastTransportOptions.body()).toMatchObject({
       hostedElicitationVersion: 1,
+    });
+  });
+
+  it("announces the hosted-MRTR handshake", async () => {
+    // §12.5: the server only registers the SUSPENDING collector — and so only
+    // takes the durable continuation path — when it sees this. Without it a
+    // stale bundle would be handed a continuationId it cannot render or
+    // resume, and the operation would sit until its TTL.
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      hostedMrtrVersion: 1,
     });
   });
 
@@ -355,10 +432,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
@@ -368,27 +445,27 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       accessScope: "chat_v2",
     });
     unmount();
   });
 
-  it("includes chatboxId and accessVersion in the hosted transport body", async () => {
+  it("includes scenarioId and accessVersion in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
           oauthTokens: {
             "server-id-1": "browser-token",
           },
         },
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
@@ -398,7 +475,7 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       accessScope: "chat_v2",
     });
@@ -406,30 +483,38 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("includes chatbox surface in the hosted transport body", async () => {
+  it("includes scenario surface in the hosted transport body", async () => {
     const { unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
-          chatboxSurface: "preview",
+          scenarioSurface: "preview",
         },
-      })
+      }),
     );
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       surface: "preview",
     });
     unmount();
   });
 
-  it("ships WebMCP ui_* tools on direct chats but never on chatbox sessions", async () => {
+  it("never ships WebMCP ui_* tools from the generic hook", async () => {
+    // The Playground and every other generic chat surface stay isolated from
+    // the UI-tool catalog: even with a non-empty registry, the body must not
+    // carry a `uiTools` field on any surface. The only sender is
+    // agent-chat-instances.ts (/api/web/mcpjam-agent). A user who explicitly
+    // opts a turn into an open WebMCP session's `pageTools` still gets those
+    // — this is about the automatic snapshot, not about page tools. (The
+    // catalog ALSO reaches browser-native agents now, but through
+    // `document.modelContext`, which never touches this request body.)
     const unregister = useUiToolsRegistry.getState().registerUiTool({
       name: "ui_navigate",
       description: "Navigate the MCPJam inspector",
@@ -439,7 +524,7 @@ describe("useChatSession hosted mode", () => {
       }),
     });
     try {
-      // Direct hosted chat (no chatbox scope): the snapshot ships.
+      // Direct hosted chat: no uiTools field.
       const direct = renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
@@ -447,29 +532,71 @@ describe("useChatSession hosted mode", () => {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
           },
-        })
+        }),
       );
-      expect(lastTransportOptions.body().uiTools).toEqual([
-        expect.objectContaining({ name: "ui_navigate" }),
-      ]);
+      expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
       direct.unmount();
 
-      // Chatbox session (published/share-link or owner preview): the turn
-      // renders the end-user chatbox surface — inspector-driving tools are
-      // omitted entirely, not sent as an empty list.
-      const chatbox = renderHook(() =>
+      // Scenario session (published/share-link or owner preview): same —
+      // the field is absent entirely, not sent as an empty list.
+      const scenario = renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_test",
+            scenarioId: "cbx_test",
             accessVersion: 1,
           },
-        })
+        }),
       );
       expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
-      chatbox.unmount();
+      scenario.unmount();
+    } finally {
+      unregister();
+    }
+  });
+
+  it("does not claim a server-origin ui_* tool call in the generic hook", async () => {
+    // Provenance boundary regression: an MCP server may legitimately expose a
+    // tool named `ui_server_action`. Even when the internal MCPJam UI registry
+    // holds a same-named entry, the generic hook's onToolCall must NOT execute
+    // it in the browser or synthesize a tool output — the call falls through
+    // to the server's execute path like any other MCP tool.
+    const uiExecute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "{}" }],
+    }));
+    const unregister = useUiToolsRegistry.getState().registerUiTool({
+      name: "ui_server_action",
+      description: "Registry twin that must not claim the server call",
+      readOnly: false,
+      execute: uiExecute,
+    });
+    try {
+      const { unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+          },
+        }),
+      );
+      expect(mockState.latestOnToolCall).toBeDefined();
+
+      await act(async () => {
+        await mockState.latestOnToolCall?.({
+          toolCall: {
+            toolName: "ui_server_action",
+            toolCallId: "tool-call-ui-1",
+            input: {},
+          },
+        });
+      });
+
+      expect(uiExecute).not.toHaveBeenCalled();
+      expect(mockState.addToolOutput).not.toHaveBeenCalled();
+      unmount();
     } finally {
       unregister();
     }
@@ -494,12 +621,12 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
       expect(result.current.availableModels.map((model) => model.id)).toContain(
-        "gpt-4o-mini"
+        "gpt-4o-mini",
       );
     });
     expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
@@ -521,7 +648,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: string;
           selectedServerIds: string[];
-          chatboxId: string;
+          scenarioId: string;
           accessVersion: number;
         };
       }) =>
@@ -535,11 +662,11 @@ describe("useChatSession hosted mode", () => {
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_1",
+            scenarioId: "cbx_1",
             accessVersion: 1,
           },
         },
-      }
+      },
     );
 
     await waitFor(() => {
@@ -555,7 +682,7 @@ describe("useChatSession hosted mode", () => {
       hostedContext: {
         projectId: "project-2",
         selectedServerIds: ["server-id-2"],
-        chatboxId: "cbx_2",
+        scenarioId: "cbx_2",
         accessVersion: 1,
       },
     });
@@ -568,13 +695,69 @@ describe("useChatSession hosted mode", () => {
     expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
   });
 
+  it("restores a saved host before hydrating, so its scope reset cannot erase the reopened session", async () => {
+    const onReset = vi.fn();
+    const { result } = renderHook(() => {
+      const [hostId, setHostId] = useState<string | null>("host-a");
+      const chat = useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          hostId: hostId ?? undefined,
+          selectedServerIds: [],
+        },
+        onReset,
+      });
+      const restoration = useConversationTargetRestoration({
+        projectId: "project-1",
+        composer: { kind: "host", hostId },
+        settled: chat.isSessionBootstrapComplete,
+        hostsLoading: false,
+        hostIds: ["host-a", "host-b"],
+        environmentsEnabled: false,
+        selectHost: setHostId,
+        selectEnvironment: () => {},
+        clearEnvironment: () => {},
+      });
+      return { chat, restoration, hostId };
+    });
+    await waitFor(() =>
+      expect(result.current.chat.isSessionBootstrapComplete).toBe(true),
+    );
+    onReset.mockClear();
+    let resumed!: Promise<void>;
+    act(() => {
+      resumed = result.current.restoration
+        .restoreTarget({ kind: "host", hostId: "host-b" }, () => true)
+        .then(async (apply) => {
+          expect(apply).toBe(true);
+          await result.current.chat.loadChatSession({
+            chatSessionId: "saved-chat",
+            messagesBlobUrl: null,
+            version: 3,
+          });
+        });
+    });
+    await waitFor(() =>
+      expect(result.current.chat.chatSessionId).toBe("saved-chat"),
+    );
+    await resumed;
+    expect(result.current.hostId).toBe("host-b");
+    expect(result.current.chat.chatSessionId).toBe("saved-chat");
+    expect(result.current.chat.resumedVersion).toBe(3);
+    expect(onReset.mock.calls.map(([reason]) => reason)).toEqual([
+      "auth-bootstrap",
+      "hydrate",
+    ]);
+  });
+
   it("marks session bootstrap complete only after auth setup finishes", async () => {
     let resolveAccessToken: (value: string) => void = () => {};
     mockState.getAccessToken.mockImplementation(
       () =>
         new Promise<string>((resolve) => {
           resolveAccessToken = resolve;
-        })
+        }),
     );
 
     const { result } = renderHook(() =>
@@ -584,7 +767,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     expect(result.current.isSessionBootstrapComplete).toBe(false);
@@ -617,7 +800,7 @@ describe("useChatSession hosted mode", () => {
           selectedServers: ["server-1"],
           hostedSelectedServerIds: ["server-id-1"],
         },
-      }
+      },
     );
 
     await waitFor(() => {
@@ -640,11 +823,10 @@ describe("useChatSession hosted mode", () => {
         String(
           (
             mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}"
-        )
-      )
+              RequestInit | undefined
+          )?.body ?? "{}",
+        ),
+      ),
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-1"],
@@ -670,14 +852,148 @@ describe("useChatSession hosted mode", () => {
         String(
           (
             mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}"
-        )
-      )
+              RequestInit | undefined
+          )?.body ?? "{}",
+        ),
+      ),
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
+    });
+  });
+
+  it("pairs preflight-resolved server ids with the names they were resolved from when the selection changes mid-preflight", async () => {
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({
+          selectedServers,
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: [],
+            ensureServerIds,
+          },
+        }),
+      { initialProps: { selectedServers: ["server-a", "server-b"] } },
+    );
+
+    mockState.authFetch.mockClear();
+
+    // Send starts: the async preflight is now in flight for [server-a, server-b].
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" });
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a", "server-b"]);
+
+    // Selection changes BEFORE the preflight resolves.
+    rerender({ selectedServers: ["server-a"] });
+
+    resolvePreflight([{ serverId: "id-a" }, { serverId: "id-b" }]);
+    await act(async () => {
+      await sendPromise;
+    });
+
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+    });
+    const body = JSON.parse(
+      String(
+        (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
+          ?.body ?? "{}",
+      ),
+    );
+    // Ids ride with the names they were resolved from — never stale ids
+    // paired with the fresh (shrunk) selection.
+    expect(body.selectedServerIds).toEqual(["id-a", "id-b"]);
+    expect(body.selectedServerNames).toEqual(["server-a", "server-b"]);
+  });
+
+  it("fails a send closed when the session changes mid-preflight", async () => {
+    // `useChat` runs on a stable `proxyTransport` that delegates at REQUEST
+    // time to the latest transport, so the POST body carries whatever
+    // `chatSessionId` is live when it fires — not the one the message was
+    // composed against. Without a guard, a session change during the async
+    // server-id preflight posts this turn into an unrelated transcript, and
+    // ingestion writes it there. Sibling of the target-key check above.
+    // `resetChat` mints through `generateId`, stubbed to a constant for this
+    // suite — so it must vary here or the session would never actually move.
+    vi.mocked(generateId)
+      .mockImplementationOnce(() => "chat-session-id")
+      .mockImplementation(() => "chat-session-id-2");
+
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+
+    // `authFetch`, not `mockState.sendMessage`: the mocked `useChat` returns
+    // its OWN inline `sendMessage` that drives the transport directly, so
+    // `mockState.sendMessage` is never wired in and asserting on it would be
+    // vacuously true. The transport's fetch is the only real post signal.
+    mockState.authFetch.mockClear();
+
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" }) as unknown as
+        Promise<boolean> | undefined;
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
+
+    // The thread moves under the in-flight preflight.
+    act(() => {
+      result.current.resetChat();
+    });
+    expect(result.current.chatSessionId).toBe("chat-session-id-2");
+
+    resolvePreflight([{ serverId: "id-a" }]);
+    const dispatched = await act(async () => await sendPromise);
+
+    // Fails closed: resolves `false` and never posts, so the turn cannot land
+    // under the session that replaced the one it was composed against.
+    expect(dispatched).toBe(false);
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
+    const ensureServerIds = vi.fn(async (names: string[]) =>
+      names.map((name) => ({ serverId: `id-${name}` })),
+    );
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["adhoc-server"],
+        hostedContext: {
+          projectId: "project-1",
+          // Ad-hoc/App servers have no pre-resolved Convex ids — the
+          // sendMessage preflight is what persists them.
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+    await waitFor(() => {
+      expect(result.current.inputDisabled).toBe(false);
     });
   });
 
@@ -704,8 +1020,8 @@ describe("useChatSession hosted mode", () => {
         {
           status: 500,
           headers: { "Content-Type": "application/json" },
-        }
-      )
+        },
+      ),
     );
 
     const { result } = renderHook(() =>
@@ -715,7 +1031,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -734,7 +1050,7 @@ describe("useChatSession hosted mode", () => {
             serverName: "server-1",
             method: "tools/list",
           }),
-        ])
+        ]),
       );
     });
   });
@@ -747,7 +1063,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     act(() => {
@@ -775,7 +1091,7 @@ describe("useChatSession hosted mode", () => {
           direction: "RECEIVE",
           method: "result",
         }),
-      ])
+      ]),
     );
   });
 
@@ -789,10 +1105,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -827,10 +1143,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -839,7 +1155,7 @@ describe("useChatSession hosted mode", () => {
 
     // No longer gated → the persisted model stays selected (no fallback).
     expect(result.current.selectedModel.id).toBe(
-      "google/gemini-3.1-pro-preview"
+      "google/gemini-3.1-pro-preview",
     );
     unmount();
   });
@@ -853,10 +1169,10 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -867,7 +1183,7 @@ describe("useChatSession hosted mode", () => {
     expect(
       result.current.availableModels
         .filter((model) => !model.disabled)
-        .map((model) => model.id)
+        .map((model) => model.id),
     ).toEqual([
       "anthropic/claude-opus-4.6",
       "google/gemini-3.1-pro-preview",
@@ -889,7 +1205,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -919,7 +1235,7 @@ describe("useChatSession hosted mode", () => {
         expect.objectContaining({
           chatSessionId: "history-session-1",
           persistedSnapshotToolCallIds: ["tool-call-1"],
-        })
+        }),
       );
     });
 
@@ -939,7 +1255,7 @@ describe("useChatSession hosted mode", () => {
       new Response(JSON.stringify(toolOutput), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      })
+      }),
     );
 
     const { result, unmount } = renderHook(() =>
@@ -949,7 +1265,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -978,7 +1294,7 @@ describe("useChatSession hosted mode", () => {
 
     await waitFor(() => {
       expect(
-        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput
+        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput,
       ).toEqual(toolOutput);
     });
 
@@ -994,7 +1310,7 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -1043,13 +1359,13 @@ describe("useChatSession hosted mode", () => {
       // connected.
       expect(mcp?.liveFetchPreferred).toBe(true);
       expect(mcp?.cachedWidgetHtmlUrl).toBe(
-        "https://storage.example.com/mcp-widget.html"
+        "https://storage.example.com/mcp-widget.html",
       );
       // OpenAI Apps revisit: cached path only (cannot live-fetch
       // `outputTemplate = "__cached__"`).
       expect(openai?.liveFetchPreferred).toBe(false);
       expect(openai?.cachedWidgetHtmlUrl).toBe(
-        "https://storage.example.com/openai-widget.html"
+        "https://storage.example.com/openai-widget.html",
       );
       expect(openai?.isOffline).toBe(true);
     });
@@ -1064,22 +1380,504 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
-      })
+      }),
     );
 
     await waitFor(() => {
       expect(result.current.availableModels.map((model) => model.id)).toContain(
-        "openai/gpt-5.4-pro"
+        "openai/gpt-5.4-pro",
       );
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro"
-      )?.disabled
+        (model) => model.id === "openai/gpt-5.4-pro",
+      )?.disabled,
     ).toBeUndefined();
     unmount();
   });
+});
+
+// ── Project Environments — Phase 2.3 (request serialization) ────────────────
+//
+// The wire contract these cover is not "an extra optional field". It is a
+// closed union that `normalizeExecutionTarget` REJECTS ambiguity in, plus an
+// override envelope whose absent / `[]` distinction is load-bearing all the way
+// to the backend resolver. Both are exactly the kind of thing that regresses
+// silently — a body that still carries `hostId` 400s, and a body that always
+// carries `environmentOverrides` would pin the environment's own set as if the
+// user had chosen it.
+describe("useChatSession — environment execution target", () => {
+  const environmentContext = {
+    projectId: "project-1",
+    selectedServerIds: ["server-id-1"],
+    requiresWebChatApi: true,
+    executionTarget: { kind: "environment" as const, environmentId: "env_1" },
+  };
+
+  it("sends executionTarget and NEVER a legacy hostId alongside it", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+    expect(body).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+    });
+    // `hostId` + `executionTarget` is a 400, not a precedence question.
+    expect(body).not.toHaveProperty("hostId");
+    unmount();
+  });
+
+  it("omits environmentOverrides entirely before the user overrides anything", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    // Absent ⇒ "resolve the environment's own server set". Sending an envelope
+    // here would freeze whatever the set happened to be at page load.
+    expect(lastTransportOptions.body()).not.toHaveProperty(
+      "environmentOverrides",
+    );
+    unmount();
+  });
+
+  it("sends an EMPTY explicit override as an override, not as absence", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...environmentContext,
+          environmentOverrides: { serverIds: [] },
+        },
+      }),
+    );
+
+    // `[]` means "run this turn with no MCP servers" and must survive the trip.
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: [] },
+    });
+    unmount();
+  });
+
+  it("forwards an explicit narrowing by id", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...environmentContext,
+          environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
+        },
+      }),
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
+    });
+    unmount();
+  });
+
+  it("never runs the name→id persistence preflight for an environment turn", async () => {
+    // Environment servers already carry authoritative Convex ids, and
+    // plugin-contributed ones are deliberately hidden from
+    // `servers:getProjectServers` — resolving them BY NAME would fail outright
+    // or persist a shadow copy that bypasses plugin lifecycle semantics.
+    const ensureServerIds = vi.fn(async () => [
+      { serverName: "server-1", serverId: "server-id-1" },
+    ]);
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { ...environmentContext, ensureServerIds },
+      }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+
+    expect(ensureServerIds).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("does not gate submit on browser-resolved server ids", async () => {
+    // The hosted environment path is server-connected: the backend resolves and
+    // connects the set. Requiring one browser-known id per selected server would
+    // never open for a plugin-contributed environment.
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1", "hidden-plugin-server"],
+        hostedContext: { ...environmentContext, selectedServerIds: [] },
+      }),
+    );
+
+    await waitFor(() => expect(result.current.submitBlocked).toBe(false));
+
+    // Control: the same shape WITHOUT an environment target stays blocked,
+    // because that path really does need one Convex id per selected server.
+    const hostMode = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1", "hidden-plugin-server"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          requiresWebChatApi: true,
+          hostId: "host_1",
+        },
+      }),
+    );
+    expect(hostMode.result.current.submitBlocked).toBe(true);
+    hostMode.unmount();
+    unmount();
+  });
+
+  it("caches the harness workdir under the PRESENTATION host, not the project fallback", () => {
+    // An environment target carries no `hostId` on the wire (the server
+    // re-resolves the host from the environment), so the workdir cache used to
+    // land under the project key — while the Playground Shell reads it by the
+    // environment's resolved host id. The terminal then opened at the box home
+    // instead of inside the harness session directory.
+    useHarnessWorkdirStore.setState({ byKey: {} });
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          ...environmentContext,
+          presentationHostId: "host_env",
+        },
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/claude-code-abc" },
+      });
+    });
+
+    // `h:<hostId>` is the store's own key shape, and the rail reads it with the
+    // previewed host id — which in environment mode IS the environment's host.
+    expect(useHarnessWorkdirStore.getState().byKey["h:host_env"]).toBe(
+      "/home/user/claude-code-abc",
+    );
+    unmount();
+  });
+
+  it("aborts a send whose target changed while the name→id preflight was in flight", async () => {
+    // The preflight is async and the transport body is built from the LATEST
+    // props when the request finally goes out. A message composed against a
+    // host would otherwise resume into the environment the user just selected
+    // and run against a different bundle entirely.
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        }),
+    );
+
+    const { result, rerender, unmount } = renderHook(
+      ({ inEnvironment }: { inEnvironment: boolean }) =>
+        useChatSession({
+          selectedServers: ["server-a"],
+          hostedContext: inEnvironment
+            ? environmentContext
+            : {
+                projectId: "project-1",
+                selectedServerIds: [],
+                requiresWebChatApi: true,
+                hostId: "host_1",
+                ensureServerIds,
+              },
+        }),
+      { initialProps: { inEnvironment: false } },
+    );
+    mockState.authFetch.mockClear();
+
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" });
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
+
+    // The user switches to an environment before the preflight settles.
+    rerender({ inEnvironment: true });
+    resolvePreflight([{ serverId: "id-a" }]);
+    await act(async () => {
+      await sendPromise;
+    });
+
+    // Fail CLOSED: nothing goes out. The user resends against the target they
+    // can actually see.
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  describe("scenario access recovery", () => {
+    const TURN_URL = "/api/web/chat-v2";
+
+    function turnInit(accessVersion: number) {
+      return {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scenarioId: "cbx_recover",
+          accessVersion,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      } satisfies RequestInit;
+    }
+
+    function accessErrorResponse(code: string, status: number) {
+      return new Response(JSON.stringify({ code, message: "no" }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    function renderScenario(hostedOverrides: Record<string, unknown>) {
+      return renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            scenarioId: "cbx_recover",
+            accessVersion: 1,
+            requiresWebChatApi: true,
+            ...hostedOverrides,
+          },
+        }),
+      );
+    }
+
+    /** The transport's fetch IS chatFetch — call it directly. */
+    function chatFetch() {
+      return lastTransportOptions.fetch as (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => Promise<Response>;
+    }
+
+    it("recovers from a 409 stale turn and replays it with the fresh accessVersion", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 12 });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderScenario({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(200);
+      expect(refreshAccessSession).toHaveBeenCalledTimes(1);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+
+      // The replay is byte-identical except for the field that went stale.
+      const replayInit = mockState.authFetch.mock.calls[1][1] as RequestInit;
+      expect(JSON.parse(replayInit.body as string)).toEqual({
+        scenarioId: "cbx_recover",
+        accessVersion: 12,
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(onAccessRevoked).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it("recovers from a direct denial too — /redeem re-mints the link grant", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 3 });
+      const { unmount } = renderScenario({ refreshAccessSession });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(200);
+      expect(refreshAccessSession).toHaveBeenCalledTimes(1);
+      unmount();
+    });
+
+    it("never recovers twice — a replay that also fails is final", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 2 });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderScenario({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+        )
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+        );
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(409);
+      expect(refreshAccessSession).toHaveBeenCalledTimes(1);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+      // A still-stale replay is not a revocation.
+      expect(onAccessRevoked).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it("revokes when the replay itself comes back denied", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: true, accessVersion: 2 });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderScenario({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+        )
+        .mockResolvedValueOnce(
+          accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+        );
+
+      await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(onAccessRevoked).toHaveBeenCalledTimes(1);
+      expect(onAccessRevoked).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 403,
+          code: "SCENARIO_ACCESS_DENIED",
+        }),
+      );
+      unmount();
+    });
+
+    it("revokes when the recovery redeem is itself definitively refused", async () => {
+      const error = {
+        status: 403,
+        code: "SCENARIO_MEMBERS_ONLY",
+        message: "no",
+      };
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: "denied", error });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderScenario({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch.mockResolvedValue(
+        accessErrorResponse("SCENARIO_ACCESS_DENIED", 403),
+      );
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(response.status).toBe(403);
+      // No replay — the redeem already said no.
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+      expect(onAccessRevoked).toHaveBeenCalledWith(error);
+      unmount();
+    });
+
+    it("leaves a transient recovery failure to the normal error path", async () => {
+      const refreshAccessSession = vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: "transient" });
+      const onAccessRevoked = vi.fn();
+      const { unmount } = renderScenario({
+        refreshAccessSession,
+        onAccessRevoked,
+      });
+
+      mockState.authFetch.mockResolvedValue(
+        accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+      );
+
+      const response = await chatFetch()(TURN_URL, turnInit(1));
+
+      // The original error surfaces; the next send gets a fresh attempt.
+      expect(response.status).toBe(409);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+      expect(onAccessRevoked).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it("skips classification entirely on a non-scenario turn", async () => {
+      const refreshAccessSession = vi.fn();
+      const { unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            requiresWebChatApi: true,
+            refreshAccessSession,
+          },
+        }),
+      );
+
+      mockState.authFetch.mockResolvedValue(
+        accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+      );
+
+      await chatFetch()(TURN_URL, turnInit(1));
+
+      expect(refreshAccessSession).not.toHaveBeenCalled();
+      unmount();
+    });
+  });
+});
+
+it("hands back a browser keyed by an unprovisioned local project", async () => {
+  mockState.appState = {
+    activeProjectId: "local-project",
+    projects: {},
+    servers: {},
+  };
+  const release = vi.fn(async () => false);
+  try {
+    const view = renderHook(() => {
+      const chat = useChatSession({ selectedServers: [] });
+      useBrowserChatHandoff({
+        projectId: "local-project",
+        sessionId: chat.chatSessionId,
+        holding: true,
+        release,
+      });
+      return chat;
+    });
+    await act(async () => {
+      await view.result.current.sendMessage({ text: "continue" });
+    });
+    expect(release).toHaveBeenCalledOnce();
+    view.unmount();
+  } finally {
+    mockState.appState = null;
+  }
 });

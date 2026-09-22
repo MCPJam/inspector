@@ -11,6 +11,7 @@ import {
   type ResolvedAuthorizationPlan,
 } from "./oauth/authorization-plan.js";
 import { createOAuthStateMachine } from "./oauth/state-machines/factory.js";
+import { isLoopbackOAuthUrl } from "./oauth/ssrf-guard.js";
 import { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 import {
   EMPTY_OAUTH_FLOW_STATE,
@@ -235,6 +236,7 @@ async function resolveOAuthLoginAuthorizationPlan(
     headers: input.customHeaders,
     timeoutMs: input.stepTimeout ?? DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS,
     fetchFn: input.fetchFn,
+    allowPrivateNetwork: input.allowPrivateNetwork,
   });
 
   return resolveAuthorizationPlan({
@@ -289,6 +291,12 @@ async function runVerification(
       ? { headers: config.customHeaders }
       : undefined,
     timeout: verificationConfig.timeout ?? 30_000,
+    // Post-auth verification must speak the negotiated wire era. For 2026 the
+    // MCP endpoint is stateless (no initialize), so pin the transport; older
+    // OAuth flows keep the legacy default (unset) they used before.
+    ...(config.protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
 
   try {
@@ -507,6 +515,11 @@ export async function runOAuthLogin(
       serverUrl: config.serverUrl,
       serverName: config.serverName,
       redirectUrl,
+      // See the conformance runner: `trackedRequest` wraps the caller's
+      // `fetchFn`, so this pre-flight is the only destination check the login
+      // flow gets.
+      allowLoopbackMetadataFetch: isLoopbackOAuthUrl(config.serverUrl),
+      allowPrivateMetadataFetch: config.allowPrivateNetwork,
       requestExecutor: (request: OAuthHttpRequest) => trackedRequest(request),
       loadPreregisteredCredentials: async () => ({
         clientId: config.client.preregistered?.clientId,

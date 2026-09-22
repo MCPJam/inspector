@@ -15,7 +15,7 @@ import type {
 /** Boolean MCP Apps spec-bridge dimensions (excludes the two non-boolean fields). */
 export type McpAppsDimensionKey = Exclude<
   keyof McpAppsCapabilities,
-  "availableDisplayModes" | "widgetDisplayModeRequests"
+  "availableDisplayModes" | "widgetDisplayModeRequests" | "toolResult"
 >;
 
 /** Per-dimension matrix metadata. Description is shown on row hover. */
@@ -98,6 +98,11 @@ export const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
   {
     key: "resourcePrefersBorder",
     description: "Honor _meta.ui.prefersBorder when rendering app chrome",
+  },
+  {
+    key: "safeAreaInsets",
+    description:
+      "Send hostContext.safeAreaInsets so an app can keep content clear of host chrome",
   },
 ];
 

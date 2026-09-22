@@ -1,10 +1,22 @@
 /**
  * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
  *
- * Replaces the old host-anchored `ChatboxesTab product="swarm"`. Personas and
+ * Replaces the old host-anchored `ScenariosTab product="swarm"`. Personas and
  * journeys live at the project level; a journey targets one-or-more hosts and,
- * when run, fans out one single-host session per (host × sessionsPerHost).
+ * when run, fans out one single-host session per (host × sessionsPerTarget).
  *
+ * Top-level views (ViewModeSelector) on `/swarms`. Overview is the landing tab;
+ * a deep link naming a session or a run overrides it, because those name a place:
+ *   - Overview — Swarm Runs list; row click opens `/swarms/:swarmId`
+ *   - Personas — persona sidebar, journey cards, run matrix / live stream
+ *   - Sessions — flat chatSessions browser with top-bar persona filter
+ *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
+ *
+ * `/swarms/:swarmId` renders a dedicated Swarm Run detail (Insights / Sessions
+ * scoped to that wave) instead of the list header. Per-wave Insights owns the
+ * session-flow Sankey; there is no project-wide Insights tab.
+ *
+
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  *
  * ## Agent bridge (v1 scope)
@@ -23,62 +35,93 @@
  *   TARGETS (names) via the journey→hosts mapping.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
-import { Loader2, Plus } from "lucide-react";
+import { useQuery, useMutation } from "convex/react";
+import { Loader2, Plus, Sparkles, Trash2, Users, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
+import { isNamedEnvironment } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { InlineEditableText } from "@/components/ui/inline-editable-text";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
+import { inheritedGoalTarget } from "@/components/swarms/inherited-goal-target";
+import { joinLabels } from "@/lib/cloud-server-readiness";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
+import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
+import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import {
   launchJourneyRun,
   LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
-  type GoalScoreRollup,
   type JourneyRun,
+  type GoalScoreRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
-  type JourneyRollup,
-  type SessionGoalScore,
 } from "@/lib/swarm-api";
-import { formatScore } from "@/components/shared/session-quality/judge-presentation";
 import {
-  EMPTY_SESSION_FILTER,
-  sessionMatchesFilter,
-  toggleSessionFilter,
-  type SessionFilterState,
-} from "@/lib/session-usage-filters";
-import {
-  SessionReadinessBadge,
-  type SessionReadiness,
-} from "@/components/chatboxes/session-readiness";
+  useCreateProjectEnvironment,
+  type ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
+// The badge + wide-shape guard live in the shared session-quality module so
+// surfaces rendered inside this subtree can use them without an import cycle.
+// Re-exported here because the goal-score unit test imports from `../SwarmsTab`.
+export {
+  SessionGoalScoreBadge,
+  toSessionGoalScore,
+} from "@/components/shared/session-quality/session-goal-score-badge";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
+import { RunScorecardSection } from "@/components/swarms/run-scorecard";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
-  buildEvalsPath,
+  buildSwarmPath,
   buildSwarmSessionPath,
-  navigateApp,
   parseSwarmSessionParams,
+  routePaths,
+  swarmsCreatePath,
+  useAppNavigate,
 } from "@/lib/app-navigation";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
-import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
-import { useProjectServerAttachments } from "@/hooks/useViews";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
+import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
+import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
+import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
+import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
+import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
+import {
+  RunSessionsProvider,
+  useRunSessionsContext,
+} from "@/components/swarms/run-sessions-context";
+import {
+  JourneyList,
+  type JourneyListJourney,
+  type JourneyRunSelection,
+} from "@/components/swarms/journey-list";
+import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
+import { NewSwarmCreateFlow } from "@/components/swarms/new-swarm-create-flow";
+import {
+  formatJourneyRelativeTime,
+  journeyRunDisplayStatus,
+  runStatusChipClass,
+  runSummaryLine,
+} from "@/components/swarms/journey-run-format";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+// Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
+export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
+import {
+  SwarmsTabHeader,
+  type SwarmViewMode,
+} from "@/components/swarms/swarms-tab-header";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -91,116 +134,19 @@ import type {
 // data dump. Personas/journeys are usually few; the cap just bounds the
 // pathological case.
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
+
+/** Above this, the library is long enough that scanning it needs a filter. */
+const SEARCHABLE_PERSONA_COUNT = 5;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
+const PERSONA_SIDEBAR_DEFAULT_WIDTH = 288;
+const PERSONA_SIDEBAR_MIN_WIDTH = 224;
+const PERSONA_SIDEBAR_MAX_WIDTH = 480;
 
-// Valid readiness enums (mirror `session-readiness.tsx`). The backend
-// denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
-// session row, so guard it into a well-typed `SessionReadiness` before handing
-// it to the badge instead of an unchecked `as` cast — an unexpected string must
-// degrade to "no badge", not render a bogus pill.
-const READINESS_STATUSES = ["pending", "completed", "partial", "failed"] as const;
-const READINESS_VERDICTS = ["ready", "needs_attention", "not_ready"] as const;
-
-function toSessionReadiness(
-  raw: JourneySessionRow["readiness"],
-): SessionReadiness | undefined {
-  if (!raw) return undefined;
-  const status = (READINESS_STATUSES as readonly string[]).includes(
-    raw.status ?? "",
-  )
-    ? (raw.status as SessionReadiness["status"])
-    : undefined;
-  // Without a valid status the badge has nothing meaningful to show.
-  if (!status) return undefined;
-  const verdict = (READINESS_VERDICTS as readonly string[]).includes(
-    raw.verdict ?? "",
-  )
-    ? (raw.verdict as SessionReadiness["verdict"])
-    : undefined;
-  return {
-    status,
-    ...(verdict ? { verdict } : {}),
-    issueCount:
-      typeof raw.issueCount === "number" && Number.isFinite(raw.issueCount)
-        ? raw.issueCount
-        : 0,
-  };
-}
-
-// Judge-verdict guard, same philosophy as `toSessionReadiness`: the backend
-// denormalizes a WIDE `goalScore` subset; validate the status enum + score
-// before rendering so a malformed record degrades to "no badge".
-const GOAL_SCORE_STATUSES = ["running", "completed", "failed"] as const;
-type GoalScoreStatus = (typeof GOAL_SCORE_STATUSES)[number];
-
-export function toSessionGoalScore(raw: JourneySessionRow["goalScore"]):
-  | (SessionGoalScore & { status: GoalScoreStatus })
-  | undefined {
-  if (!raw) return undefined;
-  if (!(GOAL_SCORE_STATUSES as readonly string[]).includes(raw.status ?? "")) {
-    return undefined;
-  }
-  const status = raw.status as GoalScoreStatus;
-  // A completed verdict must carry BOTH a finite score and a boolean passed —
-  // a malformed `passed` must not silently render as "below threshold".
-  if (
-    status === "completed" &&
-    (!Number.isFinite(raw.score) || typeof raw.passed !== "boolean")
-  ) {
-    return undefined;
-  }
-  return { ...raw, status };
-}
-
-/**
- * Per-session judge score badge, rendered next to the readiness badge.
- * completed → "82% · meets goal"; running → "judging…"; failed → "judge
- * unavailable" (never silently hidden — the viewer offers Retry); absent →
- * nothing.
- */
-export function SessionGoalScoreBadge({
-  goalScore,
-}: {
-  goalScore: JourneySessionRow["goalScore"];
-}) {
-  const gs = toSessionGoalScore(goalScore);
-  if (!gs) return null;
-  if (gs.status === "running") {
-    return (
-      <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-        judging…
-      </span>
-    );
-  }
-  if (gs.status === "failed") {
-    return (
-      <span
-        className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
-        title={gs.error ?? "Judge run failed — open the session to retry"}
-      >
-        judge unavailable
-      </span>
-    );
-  }
-  return (
-    <span
-      className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
-        gs.passed ? "bg-success/50 text-foreground" : "bg-warning/50 text-foreground"
-      }`}
-      title={gs.reason ?? undefined}
-    >
-      {formatScore(gs.score ?? NaN)} · {gs.passed ? "meets goal" : "below threshold"}
-    </span>
-  );
-}
-
-/** `· goal 78% avg (4 judged)` — used on journey run cards. */
-export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
-  if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
-    return null;
-  }
-  return `goal ${formatScore(rollup.avgScore)} avg (${rollup.gradedCount} judged)`;
-}
+const SWARM_VIEW_OPTIONS = [
+  { value: "overview" as const, label: "Overview" },
+  { value: "journeys" as const, label: "Personas" },
+  { value: "sessions" as const, label: "Sessions" },
+] as const;
 
 type Persona = {
   _id: string;
@@ -220,7 +166,11 @@ type Journey = {
   hostIds: string[];
   /** Standalone server group shared across all hosts at launch (suite-like). */
   serverAttachmentId?: string | null;
-  config: { sessionsPerHost: number; maxTurns: number };
+  /** Env-based fan-out (Project Environments). Non-empty ⇒ env-based. */
+  environmentIds?: string[] | null;
+  config: { sessionsPerTarget: number; maxTurns: number };
+  /** Per-journey goal-completion judge config (shared envelope with suites). */
+  judgeConfig?: GoalJudgeConfig;
 };
 type HostItem = {
   hostId: string;
@@ -233,33 +183,72 @@ type HostItem = {
 };
 
 interface SwarmsTabProps {
+  organizationId?: string;
   projectId: string | null;
   isAuthenticated: boolean;
+  /**
+   * When set (from `/swarms/:swarmId`), render the Swarm Run detail instead of
+   * the list header + view modes. Optional so unit tests can mount without a
+   * router.
+   */
+  swarmId?: string | null;
+  /**
+   * When true (from `/swarms/new`), render the full-page create flow. A route
+   * rather than in-page state so the flow is linkable and the browser back
+   * button leaves it — the same durable-path shape User Testing uses.
+   */
+  createFlow?: boolean;
 }
 
 // ── hooks ─────────────────────────────────────────────────────────────────
 function usePersonas(projectId: string | null) {
   return useQuery(
     SWARM_QUERIES.listPersonas as any,
-    projectId ? ({ projectId } as any) : "skip"
+    projectId ? ({ projectId } as any) : "skip",
   ) as Persona[] | undefined;
 }
 function useJourneys(personaRefId: string | null) {
   return useQuery(
     SWARM_QUERIES.listJourneysByPersona as any,
-    personaRefId ? ({ personaRefId } as any) : "skip"
+    personaRefId ? ({ personaRefId } as any) : "skip",
   ) as Journey[] | undefined;
 }
 function useProjectHosts(projectId: string | null) {
   return useQuery(
     SWARM_QUERIES.listHosts as any,
-    projectId ? ({ projectId } as any) : "skip"
+    projectId ? ({ projectId } as any) : "skip",
   ) as HostItem[] | undefined;
+}
+/**
+ * Live project environments for swarm create/generate (environments-only).
+ *
+ * NOTE this is a RAW `useQuery`, deliberately not `useProjectEnvironments` —
+ * it predates that hook's auth/db-ready gate and feeds four consumers here. It
+ * is therefore the one list site an `includeAdhoc` option on the hook cannot
+ * protect, so the NAMED-only filter is applied explicitly below. Everything
+ * this feeds — the castle picker, the journey environments popover — offers
+ * environments a human chose to name; ad-hoc rows would flood them.
+ *
+ * The backend's own named-only default already covers this, and the filter is
+ * redundant with it on purpose: the two protect different failure modes.
+ */
+function useProjectEnvironmentsList(projectId: string | null) {
+  const rows = useQuery(
+    SWARM_QUERIES.listEnvironments as any,
+    // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
+    // or UUID project id during a project transition would 500 the Convex arg
+    // validator, so skip until the id is a real queryable project.
+    shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip",
+  ) as ProjectEnvironmentView[] | undefined;
+  return useMemo(
+    () => (rows === undefined ? undefined : rows.filter(isNamedEnvironment)),
+    [rows],
+  );
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
     SWARM_QUERIES.personaTrackRecord as any,
-    personaRefId ? ({ personaRefId } as any) : "skip"
+    personaRefId ? ({ personaRefId } as any) : "skip",
   ) as PersonaTrackRecord | undefined;
 }
 
@@ -289,15 +278,28 @@ function RunningPersonasSubscriber({
 
 export function SwarmsTab({
   projectId,
+  organizationId,
   isAuthenticated,
+  swarmId: swarmIdProp = null,
+  createFlow = false,
 }: SwarmsTabProps) {
   // Don't subscribe to project-scoped Convex reads until auth is ready — a
   // signed-out/loading mount with a persisted project would otherwise surface
   // authorization errors instead of holding the screen.
   const effectiveProjectId = isAuthenticated ? projectId : null;
+  const navigate = useAppNavigate();
+  const swarmId = swarmIdProp?.trim() ? swarmIdProp : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const environments = useProjectEnvironmentsList(effectiveProjectId);
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
+  const [personaSidebarWidth, setPersonaSidebarWidth] = useState(
+    PERSONA_SIDEBAR_DEFAULT_WIDTH,
+  );
+  const [isResizingPersonaSidebar, setIsResizingPersonaSidebar] =
+    useState(false);
+  const personaSidebarRef = useRef<HTMLElement>(null);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
     [runningPersonaIds],
@@ -311,8 +313,33 @@ export function SwarmsTab({
     () => parseSwarmSessionParams(window.location.search),
     [],
   );
+  // Session deep-links open the flat Sessions browser; a run-only link needs
+  // the Journeys matrix / live stream, so it lands there. Everything else
+  // starts on the Overview.
+  const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
+    if (deepLink.threadId) return "sessions";
+    if (deepLink.runId || deepLink.personaRefId) return "journeys";
+    // `?view=` is how leaving the create flow names its landing view, so a
+    // reload of that URL lands in the same place.
+    const requested = new URLSearchParams(window.location.search).get("view");
+    if (requested === "sessions" || requested === "journeys") return requested;
+    return "overview";
+  });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null,
+  );
+  // Sessions-tab persona filter — independent of the Personas-tab selection:
+  // that tab auto-selects a persona to land on, which must not narrow the flat
+  // Sessions browser away from its all-project default. Session deep-links
+  // still restore their persona filter.
+  const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
+    string | null
+  >(() => (deepLink.threadId ? deepLink.personaRefId ?? null : null));
+  const handleOpenSwarm = useCallback(
+    (id: string) => {
+      navigate(buildSwarmPath(id));
+    },
+    [navigate],
   );
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot (one subscription).
@@ -321,6 +348,31 @@ export function SwarmsTab({
   const updatePersona = useMutation("personas:updatePersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
+  /** Authoring container written once per New-swarm run (see `swarms.ts`). */
+  const createSwarm = useMutation("swarms:createSwarm" as any);
+  const updateJourney = useMutation("journeys:updateJourney" as any);
+  const createEnvironment = useCreateProjectEnvironment();
+  const hostNameById = useCallback(
+    (hostId: string) =>
+      hosts?.find((host) => host.hostId === hostId)?.name ?? hostId.slice(0, 8),
+    [hosts],
+  );
+
+  // The create flow is route-driven (`createFlow`), not state.
+  // Human labels for the runs the create flow just launched, so the sessions
+  // view groups them under "Persona · Journey" instead of a run id suffix.
+  // Empty for every run this session didn't launch — those keep the id label.
+  const [swarmRunLabels, setSwarmRunLabels] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+
+  // AI generation ("Generate persona" / "Generate journeys"). Both write real
+  // rows through the mutations above; running them stays a separate click.
+  // New swarm has its own route; this dialog remains for Personas sidebar
+  // Generate and "Generate journeys".
+  const [generateMode, setGenerateMode] = useState<
+    "persona" | "journeys" | null
+  >(null);
 
   const savePersonaField = useCallback(
     async (
@@ -345,10 +397,69 @@ export function SwarmsTab({
     [updatePersona],
   );
 
+  const handleDeletePersona = useCallback(
+    async (persona: Persona) => {
+      if (
+        !window.confirm(
+          `Delete persona "${persona.name}"? Its goals are hidden but historical runs are kept.`,
+        )
+      ) {
+        return;
+      }
+      try {
+        await deletePersona({ personaRefId: persona._id } as any);
+        setSelectedPersonaId(null);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to delete persona",
+        );
+      }
+    },
+    [deletePersona],
+  );
+
   const selectedPersona = useMemo(
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
-    [personas, selectedPersonaId]
+    [personas, selectedPersonaId],
   );
+
+  /**
+   * Personas library search (BB-123). Filters the rail only — the selection
+   * survives a search that hides it, so typing never silently swaps which
+   * persona the editor (or the agent bridge) is pointed at.
+   */
+  const [personaSearch, setPersonaSearch] = useState("");
+  const personaList = useMemo(() => personas ?? [], [personas]);
+  const visiblePersonas = useMemo(() => {
+    const query = personaSearch.trim().toLowerCase();
+    if (!query) return personaList;
+    return personaList.filter(
+      (persona) =>
+        persona.name.toLowerCase().includes(query) ||
+        persona.role.toLowerCase().includes(query),
+    );
+  }, [personaList, personaSearch]);
+
+  // Always land on someone — pick the first list entry when none is selected or
+  // the current id no longer exists (deleted / stale deep link).
+  //
+  // Deliberately NOT gated on `viewMode`. It used to be, back when Personas was
+  // the landing tab and the gate was a no-op; with Overview landing instead, a
+  // gate would leave `selectedPersonaId` null on a fresh visit — and the agent
+  // bridge's `ui_launch_swarm_run` resolves journeys through `selectedPersona`,
+  // so it would answer "Select a persona first" for journeys the user can see
+  // listed in front of them. The Sessions tab is unaffected either way: its
+  // persona filter is separate state (`sessionsPersonaFilter`) precisely so
+  // this auto-select cannot narrow the flat browser.
+  useEffect(() => {
+    if (personas === undefined || personas.length === 0) return;
+    const currentValid =
+      selectedPersonaId !== null &&
+      personas.some((p) => p._id === selectedPersonaId);
+    if (!currentValid) {
+      setSelectedPersonaId(personas[0]._id);
+    }
+  }, [personas, selectedPersonaId]);
   // Gate on the VALIDATED persona, not the raw URL-derived id: a copied
   // /swarms?persona=... deep link opened while signed out (or with a stale id)
   // must not subscribe getPersonaTrackRecord before the allowed persona list
@@ -362,6 +473,69 @@ export function SwarmsTab({
   // config, so the human finishes and submits it).
   const [journeyFormOpen, setJourneyFormOpen] = useState(false);
   const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
+  const [creatingPersona, setCreatingPersona] = useState(false);
+  const [personaAutoEditId, setPersonaAutoEditId] = useState<string | null>(
+    null,
+  );
+
+  const handleCreatePersona = useCallback(async () => {
+    if (!projectId || creatingPersona) return;
+    setCreatingPersona(true);
+    try {
+      const row = await createPersona({
+        projectId,
+        name: "New persona",
+        role: "Role",
+      } as any);
+      setPersonaAutoEditId(row._id);
+      setSelectedPersonaId(row._id);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create persona",
+      );
+    } finally {
+      setCreatingPersona(false);
+    }
+  }, [projectId, creatingPersona, createPersona]);
+
+  // Run detail opened in the right-hand panel. `runSnapshot` seeds the panel
+  // until its own `listJourneyRuns` subscription resolves the run (identical
+  // query args as the journey block, so Convex dedupes the subscription).
+  const [runDetail, setRunDetail] = useState<
+    (JourneyRunSelection & { runSnapshot: JourneyRun }) | null
+  >(null);
+  const openRunDetail = useCallback(
+    (
+      journey: JourneyListJourney,
+      run: JourneyRun,
+      targetKey: string | null,
+    ) => {
+      setRunDetail({
+        journeyId: journey._id,
+        runId: run._id,
+        targetKey,
+        runSnapshot: run,
+      });
+    },
+    [],
+  );
+  const closeRunDetail = useCallback(() => setRunDetail(null), []);
+  // Close the panel when the persona changes or its journey disappears.
+  useEffect(() => {
+    setRunDetail(null);
+  }, [selectedPersonaId]);
+  useEffect(() => {
+    if (
+      runDetail &&
+      journeys !== undefined &&
+      !journeys.some((j) => j._id === runDetail.journeyId)
+    ) {
+      setRunDetail(null);
+    }
+  }, [journeys, runDetail]);
+  const detailJourney = runDetail
+    ? journeys?.find((j) => j._id === runDetail.journeyId) ?? null
+    : null;
 
   // ── Agent bridge ──────────────────────────────────────────────────────────
   // The swarms tool group + this screen's command handlers and snapshot. Lives
@@ -384,7 +558,14 @@ export function SwarmsTab({
   // unsuccessful response and reused on retry so a network retry can't spawn a
   // duplicate run (the backend dedupes the reused key). Cleared only after a
   // confirmed 2xx — mirrors the Run button's `launchKeyRef` semantics.
-  const launchKeysRef = useRef<Map<string, string>>(new Map());
+  //
+  // The wave id is retained ALONGSIDE the key, not separately: a replayed
+  // launchKey returns the run the backend already created, carrying the wave it
+  // was first stamped with. Minting a fresh wave id on retry would therefore
+  // claim a grouping the stored run does not have.
+  const launchKeysRef = useRef<
+    Map<string, { launchKey: string; swarmRunGroupId?: string }>
+  >(new Map());
   const launchingRef = useRef<Set<string>>(new Set());
 
   // SINGLE per-journey launch coordinator, shared by BOTH the Run button
@@ -397,8 +578,21 @@ export function SwarmsTab({
   const launchJourney = useCallback(
     async (
       journeyId: string,
+      /**
+       * `swarmRunGroupId` groups this launch with its siblings. The create
+       * flow mints ONE per wave and passes it for every journey; solo callers
+       * (Run, Run again, `ui_launch_swarm_run`) pass nothing and get a fresh
+       * id — each of those launches exactly one journey, so a wave of one is
+       * the correct grouping, and it retires the time heuristic for them too.
+       */
+      opts?: {
+        swarmRunGroupId?: string;
+        environmentIds?: string[];
+        /** Iterations for THIS run; leaves the journey's own config alone. */
+        sessionsPerTarget?: number;
+      },
     ): Promise<
-      | { status: "launched"; runId?: string }
+      | { status: "launched"; runId?: string; swarmRunGroupId?: string }
       | { status: "already_launching" }
     > => {
       if (!projectId) {
@@ -407,29 +601,100 @@ export function SwarmsTab({
       if (launchingRef.current.has(journeyId)) {
         return { status: "already_launching" };
       }
-      let launchKey = launchKeysRef.current.get(journeyId);
-      if (!launchKey) {
-        launchKey = crypto.randomUUID();
-        launchKeysRef.current.set(journeyId, launchKey);
+      let pending = launchKeysRef.current.get(journeyId);
+      if (!pending) {
+        pending = {
+          launchKey: crypto.randomUUID(),
+          swarmRunGroupId: opts?.swarmRunGroupId ?? crypto.randomUUID(),
+        };
+        launchKeysRef.current.set(journeyId, pending);
       }
       launchingRef.current.add(journeyId);
       try {
         const result = await launchJourneyRun({
           journeyId,
           projectId,
-          launchKey,
+          launchKey: pending.launchKey,
+          ...(pending.swarmRunGroupId
+            ? { swarmRunGroupId: pending.swarmRunGroupId }
+            : {}),
+          // Per-launch fan-out. NOT cached with the launch key: unlike the
+          // wave id, this isn't an identity the backend already committed —
+          // a replayed launchKey returns the existing run and ignores it.
+          ...(opts?.environmentIds?.length
+            ? { environmentIds: opts.environmentIds }
+            : {}),
+          ...(opts?.sessionsPerTarget !== undefined
+            ? { sessionsPerTarget: opts.sessionsPerTarget }
+            : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
-        return { status: "launched", runId: result.runId };
+        // The wave this run ACTUALLY landed under, which is not always the one
+        // the caller asked for: a retry after a failed launch reuses the cached
+        // `pending` and its id. Reported so a caller offering a link into the
+        // new wave can tell whether the wave it minted exists.
+        return {
+          status: "launched",
+          runId: result.runId,
+          swarmRunGroupId: pending.swarmRunGroupId,
+        };
       } finally {
-        // Retain the key on failure (handled by the thrown error reaching the
-        // caller); only clear the in-flight marker.
+        // Retain the key (and its wave) on failure (handled by the thrown error
+        // reaching the caller); only clear the in-flight marker.
         launchingRef.current.delete(journeyId);
       }
     },
     [projectId],
   );
 
+  const handleRunAgainFromDetail = useCallback(
+    async (journeyRefIds: string[]) => {
+      const swarmRunGroupId = crypto.randomUUID();
+      const errors: string[] = [];
+      let landedUnderNewWave = false;
+      for (const journeyId of journeyRefIds) {
+        try {
+          const result = await launchJourney(journeyId, { swarmRunGroupId });
+          if (result.status === "already_launching") continue;
+          if (result.swarmRunGroupId === swarmRunGroupId) {
+            landedUnderNewWave = true;
+          }
+        } catch (err) {
+          // The limit dialog owns this failure and carries its own copy. Skip
+          // it HERE: the throw below re-wraps into a plain `Error`, so the
+          // flag is gone by the time the detail page toasts the message.
+          if (err instanceof LaunchJourneyRunError && err.limitDialogRaised) {
+            continue;
+          }
+          errors.push(
+            err instanceof LaunchJourneyRunError
+              ? err.message
+              : err instanceof Error
+              ? err.message
+              : "Launch failed",
+          );
+        }
+      }
+      if (errors.length > 0) {
+        throw new Error(errors[0]!);
+      }
+      // The group id minted above IS the new wave's route id
+      // (`swarmWaveRouteId`), so the detail page can offer a way into the run
+      // it just started instead of leaving the viewer on the one they
+      // relaunched from.
+      //
+      // Only when a run actually landed under it, though. Two paths mint it and
+      // don't use it: a retry after a failed launch reuses the cached wave from
+      // `launchKeysRef`, and an `already_launching` goal is skipped without an
+      // error. Returning the id regardless offered "View run" into a wave no
+      // run carries — a link to "Swarm run not found." A confirmation with no
+      // link is the honest answer, and the caller already treats the field as
+      // optional.
+      if (!landedUnderNewWave) return {};
+      return { swarmRunGroupId };
+    },
+    [launchJourney],
+  );
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
   const resolvePersona = (raw: unknown): Persona => {
@@ -461,13 +726,13 @@ export function SwarmsTab({
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'journey' string (a goal or journey id).",
+        "Missing required 'journey' string (goal text or goal id).",
       );
     }
     if (!selectedPersona) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Select a persona first — journeys are listed per persona (see ui_snapshot_app).",
+        "Select a persona first — goals are listed per persona (see ui_snapshot_app).",
       );
     }
     const wanted = raw.trim();
@@ -482,12 +747,12 @@ export function SwarmsTab({
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No journey matches "${wanted}" for persona "${selectedPersona.name}". Use a journey goal or id from this screen; if the journey belongs to another persona, select that persona first.`,
+        `No goal matches "${wanted}" for persona "${selectedPersona.name}". Use a goal text or id from this screen; if the goal belongs to another persona, select that persona first.`,
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} journeys match "${wanted}" — pass the journey id instead (ids are in ui_snapshot_app).`,
+      `${matches.length} goals match "${wanted}" — pass the goal id instead (ids are in ui_snapshot_app).`,
     );
   };
 
@@ -544,7 +809,7 @@ export function SwarmsTab({
           status: "persona_created",
           personaId: row._id,
           name,
-          note: "The persona is now selected; add a journey with ui_open_journey_form.",
+          note: "The persona is now selected; add a goal with ui_open_journey_form.",
         };
       },
       openJourneyForm: async (command) => {
@@ -558,7 +823,7 @@ export function SwarmsTab({
         if (!persona) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Select or name a persona first — a journey belongs to a persona.",
+            "Select or name a persona first — a goal belongs to a persona.",
           );
         }
         if (payload?.goal !== undefined && typeof payload.goal !== "string") {
@@ -575,7 +840,7 @@ export function SwarmsTab({
           status: "form_opened",
           personaId: persona._id,
           ...(goal ? { prefilledGoal: goal } : {}),
-          note: "The user picks a server group, target hosts, and fan-out config and submits — no journey is created yet.",
+          note: "The user picks environments and fan-out config and submits — no goal is created yet.",
         };
       },
       launchSwarmRun: async (command) => {
@@ -597,7 +862,7 @@ export function SwarmsTab({
           if (result.status === "already_launching") {
             throw createInspectorCommandClientError(
               "execution_failed",
-              "This journey is already launching — wait for it to start.",
+              "This goal is already launching — wait for it to start.",
             );
           }
           return {
@@ -611,12 +876,12 @@ export function SwarmsTab({
             if (e.status === 402) {
               throw createInspectorCommandClientError(
                 "execution_failed",
-                `Cannot launch this journey run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`,
+                `Cannot launch this goal run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`,
               );
             }
             throw createInspectorCommandClientError(
               "execution_failed",
-              `Could not launch the journey run: ${e.message}`,
+              `Could not launch the goal run: ${e.message}`,
             );
           }
           throw e; // already an InspectorCommandClientError (e.g. already_launching)
@@ -652,7 +917,7 @@ export function SwarmsTab({
             goal: j.goal,
             name: j.name ?? null,
             hostTargets: j.hostIds.map(hostTargetName),
-            sessionsPerHost: j.config.sessionsPerHost,
+            sessionsPerTarget: j.config.sessionsPerTarget,
             maxTurns: j.config.maxTurns,
           })),
         trackRecord:
@@ -681,6 +946,123 @@ export function SwarmsTab({
     );
   }
 
+  if (createFlow && projectId) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ErrorBoundary fallback={null}>
+          <RunningPersonasSubscriber
+            projectId={effectiveProjectId}
+            onChange={onRunningPersonasChange}
+          />
+        </ErrorBoundary>
+        <NewSwarmCreateFlow
+          organizationId={organizationId}
+          projectId={projectId}
+          environments={environments}
+          hostNameById={hostNameById}
+          createEnvironment={createEnvironment}
+          personas={personas}
+          onCreateSwarm={async (draft) => {
+            const row = await createSwarm({ projectId, ...draft } as any);
+            return row._id as string;
+          }}
+          onCreatePersona={async (draft) => {
+            const row = await createPersona({
+              projectId,
+              source: "generated",
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          onCreateJourney={async (personaRefId, draft) => {
+            const row = await createJourney({
+              projectId,
+              personaRefId,
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          onUpdateJourney={async (journeyRefId, patch) => {
+            // Spread the patch as-is: every field is optional and an OMITTED
+            // field must stay omitted on the wire. `updateJourney` treats
+            // `null` as "clear", so sending an explicit undefined-turned-null
+            // judgeConfig would wipe the journey's own judge.
+            await updateJourney({ journeyRefId, ...patch } as any);
+          }}
+          launchJourney={launchJourney}
+          onCancel={() => navigate(routePaths.swarms)}
+          onDone={(runLabels, swarmRunGroupId) => {
+            // Labels are component state and `/swarms/new` → `/swarms/:id`
+            // swaps sibling routes without remounting this component, so
+            // they survive. Findings is the swarm page's default tab — the
+            // run keeps going after this leave.
+            setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              navigate(buildSwarmPath(swarmRunGroupId));
+              return;
+            }
+            setViewMode("sessions");
+            navigate(`${routePaths.swarms}?view=sessions`);
+          }}
+          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
+            setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              // Live-pane "open this completed session" — the wave's own
+              // page, on the session the viewer picked, showing the transcript
+              // rather than Findings (Findings is `onDone` / Open findings). It
+              // is a real URL, so this leave is reversible — and the run keeps
+              // streaming into that page while the user reads.
+              navigate(
+                buildSwarmPath(swarmRunGroupId, {
+                  tab: "sessions",
+                  session: sessionId,
+                }),
+              );
+              return;
+            }
+            setViewMode("sessions");
+            navigate(`${routePaths.swarms}?view=sessions`);
+          }}
+          // Raw, NOT `savePersonaField`: that helper toasts and rethrows for
+          // the Personas library, where its toast is the only error surface.
+          // Confirm owns the message for its own panel, so routing through it
+          // would show the same error twice.
+          onSaveExistingPersona={async (personaRefId, patch) => {
+            await updatePersona({ personaRefId, ...patch } as any);
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (swarmId) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ErrorBoundary fallback={null}>
+          <RunningPersonasSubscriber
+            projectId={effectiveProjectId}
+            onChange={onRunningPersonasChange}
+          />
+        </ErrorBoundary>
+        <SwarmRunDetail
+          organizationId={organizationId}
+          // Remount per wave. Every piece of state in here is about the wave
+          // being looked at — the persona filter, the stop confirmation, and
+          // `stoppedHere` above all. Without a key, "Run again" → "View run"
+          // swaps `swarmId` on the SAME instance, and the new wave inherits
+          // the old one's "you stopped this", so a wave that later completes
+          // reads Stopped.
+          key={swarmId}
+          swarmId={swarmId}
+          projectId={effectiveProjectId}
+          personas={personas ?? []}
+          hosts={hosts ?? []}
+          onRunAgain={handleRunAgainFromDetail}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ErrorBoundary fallback={null}>
@@ -689,516 +1071,665 @@ export function SwarmsTab({
           onChange={onRunningPersonasChange}
         />
       </ErrorBoundary>
+      <SwarmsTabHeader
+        projectId={effectiveProjectId}
+        viewMode={viewMode}
+        viewOptions={SWARM_VIEW_OPTIONS}
+        onViewModeChange={setViewMode}
+        creatingSwarm={creatingPersona}
+        // Same condition the body uses to choose the empty hero, so the header
+        // and the body can never disagree about whether this project has
+        // anything in it.
+        showCreate={personas !== undefined && personas.length > 0}
+        onNewSwarm={() => navigate(swarmsCreatePath)}
+      />
       <div className="flex min-h-0 flex-1">
-        {/* Personas */}
-        <aside className="flex w-72 shrink-0 flex-col border-r">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Personas</h2>
-            <NewPersonaDialog
-              onCreate={async (draft) => {
-                const row = await createPersona({ projectId, ...draft } as any);
-                setSelectedPersonaId(row._id);
-              }}
+        {viewMode === "overview" ? (
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmOverviewPanel
+              projectId={effectiveProjectId}
+              hasPersonas={
+                personas === undefined ? undefined : personas.length > 0
+              }
+              onNewSwarm={() => navigate(swarmsCreatePath)}
+              onOpenSwarm={handleOpenSwarm}
             />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {personas === undefined ? (
-              <div className="p-4 text-sm text-muted-foreground">Loading…</div>
-            ) : personas.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">
-                No personas yet. Create one to get started.
-              </div>
-            ) : (
-              personas.map((p) => {
-                const selected = p._id === selectedPersonaId;
-                return (
-                  <button
-                    key={p._id}
+          </main>
+        ) : viewMode === "journeys" ? (
+          <>
+            {/* Personas sidebar — Personas tab only */}
+            <aside
+              ref={personaSidebarRef}
+              className="flex shrink-0 flex-col border-r"
+              style={{ width: personaSidebarWidth }}
+              data-testid="swarm-persona-sidebar"
+            >
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <h2 className="text-sm font-semibold">Personas</h2>
+                <div className="flex items-center gap-1.5">
+                  <Button
                     type="button"
-                    onClick={() => setSelectedPersonaId(p._id)}
-                    className={cn(
-                      "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
-                      selected && "bg-muted",
-                    )}
+                    size="sm"
+                    variant="outline"
+                    aria-label="Generate persona with AI"
+                    onClick={() => setGenerateMode("persona")}
                   >
-                    <PersonaPixelAvatar
-                      seed={p._id}
-                      shapeIndex={p.avatarShape}
-                      paletteIndex={p.avatarPalette}
-                      size="md"
-                      active={selected}
-                      state={runningSet.has(p._id) ? "running" : "idle"}
-                    />
-                    <span className="flex min-w-0 flex-col items-start gap-0.5">
-                      <span className="truncate text-sm font-medium">
-                        {p.name}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {p.role}
-                      </span>
-                    </span>
-                  </button>
+                    <Sparkles className="mr-1 size-3" />
+                    Generate
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={creatingPersona}
+                    onClick={() => void handleCreatePersona()}
+                  >
+                    {creatingPersona ? (
+                      <Loader2 className="mr-1 size-3 animate-spin" />
+                    ) : (
+                      <Plus className="mr-1 size-3" />
+                    )}
+                    New
+                  </Button>
+                </div>
+              </div>
+              {/* Only once the list is long enough to hunt through — a search
+                  box over three rows is furniture, not a tool. Kept while a
+                  query is active regardless: deleting a persona can drop the
+                  list under the threshold, and hiding the input then would
+                  leave the filter applied with nothing to clear it. */}
+              {personaList.length > SEARCHABLE_PERSONA_COUNT ||
+              personaSearch.trim().length > 0 ? (
+                <div className="border-b px-3 py-2">
+                  <Input
+                    value={personaSearch}
+                    onChange={(event) => setPersonaSearch(event.target.value)}
+                    placeholder="Search personas…"
+                    aria-label="Search personas"
+                    className="h-8"
+                    data-testid="swarm-persona-search"
+                  />
+                </div>
+              ) : null}
+              <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+                {personas === undefined ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Loading…
+                  </div>
+                ) : personas.length === 0 ? (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20">
+                      <Users className="h-7 w-7 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-foreground">
+                        No saved personas yet
+                      </p>
+                      <p className="max-w-xs text-xs text-muted-foreground">
+                        Personas you save here are the ones you send into
+                        swarms.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="font-semibold shadow-sm"
+                      disabled={creatingPersona}
+                      onClick={() => void handleCreatePersona()}
+                    >
+                      {creatingPersona ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                      Create a persona
+                    </Button>
+                  </div>
+                ) : visiblePersonas.length === 0 ? (
+                  <p
+                    className="p-4 text-sm text-muted-foreground"
+                    data-testid="swarm-persona-search-empty"
+                  >
+                    No personas match &ldquo;{personaSearch.trim()}&rdquo;.
+                  </p>
+                ) : (
+                  visiblePersonas.map((p) => {
+                    const selected = p._id === selectedPersonaId;
+                    return (
+                      <div
+                        key={p._id}
+                        className={cn(
+                          "group flex w-full items-center border-b",
+                          selected && "bg-muted",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPersonaId(p._id)}
+                          /* Room for a two-line name on every card. */
+                          className="flex min-h-[82px] min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
+                        >
+                          <PersonaPixelAvatar
+                            seed={p._id}
+                            shapeIndex={p.avatarShape}
+                            paletteIndex={p.avatarPalette}
+                            size="md"
+                            state={runningSet.has(p._id) ? "running" : "idle"}
+                          />
+                          {/* Stretch, not items-start: the lines need the column's
+                              width for the clamp to wrap against. */}
+                          <span className="flex min-w-0 flex-col gap-0.5">
+                            <span
+                              className="line-clamp-2 w-full min-w-0 break-words text-sm font-medium"
+                              title={p.name}
+                            >
+                              {p.name}
+                            </span>
+                            <span
+                              className="w-full min-w-0 truncate text-xs text-muted-foreground"
+                              title={p.role}
+                            >
+                              {p.role}
+                            </span>
+                          </span>
+                        </button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Delete ${p.name}`}
+                          title="Delete persona"
+                          className={cn(
+                            "mr-2 size-8 shrink-0 p-0 text-muted-foreground hover:text-destructive",
+                            selected
+                              ? "opacity-100"
+                              : "opacity-0 group-hover:opacity-100",
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleDeletePersona(p);
+                          }}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </aside>
+            <div
+              role="separator"
+              aria-label="Resize personas sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={PERSONA_SIDEBAR_MIN_WIDTH}
+              aria-valuemax={PERSONA_SIDEBAR_MAX_WIDTH}
+              aria-valuenow={personaSidebarWidth}
+              tabIndex={0}
+              className={cn(
+                "relative z-10 -ml-px w-1 shrink-0 cursor-col-resize touch-none select-none border-r border-transparent transition-colors hover:border-primary/40",
+                isResizingPersonaSidebar && "border-primary/60",
+              )}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setIsResizingPersonaSidebar(true);
+              }}
+              onPointerMove={(event) => {
+                if (!isResizingPersonaSidebar) return;
+                const left =
+                  personaSidebarRef.current?.getBoundingClientRect().left ?? 0;
+                setPersonaSidebarWidth(
+                  Math.min(
+                    PERSONA_SIDEBAR_MAX_WIDTH,
+                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, event.clientX - left),
+                  ),
                 );
-              })
-            )}
-          </div>
-        </aside>
-
-        {/* Journeys for the selected persona */}
-        <main className="min-w-0 flex-1 overflow-y-auto">
-        {!selectedPersona ? (
-          <JourneyNetworkBackdrop />
-        ) : (
-          <div className="mx-auto max-w-3xl px-8 py-6">
-            <PersonaDetailHeader
-              persona={selectedPersona}
-              running={runningSet.has(selectedPersona._id)}
-              onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
-              onDelete={async () => {
-                if (
-                  !window.confirm(
-                    `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
-                  )
-                ) {
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                setIsResizingPersonaSidebar(false);
+              }}
+              onPointerCancel={() => setIsResizingPersonaSidebar(false)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
                   return;
                 }
-                await deletePersona({
-                  personaRefId: selectedPersona._id,
-                } as any);
-                setSelectedPersonaId(null);
+                event.preventDefault();
+                const delta = event.key === "ArrowLeft" ? -16 : 16;
+                setPersonaSidebarWidth((width) =>
+                  Math.min(
+                    PERSONA_SIDEBAR_MAX_WIDTH,
+                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, width + delta),
+                  ),
+                );
               }}
+              data-testid="persona-sidebar-resizer"
             />
 
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Journeys</h3>
-              <NewJourneyButton
-                projectId={projectId}
-                hosts={hosts ?? []}
-                open={journeyFormOpen}
-                onOpenChange={(o) => {
-                  setJourneyFormOpen(o);
-                  // Drop the agent prefill on close so a later manual open
-                  // starts blank.
-                  if (!o) setJourneyGoalSeed("");
-                }}
-                goalSeed={journeyGoalSeed}
-                onCreate={async (draft) => {
-                  await createJourney({
-                    projectId,
-                    personaRefId: selectedPersona._id,
-                    ...draft,
-                  } as any);
-                }}
-              />
-            </div>
+            {/* Persona detail + journey blocks; run detail opens on the right */}
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              {personas === undefined ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                  Loading…
+                </div>
+              ) : personas.length === 0 ? (
+                <SwarmsEmptyHero
+                  onNewSwarm={() => navigate(swarmsCreatePath)}
+                />
+              ) : !selectedPersona ? (
+                <JourneyNetworkBackdrop />
+              ) : (
+                (() => {
+                  const personaDetail = (
+                    <>
+                      <PersonaDetailHeader
+                        persona={selectedPersona}
+                        running={runningSet.has(selectedPersona._id)}
+                        autoEditName={personaAutoEditId === selectedPersona._id}
+                        onSave={(patch) =>
+                          savePersonaField(selectedPersona._id, patch)
+                        }
+                        onDelete={() => handleDeletePersona(selectedPersona)}
+                      />
 
-            {journeys === undefined ? (
-              <div className="text-sm text-muted-foreground">Loading…</div>
-            ) : journeys.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                No journeys yet. A journey is a goal this persona pursues across
-                one or more hosts.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {journeys.map((j) => (
-                  <JourneyCard
-                    key={j._id}
-                    journey={j}
-                    onLaunch={launchJourney}
-                    hosts={hosts ?? []}
-                    isAuthenticated={isAuthenticated}
-                    projectId={projectId}
-                    initialRunId={deepLink.runId}
-                    initialThreadId={deepLink.threadId}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+                      <div
+                        className={cn(
+                          "mb-3",
+                          journeyFormOpen
+                            ? "space-y-2"
+                            : "flex items-center justify-between",
+                        )}
+                      >
+                        <SectionLabel>Goals</SectionLabel>
+                        {journeyFormOpen ? null : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="ml-auto mr-1.5"
+                            aria-label="Generate goals with AI"
+                            onClick={() => setGenerateMode("journeys")}
+                          >
+                            <Sparkles className="mr-1 size-3" />
+                            Generate
+                          </Button>
+                        )}
+                        <NewJourneyButton
+                          projectId={projectId}
+                          environments={environments}
+                          hosts={hosts ?? []}
+                          siblingGoals={journeys}
+                          open={journeyFormOpen}
+                          onOpenChange={(o) => {
+                            setJourneyFormOpen(o);
+                            // Drop the agent prefill on close so a later manual
+                            // open starts blank.
+                            if (!o) setJourneyGoalSeed("");
+                          }}
+                          goalSeed={journeyGoalSeed}
+                          onCreate={async (draft) => {
+                            await createJourney({
+                              projectId,
+                              personaRefId: selectedPersona._id,
+                              ...draft,
+                            } as any);
+                          }}
+                        />
+                      </div>
+
+                      {journeys === undefined ? (
+                        <div className="text-sm text-muted-foreground">
+                          Loading…
+                        </div>
+                      ) : journeys.length === 0 ? (
+                        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                          No goals yet. A goal is what this persona pursues
+                          across one or more hosts.
+                        </div>
+                      ) : (
+                        <JourneyList
+                          journeys={journeys}
+                          hosts={hosts ?? []}
+                          isAuthenticated={isAuthenticated}
+                          projectId={projectId}
+                          onLaunch={launchJourney}
+                          initialRunId={deepLink.runId}
+                          selection={runDetail}
+                          onOpenRun={openRunDetail}
+                          onCloseRun={closeRunDetail}
+                          environments={environments}
+                          environmentsEnabled={environmentsEnabled}
+                        />
+                      )}
+                    </>
+                  );
+
+                  if (!runDetail || !detailJourney) {
+                    return (
+                      <div className="h-full overflow-y-auto">
+                        <div className="mx-auto max-w-3xl px-8 py-6">
+                          {personaDetail}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <RunSessionsProvider
+                      runId={runDetail.runId}
+                      runSnapshot={runDetail.runSnapshot}
+                      journeyRefId={runDetail.journeyId}
+                      hosts={hosts ?? []}
+                      sessionsPerTarget={detailJourney.config.sessionsPerTarget}
+                      initialTargetKey={runDetail.targetKey}
+                      initialThreadId={
+                        deepLink.runId === runDetail.runId
+                          ? deepLink.threadId
+                          : undefined
+                      }
+                    >
+                      <ResizablePanelGroup
+                        direction="horizontal"
+                        className="h-full"
+                      >
+                        <ResizablePanel defaultSize={38} minSize={26}>
+                          <div className="h-full overflow-y-auto px-6 py-6">
+                            {personaDetail}
+                          </div>
+                        </ResizablePanel>
+                        <ResizableHandle withHandle />
+                        <ResizablePanel defaultSize={62} minSize={35}>
+                          <RunDetailPanel
+                            key={`${runDetail.runId}:${
+                              runDetail.targetKey ?? ""
+                            }`}
+                            journey={detailJourney}
+                            onClose={closeRunDetail}
+                          />
+                        </ResizablePanel>
+                      </ResizablePanelGroup>
+                    </RunSessionsProvider>
+                  );
+                })()
+              )}
+            </main>
+          </>
+        ) : (
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmsSessionsPanel
+              projectId={projectId}
+              personas={personas ?? []}
+              hosts={hosts ?? []}
+              personaRefId={sessionsPersonaFilter}
+              onPersonaRefIdChange={setSessionsPersonaFilter}
+              initialThreadId={deepLink.threadId}
+              runLabels={swarmRunLabels}
+            />
+          </main>
         )}
-      </main>
       </div>
+      {generateMode ? (
+        <GenerateSwarmDialog
+          mode={generateMode}
+          open
+          onOpenChange={(o) => {
+            if (!o) setGenerateMode(null);
+          }}
+          projectId={projectId}
+          environments={environments}
+          personaCount={personas?.length}
+          hosts={hosts ?? []}
+          {...(selectedPersona
+            ? {
+                persona: {
+                  _id: selectedPersona._id,
+                  name: selectedPersona.name,
+                  role: selectedPersona.role,
+                  notes: selectedPersona.notes,
+                },
+              }
+            : {})}
+          onCreatePersona={async (draft) => {
+            const row = await createPersona({
+              projectId,
+              source: "generated",
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          onCreateJourney={async (personaRefId, draft) => {
+            await createJourney({
+              projectId,
+              personaRefId,
+              ...draft,
+            } as any);
+          }}
+          onPersonaCreated={setSelectedPersonaId}
+        />
+      ) : null}
     </div>
   );
 }
 
-// ── run status treatment ─────────────────────────────────────────────────────
-function runStatusClass(status: string): string {
-  switch (status) {
-    case "completed":
-      return "text-emerald-600 dark:text-emerald-400";
-    case "partial":
-      return "text-amber-600 dark:text-amber-400";
-    case "rate_limited":
-      return "text-amber-600 dark:text-amber-400";
-    case "failed":
-      return "text-red-600 dark:text-red-400";
-    case "stale":
-      return "text-muted-foreground";
-    default:
-      return "text-foreground"; // running
-  }
-}
-
-// ── journey card + runs ──────────────────────────────────────────────────────
-function JourneyCard({
+// ── run detail (right panel): header + sessions matrix + live stream ─────────
+function RunDetailPanel({
   journey,
-  hosts,
-  isAuthenticated,
-  projectId,
-  initialRunId,
-  initialThreadId,
-  onLaunch,
+  onClose,
 }: {
   journey: Journey;
-  hosts: HostItem[];
-  isAuthenticated: boolean;
-  projectId: string;
-  /** Shared launch coordinator — see SwarmsTab.launchJourney. */
-  onLaunch: (
-    journeyId: string,
-  ) => Promise<
-    { status: "launched"; runId?: string } | { status: "already_launching" }
-  >;
-  /** Deep-link run to auto-open (only the card that owns it reacts). */
-  initialRunId?: string;
-  /** Deep-link session to auto-select inside the opened run. */
-  initialThreadId?: string;
+  onClose: () => void;
 }) {
-  const { serverAttachments } = useProjectServerAttachments({
-    isAuthenticated,
-    projectId,
-  });
-  const serverGroupName = journey.serverAttachmentId
-    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null)
-    : null;
-  // Real Convex pagination (numItems + cursor) over the journey's runs.
-  const {
-    results: runs,
-    status: runsStatus,
-    loadMore,
-  } = usePaginatedQuery(
-    SWARM_QUERIES.listJourneyRuns as any,
-    { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
-  );
-  const rollup = useQuery(
-    SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any
-  ) as JourneyRollup | undefined;
+  const runSessions = useRunSessionsContext();
+  if (!runSessions) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Loading run…
+      </div>
+    );
+  }
 
-  const [launching, setLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [openRunId, setOpenRunId] = useState<string | null>(null);
-
-  // Deep-link restore: once this journey's runs load, if the linked run belongs
-  // to THIS card, open it (so RunSessionsView mounts and can select the
-  // session). Runs itself once — later user toggling isn't overridden.
-  const appliedInitialRunRef = useRef(false);
-  useEffect(() => {
-    if (appliedInitialRunRef.current || !initialRunId) return;
-    if ((runs as JourneyRun[]).some((r) => r._id === initialRunId)) {
-      appliedInitialRunRef.current = true;
-      setOpenRunId(initialRunId);
-    }
-  }, [initialRunId, runs]);
-
-  const hostName = (id: string) =>
-    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
-
-  const onRun = async () => {
-    if (launching) return;
-    setLaunchError(null);
-    setLaunching(true);
-    try {
-      // Shared coordinator: same launchKey store as the agent path, so a
-      // concurrent agent launch of this journey dedupes to one paid run.
-      const result = await onLaunch(journey._id);
-      if (result.status === "already_launching") {
-        return; // another launch of this journey is already in flight
-      }
-      toast.success("Journey run started");
-    } catch (e) {
-      // The coordinator retains the key on ANY failure and reuses it on retry,
-      // so the backend dedupes rather than double-spending.
-      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
-    } finally {
-      setLaunching(false);
-    }
-  };
+  const { run } = runSessions;
+  const clientCount = run.hostSummaries.length || journey.hostIds.length;
 
   return (
-    <div className="rounded-lg border p-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{journey.goal}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {serverGroupName ? `${serverGroupName} · ` : null}
-            {journey.hostIds.map(hostName).join(", ")} ·{" "}
-            {journey.config.sessionsPerHost}/host · {journey.config.maxTurns} turns
-          </p>
-          {rollup && rollup.runCount > 0 && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {rollup.runCount} run{rollup.runCount === 1 ? "" : "s"} total
-            </p>
-          )}
-        </div>
-        <Button type="button" size="sm" disabled={launching} onClick={onRun}>
-          {launching ? "Starting…" : "Run journey"}
-        </Button>
-      </div>
-
-      {launchError && (
-        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
-          {launchError}
-        </p>
-      )}
-
-      {runs.length > 0 && (
-        <div className="mt-3 border-t pt-3">
-          {(runs as JourneyRun[]).map((r) => (
-            <div key={r._id} className="mb-3 last:mb-0">
-              <div className="flex items-center justify-between text-xs">
-                <span className={`font-medium ${runStatusClass(r.status)}`}>
-                  {r.status}
-                </span>
-                <span className="text-muted-foreground">
-                  {r.summary.succeeded}/{r.summary.total} ok
-                  {r.summary.failed > 0 && ` · ${r.summary.failed} failed`}
-                  {r.summary.rateLimited > 0 &&
-                    ` · ${r.summary.rateLimited} rate-limited`}
-                  {goalScoreAvgLabel(r.goalScoreSummary)
-                    ? ` · ${goalScoreAvgLabel(r.goalScoreSummary)}`
-                    : ""}
-                </span>
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                {r.hostSummaries.map((hs) => (
-                  <span
-                    key={hs.hostId}
-                    className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                  >
-                    {hostName(hs.hostId)}: {hs.succeeded}/{hs.total}
-                  </span>
-                ))}
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-primary hover:underline"
-                  onClick={() =>
-                    setOpenRunId((cur) => (cur === r._id ? null : r._id))
-                  }
-                >
-                  {openRunId === r._id ? "Hide sessions" : "View sessions"}
-                </button>
-              </div>
-              {openRunId === r._id && (
-                <RunSessionsView
-                  runId={r._id}
-                  personaRefId={journey.personaRefId}
-                  hosts={hosts}
-                  hostSummaries={r.hostSummaries}
-                  initialThreadId={
-                    initialRunId === r._id ? initialThreadId : undefined
-                  }
-                />
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium">
+            <span>{runSessions.runLabel}</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
+                runStatusChipClass(journeyRunDisplayStatus(run)),
               )}
-            </div>
-          ))}
-          {runsStatus === "CanLoadMore" && (
-            <button
-              type="button"
-              className="mt-1 text-[11px] font-medium text-primary hover:underline"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
             >
-              Load more runs
-            </button>
-          )}
+              {journeyRunDisplayStatus(run).replace(/_/g, " ")}
+            </span>
+            <span className="min-w-0 truncate font-normal text-muted-foreground">
+              {journey.goal}
+            </span>
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+            <span>
+              {clientCount} client{clientCount === 1 ? "" : "s"} ×{" "}
+              {journey.config.sessionsPerTarget} session
+              {journey.config.sessionsPerTarget === 1 ? "" : "s"}
+            </span>
+            <span aria-hidden>·</span>
+            <span>{runSummaryLine(run)}</span>
+            <span aria-hidden>·</span>
+            <span>launched {formatJourneyRelativeTime(run.createdAt)}</span>
+          </p>
         </div>
-      )}
+        <button
+          type="button"
+          aria-label="Close run detail"
+          className="rounded-md p-1 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onClose}
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <RunSessionsView
+          personaRefId={journey.personaRefId}
+          runId={run._id}
+          goalScoreSummary={run.goalScoreSummary}
+        />
+      </div>
     </div>
   );
 }
 
-// ── sessions by host (per run) ───────────────────────────────────────────────
+// ── live stream + session detail (per run; matrix lives in JourneyBlock) ────
 function RunSessionsView({
-  runId,
   personaRefId,
-  hosts,
-  hostSummaries,
-  initialThreadId,
+  runId: scorecardRunId,
+  goalScoreSummary,
 }: {
-  runId: string;
-  /** Owning persona — encoded into copied session links for deep-link restore. */
   personaRefId: string;
-  hosts: HostItem[];
-  hostSummaries: JourneyRun["hostSummaries"];
-  /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
-  initialThreadId?: string;
+  runId: string;
+  goalScoreSummary?: GoalScoreRollup;
 }) {
-  // Paginated sessions for this run; grouped/filterable by host client-side.
+  const runSessions = useRunSessionsContext();
+  const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
+    null,
+  );
+
+  if (!runSessions) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Loading sessions…
+      </div>
+    );
+  }
+
   const {
-    results: sessions,
-    status,
-    loadMore,
-  } = usePaginatedQuery(
-    SWARM_QUERIES.listSessionsByJourneyRun as any,
-    // Backend arg name is `journeyRunId` (NOT `runId`).
-    { journeyRunId: runId } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
-  );
-  const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
-  const [selected, setSelected] = useState<JourneySessionRow | null>(null);
-  const [sessionToPromote, setSessionToPromote] =
-    useState<JourneySessionRow | null>(null);
+    run,
+    runId,
+    runStatus,
+    sessionsStatus,
+    loadMoreSessions,
+    stream,
+    matrixSelection,
+    selectedConvex,
+    fallbackTrace,
+    autoFollowing,
+  } = runSessions;
+  // The pane resolves its own outcome and needs the execution-plane row to do
+  // it: a session the provider refused can still read `completed` on its
+  // `chatSessions` lifecycle.
+  const selectedAttempt = matrixSelection
+    ? findAttemptForSelection(run.attempts, matrixSelection)
+    : null;
 
-  const hostName = (id: string) =>
-    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
-
-  const rows = sessions as JourneySessionRow[];
-  const visible = useMemo(
-    () => rows.filter((s) => sessionMatchesFilter(s, filter)),
-    [rows, filter]
-  );
-
-  // Deep-link restore: auto-select the linked session once it appears on a
-  // loaded page. Runs once. NOTE (remainder): a session on a not-yet-loaded
-  // page won't auto-select until the user pages to it — full cross-page
-  // restore would need the backend list query to accept a session cursor.
-  const appliedInitialThreadRef = useRef(false);
   useEffect(() => {
-    if (appliedInitialThreadRef.current || !initialThreadId) return;
-    const match = rows.find((s) => s.id === initialThreadId);
-    if (match) {
-      appliedInitialThreadRef.current = true;
-      setSelected(match);
-    }
-  }, [initialThreadId, rows]);
+    setDetailSession(null);
+  }, [matrixSelection?.chatSessionId]);
 
   return (
-    <div className="mt-2 rounded-lg border bg-muted/20 p-2">
-      {/* Host filter chips */}
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        {hostSummaries.map((hs) => (
-          <button
-            key={hs.hostId}
-            type="button"
-            onClick={() =>
-              setFilter((f) => toggleSessionFilter(f, "hostId", hs.hostId))
-            }
-            className={`rounded-full border px-2 py-0.5 text-[11px] ${
-              filter.hostId === hs.hostId
-                ? "border-primary bg-primary/10"
-                : "hover:bg-muted"
-            }`}
-          >
-            {hostName(hs.hostId)}
-          </button>
-        ))}
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="px-1 py-2 text-[11px] text-muted-foreground">
-          No sessions recorded yet for this run.
-        </p>
-      ) : (
-        <div className="flex flex-col divide-y">
-          {visible.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setSelected(s)}
-              className={`flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50 ${
-                selected?.id === s.id ? "bg-muted" : ""
-              }`}
-            >
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate text-[11px] font-medium">
-                  {hostName(s.hostId)}
-                </span>
-                <span className="truncate text-[10px] text-muted-foreground">
-                  {s.status ?? "—"}
-                  {s.modelId ? ` · ${s.modelId}` : ""}
-                </span>
-              </span>
-              <SessionGoalScoreBadge goalScore={s.goalScore} />
-              <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
-            </button>
-          ))}
-        </div>
-      )}
-
-      {status === "CanLoadMore" && (
-        <button
-          type="button"
-          className="mt-1 text-[11px] font-medium text-primary hover:underline"
-          onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-        >
-          Load more sessions
-        </button>
-      )}
-
-      {/* Reuse the existing project-scoped session viewer — do NOT build a new
-          one. `ShareUsageThreadDetail` takes the session row's `id`. */}
-      {selected && (
-        <div className="mt-2">
-          <div className="mb-1 flex justify-end">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
+      {stream.connected || stream.error || sessionsStatus === "CanLoadMore" ? (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] text-muted-foreground">
+            {stream.connected ? "live" : null}
+            {stream.error ? `stream error: ${stream.error}` : null}
+          </p>
+          {sessionsStatus === "CanLoadMore" ? (
             <button
               type="button"
               className="text-[11px] font-medium text-primary hover:underline"
-              onClick={() => setSessionToPromote(selected)}
+              onClick={() => loadMoreSessions(DEFAULT_PAGE_SIZE)}
             >
-              Promote to test case
+              Load more sessions
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <RunScorecardSection
+        runId={scorecardRunId}
+        goalScoreSummary={goalScoreSummary}
+      />
+
+      <div className="flex min-h-[24rem] flex-1 flex-col">
+        <SwarmLiveStreamPane
+          selection={matrixSelection}
+          stream={stream}
+          convexSession={selectedConvex}
+          attempt={selectedAttempt}
+          fallbackTrace={fallbackTrace}
+          runStatus={String(runStatus)}
+          onOpenCompleted={(session) => setDetailSession(session)}
+          fillHeight
+          autoFollowing={autoFollowing}
+        />
+      </div>
+
+      {detailSession ? (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Session detail
+            </p>
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:underline"
+              onClick={() => setDetailSession(null)}
+            >
+              Close
             </button>
           </div>
           <div className="h-[420px] overflow-hidden rounded-lg border">
             <ShareUsageThreadDetail
-              threadId={selected.id}
+              threadId={detailSession.id}
               sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
                 personaRefId,
                 runId,
-                hostId: selected.hostId,
-                threadId: selected.id,
+                hostId: detailSession.hostId,
+                threadId: detailSession.id,
               })}`}
+              promote={
+                detailSession.projectId
+                  ? {
+                      projectId: detailSession.projectId,
+                      // Swarms route is member-gated (canViewSwarms).
+                      canPromote: true,
+                    }
+                  : undefined
+              }
             />
           </div>
         </div>
-      )}
-
-      <ConvertSwarmSessionDialog
-        open={sessionToPromote !== null}
-        session={sessionToPromote}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSessionToPromote(null);
-          }
-        }}
-        onImported={({ suiteId, testCaseId }) => {
-          setSessionToPromote(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            }),
-          );
-        }}
-      />
+      ) : null}
     </div>
   );
 }
 
 // ── persona detail (evals-style editable header) ─────────────────────────────
 
+/**
+ * Persona identity + context editor for the Personas library.
+ *
+ * Mirrors the field groups Confirm personas uses — identity, Persona, Use cases
+ * & context — so a persona reads the same in the library as it does mid-flow
+ * (BB-123). Goals follow below, owned by the caller.
+ *
+ * No Save button: every field commits on blur, which is what "direct fields"
+ * means here and matches how notes already behaved. A field that failed to
+ * save rolls back to the stored value rather than showing a phantom edit.
+ * `Delete persona` is the only button, since it is the one action that is not
+ * an edit.
+ */
 function PersonaDetailHeader({
   persona,
   running,
+  autoEditName = false,
   onSave,
   onDelete,
 }: {
   persona: Persona;
   running: boolean;
+  autoEditName?: boolean;
   onSave: (patch: {
     name?: string;
     role?: string;
@@ -1208,227 +1739,164 @@ function PersonaDetailHeader({
   }) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
+  const [name, setName] = useState(persona.name);
+  const [role, setRole] = useState(persona.role);
   const [notes, setNotes] = useState(persona.notes ?? "");
 
+  // Re-seed when the selection changes, or when the stored row moves under us
+  // (another tab, or the AI generator writing into this persona).
+  useEffect(() => {
+    setName(persona.name);
+  }, [persona._id, persona.name]);
+  useEffect(() => {
+    setRole(persona.role);
+  }, [persona._id, persona.role]);
   useEffect(() => {
     setNotes(persona.notes ?? "");
   }, [persona._id, persona.notes]);
 
-  const persistNotes = async () => {
-    const next = notes.trim();
-    const prev = (persona.notes ?? "").trim();
-    if (next === prev) return;
-    try {
-      await onSave({ notes: next });
-    } catch {
-      setNotes(persona.notes ?? "");
-    }
-  };
-
-  return (
-    <div className="mb-4 flex items-start justify-between gap-4">
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <PersonaAvatarLookPicker
-          seed={persona._id}
-          avatarShape={persona.avatarShape}
-          avatarPalette={persona.avatarPalette}
-          state={running ? "running" : "idle"}
-          onSave={(look) => onSave(look)}
-        />
-        <div className="min-w-0 flex-1">
-          <InlineEditableText
-            value={persona.name}
-            onSave={(name) => onSave({ name })}
-            className="block w-full text-lg font-semibold tracking-tight sm:text-xl"
-            truncate={false}
-          />
-          <InlineEditableText
-            value={persona.role}
-            onSave={(role) => onSave({ role })}
-            className="mt-0.5 block w-full text-sm text-muted-foreground"
-            truncate={false}
-          />
-          <TextareaAutosize
-            aria-label="Notes / personality"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            onBlur={() => void persistNotes()}
-            minRows={1}
-            maxRows={4}
-            placeholder="Add personality notes…"
-            className={cn(
-              "mt-2 min-h-0 resize-none border-0 bg-transparent px-0 py-0 text-sm",
-              "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-              "focus-visible:border-0 focus-visible:ring-0",
-            )}
-          />
-        </div>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
-        onClick={() => void onDelete()}
-      >
-        Delete persona
-      </Button>
-    </div>
-  );
-}
-
-// ── create persona dialog (design-system; replaces the floating raw form) ────
-function NewPersonaDialog({
-  onCreate,
-}: {
-  onCreate: (draft: {
-    name: string;
-    role: string;
-    notes?: string;
-  }) => Promise<void>;
-}) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      setName("");
-      setRole("");
-      setNotes("");
-      setSaving(false);
-    }
-  }, [open]);
-
-  const handleCreate = async () => {
-    if (!name.trim() || !role.trim()) {
-      toast.error("Name and role are required");
+  /**
+   * Commit one field on blur. Compares trimmed values so whitespace-only
+   * churn never writes, and rolls the local value back if the write throws —
+   * leaving the edit on screen would claim a save that did not happen.
+   *
+   * The rollback is guarded by a per-field sequence number. Blur, edit again,
+   * blur again before the first write settles, and a late failure from the
+   * FIRST would otherwise reset the field to the stale stored value and throw
+   * away the newer edit — the exact loss the rollback exists to prevent.
+   */
+  const commitSeqRef = useRef<Record<string, number>>({});
+  const commit = async (
+    field: "name" | "role" | "notes",
+    next: string,
+    stored: string,
+    reset: (value: string) => void,
+  ) => {
+    const trimmed = next.trim();
+    if (trimmed === stored.trim()) return;
+    // A persona needs a name; an emptied field is a slip, not an intent.
+    if (field === "name" && trimmed.length === 0) {
+      reset(stored);
       return;
     }
-    setSaving(true);
+    const seq = (commitSeqRef.current[field] ?? 0) + 1;
+    commitSeqRef.current[field] = seq;
     try {
-      await onCreate({
-        name: name.trim(),
-        role: role.trim(),
-        notes: notes.trim() || undefined,
-      });
-      toast.success("Persona created");
-      setOpen(false);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to create persona",
-      );
-    } finally {
-      setSaving(false);
+      await onSave({ [field]: trimmed });
+    } catch {
+      // Stale failure: a newer commit for this field has already started, and
+      // its value is what is on screen.
+      if (commitSeqRef.current[field] !== seq) return;
+      reset(stored);
     }
   };
 
   return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => setOpen(true)}
-      >
-        <Plus className="mr-1 size-3" />
-        New
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>New persona</DialogTitle>
-            <DialogDescription>
-              A synthetic user who pursues journeys across your clients.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3 py-1">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="swarm-persona-name">Name</Label>
-              <Input
-                id="swarm-persona-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Test User"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleCreate();
-                  }
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="swarm-persona-role">Role</Label>
-              <Input
-                id="swarm-persona-role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                placeholder="SWE evaluating the product"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleCreate();
-                  }
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="swarm-persona-notes">Notes / personality</Label>
-              <Textarea
-                id="swarm-persona-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Background, tone, what they care about…"
-                rows={4}
-                className="leading-relaxed"
-              />
-            </div>
+    <div className="mb-5 space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <PersonaAvatarLookPicker
+            seed={persona._id}
+            avatarShape={persona.avatarShape}
+            avatarPalette={persona.avatarPalette}
+            state={running ? "running" : "idle"}
+            onSave={(look) => onSave(look)}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xl font-semibold tracking-tight text-foreground">
+              {persona.name}
+            </p>
+            {persona.role ? (
+              <p className="truncate text-sm text-muted-foreground">
+                {persona.role}
+              </p>
+            ) : null}
           </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={saving || !name.trim() || !role.trim()}
-              onClick={() => void handleCreate()}
-            >
-              {saving ? (
-                <Loader2 className="mr-1 size-3 animate-spin" />
-              ) : null}
-              Create persona
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="shrink-0 text-destructive hover:text-destructive"
+          onClick={() => void onDelete()}
+        >
+          Delete persona
+        </Button>
+      </div>
+
+      <div className="space-y-1.5">
+        <SectionLabel>Persona</SectionLabel>
+        <div className="space-y-2.5">
+          <div className="space-y-1">
+            <Label htmlFor="persona-name" className="text-xs">
+              Name
+            </Label>
+            <Input
+              id="persona-name"
+              value={name}
+              autoFocus={autoEditName}
+              placeholder="Persona name"
+              onChange={(event) => setName(event.target.value)}
+              onBlur={() => void commit("name", name, persona.name, setName)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="persona-role" className="text-xs">
+              Role
+            </Label>
+            <Input
+              id="persona-role"
+              value={role}
+              placeholder="Role"
+              onChange={(event) => setRole(event.target.value)}
+              onBlur={() => void commit("role", role, persona.role, setRole)}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <SectionLabel>Use cases &amp; context</SectionLabel>
+        <TextareaAutosize
+          aria-label="Use cases and context"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          onBlur={() =>
+            void commit("notes", notes, persona.notes ?? "", setNotes)
+          }
+          minRows={3}
+          maxRows={10}
+          placeholder="Who they are and how they show up…"
+          className="resize-none text-sm leading-relaxed"
+        />
+      </div>
+    </div>
   );
 }
 
 function NewJourneyButton({
   projectId,
-  hosts,
+  environments,
   onCreate,
   open,
   onOpenChange,
   goalSeed,
+  hosts,
+  siblingGoals,
 }: {
   projectId: string;
-  hosts: HostItem[];
+  /** Live project environments — `undefined` while loading, `[]` when none. */
+  environments: ProjectEnvironmentView[] | undefined;
+  /** Project clients, for the default target. */
+  hosts: ReadonlyArray<{ hostId: string }>;
+  /** This persona's existing goals; the new one runs where they do. */
+  siblingGoals: { environmentIds?: string[] | null }[] | undefined;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
-    serverAttachmentId: string;
-    config: { sessionsPerHost: number; maxTurns: number };
+    /** Ordered fan-out; compat hostIds ride alongside. */
+    environmentIds: string[];
+    config: { sessionsPerTarget: number; maxTurns: number };
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
   open: boolean;
@@ -1436,176 +1904,125 @@ function NewJourneyButton({
   /** Goal to seed each time the form opens ("" for a manual open). */
   goalSeed: string;
 }) {
-  const [goal, setGoal] = useState("");
-  const [hostIds, setHostIds] = useState<string[]>([]);
-  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null,
-  );
-  const [sessionsPerHost, setSessionsPerHost] = useState(2);
-  const [maxTurns, setMaxTurns] = useState(6);
-  // Seed the goal from the agent prefill (or reset to "") whenever the form
-  // transitions open. Manual "+ New journey" opens pass goalSeed="".
-  useEffect(() => {
-    if (open) setGoal(goalSeed);
-  }, [open, goalSeed]);
-  const setOpen = onOpenChange;
-  // A journey may target ANY project host, including chatbox/suite-owned ones
-  // (the backend validates only project ownership). But surface the Swarms'
-  // own clients first and badge the "shared" ones so it's clear which hosts
-  // are managed elsewhere. (Deliberately NOT filtered — that would break
-  // cross-product journey targeting.)
-  const isSwarmClient = (h: HostItem) =>
-    !h.ownerScope || h.ownerScope.type === "journeys";
-  const sortedHosts = useMemo(
-    () =>
-      [...hosts].sort((a, b) => {
-        const rank = (h: HostItem) => (isSwarmClient(h) ? 0 : 1);
-        return rank(a) - rank(b) || a.name.localeCompare(b.name);
-      }),
-    [hosts],
-  );
   if (!open) {
     return (
-      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => onOpenChange(true)}
+      >
         <Plus className="mr-1 size-3" />
-        New journey
+        New goal
       </Button>
     );
   }
-  const toggleHost = (id: string) =>
-    setHostIds((prev) =>
-      prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]
-    );
+  return (
+    <NewJourneyForm
+      projectId={projectId}
+      environments={environments}
+      hosts={hosts}
+      siblingGoals={siblingGoals}
+      onCreate={onCreate}
+      onOpenChange={onOpenChange}
+      goalSeed={goalSeed}
+    />
+  );
+}
+
+/** Mounted only while open, so a closed form costs no target resolution. */
+function NewJourneyForm({
+  projectId,
+  environments,
+  hosts,
+  siblingGoals,
+  onCreate,
+  onOpenChange,
+  goalSeed,
+}: {
+  projectId: string;
+  environments: ProjectEnvironmentView[] | undefined;
+  hosts: ReadonlyArray<{ hostId: string }>;
+  siblingGoals: { environmentIds?: string[] | null }[] | undefined;
+  onCreate: (draft: {
+    goal: string;
+    hostIds: string[];
+    environmentIds: string[];
+    config: { sessionsPerTarget: number; maxTurns: number };
+  }) => Promise<void>;
+  onOpenChange: (open: boolean) => void;
+  goalSeed: string;
+}) {
+  const [goal, setGoal] = useState(goalSeed);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const goalsLoading = siblingGoals === undefined;
+  const target = useSwarmDefaultTarget({
+    projectId,
+    active: true,
+    environments,
+    hosts,
+  });
+  const inherited = inheritedGoalTarget(
+    siblingGoals,
+    target.liveEnvironmentIds,
+  );
+  // The agent bridge can re-prefill an already-open form.
+  useEffect(() => {
+    setGoal(goalSeed);
+  }, [goalSeed]);
+  const setOpen = onOpenChange;
+
   return (
     <div
       className={cn(
-        "w-full rounded-xl border border-border/50 bg-card/50 p-4 shadow-sm",
+        "w-full rounded-xl border border-border/50 bg-card/50 p-3 shadow-sm",
         "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
       )}
     >
-      <div className="mb-3 flex flex-col gap-1.5">
-        <Label htmlFor="swarm-journey-goal">Goal</Label>
+      <div className="mb-2.5 flex flex-col gap-1">
+        <Label htmlFor="swarm-journey-goal" className="text-xs">
+          Goal
+        </Label>
         <Textarea
           id="swarm-journey-goal"
           placeholder="What this persona is trying to accomplish"
           value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          rows={3}
-          className="leading-relaxed"
+          onChange={(e) => {
+            setGoal(e.target.value);
+            setError(null);
+          }}
+          rows={2}
+          className="min-h-[56px] resize-none leading-relaxed"
         />
       </div>
-      <div className="mb-3 divide-y rounded-lg border bg-muted/20">
-        <div className="flex items-start justify-between gap-4 p-3">
-          <div className="min-w-0 space-y-0.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Servers
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Server group all clients run against for this journey.
-            </p>
-          </div>
-          <div className="shrink-0">
-            <ServerGroupPicker
-              projectId={projectId}
-              value={serverAttachmentId}
-              onChange={(id) => setServerAttachmentId(id)}
-              onClearSelection={() => setServerAttachmentId(null)}
-              emptyTriggerLabel="No server group · pick one"
-              infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
-            />
-          </div>
-        </div>
-        <div className="space-y-2 p-3">
-          <div className="space-y-0.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Clients
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Each selected client fans out into its own sessions.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {hosts.length === 0 ? (
-              <span className="text-xs text-muted-foreground">
-                No clients in this project.
-              </span>
-            ) : (
-              sortedHosts.map((h) => {
-                // Compact config chips so the picker shows what each client
-                // brings (model · computer) without opening the editor. Server
-                // count is journey-scoped via the group above, not the host.
-                const meta = [
-                  h.modelId || null,
-                  h.hasComputer ? "computer" : null,
-                ].filter(Boolean);
-                const shared = !isSwarmClient(h);
-                return (
-                  <button
-                    key={h.hostId}
-                    type="button"
-                    onClick={() => toggleHost(h.hostId)}
-                    className={cn(
-                      "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
-                      hostIds.includes(h.hostId)
-                        ? "border-primary bg-primary/10"
-                        : "hover:bg-muted",
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 font-medium">
-                      {h.name}
-                      {shared ? (
-                        <span
-                          className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
-                          title="Managed in another product surface — still runnable by this journey"
-                        >
-                          shared
-                        </span>
-                      ) : null}
-                    </span>
-                    {meta.length > 0 ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        {meta.join(" · ")}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-4">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="swarm-journey-sessions" className="text-xs">
-            Sessions/host
-          </Label>
-          <Input
-            id="swarm-journey-sessions"
-            type="number"
-            min={1}
-            max={5}
-            className="h-8 w-20"
-            value={sessionsPerHost}
-            onChange={(e) => setSessionsPerHost(Number(e.target.value))}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="swarm-journey-turns" className="text-xs">
-            Max turns
-          </Label>
-          <Input
-            id="swarm-journey-turns"
-            type="number"
-            min={1}
-            max={20}
-            className="h-8 w-20"
-            value={maxTurns}
-            onChange={(e) => setMaxTurns(Number(e.target.value))}
-          />
-        </div>
-      </div>
+
+      {error ? (
+        <p
+          role="alert"
+          className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
+        >
+          {error}
+        </p>
+      ) : null}
+
+      {!error && !inherited && target.noServers ? (
+        <p
+          role="alert"
+          className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
+        >
+          {joinLabels(target.noServers.labels)} has no servers assigned. Pick a
+          server group for it.
+        </p>
+      ) : null}
+
       <div className="flex justify-end gap-2">
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setOpen(false)}
+        >
           Cancel
         </Button>
         <Button
@@ -1613,30 +2030,36 @@ function NewJourneyButton({
           size="sm"
           disabled={
             !goal.trim() ||
-            !serverAttachmentId ||
-            hostIds.length === 0 ||
-            !Number.isInteger(sessionsPerHost) ||
-            sessionsPerHost < 1 ||
-            sessionsPerHost > 5 ||
-            !Number.isInteger(maxTurns) ||
-            maxTurns < 1 ||
-            maxTurns > 20
+            goalsLoading ||
+            (!inherited && !target.ready) ||
+            saving
           }
           onClick={async () => {
-            if (!serverAttachmentId) return;
-            await onCreate({
-              goal,
-              hostIds,
-              serverAttachmentId,
-              config: { sessionsPerHost, maxTurns },
-            });
-            setOpen(false);
-            setGoal("");
-            setHostIds([]);
-            setServerAttachmentId(null);
+            setSaving(true);
+            setError(null);
+            try {
+              await onCreate({
+                goal,
+                hostIds: [],
+                environmentIds: inherited ?? (await target.resolve()),
+                // Matches the generated goals and the swarm flow's default.
+                config: { sessionsPerTarget: 1, maxTurns: 6 },
+              });
+              setOpen(false);
+              setGoal("");
+            } catch (err) {
+              // Keep the form and its text: the goal is retried, not retyped.
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "Could not create the goal",
+              );
+            } finally {
+              setSaving(false);
+            }
           }}
         >
-          Create journey
+          Create goal
         </Button>
       </div>
     </div>

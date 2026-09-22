@@ -15,6 +15,7 @@ import { CliError } from "../src/lib/output.js";
 function createSingleResult(): ConformanceResult {
   return {
     passed: false,
+    outcome: "failed",
     protocolVersion: "2025-06-18",
     registrationStrategy: "dcr",
     serverUrl: "https://mcp.example.com/mcp",

@@ -9,6 +9,7 @@ import {
 import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ import { Thread } from "@/components/chat-v2/thread";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { useChangeProtocolVersionAction } from "@/hooks/use-change-protocol-version-action";
 import {
   cloneUiMessages,
   formatErrorMessage,
@@ -40,15 +42,15 @@ import {
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-  useChatboxChatUiOverride,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+  useScenarioChatUiOverride,
+} from "@/contexts/scenario-client-style-context";
 import {
-  ChatboxHostCapabilitiesOverrideProvider,
-  useChatboxHostCapabilitiesOverride,
-} from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioHostCapabilitiesOverrideProvider,
+  useScenarioHostCapabilitiesOverride,
+} from "@/contexts/scenario-client-capabilities-override-context";
 import {
   ActiveMcpProfileProvider,
   useActiveMcpProfile,
@@ -60,14 +62,15 @@ import {
 } from "@/lib/client-config-v2";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
-  getChatboxChatBackground,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -112,6 +115,7 @@ function InvokingIndicator({
 }
 
 interface MultiModelPlaygroundCardProps {
+  browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode `compareId === String(model.id)`; in host mode it's the host id.
@@ -138,9 +142,38 @@ interface MultiModelPlaygroundCardProps {
   executionConfig: ExecutionConfig;
   hostedContext?: HostedRuntimeContext;
   hostedOrgModelConfig?: OrgVisibleConfig;
+  /**
+   * Resolved Local⇄Cloud engine for the project's personal computer, so a
+   * comparison column runs bash on the same engine ("This machine") the tab
+   * root does — omitted ⇒ cloud, like every other surface.
+   */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
+  personalComputerEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
+  /**
+   * Local Claude Code execution for this LANE.
+   *
+   * Threaded like `personalComputerEngine` and for the same reason, with one
+   * extra rule: `requested` is answered per lane by the shared scope
+   * predicate, so a compare view whose columns run different hosts does not
+   * hand a Codex lane a Claude Code lane's local requirement. The controller
+   * itself lives once, in PlaygroundMain.
+   */
+  localHarnessExecution?: {
+    requested: boolean;
+    resolveSendTarget: () => {
+      target: LocalHarnessTargetIds;
+      token: string;
+    } | null;
+  };
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
   hideInlineEdit?: boolean;
@@ -150,9 +183,22 @@ interface MultiModelPlaygroundCardProps {
   executingToolName?: string | null;
   invokingMessage?: string | null;
   onSummaryChange: (summary: MultiModelCardSummary) => void;
+  /**
+   * Whether this compare column may use the tools of the page open in the
+   * WebMCP tab. Passed down rather than read from the store here so every
+   * column in a comparison sends the same turn as the single-model view.
+   */
+  usePageTools?: boolean;
   onHasMessagesChange?: (compareId: string, hasMessages: boolean) => void;
   /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
   showComparisonChrome?: boolean;
+  /**
+   * When true, shows a compact host identity row (logo + name) above the
+   * Trace/Chat/Raw strip. Used for multi-host columns.
+   */
+  showIdentityHeader?: boolean;
+  /** Host / client logo for the identity header. */
+  logoSrc?: string | null;
   /** Hide in-card “send a shared message” empty hint when the parent shows the shared starter strip + footer composer. */
   suppressThreadEmptyHint?: boolean;
   compareEnterVersion?: number;
@@ -175,7 +221,7 @@ interface MultiModelPlaygroundCardProps {
    * into chat + trace + raw views.
    *
    * Note: `hostStyle` lives on the snapshot too but is already a required
-   * card prop above (`hostStyle: ChatboxHostStyle`) — the multi-host
+   * card prop above (`hostStyle: ScenarioHostStyle`) — the multi-host
    * caller passes both, and they must agree. Documenting here so future
    * refactors don't accidentally diverge them.
    */
@@ -196,9 +242,10 @@ interface MultiModelPlaygroundCardProps {
 }
 
 export function MultiModelPlaygroundCard({
+  browserWorkspace,
   compareId,
   compareLabel,
-  compareKind: _compareKind,
+  compareKind,
   compareSubLabel,
   model,
   comparisonSummaries,
@@ -210,6 +257,9 @@ export function MultiModelPlaygroundCard({
   executionConfig,
   hostedContext,
   hostedOrgModelConfig,
+  personalComputerEngine,
+  personalBrowserEngine,
+  localHarnessExecution,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -222,8 +272,11 @@ export function MultiModelPlaygroundCard({
   executingToolName,
   invokingMessage,
   onSummaryChange,
+  usePageTools,
   onHasMessagesChange,
   showComparisonChrome = true,
+  showIdentityHeader = false,
+  logoSrc = null,
   suppressThreadEmptyHint = false,
   compareEnterVersion = 0,
   compareEnterMessages = [],
@@ -249,8 +302,8 @@ export function MultiModelPlaygroundCard({
   // the snapshot is meaningful ("no override; preset wins") — when the
   // snapshot itself is set, we forward the field verbatim including
   // undefined, NOT fall back to the tab-root value.
-  const tabRootHostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
-  const tabRootChatUiOverride = useChatboxChatUiOverride();
+  const tabRootHostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
+  const tabRootChatUiOverride = useScenarioChatUiOverride();
   const tabRootMcpProfile = useActiveMcpProfile();
   const effectiveHostCapabilitiesOverride = hostSnapshot
     ? hostSnapshot.hostCapabilitiesOverride
@@ -286,20 +339,20 @@ export function MultiModelPlaygroundCard({
     [
       hostCapsResolver?.modelVisibleMcpToolResults,
       executionConfig?.modelVisibleMcpToolResults,
-    ]
+    ],
   );
   const resolvedMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
         hostCapsResolver?.mcpToolResultImageRendering ??
           executionConfig?.mcpToolResultImageRendering,
-        resolvedModelVisibleMcpToolResults
+        resolvedModelVisibleMcpToolResults,
       ),
     [
       hostCapsResolver?.mcpToolResultImageRendering,
       executionConfig?.mcpToolResultImageRendering,
       resolvedModelVisibleMcpToolResults,
-    ]
+    ],
   );
 
   const {
@@ -317,12 +370,17 @@ export function MultiModelPlaygroundCard({
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
+    isSessionBootstrapComplete,
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
+    usePageTools,
     hostedContext,
     hostedOrgModelConfig,
+    ...(personalComputerEngine ? { personalComputerEngine } : {}),
+    ...(personalBrowserEngine ? { personalBrowserEngine } : {}),
+    ...(localHarnessExecution ? { localHarnessExecution } : {}),
     executionConfig: {
       ...executionConfig,
       modelId: String(model.id),
@@ -344,8 +402,25 @@ export function MultiModelPlaygroundCard({
     },
   });
 
+  useComparisonBrowser(
+    browserWorkspace && hostedContext?.projectId
+      ? {
+          workspaceId: browserWorkspace.id,
+          projectId: hostedContext.projectId,
+          sessionId: chatSessionId,
+          clientId: compareId,
+          name: compareLabel,
+          logo: logoSrc,
+          order: browserWorkspace.order,
+          clientCount: browserWorkspace.clientCount,
+          engine: personalBrowserEngine?.engine ?? "cloud",
+        }
+      : null,
+    messages,
+  );
+
   const isThreadEmpty = !messages.some(
-    (message) => message.role === "user" || message.role === "assistant"
+    (message) => message.role === "user" || message.role === "assistant",
   );
   const { sendBlocked: fullscreenChatSendBlocked } =
     getChatComposerInteractivity({
@@ -389,12 +464,12 @@ export function MultiModelPlaygroundCard({
       buildPreludeTraceEnvelope(preludeTraceExecutions, {
         ...hostStyleSupportsModelVisibleMcpToolImages(hostStyle),
       }),
-    [hostStyle, preludeTraceExecutions]
+    [hostStyle, preludeTraceExecutions],
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : preludeTraceEnvelope ?? liveTraceEnvelope;
+      : (preludeTraceEnvelope ?? liveTraceEnvelope);
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceTabs
     ? traceViewMode
@@ -435,24 +510,33 @@ export function MultiModelPlaygroundCard({
       status: error
         ? "error"
         : isStreaming || isExecuting
-        ? "running"
-        : isThreadEmpty
-        ? "idle"
-        : "ready",
+          ? "running"
+          : isThreadEmpty
+            ? "idle"
+            : "ready",
       hasMessages: !isThreadEmpty,
     }),
-    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn]
+    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn],
   );
   const errorMessage = formatErrorMessage(error);
+  // In host mode each column IS a different client, and `compareId` is that
+  // client's id — so the column's own host is the one holding the pin that
+  // failed here, not the turn's. In model mode every column shares the turn's
+  // client, and `compareId` is a model id, which must not be used as one.
+  const changeProtocolVersionHandler = useChangeProtocolVersionAction({
+    error: errorMessage,
+    hostId: compareKind === "host" ? compareId : hostedContext?.hostId,
+    location: "playground_compare_card",
+  });
   const mergedToolRenderOverrides = useMemo(
     () => ({
       ...injectedToolRenderOverrides,
       ...toolRenderOverrides,
     }),
-    [injectedToolRenderOverrides, toolRenderOverrides]
+    [injectedToolRenderOverrides, toolRenderOverrides],
   );
   const hostBackgroundColor =
-    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
+    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
   const isMobileFullTakeover =
     deviceType === "mobile" &&
     (displayMode === "fullscreen" || displayMode === "pip");
@@ -498,6 +582,10 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
+    if (!isSessionBootstrapComplete) {
+      return;
+    }
+
     if (!broadcastRequest) {
       return;
     }
@@ -528,6 +616,7 @@ export function MultiModelPlaygroundCard({
   }, [
     broadcastRequest,
     drainModelContextQueue,
+    isSessionBootstrapComplete,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -563,7 +652,7 @@ export function MultiModelPlaygroundCard({
       deterministicExecutionRequest.params,
       deterministicExecutionRequest.result,
       deterministicExecutionRequest.toolMeta,
-      deterministicOptions
+      deterministicOptions,
     );
 
     if (deterministicExecutionRequest.renderOverride) {
@@ -576,10 +665,10 @@ export function MultiModelPlaygroundCard({
 
     const upsertById = (
       currentMessages: typeof newMessages,
-      nextMessage: (typeof newMessages)[number]
+      nextMessage: (typeof newMessages)[number],
     ) => {
       const existingIndex = currentMessages.findIndex(
-        (message) => message.id === nextMessage.id
+        (message) => message.id === nextMessage.id,
       );
       if (existingIndex === -1) {
         return [...currentMessages, nextMessage];
@@ -598,7 +687,7 @@ export function MultiModelPlaygroundCard({
         for (const message of newMessages) {
           next = upsertById(
             next as typeof newMessages,
-            message
+            message,
           ) as typeof previous;
         }
         return next;
@@ -632,7 +721,7 @@ export function MultiModelPlaygroundCard({
         return previous.map((execution) =>
           execution.toolCallId === deterministicExecutionRequest.toolCallId
             ? nextExecution
-            : execution
+            : execution,
         );
       }
 
@@ -667,7 +756,7 @@ export function MultiModelPlaygroundCard({
         widgetModelContext: drainModelContextQueue(),
       });
     },
-    [drainModelContextQueue, sendMessage, outgoingSenderMetadata]
+    [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
   );
 
   const handleModelContextUpdate = useCallback(
@@ -676,13 +765,13 @@ export function MultiModelPlaygroundCard({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      }
+      },
     ) => {
       setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
       );
     },
-    []
+    [],
   );
 
   // Provider stack wraps the WHOLE card body — header + trace branch +
@@ -713,6 +802,8 @@ export function MultiModelPlaygroundCard({
         onModeChange={handleTraceViewModeChange}
         showTraceTabs={showTraceTabs}
         showComparisonChrome={showComparisonChrome}
+        showIdentityHeader={showIdentityHeader}
+        logoSrc={logoSrc}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -725,6 +816,7 @@ export function MultiModelPlaygroundCard({
               statusCode={errorMessage.statusCode}
               isRetryable={errorMessage.isRetryable}
               isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+              onChangeProtocolVersion={changeProtocolVersionHandler}
             />
           </div>
         ) : null}
@@ -800,9 +892,9 @@ export function MultiModelPlaygroundCard({
         ) : (
           <div
             className={cn(
-              "chatbox-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
+              "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
-              effectiveThreadTheme === "dark" && "dark"
+              effectiveThreadTheme === "dark" && "dark",
             )}
             data-host-style={hostStyle}
             data-thread-theme={effectiveThreadTheme}
@@ -873,17 +965,17 @@ export function MultiModelPlaygroundCard({
   // context), so model-mode is byte-equivalent to today (tab-root flows
   // through), host-mode shadows.
   let wrapped: ReactNode = (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider
+    <ScenarioHostStyleProvider value={hostStyle}>
+      <ScenarioHostCapabilitiesOverrideProvider
         value={effectiveHostCapabilitiesOverride}
       >
-        <ChatboxChatUiOverrideProvider value={effectiveChatUiOverride}>
-          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+        <ScenarioChatUiOverrideProvider value={effectiveChatUiOverride}>
+          <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             {cardBody}
-          </ChatboxHostThemeProvider>
-        </ChatboxChatUiOverrideProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioChatUiOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
+    </ScenarioHostStyleProvider>
   );
 
   // Optional shadow providers — only wrap when the caller explicitly

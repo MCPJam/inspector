@@ -1,8 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listProjectsOperation } from "@mcpjam/sdk/platform";
 import {
+  ALL_OPERATIONS,
+  getPluginVersionOperation,
+  listProjectPluginsOperation,
+  listProjectServersOperation,
+  listProjectsOperation,
+  listScenariosOperation,
+  runEvalSuiteOperation,
+  showServersOperation,
+} from "@mcpjam/sdk/platform";
+import {
+  EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
+  platformWidgetUi,
   registerPlatformCatalogTools,
   runPlatformOperation,
 } from "../src/tools/platformTools.js";
@@ -10,8 +21,11 @@ import {
   registerShowServersTool,
   SHOW_SERVERS_RESOURCE_URI,
 } from "../src/tools/showServers.js";
-import { PLATFORM_WIDGET_RESOURCE_URIS } from "../src/shared/platform-widgets.js";
-import type { McpJamMcpServer } from "../src/server.js";
+import {
+  PLATFORM_WIDGETS_ENABLED,
+  PLATFORM_WIDGET_RESOURCE_URIS,
+} from "../src/shared/platform-widgets.js";
+import type { PlatformToolContext } from "../src/server.js";
 import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
 type ToolResult = {
@@ -55,24 +69,47 @@ function fakeRegistrar(): {
       registrations.push({ name, config, callback, ui });
       return {} as never;
     },
-    setUiEnabled() {},
   } as unknown as SessionToolRegistrar;
   return { registrar, registrations };
 }
 
-function fakeAgent(
-  overrides: { bearerToken?: string; platformApiUrl?: string } = {}
-): McpJamMcpServer {
+/**
+ * The JSON half of a tool's text content.
+ *
+ * The text block leads with one `Label: https://…` line per permalink and then
+ * the payload, separated by a blank line — deliberately not parseable as a
+ * whole. The text channel is what a MODEL reads (and hosts vary in whether
+ * they render `structuredContent` at all, which is why the links are there
+ * too); `structuredContent` is the machine channel, and every consumer that
+ * wants an object should read that.
+ */
+function jsonBodyOf(result: ToolResult): Record<string, unknown> {
+  const text = (result.content?.[0] as { text: string }).text;
+  const separator = text.indexOf("\n\n{");
+  return JSON.parse(separator === -1 ? text : text.slice(separator + 2));
+}
+
+function fakeToolContext(
+  overrides: {
+    bearerToken?: string;
+    platformApiUrl?: string;
+    appOrigin?: string;
+    callerUserAgent?: string;
+  } = {}
+): PlatformToolContext {
   return {
-    bearerToken: overrides.bearerToken,
     // runPlatformOperation resolves the bearer via getBearerToken() (async, so
-    // anonymous sessions can mint lazily). The stub just returns the override.
+    // anonymous requests can mint lazily). The stub just returns the override.
     getBearerToken: async () => overrides.bearerToken,
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
+      MCPJAM_APP_ORIGIN: overrides.appOrigin ?? "https://staging.example.com",
     },
-  } as unknown as McpJamMcpServer;
+    ...(overrides.callerUserAgent
+      ? { callerUserAgent: overrides.callerUserAgent }
+      : {}),
+  };
 }
 
 const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
@@ -81,41 +118,196 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
     list_eval_suite_runs: "eval_suite_runs",
     get_eval_run: "eval_run",
     list_eval_run_iterations: "eval_run_iterations",
-    list_chatboxes: "chatboxes",
-    get_chatbox: "chatbox",
+    list_scenarios: "scenarios",
+    get_scenario: "scenario",
   };
 
 const PLAIN_TOOLS = [
+  "get_me",
+  "list_models",
+  "list_organizations",
   "list_projects",
+  "create_project",
+  "update_project",
   "list_project_servers",
+  "create_project_server",
+  "get_project_server",
+  "update_project_server",
+  "delete_project_server",
   // Server live operations are agent-oriented payloads with no widget view.
+  "connect_project_server",
+  "get_project_server_connection_status",
+  "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
+  // The render verdict is structured evidence (tree, console errors, blocked
+  // requests). A widget PANEL here would be a second, drifting copy of the
+  // Apps tab.
+  "render_server_widget",
   "list_server_prompts",
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  // Skills over MCP: a catalog, a verified skill body, and a verified file.
+  // All three can answer with a refusal naming the integrity check that
+  // failed, which is structured evidence to read rather than a card to render.
+  "list_server_skills",
+  "get_server_skill",
+  "read_server_skill_file",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
+  // Directory readiness: receipts and run rows are agent-oriented payloads,
+  // and a report is a document to read rather than a card to render.
+  "start_claude_readiness_run",
+  "start_openai_readiness_run",
+  "get_readiness_run",
+  "list_readiness_runs",
+  "cancel_readiness_run",
+  "get_readiness_report",
+  "start_conformance_run",
+  "get_conformance_run",
+  "list_conformance_runs",
+  "get_conformance_report",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
   // Eval suite/case editing: agent-oriented payloads, no widget view.
   "get_eval_suite",
+  "get_eval_run_disclosure",
   "update_eval_suite",
+  "list_eval_suite_revisions",
   "delete_eval_suite",
   "set_eval_suite_schedule",
   "list_eval_cases",
   "get_eval_case",
   "create_eval_case",
+  "create_eval_cases",
   "update_eval_case",
   "delete_eval_case",
   "generate_eval_cases",
+  // Stage analytics: a measured description with slice arrays and exclusion
+  // tallies. The app renders it as a funnel; a tool result is the numbers.
+  "get_eval_run_stage_analytics",
+  "get_eval_run_gate",
+  "get_eval_run_route_facts",
+  // Server facts: what the run was taken against — a snapshot description, no
+  // widget view, so it belongs with the plain tools.
+  "get_eval_run_server_facts",
+  "list_eval_suite_stage_analytics",
+  "set_eval_suite_environments",
+  // Project environments: agent-oriented payloads, no widget view.
+  "list_project_environments",
+  "get_project_environment",
+  "resolve_project_environment",
+  "ensure_adhoc_environment",
+  // Sandbox image reads: the picker behind a suite's computer image.
+  "list_sandbox_images",
+  "get_sandbox_image",
+  // Agent Plugins reads: agent-oriented payloads, no widget view.
+  "list_project_plugins",
+  "get_plugin_version",
+  "list_project_skills",
+  "get_project_skill",
   "get_eval_iteration_trace",
+  "compare_eval_run",
+  // The gate-waiver read: an agent-oriented payload, no widget view.
+  "get_eval_gate_waiver",
   "get_eval_run_steps",
   "cancel_eval_run",
+  "backtest_eval_run",
+  "backtest_eval_run_judge",
+  "request_eval_run_judge",
+  // The description-rewrite experiment: agent-oriented payloads (a diff and
+  // two arm counts), no widget view.
+  "propose_eval_description_rewrite",
+  "start_eval_description_experiment",
+  "get_eval_description_experiment",
+  // GitHub checks: agent-oriented payloads, no widget view. Both spellings —
+  // the `*_check_repo*` pair is the pre-rename one, still advertised.
+  "list_eval_github_repos",
+  "connect_eval_github_repo",
+  "list_eval_check_repos",
+  "connect_eval_check_repo",
   "list_chat_sessions",
+  "search_sessions",
+  // Agent Playground: the turn plus its two reads. Agent-oriented payloads —
+  // a trace panel would be a second, drifting copy of the eval trace viewer.
+  "send_chat_message",
+  "drive_chat_session_browser",
+  "observe_chat_session_browser",
+  "get_chat_session",
+  "get_chat_session_trace",
+  // Swarms + user testing. No widget views yet: these are agent-oriented
+  // payloads, and a half-designed panel is worse than the structured JSON.
+  "get_capabilities",
+  "list_personas",
+  "get_persona",
+  "create_persona",
+  "update_persona",
+  "delete_persona",
+  "list_secrets",
+  "get_secret",
+  "delete_secret",
+  "generate_personas",
+  "list_journeys",
+  "get_journey",
+  "create_journey",
+  "update_journey",
+  "archive_journey",
+  "generate_journeys",
+  "list_journey_runs",
+  "get_journey_run",
+  "list_journey_run_sessions",
+  "launch_journey_run",
+  "cancel_journey_run",
+  "list_swarms",
+  "get_swarm",
+  "create_swarm",
+  "update_swarm",
+  "archive_swarm",
+  "get_swarms_overview",
+  "get_journey_run_scorecard",
+  "list_swarm_findings",
+  "dismiss_swarm_finding",
+  "undismiss_swarm_finding",
+  "get_wave_insights",
+  "request_wave_insights",
+  "cancel_wave_insights",
+  "publish_scenario",
+  "unpublish_scenario",
+  "get_user_testing_scenario",
+  "list_user_testing_sessions",
+  "get_user_testing_session",
+  "get_user_testing_metrics",
+  "get_user_testing_usage",
+  "list_user_testing_findings",
+  "get_user_testing_signals",
+  "get_user_testing_insights",
+  "update_user_testing_scenario",
+  "request_user_testing_insights",
+  "cancel_user_testing_insights",
+  "dismiss_user_testing_finding",
+  "undismiss_user_testing_finding",
+  "set_user_testing_guest_execution",
+  "rotate_user_testing_link",
+  "upsert_user_testing_member",
+  "remove_user_testing_member",
+  "rebind_user_testing_scenario",
+  "list_clients",
+  "get_client",
+  "create_client",
+  "update_client",
+  "set_client_servers",
+  "duplicate_client",
+  "search_registry_directory",
+  "get_registry_directory_server",
+  "list_registry_directory_sources",
+  "list_registry_servers",
+  "list_registry_connections",
+  "install_registry_directory_server",
+  "install_registry_server",
+  "uninstall_registry_server",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -149,58 +341,248 @@ afterEach(() => {
 });
 
 describe("platform tool registration", () => {
-  it("registers show_servers with the MCP Apps UI resource", () => {
+  it("partitions every SDK operation exactly once", () => {
+    const exposed = new Set(
+      PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+    );
+    const excluded = new Set(Object.keys(EXCLUDED_FROM_CATALOG));
+    const all = new Set(ALL_OPERATIONS.map((operation) => operation.name));
+    expect(exposed.size + excluded.size).toBe(all.size);
+    expect([...exposed].filter((name) => excluded.has(name))).toEqual([]);
+    expect(
+      [...all].filter((name) => !exposed.has(name) && !excluded.has(name))
+    ).toEqual([]);
+    expect([...exposed, ...excluded].filter((name) => !all.has(name))).toEqual(
+      []
+    );
+    for (const reason of Object.values(EXCLUDED_FROM_CATALOG)) {
+      expect(reason.trim().length).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it("warns that a spend operation costs money, derived from its risk facet", () => {
+    // MCP has no "this costs money" annotation, so the honest place for it is
+    // the description every client renders. Derived from the operation's own
+    // `risk`, never a second name list here: that list would go stale the
+    // first time an operation is re-classified, silently and in the direction
+    // that drops the warning.
+    const { registrar, registrations } = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+    const byName = new Map(
+      registrations.map((registration) => [registration.name, registration])
+    );
+    for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+      const description = String(
+        byName.get(operation.name)?.config.description
+      );
+      expect(description.includes("COSTS MONEY")).toBe(
+        operation.risk === "spend"
+      );
+    }
+    // The two eval launches are the ones this exists for.
+    expect(String(byName.get("run_eval_suite")?.config.description)).toContain(
+      "COSTS MONEY"
+    );
+    expect(
+      String(byName.get("list_eval_suites")?.config.description)
+    ).not.toContain("COSTS MONEY");
+  });
+
+  it("registers show_servers, with its MCP Apps UI resource only while widgets are on", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerShowServersTool(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerShowServersTool(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
+    // The tool itself registers either way: pausing the widgets must not
+    // remove a tool name hosts and agents already call.
     expect(registrations).toHaveLength(1);
     const registration = registrations[0]!;
     expect(registration.name).toBe("show_servers");
     expect(registration.config.annotations?.readOnlyHint).toBe(true);
-    expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
-    expect(registration.ui?.html).toContain("<html");
+    if (PLATFORM_WIDGETS_ENABLED) {
+      expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
+      expect(registration.ui?.html).toContain("<html");
+    } else {
+      expect(registration.ui).toBeUndefined();
+    }
   });
 
   it("registers the whole operation catalog in order", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     expect(registrations.map((registration) => registration.name)).toEqual([
+      "get_me",
+      "list_models",
+      "list_organizations",
       "list_projects",
+      "create_project",
+      "update_project",
       "list_project_servers",
+      "create_project_server",
+      "get_project_server",
+      "update_project_server",
+      "delete_project_server",
+      "connect_project_server",
+      "get_project_server_connection_status",
+      "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
+      "render_server_widget",
       "list_server_prompts",
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_server_skills",
+      "get_server_skill",
+      "read_server_skill_file",
       "check_host_compatibility",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "get_readiness_report",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",
       "get_eval_suite",
+      "get_eval_run_disclosure",
       "update_eval_suite",
+      "list_eval_suite_revisions",
       "delete_eval_suite",
       "set_eval_suite_schedule",
+      "set_eval_suite_environments",
       "list_eval_cases",
       "get_eval_case",
       "create_eval_case",
+      "create_eval_cases",
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
       "get_eval_run",
+      "get_eval_run_stage_analytics",
+      "get_eval_run_gate",
+      "get_eval_run_route_facts",
+      "get_eval_run_server_facts",
+      "list_eval_suite_stage_analytics",
+      "compare_eval_run",
+      "get_eval_gate_waiver",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
-      "list_chatboxes",
-      "get_chatbox",
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
+      "request_eval_run_judge",
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "get_eval_description_experiment",
+      "list_eval_github_repos",
+      "connect_eval_github_repo",
+      "list_eval_check_repos",
+      "connect_eval_check_repo",
+      "list_project_environments",
+      "get_project_environment",
+      "resolve_project_environment",
+      "ensure_adhoc_environment",
+      "list_sandbox_images",
+      "get_sandbox_image",
+      "list_project_plugins",
+      "get_plugin_version",
+      "list_project_skills",
+      "get_project_skill",
+      "list_scenarios",
+      "get_scenario",
       "list_chat_sessions",
+      "search_sessions",
+      "send_chat_message",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
+      "get_chat_session",
+      "get_chat_session_trace",
+      "get_capabilities",
+      "list_personas",
+      "get_persona",
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      "list_secrets",
+      "get_secret",
+      "delete_secret",
+      "generate_personas",
+      "list_journeys",
+      "get_journey",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "generate_journeys",
+      "list_journey_runs",
+      "get_journey_run",
+      "list_journey_run_sessions",
+      "launch_journey_run",
+      "cancel_journey_run",
+      "list_swarms",
+      "get_swarm",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      "get_swarms_overview",
+      "get_journey_run_scorecard",
+      "list_swarm_findings",
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "get_wave_insights",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      "publish_scenario",
+      "unpublish_scenario",
+      "get_user_testing_scenario",
+      "list_user_testing_sessions",
+      "get_user_testing_session",
+      "get_user_testing_metrics",
+      "get_user_testing_usage",
+      "list_user_testing_findings",
+      "get_user_testing_signals",
+      "get_user_testing_insights",
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
+      "list_clients",
+      "get_client",
+      "create_client",
+      "update_client",
+      "set_client_servers",
+      "duplicate_client",
+      "search_registry_directory",
+      "get_registry_directory_server",
+      "list_registry_directory_sources",
+      "list_registry_servers",
+      "list_registry_connections",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -211,10 +593,18 @@ describe("platform tool registration", () => {
   it("attaches the shared widget bundle to the widget-backed tools only", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
 
     for (const registration of registrations) {
-      const view = WIDGET_TOOLS[registration.name];
+      // Widgets paused ⇒ every tool registers plain, whatever the view map
+      // says. The map itself is still checked below, so it cannot rot while
+      // the switch is off.
+      const view = PLATFORM_WIDGETS_ENABLED
+        ? WIDGET_TOOLS[registration.name]
+        : undefined;
       if (view) {
         expect(registration.ui?.resourceUri).toBe(
           PLATFORM_WIDGET_RESOURCE_URIS[view]
@@ -222,7 +612,9 @@ describe("platform tool registration", () => {
         expect(registration.ui?.html).toContain("<html");
         expect(registration.ui?.callback).toBeTypeOf("function");
       } else {
-        expect(PLAIN_TOOLS).toContain(registration.name);
+        if (PLATFORM_WIDGETS_ENABLED) {
+          expect(PLAIN_TOOLS).toContain(registration.name);
+        }
         expect(registration.ui).toBeUndefined();
       }
     }
@@ -234,40 +626,196 @@ describe("platform tool registration", () => {
   it("marks reads read-only, the eval-run starter as non-destructive write, and call_server_tool as assume-destructive", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+
+    // Writes whose handler is a no-op when the work is already done, so a
+    // client may safely repeat one after a dropped response.
+    const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      "observe_chat_session_browser",
+      // Starting dials a third party's server and can spend; cancelling stops
+      // one. Neither destroys a record, so both annotate as plain writes.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "start_conformance_run",
+      "cancel_readiness_run",
       "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",
       "update_eval_suite",
       "set_eval_suite_schedule",
+      "set_eval_suite_environments",
       "create_eval_case",
+      "create_eval_cases",
       "update_eval_case",
       "generate_eval_cases",
+      // Grading SPENDS but writes only an advisory result onto the run — the
+      // deterministic verdict stays authoritative, so nothing is destroyed.
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
+      "request_eval_run_judge",
+      // Proposing SPENDS one model call and starting SPENDS trials, but both
+      // only ever create rows: the proposal and two replay runs. The source
+      // run, its verdict and the developer's server are untouched.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      // Additive: it creates a repository connection. Its hazard is REACH (a
+      // shared repository, everyone's pull requests), not destruction — the
+      // annotation says write, and the gated tier is what warns.
+      "connect_eval_github_repo",
+      "connect_eval_check_repo",
+      // Content-addressed mint: repeating the same stack reuses one row.
+      // Nothing is destroyed and nothing is named.
+      "ensure_adhoc_environment",
+      "create_project_server",
+      "update_project_server",
+      // Project create/update: both are cheap, both are metadata-only (the
+      // update schema has no `servers` key at all), and neither destroys
+      // anything — so they announce a plain write, not a destructive one.
+      "create_project",
+      "update_project",
+      // Creates a connection request, and possibly a DISABLED server row.
+      // Nothing is destroyed and nothing is enabled without a person
+      // completing the flow, so it is a write rather than a destructive one.
+      "connect_project_server",
+      // Install writes a servers row + provenance. Not a live connection and
+      // not a removal — exposure is the risk, announced as a plain write.
+      "install_registry_directory_server",
+      "install_registry_server",
+      // Swarms authoring. Persists and is editable; nothing here removes
+      // anything, and creating a journey starts nothing.
+      "create_persona",
+      "update_persona",
+      "create_journey",
+      "update_journey",
+      "create_swarm",
+      "update_swarm",
+      // Generation writes NOTHING — it returns drafts — but it spends, so it
+      // cannot claim to be a read.
+      "generate_personas",
+      "generate_journeys",
+      // Insight lifecycle. Requesting spends; dismissing records a judgement;
+      // cancelling stops a generation nobody is waiting for.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      // Launching spends across a fan-out, but it does not destroy anything.
+      "launch_journey_run",
+      // Publishing exposes an environment. Additive: it creates a scenario.
+      "publish_scenario",
+      // User testing writes that change state without removing anything.
+      // `rotate_user_testing_link` and `remove_user_testing_member` are below,
+      // with the destructive set: both take access away from people who have
+      // it, immediately.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "upsert_user_testing_member",
+      "rebind_user_testing_scenario",
+      // Client authoring, the ADDITIVE half. Both mint a new client and change
+      // nothing that exists — which is exactly what separates them from
+      // `update_client` / `set_client_servers` below.
+      "create_client",
+      "duplicate_client",
+    ]);
+    // Destructive AND not safe to repeat — for opposite reasons: the soft
+    // deletes 404 on a retry, the rotation mints another link.
+    const NON_IDEMPOTENT_DESTRUCTIVE = new Set([
+      // Executes the caller's tool before rendering, and nobody can promise
+      // that running a third party's tool twice is safe.
+      "render_server_widget",
+      "delete_persona",
+      // A HARD credential revoke: the row and the ciphertext both go, so a
+      // second call cannot find the row to report the same outcome.
+      "delete_secret",
+      "archive_journey",
+      "archive_swarm",
+      "remove_user_testing_member",
+      "rotate_user_testing_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
+      // `risk: "destructive"` is the CONSERVATIVE reading of an unknowable
+      // effect, not a claim that this removes a specific record. Overclaiming
+      // destructiveness is the safe direction, and it matches what the spec
+      // tells a client to assume when the hints are absent anyway.
+      "render_server_widget",
       "delete_eval_suite",
       "delete_eval_case",
       // Cancelling a run terminates in-flight work, so it announces destructive.
       "cancel_eval_run",
+      "delete_project_server",
+      // The swarm soft deletes: history survives, but the resource leaves the
+      // roster and a second call answers not-found. From the caller's side
+      // that is a removal.
+      "delete_persona",
+      // Revoking a credential. Unlike the soft deletes around it, this one is
+      // genuinely irreversible — the encrypted value is gone.
+      "delete_secret",
+      "archive_journey",
+      "archive_swarm",
+      "cancel_journey_run",
+      // Unpublishing kills every live guest session on the scenario.
+      "unpublish_scenario",
+      // Rotating invalidates every copy of the share link that anyone holds.
+      "rotate_user_testing_link",
+      "remove_user_testing_member",
+      "uninstall_registry_server",
+      // Client edits: DETERMINISTIC OVERWRITES. `destructiveHint: true` here is
+      // not "this is a deletion" — the taxonomy is "removes or invalidates
+      // something that existed", and replacing a live setting (or a server set,
+      // where every omitted server is detached) does exactly that. They stay in
+      // the catalog anyway, behind compare-and-set; `delete_client` does not,
+      // because it removes the client identity itself. They ARE idempotent:
+      // applying the same `set` twice against the same `expectedConfigId`
+      // conflicts on the second call rather than compounding, and applying it
+      // to the already-edited config is a no-op.
+      "update_client",
+      "set_client_servers",
     ]);
 
     for (const registration of registrations) {
-      if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
+      if (IDEMPOTENT_WRITES.has(registration.name)) {
+        // A write that can be repeated. Cancelling an already-cancelled request
+        // is a no-op on the backend, so a client that retries a dropped
+        // response lands on the state the first call produced — and NOT saying
+        // so would leave a lost cancel holding a connection slot.
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        });
+      } else if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
         });
       } else if (DESTRUCTIVE_OPS.has(registration.name)) {
-        // Known-destructive ops (deletes + cancel) announce it explicitly.
+        // Known-destructive ops announce it explicitly. Whether they also
+        // announce IDEMPOTENCY is a separate claim: a soft delete answers
+        // not-found on a second call and a link rotation mints a new link, so
+        // an auto-retrying client would get a spurious error or a broken link.
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: true,
-          idempotentHint: true,
+          idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
         });
-      } else if (registration.name === "call_server_tool") {
+      } else if (
+        registration.name === "call_server_tool" ||
+        // A turn under `toolMode: "auto"` executes arbitrary third-party
+        // tools with the MODEL choosing the arguments, so its effects are no
+        // more knowable than a direct call's. Same absent hints, same reason.
+        registration.name === "send_chat_message" ||
+        registration.name === "drive_chat_session_browser"
+      ) {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec
         // default).
@@ -287,10 +835,10 @@ describe("widget payload tagging", () => {
   it("tags the widget callback's payload in both channels and leaves the plain callback untagged", async () => {
     stubPlatformFetch({
       "/projects": PROJECTS_PAGE,
-      "/chatboxes": {
+      "/scenarios": {
         items: [
           {
-            id: "chatbox-1",
+            id: "scenario-1",
             name: "Support bot",
             serverCount: 0,
             serverNames: [],
@@ -298,21 +846,25 @@ describe("widget payload tagging", () => {
         ],
       },
     });
-    const { registrar, registrations } = fakeRegistrar();
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
-    const registration = registrations.find(
-      (candidate) => candidate.name === "list_chatboxes"
-    )!;
+    // The widget UI is built here rather than read off a registration: the
+    // tagging contract is the same whether or not PLATFORM_WIDGETS_ENABLED is
+    // currently attaching it to the tool.
+    const context = fakeToolContext({ bearerToken: "jwt" });
+    const ui = platformWidgetUi(context, listScenariosOperation, "scenarios");
 
-    const tagged = (await registration.ui!.callback!({})) as ToolResult;
+    const tagged = (await ui.callback({})) as ToolResult;
     expect(tagged.isError).toBeUndefined();
-    expect(tagged.structuredContent?.widget).toBe("chatboxes");
-    expect(JSON.parse(tagged.content[0]!.text).widget).toBe("chatboxes");
+    expect(tagged.structuredContent?.widget).toBe("scenarios");
+    expect(jsonBodyOf(tagged).widget).toBe("scenarios");
 
-    const plain = (await registration.callback({})) as ToolResult;
+    const plain = (await runPlatformOperation(
+      context,
+      listScenariosOperation,
+      {}
+    )) as ToolResult;
     expect(plain.isError).toBeUndefined();
     expect(plain.structuredContent).not.toHaveProperty("widget");
-    expect(JSON.parse(plain.content[0]!.text)).not.toHaveProperty("widget");
+    expect(jsonBodyOf(plain)).not.toHaveProperty("widget");
   });
 
   it("tags show_servers widget payloads with the servers view", async () => {
@@ -320,10 +872,13 @@ describe("widget payload tagging", () => {
       "/projects": PROJECTS_PAGE,
       "/servers": { items: [] },
     });
-    const { registrar, registrations } = fakeRegistrar();
-    registerShowServersTool(registrar, fakeAgent({ bearerToken: "jwt" }));
+    const ui = platformWidgetUi(
+      fakeToolContext({ bearerToken: "jwt" }),
+      showServersOperation,
+      "servers"
+    );
 
-    const result = (await registrations[0]!.ui!.callback!({})) as ToolResult;
+    const result = (await ui.callback({})) as ToolResult;
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.widget).toBe("servers");
@@ -331,10 +886,79 @@ describe("widget payload tagging", () => {
   });
 });
 
+describe("plugin read tools", () => {
+  it("list_project_plugins resolves the project and returns the live plugins", async () => {
+    const pluginsPage = {
+      items: [
+        {
+          id: "plugin-1",
+          projectId: "project-1",
+          name: "linear-tools",
+          displayName: "Linear Tools",
+          enabled: true,
+          activeVersionId: "pv-1",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    };
+    stubPlatformFetch({
+      "/projects": PROJECTS_PAGE,
+      "/projects/project-1/plugins": pluginsPage,
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectPluginsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      project: { id: "project-1" },
+      items: pluginsPage.items,
+    });
+  });
+
+  it("get_plugin_version returns the version detail by raw id", async () => {
+    const version = {
+      id: "pv-1",
+      pluginId: "plugin-1",
+      bundleHash: "hash-abc",
+      status: "ready",
+      componentCounts: {
+        skills: 1,
+        servers: 1,
+        apps: 0,
+        assets: 0,
+        unsupported: 0,
+      },
+      servers: [],
+      skills: [],
+      createdAt: 1,
+    };
+    stubPlatformFetch({ "/plugin-versions/pv-1": version });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      getPluginVersionOperation,
+      { pluginVersionId: "pv-1" }
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    // The envelope: the operation's own payload, plus the permalinks it
+    // derived. `get_plugin_version` resolves no project (it takes a global
+    // pluginVersionId), so it declares no permalink and the array is empty —
+    // present regardless, so a consumer never has to branch on the field
+    // existing.
+    expect(result.structuredContent).toEqual({ ...version, permalinks: [] });
+  });
+});
+
 describe("runPlatformOperation", () => {
   it("returns a tool error when the request has no bearer token", async () => {
     const result = (await runPlatformOperation(
-      fakeAgent(),
+      fakeToolContext(),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -365,7 +989,7 @@ describe("runPlatformOperation", () => {
     );
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -386,7 +1010,7 @@ describe("runPlatformOperation", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as {
@@ -415,13 +1039,60 @@ describe("runPlatformOperation", () => {
     );
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+  });
+
+  it("tells the model when a usage-limit refusal lifts, in both channels", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "RATE_LIMITED",
+            message: "MCPJam's daily budget for this feature is used up.",
+            details: {
+              ok: false,
+              code: "platform_capacity",
+              canTopUp: false,
+              isRetryable: true,
+              retryAfterMs: 3_600_000,
+              error: "not forwarded as a refusal field",
+            },
+          },
+          { status: 429, headers: { "Retry-After": "3600" } }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      "RATE_LIMITED: MCPJam's daily budget for this feature is used up. " +
+        "Retry after 3600s, not sooner. This is a usage limit: topping up credits does not lift it."
+    );
+    expect(result.structuredContent?.error).toEqual({
+      code: "RATE_LIMITED",
+      message: "MCPJam's daily budget for this feature is used up.",
+      refusal: {
+        status: 429,
+        code: "RATE_LIMITED",
+        reason: "platform_capacity",
+        canTopUp: false,
+        retryable: true,
+        retryAfterSeconds: 3600,
+      },
+    });
   });
 
   it("carries the error code in structuredContent so the widget can branch", async () => {
@@ -439,7 +1110,7 @@ describe("runPlatformOperation", () => {
     );
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -449,5 +1120,189 @@ describe("runPlatformOperation", () => {
       code: "NOT_FOUND",
       message: "No accessible MCPJam projects were found.",
     });
+  });
+});
+
+describe("the permalink envelope", () => {
+  it("returns one permalink per row, scoped to the project the op resolved", async () => {
+    // The reproduction, inverted: the caller names the project by NAME, so the
+    // id exists only after the operation resolves it. Before the resolved-scope
+    // receipt an adapter had nothing to scope a link with, and the model
+    // invented `https://app.mcpjam.com/servers` — which opens whichever
+    // project the RECIPIENT last selected.
+    stubPlatformFetch({
+      "/projects": {
+        items: [
+          { id: "proj_demo", name: "Demo", updatedAt: 2 },
+          { id: "proj_default", name: "Default", updatedAt: 1 },
+        ],
+      },
+      "/projects/proj_demo/servers": {
+        items: [
+          { id: "srv_1", name: "Asana", projectId: "proj_demo" },
+          { id: "srv_2", name: "Linear", projectId: "proj_demo" },
+        ],
+      },
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "jwt" }),
+      listProjectServersOperation,
+      { project: "Demo" }
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    const permalinks = (
+      result.structuredContent as { permalinks: Array<Record<string, unknown>> }
+    ).permalinks;
+    expect(permalinks.map((permalink) => permalink.url)).toEqual([
+      "https://staging.example.com/servers/srv_1?project=proj_demo",
+      "https://staging.example.com/servers/srv_2?project=proj_demo",
+    ]);
+    // Correlated by resource, not by array position.
+    expect(permalinks[0]!.resource).toEqual({
+      type: "project_server",
+      id: "srv_1",
+    });
+  });
+
+  it("leads the text fallback with the links, because hosts vary", async () => {
+    stubPlatformFetch({
+      "/projects": { items: [{ id: "proj_demo", name: "Demo", updatedAt: 2 }] },
+      "/projects/proj_demo/servers": {
+        items: [{ id: "srv_1", name: "Asana", projectId: "proj_demo" }],
+      },
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "jwt" }),
+      listProjectServersOperation,
+      {}
+    )) as ToolResult;
+
+    const text = (result.content?.[0] as { text: string }).text;
+    // First, so truncation of a large list cannot cut it.
+    expect(text.startsWith("Open Asana: ")).toBe(true);
+    expect(text).toContain(
+      "https://staging.example.com/servers/srv_1?project=proj_demo"
+    );
+  });
+
+  it("honors a staging app origin rather than the hosted default", async () => {
+    stubPlatformFetch({
+      "/projects": { items: [{ id: "proj_demo", name: "Demo", updatedAt: 2 }] },
+      "/projects/proj_demo/servers": {
+        items: [{ id: "srv_1", name: "Asana", projectId: "proj_demo" }],
+      },
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({
+        bearerToken: "jwt",
+        appOrigin: "http://localhost:6274",
+      }),
+      listProjectServersOperation,
+      {}
+    )) as ToolResult;
+
+    const permalinks = (
+      result.structuredContent as { permalinks: Array<{ url: string }> }
+    ).permalinks;
+    expect(permalinks[0]!.url).toBe(
+      "http://localhost:6274/servers/srv_1?project=proj_demo"
+    );
+  });
+});
+
+/**
+ * What a run launched through this worker calls itself.
+ *
+ * The platform stamps `source: "api"` on everything that arrives over the
+ * public API, so an agent's eval run was indistinguishable from a script's in
+ * the Runs table. The worker declares `mcp` — a display label beside the stamp,
+ * never an authorization input — and names the calling agent when the request
+ * did.
+ */
+describe("the worker's declared launcher", () => {
+  const RUN_LAUNCH_HEADER = "x-mcpjam-launcher";
+
+  /**
+   * A launch makes three requests — resolve the project, resolve the suite,
+   * then POST the run — so the stub answers by path. Returning one shape for
+   * all three would abort at the first resolution and never reach the call
+   * whose headers these tests are about.
+   */
+  function captureHeaders(): {
+    launchHeaders: () => Record<string, string> | undefined;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    let launch: Record<string, string> | undefined;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      const headers = { ...((init?.headers ?? {}) as Record<string, string>) };
+      if (path.endsWith("/eval-runs") && init?.method === "POST") {
+        launch = headers;
+        return Response.json({ runId: "run_1", suiteId: "suite_1" });
+      }
+      if (path.endsWith("/eval-suites")) {
+        return Response.json({
+          items: [{ id: "suite_1", name: "s1", projectId: "proj_1" }],
+        });
+      }
+      return Response.json({
+        items: [{ id: "proj_1", name: "p1", updatedAt: 1 }],
+      });
+    });
+    return { launchHeaders: () => launch, fetchMock };
+  }
+
+  it("declares mcp, and names the agent from the request's user-agent", async () => {
+    const { launchHeaders, fetchMock } = captureHeaders();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runPlatformOperation(
+      fakeToolContext({
+        bearerToken: "user-jwt",
+        callerUserAgent: "claude-code/1.2.3",
+      }),
+      runEvalSuiteOperation,
+      { project: "p1", suite: "s1" } as never
+    );
+
+    const launch = launchHeaders();
+    expect(launch).toBeDefined();
+    expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({
+      kind: "mcp",
+      client: "claude-code/1.2.3",
+    });
+  });
+
+  it("still declares mcp when the request named no agent", async () => {
+    const { launchHeaders, fetchMock } = captureHeaders();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      runEvalSuiteOperation,
+      { project: "p1", suite: "s1" } as never
+    );
+
+    const launch = launchHeaders();
+    // A missing user-agent leaves the launcher UNNAMED, never guessed: the
+    // kind is what the worker knows for itself.
+    expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({ kind: "mcp" });
+  });
+
+  it("is not a field an agent can set through the tool's own input", async () => {
+    // An operation's `inputSchema` is exposed verbatim as the MCP tool's input.
+    // A launcher field there would let the agent whose run it is pick its own
+    // badge — which is why this is a client option instead.
+    const shape = (
+      runEvalSuiteOperation.inputSchema as unknown as {
+        shape?: Record<string, unknown>;
+      }
+    ).shape;
+    expect(shape).toBeDefined();
+    expect(Object.keys(shape!)).not.toContain("launcher");
   });
 });

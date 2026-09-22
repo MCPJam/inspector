@@ -2,6 +2,7 @@ import {
   AlignLeft,
   Code2,
   Hammer,
+  ClipboardCheck,
   ListChecks,
   MessageSquare,
   Monitor,
@@ -28,6 +29,9 @@ export function TraceViewModeTabs({
   showStepsTab = false,
   stepsActive = false,
   onSelectSteps,
+  showScorecardTab = false,
+  scorecardActive = false,
+  onSelectScorecard,
   showBrowserTab = false,
   browserActive = false,
   onSelectBrowser,
@@ -41,18 +45,23 @@ export function TraceViewModeTabs({
   /** Show the step-aligned "Steps" tab when the case is authored as steps
    *  (interact/assert) — the replay mirror of the left-pane step list. */
   showStepsTab?: boolean;
+  /** Show the "Scorecard" tab — the authored scorers with this trial's result
+   *  beside each. Rides its own props for the same reason Steps does. */
+  showScorecardTab?: boolean;
+  scorecardActive?: boolean;
+  onSelectScorecard?: () => void;
   /** Highlight the Steps tab (its active mode lives outside the shared
    *  `TraceViewMode` union, in the trace viewer's local state). */
   stepsActive?: boolean;
   /** Fired when the Steps tab is selected. */
   onSelectSteps?: () => void;
-  /** PR 7: show the "App" tab when the iteration has browser-rendered
-   *  MCP App artifacts (render observations / Computer Use steps). */
+  /** Show the "Replay" tab when the run has browser-rendered MCP App artifacts
+   *  (render observations, Computer Use steps, or a replay video). */
   showBrowserTab?: boolean;
-  /** PR 7: highlight the App tab (the active mode lives outside the shared
+  /** Highlight the Replay tab (the active mode lives outside the shared
    *  `TraceViewMode` union, in the trace viewer's local state). */
   browserActive?: boolean;
-  /** PR 7: fired when the App tab is selected. */
+  /** Fired when the Replay tab is selected. */
   onSelectBrowser?: () => void;
   /** `fullWidth`: equal-width segments across the container (e.g. chat trace header). */
   layout?: "default" | "fullWidth";
@@ -64,7 +73,7 @@ export function TraceViewModeTabs({
   const segment = appearance === "segment";
   // When the App or Steps tab is active no standard tab is highlighted.
   const standardActive = (m: TraceViewMode) =>
-    !browserActive && !stepsActive && mode === m;
+    !browserActive && !stepsActive && !scorecardActive && mode === m;
 
   const handleModeChange = (nextMode: TraceViewMode) => {
     track("trace_view_mode_changed", {
@@ -83,7 +92,7 @@ export function TraceViewModeTabs({
           ? "bg-background font-medium text-foreground ring-1 ring-inset ring-border/60"
           : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
         : active
-        ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+        ? "bg-accent font-medium text-accent-foreground"
         : "text-muted-foreground hover:text-foreground"
     );
 
@@ -104,6 +113,25 @@ export function TraceViewModeTabs({
     >
       <ListChecks className="h-3 w-3 shrink-0" />
       <span className="truncate">Steps</span>
+    </button>
+  ) : null;
+  const scorecardTab = showScorecardTab ? (
+    <button
+      key="scorecard"
+      type="button"
+      onClick={() => {
+        track("trace_view_mode_changed", {
+          location: "trace_view_mode_tabs",
+          mode: "scorecard",
+        });
+        onSelectScorecard?.();
+      }}
+      className={tabClass(scorecardActive)}
+      title="Every evaluator this case carries, and what happened to it"
+      data-testid="trace-viewer-scorecard-tab"
+    >
+      <ClipboardCheck className="h-3 w-3 shrink-0" />
+      <span className="truncate">Scorecard</span>
     </button>
   ) : null;
   const chatTab = (
@@ -155,11 +183,11 @@ export function TraceViewModeTabs({
         onSelectBrowser?.();
       }}
       className={tabClass(browserActive)}
-      title="MCP App replay, render checks & Computer Use"
+      title="Replay the recorded app interactions — video, filmstrip & render checks"
       data-testid="trace-viewer-browser-tab"
     >
       <Monitor className="h-3 w-3 shrink-0" />
-      <span className="truncate">App</span>
+      <span className="truncate">Replay</span>
     </button>
   ) : null;
   const rawTab = (
@@ -177,10 +205,27 @@ export function TraceViewModeTabs({
 
   // Evals (default layout) lead with Steps (when present) then Chat — Steps is
   // the step-aligned replay default for authored-step cases. Chat / playground /
-  // compare surfaces (fullWidth) never show Steps and keep Trace-first ordering.
+  // compare surfaces (fullWidth) never show Steps and lead with Chat (the
+  // default-selected view), then Trace, then Raw (PUR-14) — all three are views
+  // onto the same backend object. `chatTab` sits first in the array so Chat
+  // leads even if a fullWidth consumer ever enables the Tool Calls tab; the
+  // remaining tabs mirror the default layout's order minus Steps.
+  // With a Scorecard, it leads and Steps moves after Trace: the scorecard
+  // answers "did this case's scorers hold", which is the question, and Steps
+  // answers "in what order did it run", which is the follow-up.
   const tabs = fullWidth
-    ? [toolsTab, timelineTab, chatTab, browserTab, rawTab]
-    : [stepsTab, chatTab, toolsTab, timelineTab, browserTab, rawTab];
+    ? [chatTab, toolsTab, timelineTab, browserTab, rawTab]
+    : showScorecardTab
+      ? [
+          scorecardTab,
+          chatTab,
+          toolsTab,
+          timelineTab,
+          stepsTab,
+          browserTab,
+          rawTab,
+        ]
+      : [stepsTab, chatTab, toolsTab, timelineTab, browserTab, rawTab];
 
   return (
     <div
@@ -232,6 +277,7 @@ export function ChatTraceViewModeHeaderBar({
       <div className="px-4 py-2.5">
         <TraceViewModeTabs
           layout="fullWidth"
+          appearance="segment"
           mode={mode}
           onModeChange={onModeChange}
           showToolsTab={false}

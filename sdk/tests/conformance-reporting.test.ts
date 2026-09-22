@@ -12,6 +12,7 @@ import type {
   MCPConformanceResult,
   MCPConformanceSuiteResult,
 } from "../src/mcp-conformance/index.js";
+import type { MCPTasksConformanceResult } from "../src/tasks-conformance/index.js";
 import type {
   ConformanceResult as OAuthConformanceResult,
   OAuthConformanceSuiteResult,
@@ -47,6 +48,7 @@ function createProtocolResult(
     ],
     summary: "0/2 checks passed, 1 failed, 1 skipped",
     durationMs: 25,
+    readiness: [],
     categorySummary: {
       core: { total: 1, passed: 0, failed: 1, skipped: 0 },
       protocol: { total: 0, passed: 0, failed: 0, skipped: 0 },
@@ -231,6 +233,144 @@ describe("toConformanceReport", () => {
   });
 });
 
+describe("report outcome fields", () => {
+  it("carries a single run's outcome and incompleteReason through", () => {
+    const incomplete = toConformanceReport(
+      createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        incompleteReason: "1 of 2 selected check(s) could not run",
+      }),
+    );
+
+    expect(incomplete.outcome).toBe("incomplete");
+    expect(incomplete.incompleteReason).toMatch(/could not run/);
+
+    const failed = toConformanceReport(
+      createProtocolResult({ passed: false, outcome: "failed" }),
+    );
+    expect(failed.outcome).toBe("failed");
+    expect(failed.incompleteReason).toBeUndefined();
+  });
+
+  it("derives a suite outcome as the worst of its runs, failure outranking incomplete", () => {
+    const suite = createProtocolSuiteResult();
+    suite.results = [
+      {
+        ...createProtocolResult({ passed: true, checks: [], outcome: "passed" }),
+        label: "Run 1",
+      },
+      {
+        ...createProtocolResult({
+          passed: false,
+          outcome: "incomplete",
+          incompleteReason: "probe unavailable",
+        }),
+        label: "Run 2",
+      },
+    ];
+
+    const incompleteSuite = toConformanceReport(suite);
+    expect(incompleteSuite.outcome).toBe("incomplete");
+    expect(incompleteSuite.incompleteReason).toBe("probe unavailable");
+
+    suite.results.push({
+      ...createProtocolResult({ passed: false, outcome: "failed" }),
+      label: "Run 3",
+    });
+    expect(toConformanceReport(suite).outcome).toBe("failed");
+  });
+
+  it("omits outcome for OAuth's not-applicable, which the report union does not carry", () => {
+    const report = toConformanceReport(
+      createOAuthResult({ passed: true, outcome: "not-applicable" }),
+    );
+
+    // Consumers keep the documented fallback: passed ? "passed" : "failed".
+    expect(report.outcome).toBeUndefined();
+    expect(report.passed).toBe(true);
+  });
+});
+
+describe("report score", () => {
+  it("scores every report kind, pooling suites over their runs", () => {
+    const single = toConformanceReport(
+      createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+        readiness: [
+          {
+            id: "readiness-metadata-quality",
+            title: "Metadata Quality",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+          },
+        ],
+      } as Partial<MCPConformanceResult>),
+    );
+
+    // 1/1 applicable passed, one SHOULD advisory: 95 + (5 − 2) = 98.
+    expect(single.score?.score).toBe(98);
+    expect(single.score?.applicable).toBe(1);
+
+    const suite = toConformanceReport(createProtocolSuiteResult());
+    expect(suite.score).toBeDefined();
+    expect(suite.score?.failed).toBeGreaterThan(0);
+  });
+
+  it("emits the score as properties inside each <testsuite>, never under the root", () => {
+    const xml = renderConformanceReportJUnitXml(
+      toConformanceReport(createAppsResult()),
+    );
+
+    expect(xml).toContain('<property name="mcpjam.conformance.score" value="100"/>');
+    expect(xml).toContain('name="mcpjam.conformance.summary"');
+    expect(xml).toContain('tests="1" failures="0" skipped="0"');
+    // JUnit XSDs (Jenkins, Ant, Surefire) place <properties> under
+    // <testsuite>; a root-level block is schema-invalid.
+    expect(xml).toMatch(/<testsuite [^>]*>\n    <properties>/);
+    expect(xml).not.toMatch(/<testsuites [^>]*>\n\s*<properties>/);
+  });
+
+  it("does not fail an OAuth suite whose only non-passing flow is not-applicable", () => {
+    const suite = createOAuthSuiteResult();
+    suite.passed = true;
+    suite.results = [
+      { ...createOAuthResult({ passed: true, outcome: "passed", steps: [] }), label: "dcr" },
+      {
+        ...createOAuthResult({ passed: false, outcome: "not-applicable", steps: [] }),
+        label: "no-auth",
+      },
+    ];
+
+    const report = toConformanceReport(suite);
+    // A no-auth flow is not a pass, but authorization is OPTIONAL — it must
+    // not drag the suite verdict to failed.
+    expect(report.outcome).toBe("passed");
+  });
+
+  it("reports not-scored for an OAuth run against a server without auth", () => {
+    const report = toConformanceReport(
+      createOAuthResult({ passed: true, outcome: "not-applicable" }),
+    );
+    expect(report.score?.score).toBeNull();
+
+    const xml = renderConformanceReportJUnitXml(report);
+    expect(xml).toContain(
+      '<property name="mcpjam.conformance.score" value="not-scored"/>',
+    );
+  });
+});
+
 describe("renderConformanceReportJson", () => {
   it("redacts sensitive values", () => {
     const report = toConformanceReport(createOAuthResult());
@@ -260,5 +400,82 @@ describe("renderConformanceReportJUnitXml", () => {
     expect(xml).toContain('testsuite name="Run 2"');
     expect(xml).toContain('<failure message="Ping failed">');
     expect(xml).toContain("<skipped/>");
+  });
+
+  /**
+   * The exit code already refuses to fail on a pending check. If the JUnit
+   * renderer still emitted `<failure>` for one, the CI job would go red anyway
+   * — reopening the retroactive-failure hole the frozen profile exists to
+   * close, on the one channel most teams actually gate on.
+   */
+  it("renders a FAILING pending check as skipped, and excludes it from the failure tallies", () => {
+    const result: MCPConformanceResult = {
+      ...createProtocolResult(),
+      checks: [
+        {
+          id: "wire-schema-valid",
+          category: "protocol",
+          title: "Wire Schema Valid",
+          description: "Every observed message validates against the schema.",
+          status: "failed",
+          durationMs: 3,
+          error: { message: "ListToolsResult: must have required property 'ttlMs'" },
+        },
+      ],
+      profile: {
+        profileId: "mcp-protocol",
+        profileVersion: "2026-08-21.1",
+        manifestDigest: "0".repeat(64),
+        checkerVersion: "0.0.0-test",
+        pendingCheckIds: ["wire-schema-valid"],
+      },
+    };
+
+    const xml = renderConformanceReportJUnitXml(toConformanceReport(result));
+
+    expect(xml).not.toContain("<failure");
+    expect(xml).toContain("unscored by the active profile");
+    expect(xml).toContain('failures="0"');
+  });
+
+  /**
+   * The same hole, on the TASKS suite. Tasks cases go through
+   * `reportCaseFromCheck`, which never read `pendingCheckIds` — so the fix
+   * above closed the protocol path and left this one open, and a failing
+   * pending Tasks check still turned the CI job red against a green exit code.
+   */
+  it("renders a FAILING pending TASKS check as skipped too", () => {
+    const result: MCPTasksConformanceResult = {
+      passed: false,
+      outcome: "failed",
+      target: "https://mcp.example.com/mcp",
+      durationMs: 12,
+      summary: "1 failed",
+      checks: [
+        {
+          id: "tasks-status-payload-shape",
+          category: "lifecycle",
+          title: "Task status payloads carry their required members",
+          description: "Each observed status carries what the extension states.",
+          status: "failed",
+          durationMs: 3,
+          error: { message: "completed: must carry the `result` field" },
+        },
+      ],
+      categorySummary: {},
+      discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
+      profile: {
+        profileId: "mcp-tasks",
+        profileVersion: "2026-08-22.1",
+        manifestDigest: "0".repeat(64),
+        checkerVersion: "0.0.0-test",
+        pendingCheckIds: ["tasks-status-payload-shape"],
+      },
+    } as unknown as MCPTasksConformanceResult;
+
+    const xml = renderConformanceReportJUnitXml(toConformanceReport(result));
+
+    expect(xml).not.toContain("<failure");
+    expect(xml).toContain('failures="0"');
   });
 });

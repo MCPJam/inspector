@@ -10,6 +10,7 @@ import {
   chatHistoryAction,
   createChatHistoryWidgetSnapshot,
   generateWidgetSnapshotUploadUrl,
+  getChatHistoryDetail,
   listChatHistory,
 } from "../chat-history-api";
 
@@ -76,6 +77,26 @@ describe("chat history API in non-hosted mode", () => {
 
     const headers = mockAuthFetch.mock.calls[0]?.[1]?.headers as Headers;
     expect(headers.get("Authorization")).toBe("Bearer explicit-token");
+  });
+
+  it("forwards an abort signal when reading history detail", async () => {
+    mockAuthFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, session: null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const controller = new AbortController();
+
+    await getChatHistoryDetail(
+      { chatSessionId: "chat-session-1" },
+      { signal: controller.signal },
+    );
+
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/chat-history/detail?chatSessionId=chat-session-1",
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 
   it("does not preempt authFetch's bearer when generating a widget snapshot upload URL", async () => {

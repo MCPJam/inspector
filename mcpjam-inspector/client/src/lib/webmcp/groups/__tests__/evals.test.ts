@@ -24,6 +24,7 @@ const EVALS_TOOL_NAMES = [
   "ui_run_eval_suite",
   "ui_cancel_eval_run",
   "ui_generate_eval_tests",
+  "ui_edit_eval_case_draft",
   "ui_delete_eval_suite",
 ];
 

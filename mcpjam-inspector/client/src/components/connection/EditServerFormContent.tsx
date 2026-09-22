@@ -1,5 +1,5 @@
 import { Input } from "@mcpjam/design-system/input";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -14,7 +14,14 @@ import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeContro
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
-import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import {
+  fetchServerSecretKeys,
+  fetchServerSecrets,
+} from "@/lib/apis/server-secrets-api";
+import {
+  credentialClearAcknowledgementKey,
+  type PendingCredentialClear,
+} from "@/lib/credential-origin";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -32,6 +39,15 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /**
+   * The active host's default MCP wire pin, resolved PROP-FIRST by the modal
+   * (`hostDefaultMcpProtocolVersion ?? useActiveMcpProfile()`). Forwarded to
+   * AuthenticationSection so the "auto" OAuth plan preview resolves against the
+   * SAME host fallback the submit path bakes with — otherwise the preview
+   * (context) and the saved era (host default) could disagree when the modal
+   * renders outside an ActiveMcpProfileProvider.
+   */
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -43,6 +59,7 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
@@ -55,6 +72,50 @@ export function EditServerFormContent({
   );
   const [bearerRevealError, setBearerRevealError] = useState<string | null>(
     null
+  );
+
+  // Names of the stored env vars / headers, so the masked rows can say which
+  // ones are set. Held here rather than in form state: they are labels, not
+  // values, and rows built from them must never be saved back over the
+  // secrets they stand for.
+  const [storedEnvKeys, setStoredEnvKeys] = useState<string[]>([]);
+  const [storedHeaderNames, setStoredHeaderNames] = useState<string[]>([]);
+
+  const loadStoredKeys = useCallback(async () => {
+    if (!projectId || !hostedServerId) return;
+    try {
+      const { envKeys, headerKeys } = await fetchServerSecretKeys({
+        projectId,
+        serverId: hostedServerId,
+      });
+      setStoredEnvKeys(envKeys);
+      setStoredHeaderNames(headerKeys);
+    } catch {
+      // Leaves the rows unnamed: the section falls back to the single masked
+      // field, which doubles as the retry for the values themselves.
+    }
+  }, [hostedServerId, projectId]);
+
+  // A stored Authorization header only stops being a header row when the
+  // reveal would route it into the bearer field, and `revealStoredHeaders`
+  // does that for a bearer server whose stored Authorization actually carries
+  // a `Bearer ` token — which is exactly what `hasStoredBearerToken` flags.
+  // An OAuth/none server can hold an Authorization header of its own (Basic
+  // auth, say); dropping that from the names would hide a row that reappears
+  // the moment the values land. Derived rather than filtered at fetch time, so
+  // changing the auth type re-answers the question without another request.
+  const authorizationBecomesBearerToken =
+    formState.authType === "bearer" && formState.hasStoredBearerToken;
+  const storedHeaderKeys = useMemo(
+    () =>
+      storedHeaderNames.filter(
+        (key) =>
+          !(
+            authorizationBecomesBearerToken &&
+            key.trim().toLowerCase() === "authorization"
+          )
+      ),
+    [storedHeaderNames, authorizationBecomesBearerToken]
   );
 
   const revealSecrets = useCallback(
@@ -115,7 +176,6 @@ export function EditServerFormContent({
           onChange={(e) => formState.setName(e.target.value)}
           placeholder="my-mcp-server"
           required
-          className="h-10"
         />
         {isDuplicateServerName && (
           <p className="text-xs text-destructive">
@@ -209,6 +269,14 @@ export function EditServerFormContent({
         )}
       </div>
 
+      {formState.pendingCredentialClear && (
+        <CredentialClearWarning
+          pending={formState.pendingCredentialClear}
+          acknowledgedFor={formState.credentialClearAcknowledgedFor}
+          onAcknowledge={formState.acknowledgeCredentialClear}
+        />
+      )}
+
       {formState.type === "http" && (
         <div className="space-y-3 pt-2">
           <AuthenticationSection
@@ -229,8 +297,15 @@ export function EditServerFormContent({
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
+            serverMcpProtocolVersion={mcpProtocolVersionOverride}
+            hostDefaultMcpProtocolVersion={hostDefaultMcpProtocolVersion}
             registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
+            xaaClientAuth={formState.xaaClientAuth}
+            onXaaClientAuthChange={formState.setXaaClientAuth}
+            confidentialCimdStatus={formState.confidentialCimdCapability.status}
+            confidentialCimdBlockReason={formState.confidentialCimdBlockReason}
+            onRetryConfidentialCimd={formState.confidentialCimdCapability.retry}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);
@@ -275,79 +350,173 @@ export function EditServerFormContent({
             onXaaAllowPathScopedIssuerChange={
               formState.setXaaAllowPathScopedIssuer
             }
+            oauthAllowPathScopedIssuer={formState.oauthAllowPathScopedIssuer}
+            onOauthAllowPathScopedIssuerChange={
+              formState.setOauthAllowPathScopedIssuer
+            }
             xaaSubject={formState.xaaSubject}
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}
             onXaaEmailChange={formState.setXaaEmail}
             autoSelectsXaa={formState.autoSelectsXaa}
             projectDefaultIdentity={projectXaaDefaultIdentity}
+            xaaDcrClientId={formState.xaaDcrClientId}
+            xaaDcrTokenEndpointAuthMethod={
+              formState.xaaDcrTokenEndpointAuthMethod
+            }
+            xaaDcrIssuer={formState.xaaDcrIssuer}
+            xaaDcrClientSecretExpiresAt={formState.xaaDcrClientSecretExpiresAt}
+            xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
+            xaaDcrStatus={formState.xaaDcrStatus}
           />
         </div>
       )}
 
-      {formState.type === "stdio" && (
-        <EnvVarsSection
-          envVars={formState.envVars}
-          showEnvVars={formState.showEnvVars}
-          onToggle={() => formState.setShowEnvVars(!formState.showEnvVars)}
-          onAdd={formState.addEnvVar}
-          onRemove={formState.removeEnvVar}
-          onUpdate={formState.updateEnvVar}
-          hasStoredEnv={formState.hasStoredEnv}
-          isRevealing={revealingEnv}
-          revealError={envRevealError}
-          onReveal={() => revealSecrets("env")}
-        />
-      )}
+      {/* Optional sections. The rule separates the required identity /
+          transport fields above from the two disclosures, which otherwise sit
+          on the same rhythm and read as more required fields. */}
+      <div className="space-y-4 border-t border-border/60 pt-5">
+        {formState.type === "stdio" && (
+          <EnvVarsSection
+            envVars={formState.envVars}
+            showEnvVars={formState.showEnvVars}
+            onToggle={() => formState.setShowEnvVars(!formState.showEnvVars)}
+            onAdd={formState.addEnvVar}
+            onRemove={formState.removeEnvVar}
+            onUpdate={formState.updateEnvVar}
+            hasStoredEnv={formState.hasStoredEnv}
+            isRevealing={revealingEnv}
+            revealError={envRevealError}
+            onReveal={() => revealSecrets("env")}
+            storedEnvKeys={storedEnvKeys}
+            onRequestStoredKeys={loadStoredKeys}
+            maskingKey={hostedServerId}
+          />
+        )}
 
-      <AdvancedConnectionSettingsSection
-        showConfiguration={formState.showConfiguration}
-        onToggle={() =>
-          formState.setShowConfiguration(!formState.showConfiguration)
-        }
-        requestTimeout={formState.requestTimeout}
-        onRequestTimeoutChange={formState.setRequestTimeout}
-        inheritedRequestTimeout={formState.inheritedRequestTimeout}
-        clientCapabilitiesOverrideEnabled={
-          formState.clientCapabilitiesOverrideEnabled
-        }
-        onClientCapabilitiesOverrideEnabledChange={(enabled) => {
-          formState.setClientCapabilitiesOverrideEnabled(enabled);
-          if (!enabled) {
-            formState.setClientCapabilitiesOverrideError(null);
+        <AdvancedConnectionSettingsSection
+          showConfiguration={formState.showConfiguration}
+          onToggle={() =>
+            formState.setShowConfiguration(!formState.showConfiguration)
           }
-        }}
-        clientCapabilitiesOverrideText={
-          formState.clientCapabilitiesOverrideText
-        }
-        onClientCapabilitiesOverrideTextChange={
-          formState.setClientCapabilitiesOverrideText
-        }
-        clientCapabilitiesOverrideError={
-          formState.clientCapabilitiesOverrideError
-        }
-        /* Render the row regardless of whether a setter is wired. When
-           `onMcpProtocolVersionOverrideChange` is absent (no project/server
-           id, or project config still loading), the select disables but
-           remains visible for discoverability. */
-        showMcpProtocolVersionOverride
-        mcpProtocolVersionOverride={mcpProtocolVersionOverride}
-        onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
-        transportKind={formState.type}
-        {...(formState.type === "http"
-          ? {
-              customHeaders: formState.customHeaders,
-              onAddHeader: formState.addCustomHeader,
-              onRemoveHeader: formState.removeCustomHeader,
-              onUpdateHeader: formState.updateCustomHeader,
-              hasStoredHeaders: formState.hasStoredHeaders,
-              isRevealingHeaders: revealingHeaders,
-              headersRevealError,
-              onRevealHeaders: () => revealSecrets("headers"),
-              headersWarning: formState.oauthAuthorizationHeaderWarning,
+          requestTimeout={formState.requestTimeout}
+          onRequestTimeoutChange={formState.setRequestTimeout}
+          inheritedRequestTimeout={formState.inheritedRequestTimeout}
+          clientCapabilitiesOverrideEnabled={
+            formState.clientCapabilitiesOverrideEnabled
+          }
+          onClientCapabilitiesOverrideEnabledChange={(enabled) => {
+            formState.setClientCapabilitiesOverrideEnabled(enabled);
+            if (!enabled) {
+              formState.setClientCapabilitiesOverrideError(null);
             }
-          : {})}
-      />
+          }}
+          clientCapabilitiesOverrideText={
+            formState.clientCapabilitiesOverrideText
+          }
+          onClientCapabilitiesOverrideTextChange={
+            formState.setClientCapabilitiesOverrideText
+          }
+          clientCapabilitiesOverrideError={
+            formState.clientCapabilitiesOverrideError
+          }
+          /* Render the row regardless of whether a setter is wired. When
+             `onMcpProtocolVersionOverrideChange` is absent (no project/server
+             id, or project config still loading), the select disables but
+             remains visible for discoverability. */
+          showMcpProtocolVersionOverride
+          mcpProtocolVersionOverride={mcpProtocolVersionOverride}
+          onMcpProtocolVersionOverrideChange={
+            onMcpProtocolVersionOverrideChange
+          }
+          transportKind={formState.type}
+          {...(formState.type === "http"
+            ? {
+                customHeaders: formState.customHeaders,
+                onAddHeader: formState.addCustomHeader,
+                onRemoveHeader: formState.removeCustomHeader,
+                onUpdateHeader: formState.updateCustomHeader,
+                hasStoredHeaders: formState.hasStoredHeaders,
+                isRevealingHeaders: revealingHeaders,
+                headersRevealError,
+                onRevealHeaders: () => revealSecrets("headers"),
+                storedHeaderKeys,
+                onRequestStoredKeys: loadStoredKeys,
+                maskingKey: hostedServerId,
+                headersWarning: formState.oauthAuthorizationHeaderWarning,
+              }
+            : {})}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What saving this edit will do to the server's stored credentials (MJ-003).
+ *
+ * Two destinations move: an http server's URL across the origin its
+ * credentials were entered for, and a stdio server's command. The backend
+ * clears the stored credentials in both cases, so both get the same warning
+ * and the same acknowledgement — a save that destroys a credential somebody
+ * else entered should not happen on one click.
+ *
+ * The acknowledgement is keyed to the destination, so typing a different one
+ * after ticking the box re-arms the warning.
+ */
+function CredentialClearWarning({
+  pending,
+  acknowledgedFor,
+  onAcknowledge,
+}: {
+  pending: PendingCredentialClear;
+  acknowledgedFor: string | null;
+  onAcknowledge: (key: string | null) => void;
+}) {
+  const key = credentialClearAcknowledgementKey(pending);
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs space-y-2"
+    >
+      <p className="font-medium">
+        {pending.kind === "url-origin"
+          ? "Saving this URL will clear any saved credentials"
+          : "Saving this command will clear this server's saved credentials"}
+      </p>
+      {pending.kind === "url-origin" ? (
+        <p className="text-muted-foreground">
+          This server points at{" "}
+          <span className="font-mono">{pending.previousOrigin}</span>. Everything
+          saved against that host is cleared when it moves: request headers,
+          environment variables, the bearer token, any OAuth access and refresh
+          tokens, and the OAuth client secret. Save it pointing at{" "}
+          <span className="font-mono">{pending.nextOrigin}</span> and all of them
+          go, including credentials other project members added that you cannot
+          see. Someone has to enter them again before this server connects.
+        </p>
+      ) : (
+        <p className="text-muted-foreground">
+          This server runs{" "}
+          <span className="font-mono">{pending.previousCommand}</span>. Its saved
+          environment variables are held for that command and are cleared when it
+          changes. Save it running{" "}
+          <span className="font-mono">{pending.nextCommand}</span> and they go,
+          including values other project members added that you cannot see.
+          Someone has to enter them again before this server connects.
+        </p>
+      )}
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={acknowledgedFor === key}
+          onChange={(e) => onAcknowledge(e.target.checked ? key : null)}
+        />
+        <span>
+          I understand the saved credentials for this server will be cleared.
+        </span>
+      </label>
     </div>
   );
 }

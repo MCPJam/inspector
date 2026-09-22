@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
-import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   mapRuntimeError,
-  webError,
+  webErrorFromRoute,
   projectServerSchema,
   withEphemeralConnection,
   handleRoute,
@@ -23,7 +23,16 @@ import {
   exportSingleServerForInspection,
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+  assertAllowedHostedTargetUrl,
+} from "../../utils/hosted-egress-guard.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { redactHostedDoctorTransportDetail } from "../../utils/hosted-doctor-redaction.js";
+import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
+import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
@@ -103,16 +112,45 @@ servers.post("/check-oauth", async (c) =>
       body.serverId,
       {
         accessScope: body.accessScope,
-        chatboxId: body.chatboxId,
+        scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
       }
     );
-    return {
-      useOAuth: auth.serverConfig.useOAuth ?? false,
-      serverUrl: auth.serverConfig.url ?? null,
-    };
+    return buildOAuthRequirementProjection(auth.serverConfig);
   })
 );
+
+/**
+ * What a caller asking "does this server need authorizing before I can use
+ * it?" must read.
+ *
+ * `useOAuth` is a DERIVED COMPAT MIRROR of the canonical `authMethod`
+ * (mcpjam-backend `deriveAuthBooleans`): an `auto` row that is not
+ * XAA-configured is stored with `useOAuth: true` even though `auto` resolves
+ * to the discover ladder — connect unauthenticated, and escalate only when the
+ * target actually answers 401. So the mirror answers "could this server ever
+ * use OAuth", never "must someone authorize it first", and a caller that gates
+ * on it demands consent from servers that have no authorization server at all.
+ * `requiresAuthorization` is that second question, resolved through the shared
+ * connect-time predicate; the mirror stays on the response for existing
+ * consumers.
+ */
+export function buildOAuthRequirementProjection(serverConfig: {
+  useOAuth?: boolean;
+  url?: string;
+  authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+  useXaa?: boolean;
+  authServerMode?: "mcpjam" | "own";
+  clientId?: string;
+}) {
+  const effectiveAuthMethod = resolveEffectiveAuthMethod(serverConfig);
+  return {
+    useOAuth: serverConfig.useOAuth ?? false,
+    requiresAuthorization: effectiveAuthMethod === "oauth",
+    effectiveAuthMethod,
+    serverUrl: serverConfig.url ?? null,
+  };
+}
 
 servers.post("/doctor", async (c) => {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -131,18 +169,34 @@ servers.post("/doctor", async (c) => {
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });
 
 export default servers;
+
+/**
+ * Refuse a doctor target the hosted inspector must not dial, mapping the two
+ * guard outcomes the way the conformance routes do: a blocked address is the
+ * caller's problem (400), a resolver failure is ours (503).
+ */
+async function assertHostedDoctorTarget(url: string): Promise<void> {
+  try {
+    await assertAllowedHostedTargetUrl(url, "Server URL");
+  } catch (error) {
+    if (error instanceof BlockedEgressTargetError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    }
+    if (error instanceof EgressResolutionError) {
+      throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, error.message);
+    }
+    throw error;
+  }
+}
 
 export async function runHostedDoctor(
   c: any,
@@ -159,7 +213,7 @@ export async function runHostedDoctor(
     body.serverId,
     {
       accessScope: body.accessScope,
-      chatboxId: body.chatboxId,
+      scenarioId: body.scenarioId,
       accessVersion: body.accessVersion,
     }
   );
@@ -171,8 +225,30 @@ export async function runHostedDoctor(
     body.clientCapabilities
   );
 
-  return runServerDoctor({
-    config,
+  // Judge the target once, before either leg runs — the same check the
+  // conformance routes make, and a no-op outside hosted mode. This is the
+  // caller-facing refusal: a stored URL that is already a private address gets
+  // a 400 naming the host they typed, rather than a transport error.
+  await assertHostedDoctorTarget(config.url);
+
+  // THE DOCTOR'S TWO LEGS, NOW ON ONE TRANSPORT.
+  //
+  // `runServerDoctor` probes over `fetchFn`, records a failed probe, and
+  // connects anyway — and its connection goes through `withEphemeralClient`,
+  // which threads the config's own `baseFetch` into the MCP transport. Before
+  // MJ-001 the probe had `createGuardedFetch` (which re-checks each hop but
+  // resolves DNS twice, leaving the rebinding window its own docblock
+  // describes) and the connection had nothing at all: a public host that
+  // answered `302 Location: http://127.0.0.1:6379/` was dialled there, and the
+  // socket's own error came back in the response.
+  //
+  // Both legs now dial the pinned transport — resolve once, classify, pin the
+  // address into the socket, re-run on every hop. One transport rather than two
+  // so the probe and the connection cannot disagree about what is dialable.
+  const doctorFetch = hostedMcpBaseFetch();
+
+  const result = await runServerDoctor({
+    config: { ...config, baseFetch: doctorFetch },
     target: {
       kind: "http",
       scope: "hosted",
@@ -183,5 +259,14 @@ export async function runHostedDoctor(
     },
     timeout: timeoutMs,
     rpcLogger,
+    // The probe follows two destinations the target names for itself — the RFC
+    // 9728 pointer in its challenge and the authorization server that document
+    // advertises. The SDK guard classifies IP literals, but only a resolver can
+    // catch a hostname that answers with a private address, and only per-hop
+    // checking can catch a redirect. Both live here. Outside hosted mode this
+    // is the identity function, so localhost and LAN probing is unaffected.
+    fetchFn: doctorFetch,
   });
+
+  return redactHostedDoctorTransportDetail(result);
 }

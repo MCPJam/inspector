@@ -1,4 +1,6 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ModelMessage } from "ai";
+import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
@@ -12,15 +14,37 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
+import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
+import { runnerCapabilities } from "./runner-capabilities.js";
+import type {
+  RunCiMetadata,
+  RunLauncher,
+} from "../../utils/launch-context.js";
+import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
+import { randomUUID } from "node:crypto";
+import {
+  environmentLaunchConflictError,
+  environmentLaunchRejectionError,
+  environmentModelRequiredError,
+  isEnvironmentLaunchConflict,
+} from "../environments/resolve.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+/**
+ * The canonical lifecycle vocabulary — `setup_failed` and `skipped` included.
+ * The recorder is a pass-through to {@link finalizeEvalIteration}, so a
+ * narrower union here would silently reject the classification a runner made.
+ */
+type IterationStatus = ContractIterationStatus;
 // Run-level (not per-iteration) terminal stop reason, threaded into the
 // suite-run finalize so the dashboard can show why a run stopped.
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
+type ExecutionType = "model" | "model_free" | "harness";
+const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
 
 /**
  * When a Convex mutation rejects because a billing/entitlement cap was hit
@@ -69,6 +93,12 @@ type SuiteRunEnvironmentSnapshot = {
 export type SuiteRunRecorder = {
   runId: string;
   suiteId: string;
+  beginExecutionAttempt?(args: {
+    caseCount: number;
+    repetitionCount: number;
+    renderConcurrencyLimit: number;
+    modelIdentifiers: Array<{ provider: string; model: string }>;
+  }): Promise<void>;
   startIteration(args: {
     testCaseId?: string;
     testCaseSnapshot?: {
@@ -89,6 +119,7 @@ export type SuiteRunRecorder = {
     };
     iterationNumber: number;
     startedAt: number;
+    executionType?: ExecutionType;
   }): Promise<string | undefined>;
   finishIteration(args: {
     iterationId?: string;
@@ -99,7 +130,10 @@ export type SuiteRunRecorder = {
     }>;
     usage: UsageTotals;
     messages: ModelMessage[];
+    /** Effective model used by the iteration; persisted on the eval session. */
+    modelId?: string;
     spans?: EvalTraceSpan[];
+    requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
     /**
@@ -124,7 +158,8 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
-    status?: IterationStatus;
+    /** Explicit harness lifecycle status; never infer it from the verdict. */
+    status: IterationStatus;
     startedAt?: number;
     error?: string;
     errorDetails?: string;
@@ -170,11 +205,104 @@ export const createSuiteRunRecorder = ({
   runId: string;
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
+  let runtimeAttempt:
+    | { attemptId: string; monotonicStartedAt: number }
+    | undefined;
+  const iterationRuntime = new Map<
+    string,
+    {
+      executionType: ExecutionType;
+      startOffsetMs: number;
+    }
+  >();
+  const pendingRuntimeWrites = new Set<Promise<void>>();
+
+  const warnRuntimeFailure = (message: string, error: unknown) => {
+    logger.warn(message, {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  const runRuntimeTelemetry = async <T>(
+    operation: () => Promise<T>,
+    failureMessage: string
+  ): Promise<{ ok: true; value: T } | { ok: false }> => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const settled = Promise.resolve().then(operation).then(
+      (value) => ({ kind: "success" as const, value }),
+      (error) => ({ kind: "failure" as const, error })
+    );
+    const deadline = new Promise<{ kind: "timeout" }>((resolve) => {
+      timeout = setTimeout(
+        () => resolve({ kind: "timeout" }),
+        RUNTIME_TELEMETRY_TIMEOUT_MS
+      );
+    });
+    const result = await Promise.race([settled, deadline]);
+    if (timeout) clearTimeout(timeout);
+    if (result.kind === "success") {
+      return { ok: true, value: result.value };
+    }
+    warnRuntimeFailure(
+      failureMessage,
+      result.kind === "timeout"
+        ? new Error(
+            `runtime telemetry timed out after ${RUNTIME_TELEMETRY_TIMEOUT_MS}ms`
+          )
+        : result.error
+    );
+    return { ok: false };
+  };
+
+  const trackRuntimeWrite = (write: Promise<unknown>) => {
+    const tracked = write.then(() => undefined);
+    pendingRuntimeWrites.add(tracked);
+    void tracked.finally(() => pendingRuntimeWrites.delete(tracked));
+  };
 
   return {
     runId,
     suiteId,
-    async startIteration({ testCaseId, testCaseSnapshot, iterationNumber }) {
+    async beginExecutionAttempt(metadata) {
+      runtimeAttempt = undefined;
+      iterationRuntime.clear();
+      const attemptId = randomUUID();
+      try {
+        const currentRunResult = await runRuntimeTelemetry(
+          () =>
+            convexClient.query("testSuites:getTestSuiteRun" as any, { runId }),
+          "[evals] Failed to read current runtime attempt"
+        );
+        if (!currentRunResult.ok) return;
+        const currentRun = currentRunResult.value;
+        const beginResult = await runRuntimeTelemetry(
+          () =>
+            convexClient.mutation(
+              "testSuites:beginEvalRuntimeAttempt" as any,
+              {
+                runId,
+                attemptId,
+                ...(currentRun?.runtimeSummary?.attemptId
+                  ? { previousAttemptId: currentRun.runtimeSummary.attemptId }
+                  : {}),
+                ...metadata,
+              }
+            ),
+          "[evals] Failed to begin runtime telemetry"
+        );
+        if (!beginResult.ok) return;
+        runtimeAttempt = { attemptId, monotonicStartedAt: performance.now() };
+      } catch (error) {
+        warnRuntimeFailure("[evals] Failed to begin runtime telemetry", error);
+      }
+    },
+    async startIteration({
+      testCaseId,
+      testCaseSnapshot,
+      iterationNumber,
+      executionType = "model",
+    }) {
       if (runDeleted) {
         // Silently skip if run was deleted
         return undefined;
@@ -230,6 +358,34 @@ export const createSuiteRunRecorder = ({
           iterationId: matchingIteration._id,
         });
 
+        if (runtimeAttempt) {
+          const attempt = runtimeAttempt;
+          const iterationId = matchingIteration._id as string;
+          const startOffsetMs = Math.max(
+            0,
+            performance.now() - attempt.monotonicStartedAt
+          );
+          trackRuntimeWrite(
+            runRuntimeTelemetry(
+              () =>
+                convexClient.mutation(
+                  "testSuites:recordEvalIterationRuntimeStart" as any,
+                  {
+                    iterationId,
+                    attemptId: attempt.attemptId,
+                    executionType,
+                    startOffsetMs,
+                  }
+                ),
+              "[evals] Failed to record iteration runtime start"
+            )
+          );
+          iterationRuntime.set(iterationId, {
+            executionType,
+            startOffsetMs,
+          });
+        }
+
         return matchingIteration._id as string;
       } catch (error) {
         const errorMessage =
@@ -256,6 +412,33 @@ export const createSuiteRunRecorder = ({
       if (runDeleted) {
         return;
       }
+      if (params.iterationId && runtimeAttempt) {
+        const timing = iterationRuntime.get(params.iterationId);
+        if (timing) {
+          const endOffsetMs = Math.max(
+            timing.startOffsetMs,
+            performance.now() - runtimeAttempt.monotonicStartedAt
+          );
+          trackRuntimeWrite(
+            runRuntimeTelemetry(
+              () =>
+                convexClient.mutation(
+                  "testSuites:recordEvalIterationRuntimeEnd" as any,
+                  {
+                    iterationId: params.iterationId,
+                    attemptId: runtimeAttempt.attemptId,
+                    executionType: timing.executionType,
+                    executionOutcome: params.status,
+                    startOffsetMs: timing.startOffsetMs,
+                    endOffsetMs,
+                  }
+                ),
+              "[evals] Failed to record iteration runtime end"
+            )
+          );
+          iterationRuntime.delete(params.iterationId);
+        }
+      }
       await finalizeEvalIteration({
         convexClient,
         ...params,
@@ -270,41 +453,117 @@ export const createSuiteRunRecorder = ({
       });
     },
     async finalize({ status, summary, notes, stopReason }) {
-      if (runDeleted) {
-        // Silently skip if run was deleted
-        return;
-      }
-
+      // Drop this run's shadow-mismatch bookkeeping FIRST, and unconditionally.
+      //
+      // `shadow-mismatch.ts` keeps a per-run dedupe set so one comparison is
+      // reported once rather than once per iteration; without a matching
+      // forget, that map is a leak that grows for the life of the process —
+      // one entry per run, one entry per (iteration, kind) inside it. It was
+      // harmless while no cohort produced score rows and stops being harmless
+      // the moment the observation window raises the volume, which is why the
+      // fix lands BEFORE the window rather than after someone notices.
+      //
+      // Before the early return, because a deleted run still had comparisons
+      // recorded against it, and in a `finally` because a failed finalize is
+      // exactly when the entry would otherwise be stranded.
       try {
-        await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
-          runId,
-          status,
-          summary,
-          notes,
-          stopReason,
-        });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // Check if run was deleted/not found
-        if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("unauthorized")
-        ) {
-          runDeleted = true;
-          // Silently skip - run was likely cancelled/deleted
+        if (runDeleted) {
+          // Silently skip if run was deleted
           return;
         }
 
-        logger.error(
-          "[evals] Failed to finalize suite run:",
-          new Error(errorMessage)
-        );
+        if (runtimeAttempt) {
+          await Promise.allSettled([...pendingRuntimeWrites]);
+          try {
+            await runRuntimeTelemetry(
+              () =>
+                convexClient.mutation(
+                  "testSuites:finalizeEvalRuntimeAttempt" as any,
+                  {
+                    runId,
+                    attemptId: runtimeAttempt.attemptId,
+                    totalElapsedMs: Math.max(
+                      0,
+                      performance.now() - runtimeAttempt.monotonicStartedAt
+                    ),
+                    interrupted:
+                      status === "cancelled" || status === "timed_out",
+                  }
+                ),
+              "[evals] Failed to finalize runtime telemetry"
+            );
+          } catch (error) {
+            warnRuntimeFailure(
+              "[evals] Failed to finalize runtime telemetry",
+              error
+            );
+          }
+        }
+
+        try {
+          await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
+            runId,
+            status,
+            summary,
+            notes,
+            stopReason,
+          });
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+
+          // Check if run was deleted/not found
+          if (
+            errorMessage.includes("not found") ||
+            errorMessage.includes("unauthorized")
+          ) {
+            runDeleted = true;
+            // Silently skip - run was likely cancelled/deleted
+            return;
+          }
+
+          logger.error(
+            "[evals] Failed to finalize suite run:",
+            new Error(errorMessage)
+          );
+        }
+      } finally {
+        forgetShadowMismatchRun(runId);
       }
     },
   };
 };
+
+// `RUNNER_CAPABILITIES` moved to `./runner-capabilities.ts` when the pre-run
+// disclosure route (G4c) became its second caller — see that module's header
+// for why both callers must send the identical list, and why a route must not
+// import this one to get it.
+
+/**
+ * Run origin, PAIRED WITH THE PROOF that the caller may write it.
+ *
+ * `'benchmark'` is not a label like the others: a run carrying it is dropped
+ * from every project list and never notifies, so asserting it is a way to bury
+ * a run teammates should see. The backend therefore stopped taking it on trust
+ * (`convex/testSuites.ts`, `requireBenchmarkRunForHiddenSource`) — it now wants
+ * the `benchmarkRunId` of the live parent the caller can already reach, and
+ * refuses a missing or terminal one.
+ *
+ * Expressed as a UNION rather than a pair of independent optionals so the
+ * requirement is a type error here instead of a `FORBIDDEN` from Convex after
+ * the child has already been dispatched. The other sources cannot carry an id
+ * at all (`never`): it is meaningless without the hidden source, and a caller
+ * that sends one is confused about which of the two run ids it holds.
+ *
+ * ONE definition, shared with the request type in `routes/shared/evals.ts`, so
+ * the invariant cannot hold at the route boundary and lapse at the wire.
+ */
+export type EvalRunProvenance =
+  | {
+      source?: "ui" | "api" | "schedule" | "github_check";
+      benchmarkRunId?: never;
+    }
+  | { source: "benchmark"; benchmarkRunId: string };
 
 export const startSuiteRunWithRecorder = async ({
   convexClient,
@@ -315,6 +574,7 @@ export const startSuiteRunWithRecorder = async ({
   replayedFromRunId,
   useCurrentSuiteConfig,
   environmentOverride,
+  githubCheckServerOverride,
   toolSnapshot,
   toolSnapshotDebug,
   iterationOverride,
@@ -322,9 +582,21 @@ export const startSuiteRunWithRecorder = async ({
   matchOptionsOverride,
   namedHostId,
   runGroupId,
+  environmentId,
+  expectedEnvironmentRevision,
+  expectedEnvironmentHostConfigId,
+  expectedEnvironmentServerIds,
   source,
+  benchmarkRunId,
   idempotencyKey,
-}: {
+  sourceHash,
+  skillsOverride,
+  toolDescriptionOverride,
+  ephemeralEnvironment,
+  importApprovals,
+  launcher,
+  ciMetadata,
+}: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
   notes?: string;
@@ -346,6 +618,11 @@ export const startSuiteRunWithRecorder = async ({
     // object would silently drop it before Convex).
     computerEnvironmentId?: string;
   };
+  /** Replace only the MCP servers for a GitHub check run. */
+  githubCheckServerOverride?: Array<{
+    serverName: string;
+    projectServerId: string;
+  }>;
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
   /**
@@ -381,17 +658,100 @@ export const startSuiteRunWithRecorder = async ({
    */
   runGroupId?: string;
   /**
-   * Run origin persisted on `testSuiteRun.source` for audit attribution.
-   * Omitted means 'ui' (backend default); the public /api/v1 surface
-   * passes 'api'; the scheduled-evals worker passes 'schedule'.
+   * Project-environment launch: the environment this run resolves and
+   * pins. Threaded into `startTestSuiteRun` (which snapshots
+   * `configSnapshot.environmentRef`). Must be declared here or a
+   * reconstruction of the mutation args would silently drop it.
    */
-  source?: "ui" | "api" | "schedule";
+  environmentId?: string;
+  /**
+   * The environment revision `prepareEvalRun` resolved (and captured the
+   * tool snapshot against). The mutation compares it to the environment's
+   * current revision BEFORE inserting any run row and rejects a mismatch
+   * with structured conflict data — see `services/environments/resolve.ts`.
+   */
+  expectedEnvironmentRevision?: number;
+  /**
+   * The host config the environment resolved to. The revision alone does NOT
+   * make a launch atomic: an environment pins a `hostId`, and the host can
+   * rotate its config (`hosts:updateHost`) without touching the environment
+   * row. Echoing it lets the mutation reject that drift (`ENV_HOST_DRIFT`).
+   */
+  expectedEnvironmentHostConfigId?: string;
+  /**
+   * The environment's effective (non-plugin + plugin-contributed) server set
+   * at resolve time. Same reason as the host config: editing the pinned
+   * standalone attachment changes what the environment resolves to at an
+   * unchanged revision. Must be the STORED closed set, not the live-healed
+   * projection — the backend re-derives the stored set to compare.
+   */
+  expectedEnvironmentServerIds?: string[];
+  // `source` (and the `benchmarkRunId` that licenses the hidden one) come
+  // from {@link EvalRunProvenance}, intersected above — the two are one fact,
+  // and declaring them here as independent optionals is what let the bench
+  // worker send the source without the id.
   /**
    * Forwarded to `startTestSuiteRun.idempotencyKey` so retried triggers
    * (scheduled-run claim retries) can never double-create a run. Absent on
    * interactive paths — the mutation's fingerprint window covers those.
    */
   idempotencyKey?: string;
+  /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Forwarded to
+   * Convex `startTestSuiteRun.sourceHash` so a file-owned run records the
+   * exact bytes it ran.
+   */
+  sourceHash?: string;
+  /**
+   * The A/B "without skills" arm. `'exclude'` tells `startTestSuiteRun` to pin
+   * NO skills from any channel and to mark the run `skillsExcluded`, so the
+   * comparison arm is labelled rather than merely empty. See the wire schema
+   * for the deliberate plugin-servers asymmetry.
+   */
+  skillsOverride?: "exclude";
+  /**
+   * The REWRITE arm of a description-experiment. `{ experimentId }` only —
+   * the backend loads the experiment and copies its proposal onto
+   * `configSnapshot.toolDescriptionOverride`. Must be declared here or a
+   * reconstruction of the mutation args would silently drop it and launch
+   * an ORIGINAL arm.
+   */
+  toolDescriptionOverride?: { experimentId: string };
+  /**
+   * Compose-and-run: accept a project-scoped, non-archived environment that
+   * is not a suite member. Forwarded to `startTestSuiteRun`.
+   */
+  ephemeralEnvironment?: boolean;
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted test-case id.
+   *
+   * Forwarded to `startTestSuiteRun.importApprovals`, which validates them
+   * against the cases this run will actually execute, derives the approver
+   * from the authenticated launcher, stamps the time, and freezes the
+   * resulting decision into the run's own case snapshot. Nothing here is
+   * persisted on the case: a later run needs a new approval.
+   *
+   * Must be declared here or a reconstruction of the mutation args would
+   * silently drop it — and a dropped approval surfaces to the caller as the
+   * backend refusing a run they did approve.
+   */
+  importApprovals?: Array<{ testCaseId: string; reason: string }>;
+  /**
+   * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
+   * boundary. A LABEL, not an authorization input: `source` is still stamped
+   * by the route and the verified attribution is still what the audit reads.
+   *
+   * Must be declared here — like every other field in this list — because the
+   * mutation args below are RECONSTRUCTED from these parameters, so anything
+   * nobody destructures is something the backend never sees.
+   */
+  launcher?: RunLauncher;
+  /**
+   * The CI envelope this launch came from, mapped to the run row's own
+   * spelling at the header boundary. Fills the Runs table's CI column and
+   * makes `--baseline-sha` resolvable for a CLI run inside GitHub Actions.
+   */
+  ciMetadata?: RunCiMetadata;
 }) => {
   let response: any;
   try {
@@ -403,7 +763,10 @@ export const startSuiteRunWithRecorder = async ({
         passCriteria,
         replayedFromRunId,
         useCurrentSuiteConfig,
-        environmentOverride,
+        ...(environmentOverride ? { environmentOverride } : {}),
+        ...(githubCheckServerOverride
+          ? { githubCheckServerOverride }
+          : {}),
         toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
         toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
         iterationOverride,
@@ -411,8 +774,40 @@ export const startSuiteRunWithRecorder = async ({
         matchOptionsOverride,
         ...(namedHostId ? { namedHostId } : {}),
         ...(runGroupId ? { runGroupId } : {}),
+        ...(environmentId ? { environmentId } : {}),
+        ...(expectedEnvironmentRevision !== undefined
+          ? { expectedEnvironmentRevision }
+          : {}),
+        ...(expectedEnvironmentHostConfigId !== undefined
+          ? { expectedEnvironmentHostConfigId }
+          : {}),
+        ...(expectedEnvironmentServerIds !== undefined
+          ? { expectedEnvironmentServerIds }
+          : {}),
         ...(source ? { source } : {}),
+        // The capability behind a hidden source. `startTestSuiteRun` refuses
+        // `source: 'benchmark'` without it, so dropping it here would fail
+        // every benchmark child at the mutation — after the claim was already
+        // leased and the MCP session already opened.
+        ...(benchmarkRunId ? { benchmarkRunId } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
+        ...(sourceHash ? { sourceHash } : {}),
+        ...(skillsOverride ? { skillsOverride } : {}),
+        ...(toolDescriptionOverride
+          ? { toolDescriptionOverride }
+          : {}),
+        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+        ...(importApprovals && importApprovals.length
+          ? { importApprovals }
+          : {}),
+        // Forwarded only when present. An older backend's `startTestSuiteRun`
+        // validator does not know these args and rejects the whole call for an
+        // unknown field, so sending `launcher: undefined` would break every
+        // launch against a deployment that predates run provenance — including
+        // self-hosted ones this Inspector talks to.
+        ...(launcher ? { launcher } : {}),
+        ...(ciMetadata ? { ciMetadata } : {}),
+        runnerCapabilities: runnerCapabilities(),
       }
     );
   } catch (error) {
@@ -422,6 +817,43 @@ export const startSuiteRunWithRecorder = async ({
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
+    }
+    // The environment resolves to no model — no override on it, none pinned on
+    // its client — so the backend refused before creating anything. Remediable
+    // and specific, so it gets its own 409 rather than surfacing as an opaque
+    // Convex rejection. NOT gated on the drift echoes below: this refusal is a
+    // property of the environment itself, not of a precondition we sent.
+    const modelRequired = environmentModelRequiredError(error);
+    if (modelRequired) {
+      throw modelRequired;
+    }
+    // The environment changed between prepareEvalRun's resolution and the
+    // run-start mutation — either its revision moved, or it resolved
+    // differently at an unchanged revision (host config rotated / pinned
+    // attachment edited). Either way no run row exists. Interactive callers
+    // surface the readable 409; the scheduled worker's trigger/idempotency
+    // path retries naturally.
+    //
+    // Gate on any echo being present, not just the revision: a launch that
+    // sent only the drift echoes still needs its conflict translated.
+    if (
+      (expectedEnvironmentRevision !== undefined ||
+        expectedEnvironmentHostConfigId !== undefined ||
+        expectedEnvironmentServerIds !== undefined) &&
+      isEnvironmentLaunchConflict(error)
+    ) {
+      throw environmentLaunchConflictError(error);
+    }
+    // The remaining structured refusals — a bad ephemeralEnvironment request,
+    // a non-member or ambiguous environment, the resolver's cross-project /
+    // archived / missing verdicts. Each aborts BEFORE any run row exists, and
+    // each names something the caller can act on; rethrowing raw handed them
+    // all to the generic handler as `500 "Server Error"`, which is what the
+    // backend raising ConvexError instead of Error was meant to prevent.
+    // Returns null for anything unrecognized, so a real fault stays a 500.
+    const rejection = environmentLaunchRejectionError(error);
+    if (rejection) {
+      throw rejection;
     }
     throw error;
   }
@@ -536,9 +968,9 @@ export const startSuiteRunWithRecorder = async ({
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
+      suppressedSuiteStandardCheckIds: tc.suppressedSuiteStandardCheckIds,
       envelope: tc.predicates as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: tc.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
         | undefined,
@@ -565,6 +997,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc._id ?? tc.testCaseId,
           },
         ];
@@ -583,6 +1016,7 @@ export const startSuiteRunWithRecorder = async ({
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
           successPredicates,
+          ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
           testCaseId: tc._id,
         }));
       }
@@ -602,6 +1036,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];
@@ -617,9 +1052,90 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    /**
+     * The run's FROZEN execution budgets, exactly as the launch resolved them
+     * against the suite's authored values and the org's ceilings.
+     *
+     * Read off the RESPONSE rather than re-read from the suite, and that is
+     * the whole point: re-reading would let an edit mid-run change what the
+     * run may spend, and two iterations of one run could end up bounded
+     * differently. The launch decided; this only carries the decision.
+     *
+     * Absent from a backend that predates the field, which the runner reads as
+     * "resolve the platform defaults" — the same code path, differing only in
+     * which rung each field came from.
+     */
+    // Read from the response's `configSnapshot`, where every other frozen
+    // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
+    // the top-level spelling as a fallback so the two repos can deploy in
+    // either order.
+    executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
+      ?.executionBudgets ?? response?.executionBudgets) as
+      | ResolvedExecutionBudgets
+      | undefined,
+    githubCredentialPolicy: response?.githubCredentialPolicy as
+      | "no_customer_credentials"
+      | "suite_credentials"
+      | undefined,
+    /**
+     * This start was a REPLAY of an existing run (idempotency key hit, or the
+     * keyless fingerprint window), not a launch.
+     *
+     * Absent from a backend that predates the field, which callers must read
+     * as "unknown", NOT as "fresh": treating an old backend's silence as a
+     * launch is exactly the assumption that had retries re-running a finished
+     * suite. Skew therefore keeps the old behaviour rather than gaining the
+     * new refusal.
+     */
+    deduped: response?.deduped as boolean | undefined,
+    /** The run's status as the platform holds it — `completed` on a replay of
+     *  a finished run, not the `running` a launch would report. */
+    status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
       | Record<string, unknown>
       | null
+      | undefined,
+    /**
+     * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
+     * `bundleHash` of every plugin version this run pinned, in pin order.
+     *
+     * Surfaced from the RUN row rather than re-read from the environment
+     * resolution that preceded it. The two agree by construction (the mutation
+     * rejects any drift between them via the `expectedEnvironment*` echoes),
+     * but only one of them is the run's own immutable record, and provenance
+     * that is displayed and reported should come from the record. Absent on a
+     * legacy run, a plugin-free environment, or an older backend.
+     */
+    pluginVersions: (response?.configSnapshot as any)
+      ?.environmentPluginVersions as RunPinnedPluginVersion[] | undefined,
+    /**
+     * The run's FROZEN grading-engine position, straight off its own snapshot.
+     *
+     * Read from the RUN row rather than re-resolved from the suite or a flag,
+     * for the same reason `pluginVersions` is: the run's immutable record is
+     * what every other reader (the judge second pass, all three backend write
+     * boundaries) consults, and a runner that resolved its own position could
+     * grade the first pass under a mode the rest of the pipeline disagrees
+     * with. Absent on a legacy run, an `off` run, or an older backend — all of
+     * which mean the same thing here.
+     */
+    gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
+      | { mode?: unknown }
+      | undefined,
+    /**
+     * The run's FROZEN description-experiment marker, straight off its own
+     * snapshot. The runner applies `{ [toolName]: description }` and stamps
+     * `metadata.descriptionExperiment` from this — never from the launch
+     * body's experimentId alone, which does not carry the proposal text.
+     */
+    toolDescriptionOverride: (response?.configSnapshot as any)
+      ?.toolDescriptionOverride as
+      | {
+          experimentId?: string;
+          toolName?: string;
+          description?: string;
+          proposalHash?: string;
+        }
       | undefined,
   };
 };

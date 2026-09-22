@@ -1,4 +1,8 @@
 import {
+  reportIncomplete,
+  reportScore,
+} from "../lib/conformance-exit-code.js";
+import {
   type OAuthConformanceConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
@@ -10,6 +14,7 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
   runOAuthLogin,
+  scoreFromOAuthResult,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
@@ -19,6 +24,7 @@ import {
 } from "../lib/server-config.js";
 import {
   VALID_PROTOCOL_VERSIONS,
+  CIMD_PROTOCOL_VERSIONS,
   VALID_REGISTRATION_STRATEGIES,
   VALID_AUTH_MODES,
 } from "../lib/oauth-enums.js";
@@ -39,6 +45,7 @@ import {
   renderConformanceReporterResult,
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { readInputSource } from "../lib/json-input.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import {
@@ -122,7 +129,7 @@ export function buildOAuthLoginDebugOutcome(options: {
 
 export interface OAuthCommandOptions {
   url: string;
-  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25";
+  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
   registration?: "cimd" | "dcr" | "preregistered";
   authMode?: "headless" | "interactive" | "client_credentials";
   clientId?: string;
@@ -144,6 +151,14 @@ interface OAuthProxyCommandOptions {
   method?: string;
   header?: string[];
   body?: string;
+  /**
+   * Opt IN to the hosted policy: HTTPS-only, no private destinations. The CLI
+   * runs on the user's own machine, so the default is the local one — these
+   * commands exist to debug a server you are developing, which is routinely on
+   * loopback or a LAN address. `--https-only` is for reproducing what the
+   * hosted app would do with the same URL.
+   */
+  httpsOnly?: boolean;
 }
 
 export function registerOAuthCommands(program: Command): void {
@@ -157,7 +172,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "MCP server URL")
     .option(
       "--protocol-version <version>",
-      "OAuth protocol override: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol override: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
     )
     .option(
       "--registration <strategy>",
@@ -315,7 +330,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "MCP server URL")
     .requiredOption(
       "--protocol-version <version>",
-      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol version: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
     )
     .requiredOption(
       "--registration <strategy>",
@@ -362,6 +377,11 @@ export function registerOAuthCommands(program: Command): void {
       "--credentials-out <path>",
       "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
     )
+    .option("--upload", "Upload this suite's result into MCPJam run history")
+    .option(
+      "--require-upload",
+      "Fail if reporting is configured but the UI record cannot be written",
+    )
     .option(
       "--print-url",
       "In interactive mode, print the consent URL to stderr instead of launching a browser",
@@ -399,8 +419,29 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
-      if (!result.passed) {
+      // A not-applicable run yields no number at all: authorization is
+      // OPTIONAL, so a server that requires none has nothing to score.
+      reportScore(scoreFromOAuthResult(result), command);
+      // A not-applicable run is not a failure: authorization is OPTIONAL, so
+      // a server that requires none has no obligations to violate. An
+      // incomplete run gets the same third exit code as every other suite —
+      // "we never established anything" is a different failure from "the
+      // server violated the spec", and a human must not have to dig for why.
+      reportIncomplete(result, command);
+      await maybeUploadSingleSuite({
+        suiteKind: "oauth",
+        result,
+        serverUrl: (options as { url?: string }).url,
+        upload: Boolean((options as { upload?: boolean }).upload),
+        requireUpload: Boolean(
+          (options as { requireUpload?: boolean }).requireUpload
+        ),
+        command,
+      });
+      if (result.outcome === "failed") {
         setProcessExitCode(1);
+      } else if (result.outcome === "incomplete") {
+        setProcessExitCode(3);
       }
     });
 
@@ -479,8 +520,22 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
-      if (!result.passed) {
+      for (const run of result.results) {
+        reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportIncomplete(run, command);
+      }
+      // Worst-of the flows, matching the shared ordering: a violation (1)
+      // outranks an unestablished run (3); not-applicable flows are neither.
+      // A run without an outcome (older serialized data) falls back to
+      // `passed`, so a failure can never read as exit 0.
+      const flowOutcomes = result.results.map(
+        (run) =>
+          run.outcome ?? ((run as { passed?: boolean }).passed ? "passed" : "failed"),
+      );
+      if (flowOutcomes.includes("failed")) {
         setProcessExitCode(1);
+      } else if (flowOutcomes.includes("incomplete")) {
+        setProcessExitCode(3);
       }
     });
 
@@ -488,15 +543,22 @@ export function registerOAuthCommands(program: Command): void {
     .command("metadata")
     .description("Fetch OAuth metadata from a URL")
     .requiredOption("--url <url>", "OAuth metadata URL")
+    .option(
+      "--https-only",
+      "Apply the hosted policy: reject non-HTTPS and private targets",
+    )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
-      const result = await runOAuthMetadata(options.url as string);
+      const result = await runOAuthMetadata(
+        options.url as string,
+        options.httpsOnly === true,
+      );
       writeResult(result, format);
     });
 
   oauth
     .command("proxy")
-    .description("Proxy an OAuth request with hosted-mode safety checks")
+    .description("Proxy an OAuth request through the SSRF-hardened transport")
     .requiredOption("--url <url>", "OAuth request URL")
     .option("--method <method>", "HTTP method", "GET")
     .option(
@@ -508,6 +570,10 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--body <value>",
       "Request body as JSON, raw string, @path, or - for stdin",
+    )
+    .option(
+      "--https-only",
+      "Apply the hosted policy: reject non-HTTPS and private targets",
     )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
@@ -517,7 +583,9 @@ export function registerOAuthCommands(program: Command): void {
 
   oauth
     .command("debug-proxy")
-    .description("Proxy an OAuth debug request with hosted-mode safety checks")
+    .description(
+      "Proxy an OAuth debug request through the SSRF-hardened transport",
+    )
     .requiredOption("--url <url>", "OAuth request URL")
     .option("--method <method>", "HTTP method", "GET")
     .option(
@@ -529,6 +597,10 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--body <value>",
       "Request body as JSON, raw string, @path, or - for stdin",
+    )
+    .option(
+      "--https-only",
+      "Apply the hosted policy: reject non-HTTPS and private targets",
     )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
@@ -563,7 +635,7 @@ export function buildOAuthConformanceConfig(
   }
 
   if (
-    protocolVersion !== "2025-11-25" &&
+    !CIMD_PROTOCOL_VERSIONS.has(protocolVersion) &&
     registrationStrategy === "cimd"
   ) {
     throw usageError(
@@ -643,6 +715,9 @@ export function buildOAuthConformanceConfig(
     serverUrl,
     protocolVersion,
     registrationStrategy,
+    // The CLI runs on the user's machine, where the server under test is
+    // routinely on loopback or a LAN address.
+    allowPrivateNetwork: true,
     auth,
     client,
     scopes: options.scopes?.trim() || undefined,
@@ -689,7 +764,7 @@ export function buildOAuthLoginConfig(
   if (
     protocolVersion !== undefined &&
     registrationStrategy === "cimd" &&
-    protocolVersion !== "2025-11-25"
+    !CIMD_PROTOCOL_VERSIONS.has(protocolVersion)
   ) {
     throw usageError(
       `CIMD registration is not supported for protocol version ${protocolVersion}.`,
@@ -775,6 +850,8 @@ export function buildOAuthLoginConfig(
     ...(registrationStrategy ? { registrationStrategy } : {}),
     protocolMode: protocolVersion ?? "auto",
     registrationMode: registrationStrategy ?? "auto",
+    // See buildOAuthConformanceConfig: a local server under test is the norm.
+    allowPrivateNetwork: true,
     auth,
     client,
     scopes: options.scopes?.trim() || undefined,
@@ -811,16 +888,32 @@ export function summarizeOAuthLoginCommandInput(
 export function buildOAuthLoginSnapshotConfig(
   config: Pick<
     OAuthLoginConfig,
-    "serverUrl" | "customHeaders" | "stepTimeout" | "client" | "auth"
+    | "serverUrl"
+    | "customHeaders"
+    | "stepTimeout"
+    | "client"
+    | "auth"
+    | "protocolVersion"
   >,
   result?: OAuthLoginResult,
 ): MCPServerConfig {
+  // Pin the sessionless 2026 wire era so the server-doctor snapshot probes via
+  // the stateless path, not the default 2025 initialize handshake. Prefer the
+  // negotiated version from the result, but fall back to the requested
+  // `--protocol-version` so a 2026 login that THROWS before returning a result
+  // (e.g. during initial 2026 discovery/probe) still records a 2026-pinned
+  // snapshot instead of a misleading 2025 probe.
+  const snapshotProtocolVersion =
+    result?.protocolVersion ?? config.protocolVersion;
   const baseConfig: MCPServerConfig = {
     url: config.serverUrl,
     ...(config.customHeaders
       ? { requestInit: { headers: config.customHeaders } }
       : {}),
     timeout: config.stepTimeout ?? 30_000,
+    ...(snapshotProtocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
   if (!result) {
     return baseConfig;
@@ -896,9 +989,9 @@ function assertValidUrl(value: string, label: string): void {
 
 function parseProtocolVersion(
   value: string,
-): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+): "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28" {
   if (VALID_PROTOCOL_VERSIONS.has(value)) {
-    return value as "2025-03-26" | "2025-06-18" | "2025-11-25";
+    return value as "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
   }
 
   throw usageError(
@@ -908,7 +1001,7 @@ function parseProtocolVersion(
 
 function parseRequiredProtocolVersion(
   value: string | undefined,
-): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+): "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28" {
   if (!value) {
     throw usageError(
       "--protocol-version is required for oauth conformance flows.",
@@ -954,9 +1047,12 @@ function parseAuthMode(
   );
 }
 
-export async function runOAuthMetadata(url: string) {
+export async function runOAuthMetadata(url: string, httpsOnly = false) {
   try {
-    const result = await fetchOAuthMetadata(url, true);
+    const result = await fetchOAuthMetadata(url, {
+      httpsOnly,
+      allowPrivateNetwork: !httpsOnly,
+    });
     if ("status" in result && result.status !== undefined) {
       throw cliError(
         statusToErrorCode(result.status),
@@ -977,7 +1073,8 @@ export async function runOAuthProxy(options: OAuthProxyCommandOptions) {
       method: options.method,
       headers: parseHeadersOption(options.header),
       body: parseProxyBody(options.body),
-      httpsOnly: true,
+      httpsOnly: options.httpsOnly === true,
+      allowPrivateNetwork: options.httpsOnly !== true,
     });
   } catch (error) {
     throw mapOAuthProxyError(error);
@@ -991,7 +1088,8 @@ export async function runOAuthDebugProxy(options: OAuthProxyCommandOptions) {
       method: options.method,
       headers: parseHeadersOption(options.header),
       body: parseProxyBody(options.body),
-      httpsOnly: true,
+      httpsOnly: options.httpsOnly === true,
+      allowPrivateNetwork: options.httpsOnly !== true,
     });
   } catch (error) {
     throw mapOAuthProxyError(error);

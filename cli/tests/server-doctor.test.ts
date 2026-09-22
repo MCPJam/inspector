@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { ProbeMcpServerResult, ServerDoctorResult } from "@mcpjam/sdk";
 import { writeDebugArtifact } from "../src/lib/debug-artifact.js";
-import { redactSensitiveValue } from "../src/lib/redaction.js";
+import { redactForTelemetry } from "../src/lib/redaction.js";
 import {
   formatServerDoctorHuman,
   summarizeServerDoctorTarget,
@@ -188,6 +188,7 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
     resources: [],
     resourceTemplates: [],
     prompts: [],
+    skills: [],
     checks: {
       probe: {
         status: "error",
@@ -220,6 +221,10 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
       prompts: {
         status: "skipped",
         detail: "Prompts were not collected.",
+      },
+      skills: {
+        status: "skipped",
+        detail: "Skills were not collected.",
       },
     },
     error: {
@@ -264,7 +269,7 @@ test("server doctor JSON payload redacts probe Authorization headers", () => {
     },
   });
 
-  const redacted = redactSensitiveValue({ probe }) as { probe: typeof probe };
+  const redacted = redactForTelemetry({ probe }) as { probe: typeof probe };
   const attempt = redacted.probe.transport.attempts[0]!;
   assert.equal(attempt.request.headers.Authorization, "[REDACTED]");
   assert.equal(attempt.request.headers.Accept, "application/json");

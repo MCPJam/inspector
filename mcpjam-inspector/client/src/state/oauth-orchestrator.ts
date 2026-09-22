@@ -2,11 +2,36 @@ import {
   clearOAuthData,
   initiateOAuth,
   readStoredOAuthConfig,
-  MCPOAuthOptions,
+  resolveStoredIssuer,
 } from "@/lib/oauth/mcp-oauth";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
+import { resolveOAuthProtocolSelection } from "@/shared/types.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
+import {
+  buildOAuthRequest,
+  selectStoredResourceUrl,
+  type BuiltOAuthRequest,
+} from "@/lib/oauth/oauth-request";
+import {
+  describeAsSlug,
+  resolveStepUpAction,
+  type NormalizedError,
+  type StepUpAction,
+  type StepUpAuthMode,
+} from "@mcpjam/sdk/browser";
+import {
+  persistRequestedScopes,
+  stepUpScopeUnion,
+} from "@/lib/oauth/requested-scopes";
+import {
+  canonicalizeStepUpResourceUrl,
+  normalizeStepUpOperationKey,
+  serializeStepUpOperationKey,
+  SCOPE_STEP_UP_LIVE_TTL_MS,
+  type StepUpOperationKey,
+  type StepUpOperationMethod,
+} from "@/shared/scope-step-up";
 
 export type OAuthReady = {
   kind: "ready";
@@ -18,6 +43,13 @@ export type OAuthRedirect = { kind: "redirect" };
 export type OAuthReauthRequired = {
   kind: "reauth_required";
   error: string;
+  /**
+   * Typed form of `error`, so the ErrorCard renders the consent state from
+   * the catalog instead of re-classifying the prose. Without it the message
+   * matched nothing in the describer and every consent prompt rendered as
+   * "Unknown error" with file-an-issue advice.
+   */
+  normalized: NormalizedError;
   oauthTrace?: OAuthTrace;
 };
 export type OAuthError = { kind: "error"; error: string; oauthTrace?: OAuthTrace };
@@ -31,9 +63,19 @@ function buildOAuthReauthRequired(
   serverName: string,
   oauthTrace?: OAuthTrace,
 ): OAuthReauthRequired {
+  const error = `OAuth consent is required for ${serverName}. Click Reconnect to continue.`;
   return {
     kind: "reauth_required",
-    error: `OAuth consent is required for ${serverName}. Click Reconnect to continue.`,
+    error,
+    // Named slug rather than `describeError(error)`: this call site KNOWS
+    // what happened, and leaving the describer to infer it from wording is
+    // how the state ended up unclassified in the first place.
+    //
+    // No raw error attached on purpose. `error` above is MCPJam's own
+    // sentence, not something that came off the wire, so surfacing it as
+    // "RAW ERROR" would print our own "Click Reconnect" a second time under
+    // a heading that promises underlying evidence.
+    normalized: describeAsSlug("auth/consent_required"),
     oauthTrace,
   };
 }
@@ -50,7 +92,16 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-function sanitizeOAuthSetupHeaders(
+/**
+ * Drop `Authorization` (and empty values) from user-configured headers before
+ * they are carried into an OAuth setup.
+ *
+ * Not a trace redactor despite the shape — this filters LIVE request headers,
+ * and the name says so. The trace-redaction naming prefix is reserved for
+ * display redaction, which lives in `lib/oauth/trace-redaction.ts` and is
+ * fenced by `lib/__tests__/oauth-redaction-ratchet.test.ts`.
+ */
+function withoutAuthorizationHeader(
   headers?: Record<string, string>,
 ): Record<string, string> | undefined {
   if (!headers) return undefined;
@@ -92,7 +143,7 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
   if (!headers) return undefined;
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
-    return sanitizeOAuthSetupHeaders(Object.fromEntries(headers.entries()));
+    return withoutAuthorizationHeader(Object.fromEntries(headers.entries()));
   }
 
   if (Array.isArray(headers)) {
@@ -102,14 +153,14 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
         typeof entry[0] === "string" &&
         typeof entry[1] === "string",
     );
-    return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
+    return withoutAuthorizationHeader(Object.fromEntries(entries));
   }
 
   if (typeof headers === "object") {
     const entries = Object.entries(headers).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     );
-    return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
+    return withoutAuthorizationHeader(Object.fromEntries(entries));
   }
 
   return undefined;
@@ -122,19 +173,48 @@ function profileHeadersToRecord(
     ?.map(({ key, value }) => [key.trim(), value] as const)
     .filter(([key, value]) => key && value);
   return entries && entries.length > 0
-    ? sanitizeOAuthSetupHeaders(Object.fromEntries(entries))
+    ? withoutAuthorizationHeader(Object.fromEntries(entries))
     : undefined;
 }
 
 function buildReconnectOAuthOptions(
   server: ServerWithName,
   serverUrl: string,
-): MCPOAuthOptions {
+  /**
+   * SEP-2350 step-up: the union of previously-requested and challenged scopes.
+   * When present it WINS over the profile/config scopes so the re-authorization
+   * requests the widened set the `403 insufficient_scope` challenge named —
+   * otherwise the fresh flow would re-request the old (insufficient) scopes and
+   * loop. Only used when a caller drives a scope step-up.
+   */
+  stepUpScopes?: string[],
+  /**
+   * SEP-2350 step-up: the `resource_metadata` URL a `403 insufficient_scope`
+   * challenge advertised, ALREADY validated same-origin by the caller. When
+   * present the fresh OAuth flow discovers protected-resource metadata from
+   * this URL instead of re-deriving it from the server URL — so a server that
+   * points its metadata elsewhere (Asana) is honored on re-authorization.
+   */
+  resourceMetadataUrl?: string,
+  onTraceUpdate?: (trace: OAuthTrace) => void,
+): BuiltOAuthRequest {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
   const profile = server.oauthFlowProfile;
-  const protocolMode =
-    profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  const configProtocolVersion =
+    "mcpProtocolVersion" in server.config &&
+    typeof server.config.mcpProtocolVersion === "string"
+      ? server.config.mcpProtocolVersion
+      : undefined;
+  const protocolSelection = resolveOAuthProtocolSelection({
+    mode:
+      server.oauthProtocolMode ??
+      profile?.protocolVersion ??
+      oauthConfig.protocolMode,
+    legacyProtocolVersion: oauthConfig.protocolVersion,
+    wireProtocolVersion: configProtocolVersion,
+    negotiatedProtocolVersion: server.initializationInfo?.protocolVersion,
+  });
   // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
   // from current server metadata at connect time), while the legacy
   // profile/localStorage values are rollback-compat concretes. Preferring a
@@ -147,40 +227,67 @@ function buildReconnectOAuthOptions(
     "auto";
   const profileScopes = parseOAuthScopes(profile?.scopes);
 
-  return {
-    serverName: server.name,
-    serverUrl,
-    scopes: profileScopes ?? oauthConfig.scopes,
-    resourceUrl: nonEmptyString(profile?.resourceUrl) ?? oauthConfig.resourceUrl,
-    customHeaders:
-      profileHeadersToRecord(profile?.customHeaders) ??
-      normalizeHeaders((server.config as any)?.requestInit?.headers) ??
-      sanitizeOAuthSetupHeaders(oauthConfig.customHeaders),
-    registryServerId: oauthConfig.registryServerId,
-    useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
-    clientId:
-      nonEmptyString(server.oauthTokens?.client_id) ??
-      nonEmptyString(profile?.clientId) ??
-      storedClientInfo.client_id,
-    clientSecret: undefined,
-    hasClientSecret: Boolean(server.hasClientSecret),
-    protocolMode,
-    protocolVersion:
-      protocolMode !== "auto"
-        ? protocolMode
-        : profile?.protocolVersion ?? oauthConfig.protocolVersion,
-    registrationMode,
-    registrationStrategy:
-      registrationMode !== "auto"
-        ? registrationMode
-        : profile?.registrationStrategy ?? oauthConfig.registrationStrategy,
-  };
+  return buildOAuthRequest(
+    {
+      serverName: server.name,
+      serverUrl,
+      scopes: profileScopes ?? oauthConfig.scopes,
+      // A stored resource indicator belongs to the endpoint it was captured
+      // for. After a server URL edit the old value is stale: on a new origin it
+      // would block the reconnect, and on the same origin it would quietly mint
+      // a token for the wrong endpoint.
+      resourceUrl: selectStoredResourceUrl(serverUrl, [
+        {
+          resourceUrl: profile?.resourceUrl,
+          capturedForServerUrl: profile?.serverUrl,
+        },
+        {
+          resourceUrl: oauthConfig.resourceUrl,
+          capturedForServerUrl:
+            localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined,
+        },
+      ]),
+      customHeaders:
+        profileHeadersToRecord(profile?.customHeaders) ??
+        normalizeHeaders((server.config as any)?.requestInit?.headers) ??
+        withoutAuthorizationHeader(oauthConfig.customHeaders),
+      registryServerId: oauthConfig.registryServerId,
+      useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
+      clientId:
+        nonEmptyString(server.oauthTokens?.client_id) ??
+        nonEmptyString(profile?.clientId) ??
+        storedClientInfo.client_id,
+      clientSecret: undefined,
+      hasClientSecret: Boolean(server.hasClientSecret),
+      protocolMode: protocolSelection.mode,
+      protocolVersion: protocolSelection.protocolVersion,
+      protocolResolutionSource: protocolSelection.source,
+      // Per-server opt-in for a path-scoped authorization server. Every
+      // reconnect and step-up re-authorization funnels through here, so
+      // omitting it makes the strict RFC 8414 §3.3 check reject the server no
+      // matter what the toggle says.
+      allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
+      registrationMode,
+      registrationStrategy:
+        profile?.registrationStrategy ?? oauthConfig.registrationStrategy,
+      onTraceUpdate,
+    },
+    {
+      // A step-up is a re-authorization with a widened scope set; without
+      // stepUpScopes it is an ordinary reconnect.
+      intent: stepUpScopes && stepUpScopes.length > 0 ? "step-up" : "reconnect",
+      stepUpScopes,
+      // Preserve `undefined` as the default so a non-step-up reconnect never
+      // pins an override and discovery keeps deriving the URL as it does today.
+      resourceMetadataUrl: nonEmptyString(resourceMetadataUrl),
+    },
+  );
 }
 
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
   options?: {
-    beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+    beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     allowInteractiveOAuthFlow?: boolean;
     /**
@@ -190,6 +297,21 @@ export async function ensureAuthorizedForReconnect(
      * redirect the user didn't ask for.
      */
     interactiveOAuthConfirmed?: boolean;
+    /**
+     * SEP-2350 step-up scope union. When set, the fresh OAuth flow requests
+     * these scopes (the union of previously-requested and `403
+     * insufficient_scope`-challenged scopes) instead of the stored profile
+     * scopes. Set by the step-up re-authorization path
+     * ({@link resolveInsufficientScopeStepUp}).
+     */
+    stepUpScopes?: string[];
+    /**
+     * SEP-2350 step-up: the `resource_metadata` URL the challenge advertised,
+     * ALREADY validated same-origin by the caller ({@link applyToolCallStepUp}).
+     * Threaded into the fresh OAuth flow so PRM discovery uses it instead of
+     * re-deriving from the server URL. `undefined` keeps today's behavior.
+     */
+    resourceMetadataUrl?: string;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -238,10 +360,29 @@ export async function ensureAuthorizedForReconnect(
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
   if (url) {
-    const opts = buildReconnectOAuthOptions(server, url);
+    // The builder refuses a configured resource indicator that is not this
+    // server's BEFORE the redirect. Surface that as an ordinary OAuth error —
+    // a misconfigured server is a configuration problem, not a crash.
+    let opts: BuiltOAuthRequest;
+    try {
+      opts = buildReconnectOAuthOptions(
+        server,
+        url,
+        options?.stepUpScopes,
+        options?.resourceMetadataUrl,
+        options?.onTraceUpdate,
+      );
+    } catch (error) {
+      return {
+        kind: "error",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to build the OAuth request",
+      };
+    }
     clearOAuthData(server.name);
     options?.beforeRedirect?.(opts);
-    opts.onTraceUpdate = options?.onTraceUpdate;
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {
       return {
@@ -265,4 +406,594 @@ export async function ensureAuthorizedForReconnect(
     kind: "error",
     error: "OAuth authorization required and no URL present",
   };
+}
+
+// ===========================================================================
+// SEP-2350 runtime scope step-up orchestration
+// ===========================================================================
+//
+// The step-up CORE (scope union, challenge parse, §10.5 policy split) lives in
+// `@mcpjam/sdk/browser`. This is the client-side ORCHESTRATION that composes
+// those helpers into a bounded, redirect-surviving re-authorization decision
+// for a runtime `403 insufficient_scope` on a live MCP request (post-connect):
+//
+//   1. read how many step-up re-authorizations this session already ran for
+//      the server's authorization-server issuer (a PERSISTED counter, so it
+//      survives the OAuth browser redirect that re-authorization triggers —
+//      the SDK transport's per-request retry cap cannot bound a cross-request
+//      loop across a full redirect round-trip, §10.5#5);
+//   2. apply the §10.5 policy split (`resolveStepUpAction`): interactive
+//      re-authorizes while under the cap then throws; m2m always throws;
+//      debugger returns `manual` (the debugger advances explicitly — no
+//      auto-browser);
+//   3. on `reauthorize`, union the previously-requested and challenged scopes,
+//      persist the widened set, bump the counter, and return the union for the
+//      caller to feed into {@link ensureAuthorizedForReconnect} via
+//      `stepUpScopes` — so the fresh flow requests the widened scopes.
+//
+// A caller wires it as: on a tool call whose error carries an
+// `insufficientScope` challenge, call `resolveInsufficientScopeStepUp`; if the
+// action is `reauthorize`, run `ensureAuthorizedForReconnect(server, {
+// stepUpScopes })`; on a later SUCCESSFUL call, `resetInsufficientScopeStepUp`
+// to clear the counter so a future legitimate step-up starts fresh.
+
+const STEP_UP_LEDGER_PREFIX = "mcp-stepup-ledger-v2-";
+const LEGACY_STEP_UP_ATTEMPTS_PREFIX = "mcp-stepup-attempts-";
+const LEGACY_STEP_UP_PENDING_PREFIX = "mcp-stepup-pending-";
+const DEFAULT_STEP_UP_MAX_RETRIES = 1;
+
+function legacyStepUpAttemptsKey(serverName: string): string {
+  return `${LEGACY_STEP_UP_ATTEMPTS_PREFIX}${serverName}`;
+}
+
+function legacyStepUpPendingKey(serverName: string): string {
+  return `${LEGACY_STEP_UP_PENDING_PREFIX}${serverName}`;
+}
+
+type StepUpLedgerEntry = {
+  serverName: string;
+  issuer: string;
+  operation: StepUpOperationKey;
+  attempts: number;
+  pending: boolean;
+  expiresAt: number;
+};
+
+function fallbackStepUpOperationKey(
+  serverName: string,
+  issuer: string | undefined,
+): StepUpOperationKey {
+  return {
+    resourceUrl: `issuer:${issuer ?? ""}`,
+    method: "tools/call",
+    operation: `server:${serverName}`,
+  };
+}
+
+function stepUpLedgerKey(operation: StepUpOperationKey): string {
+  return `${STEP_UP_LEDGER_PREFIX}${encodeURIComponent(
+    serializeStepUpOperationKey(operation),
+  )}`;
+}
+
+// The bounded step-up counter lives in `sessionStorage`, NOT `localStorage`: it
+// must survive the OAuth browser redirect that a re-authorization triggers
+// (same-origin, same tab → sessionStorage persists across the redirect
+// round-trip), but it must NOT outlive the browser session. In `localStorage`,
+// a prior session's exhausted counter would make a brand-new session throw
+// immediately on its first legitimate step-up. `sessionStorage` scopes the
+// bound to the session, which is exactly the loop we need to bound (§10.5#5).
+function stepUpAttemptsStore(): Storage | undefined {
+  try {
+    return typeof sessionStorage !== "undefined" ? sessionStorage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readStepUpLedgerEntry(
+  operation: StepUpOperationKey,
+): StepUpLedgerEntry | undefined {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return undefined;
+    const key = stepUpLedgerKey(operation);
+    const raw = store.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<StepUpLedgerEntry>;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.serverName !== "string" ||
+      typeof parsed.issuer !== "string" ||
+      typeof parsed.attempts !== "number" ||
+      !Number.isInteger(parsed.attempts) ||
+      parsed.attempts < 0 ||
+      typeof parsed.pending !== "boolean" ||
+      typeof parsed.expiresAt !== "number" ||
+      !parsed.operation
+    ) {
+      store.removeItem(key);
+      return undefined;
+    }
+    if (parsed.expiresAt <= Date.now()) {
+      store.removeItem(key);
+      return undefined;
+    }
+    return parsed as StepUpLedgerEntry;
+  } catch {
+    return undefined;
+  }
+}
+
+function readStepUpAttempts(
+  serverName: string,
+  issuer: string | undefined,
+  operationKey?: StepUpOperationKey,
+): number {
+  const operation =
+    operationKey ?? fallbackStepUpOperationKey(serverName, issuer);
+  return readStepUpLedgerEntry(operation)?.attempts ?? 0;
+}
+
+function writeStepUpAttempts(
+  serverName: string,
+  issuer: string | undefined,
+  attempts: number,
+  operationKey?: StepUpOperationKey,
+): void {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    const operation = normalizeStepUpOperationKey(
+      operationKey ?? fallbackStepUpOperationKey(serverName, issuer),
+    );
+    const existing = readStepUpLedgerEntry(operation);
+    const entry: StepUpLedgerEntry = {
+      serverName,
+      issuer: issuer ?? "",
+      operation,
+      attempts,
+      pending: existing?.pending ?? false,
+      expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
+    };
+    store.setItem(stepUpLedgerKey(operation), JSON.stringify(entry));
+  } catch {
+    // Best-effort: a full/unavailable store must not abort the OAuth flow. The
+    // upstream transport still bounds retries within a single request; only the
+    // cross-redirect count is lost, so the guard degrades, never disappears.
+  }
+}
+
+function hasPendingStepUp(
+  serverName: string,
+  issuer: string | undefined,
+  operationKey?: StepUpOperationKey,
+): boolean {
+  const operation =
+    operationKey ?? fallbackStepUpOperationKey(serverName, issuer);
+  return readStepUpLedgerEntry(operation)?.pending === true;
+}
+
+function writePendingStepUp(
+  serverName: string,
+  issuer: string | undefined,
+  pending: boolean,
+  operationKey?: StepUpOperationKey,
+): void {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    const operation = normalizeStepUpOperationKey(
+      operationKey ?? fallbackStepUpOperationKey(serverName, issuer),
+    );
+    const key = stepUpLedgerKey(operation);
+    const existing = readStepUpLedgerEntry(operation);
+    if (!pending && !existing) return;
+    const entry: StepUpLedgerEntry = {
+      serverName,
+      issuer: issuer ?? "",
+      operation,
+      attempts: existing?.attempts ?? 0,
+      pending,
+      expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
+    };
+    store.setItem(key, JSON.stringify(entry));
+  } catch {
+    // Best-effort. Losing this marker can allow one extra redirect, while the
+    // transport still keeps its per-request retry bound.
+  }
+}
+
+export interface InsufficientScopeStepUpInput {
+  serverName: string;
+  /** The server's authorization-server issuer, if known. */
+  issuer: string | undefined;
+  /** Scopes named by the `403` `WWW-Authenticate` challenge's `scope` param. */
+  challengedScopes: string[] | undefined;
+  /**
+   * The scopes the server's ORIGINAL OAuth flow requested (from the stored
+   * profile/config). Included in the union so the FIRST runtime step-up — when
+   * nothing has been persisted yet — does not drop the scopes the existing
+   * grant already held and re-request only the challenged subset.
+   */
+  originalScopes?: string[];
+  /** Where the step-up is handled — drives the §10.5 policy split. */
+  authMode: StepUpAuthMode;
+  /**
+   * July 2026 retry identity. Production callers must provide this so one
+   * operation cannot spend another operation's retry budget.
+   */
+  operationKey?: StepUpOperationKey;
+  /** Max cross-request re-authorizations before giving up (default 1). */
+  maxRetries?: number;
+}
+
+export interface InsufficientScopeStepUpDecision {
+  /** `reauthorize` (run a fresh flow with `scopes`), `throw`, or `manual`. */
+  action: StepUpAction;
+  /**
+   * The scope union — previously-requested ∪ challenged. Pass into
+   * {@link ensureAuthorizedForReconnect}'s `stepUpScopes` on `reauthorize`;
+   * for `throw`/`manual` it is the set the caller would display/request.
+   */
+  scopes: string[];
+  /** Re-authorizations already performed this session before this decision. */
+  attempt: number;
+}
+
+/**
+ * Decide what a runtime `403 insufficient_scope` challenge should do, and (on
+ * `reauthorize`) persist the widened scope set + bump the bounded per-session
+ * counter. Pure w.r.t. the network — the caller performs the actual
+ * re-authorization via {@link ensureAuthorizedForReconnect}. Reads/writes the
+ * persisted counter so the bound holds across the redirect round-trip.
+ */
+export function resolveInsufficientScopeStepUp(
+  input: InsufficientScopeStepUpInput,
+): InsufficientScopeStepUpDecision {
+  const { serverName, issuer, challengedScopes, originalScopes, authMode } =
+    input;
+  const maxRetries = input.maxRetries ?? DEFAULT_STEP_UP_MAX_RETRIES;
+  const attempt = readStepUpAttempts(serverName, issuer, input.operationKey);
+  const action = resolveStepUpAction({ authMode, attempt, maxRetries });
+  const scopes = stepUpScopeUnion(
+    serverName,
+    issuer,
+    challengedScopes,
+    originalScopes,
+  );
+
+  if (action === "reauthorize") {
+    // Persist the widened set as the newly-requested scopes for this issuer so
+    // a subsequent step-up unions from the widened base, and record the
+    // attempt so the next cross-request challenge is bounded.
+    persistRequestedScopes(serverName, issuer, scopes);
+    writeStepUpAttempts(
+      serverName,
+      issuer,
+      attempt + 1,
+      input.operationKey,
+    );
+  }
+
+  return { action, scopes, attempt };
+}
+
+/**
+ * Clear the per-session step-up counter for a server's issuer. Call after a
+ * SUCCESSFUL request so a future legitimate scope step-up starts from zero
+ * rather than inheriting a stale count that would prematurely throw.
+ */
+export function resetInsufficientScopeStepUp(
+  serverName: string,
+  issuer: string | undefined,
+  operationKey?: StepUpOperationKey,
+): void {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    if (operationKey) {
+      store.removeItem(stepUpLedgerKey(operationKey));
+    } else {
+      for (let index = store.length - 1; index >= 0; index -= 1) {
+        const key = store.key(index);
+        if (!key?.startsWith(STEP_UP_LEDGER_PREFIX)) continue;
+        try {
+          const raw = store.getItem(key);
+          const entry = raw
+            ? (JSON.parse(raw) as Partial<StepUpLedgerEntry>)
+            : undefined;
+          if (
+            entry?.serverName === serverName &&
+            entry?.issuer === (issuer ?? "")
+          ) {
+            store.removeItem(key);
+          }
+        } catch {
+          store.removeItem(key);
+        }
+      }
+    }
+  } catch {
+    // Best-effort reset.
+  }
+  // Clean legacy state whenever this server is successfully exercised.
+  try {
+    const store = stepUpAttemptsStore();
+    store?.removeItem(legacyStepUpAttemptsKey(serverName));
+    store?.removeItem(legacyStepUpPendingKey(serverName));
+  } catch {
+    // Best effort.
+  }
+}
+
+// ===========================================================================
+// Tool-call step-up wiring (local, non-hosted surface)
+// ===========================================================================
+//
+// The composition a live tool-call surface uses when `executeToolApi` surfaces
+// an `insufficientScope` challenge: resolve the server's issuer + originally-
+// requested scopes, run the bounded {@link resolveInsufficientScopeStepUp}
+// decision, and — on `reauthorize` — drive the fresh union-scope OAuth flow via
+// {@link ensureAuthorizedForReconnect}. This is what makes the step-up CORE
+// reachable end-to-end from a real MCP tool call on the local path.
+
+function readServerUrlForStepUp(server: ServerWithName): string | undefined {
+  const fromConfig = (server.config as any)?.url?.toString?.();
+  if (fromConfig) return fromConfig;
+  try {
+    return (
+      localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Validate an UNTRUSTED `resource_metadata` hint (from a `403 insufficient_scope`
+ * `WWW-Authenticate` header) before threading it into the OAuth flow. RFC 9728
+ * permits the protected-resource-metadata document to live on a DIFFERENT origin
+ * than the resource server (e.g. a dedicated metadata host), so this does NOT
+ * require same-origin — dropping a valid cross-origin pointer would force the
+ * flow back to the wrong derived well-known URL, the exact regression this path
+ * fixes. It only requires an absolute `https:` URL (RFC 9728 mandates https).
+ * Returns the trimmed hint when it parses as absolute https; otherwise
+ * `undefined`, so a malformed/relative/non-https hint falls back to derived
+ * discovery. Fetch safety of a cross-origin hint is enforced downstream by the
+ * SDK: the factory's outbound-host allowlist (`assertOutboundOAuthUrlAllowed`
+ * blocks private/reserved hosts → SSRF) and cross-origin MCP-Authorization
+ * header stripping (`mergeHeadersForResourceMetadataRequest`).
+ */
+function validResourceMetadataUrlHint(
+  resourceMetadataUrl: string | undefined,
+): string | undefined {
+  const hint = resourceMetadataUrl?.trim();
+  if (!hint) return undefined;
+  try {
+    if (new URL(hint).protocol === "https:") {
+      return hint;
+    }
+  } catch {
+    // Unparseable / relative hint — treat as no usable override.
+  }
+  return undefined;
+}
+
+function readOriginalOAuthScopes(
+  server: ServerWithName,
+): string[] | undefined {
+  // Mirror buildReconnectOAuthOptions' scope precedence: the flow profile's
+  // scopes, else the stored OAuth config's scopes. These are the scopes the
+  // ORIGINAL grant requested — the base the step-up union must not drop.
+  const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
+  if (profileScopes) return profileScopes;
+  return readStoredOAuthConfig(server.name).scopes;
+}
+
+/** The `WWW-Authenticate` challenge fields a failed tool call surfaces. */
+export interface ToolCallStepUpChallenge {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+}
+
+export type ToolCallStepUpOperation = {
+  method: StepUpOperationMethod;
+  operation: string;
+};
+
+export interface ToolCallStepUpOutcome {
+  /** `reauthorize` (a fresh flow ran), `throw`, or `manual`. */
+  action: StepUpAction;
+  /** The union scope set the decision produced (for display / the fresh flow). */
+  scopes: string[];
+  /** Re-authorizations already performed this session before this decision. */
+  attempt: number;
+  /**
+   * The OAuth outcome when `action === "reauthorize"` (typically a `redirect`,
+   * which navigates away). Undefined for `throw` / `manual`.
+   */
+  reauthorization?: OAuthResult;
+}
+
+/**
+ * Handle a runtime `403 insufficient_scope` on a live tool call: decide (bounded
+ * per session, §10.5 policy split) and, on `reauthorize`, run the union-scope
+ * re-authorization. The caller supplies the server and the parsed challenge; the
+ * issuer and originally-requested scopes are resolved from stored state here.
+ */
+export async function applyToolCallStepUp(
+  server: ServerWithName,
+  challenge: ToolCallStepUpChallenge,
+  options?: {
+    /** Defaults to `interactive` — the local tool runner drives a browser flow. */
+    authMode?: StepUpAuthMode;
+    maxRetries?: number;
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+    beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
+    /**
+     * Exact MCP operation whose retry budget this challenge consumes.
+     * Defaults to a server-wide tools/call bucket only for compatibility with
+     * old call sites; production surfaces pass a concrete operation.
+     */
+    operation?: ToolCallStepUpOperation;
+  },
+): Promise<ToolCallStepUpOutcome> {
+  const serverUrl = readServerUrlForStepUp(server);
+  const issuer = resolveStoredIssuer(server.name, serverUrl);
+  const operationKey: StepUpOperationKey = {
+    resourceUrl: canonicalizeStepUpResourceUrl(serverUrl ?? ""),
+    method: options?.operation?.method ?? "tools/call",
+    operation: options?.operation?.operation ?? `server:${server.name}`,
+  };
+
+  // Migration/recovery: the removed v1 ledger was keyed by server + issuer and
+  // therefore could suppress an unrelated operation. It cannot be migrated
+  // faithfully because it never recorded the operation, so discard it once
+  // and start the concrete resource + operation bucket fresh.
+  try {
+    const store = stepUpAttemptsStore();
+    store?.removeItem(legacyStepUpAttemptsKey(server.name));
+    store?.removeItem(legacyStepUpPendingKey(server.name));
+  } catch {
+    // Best effort; the v2 ledger remains authoritative.
+  }
+
+  // A non-pending attempt can only be a crashed/abandoned redirect. Do not
+  // strand the operation until the session ends; its short-lived entry is safe
+  // to clear before a new explicit challenge starts.
+  if (
+    readStepUpAttempts(server.name, issuer, operationKey) > 0 &&
+    !hasPendingStepUp(server.name, issuer, operationKey)
+  ) {
+    resetInsufficientScopeStepUp(server.name, issuer, operationKey);
+  }
+
+  const challengedScopes = parseOAuthScopes(challenge.requiredScope);
+  // The challenge's `resource_metadata` hint is untrusted: thread it only when
+  // it parses as an absolute https URL (RFC 9728). A valid cross-origin pointer
+  // is honored — the SDK's outbound-host guard + cross-origin header stripping
+  // enforce fetch safety. See {@link validResourceMetadataUrlHint}.
+  const resourceMetadataUrl = validResourceMetadataUrlHint(
+    challenge.resourceMetadataUrl,
+  );
+
+  // A METADATA-ONLY challenge (a `resource_metadata` pointer with NO
+  // `requiredScope`) intentionally re-authorizes with the EXISTING scopes.
+  // `challengedScopes` is empty, so the union below is just the user's
+  // previously-requested/consented scopes, which flow to the fresh grant as its
+  // requested scope value. This is deliberate, not a bug: a metadata-only
+  // `insufficient_scope` names no scope to widen to — it is a "you discovered
+  // PRM from the wrong place, rediscover it here" signal (the corrected
+  // `resourceMetadataUrl` may point at a different issuer/resource). Requesting
+  // the corrected PRM's full `scopes_supported` instead would over-grant scopes
+  // the server never asked for and the user never consented to; re-requesting
+  // the original scopes against the CORRECTED metadata is the least-privilege,
+  // intent-preserving step-up (and is not a no-op — discovery, AS, and token
+  // audience can all change). If the corrected metadata still resolves to the
+  // same insufficient scopes, the bounded retry stops the loop by design.
+  const decision = resolveInsufficientScopeStepUp({
+    serverName: server.name,
+    issuer,
+    challengedScopes,
+    originalScopes: readOriginalOAuthScopes(server),
+    authMode: options?.authMode ?? "interactive",
+    maxRetries: options?.maxRetries,
+    operationKey,
+  });
+
+  if (decision.action !== "reauthorize") {
+    return {
+      action: decision.action,
+      scopes: decision.scopes,
+      attempt: decision.attempt,
+    };
+  }
+
+  writePendingStepUp(server.name, issuer, true, operationKey);
+  let reauthorization: OAuthResult;
+  try {
+    reauthorization = await ensureAuthorizedForReconnect(server, {
+      allowInteractiveOAuthFlow: true,
+      // A resolved `reauthorize` IS the confirmed escalation — without this an
+      // auto server's tokenless guard would short-circuit to
+      // ready-unauthenticated instead of redirecting for the widened scopes.
+      interactiveOAuthConfirmed: true,
+      stepUpScopes: decision.scopes,
+      resourceMetadataUrl,
+      onTraceUpdate: options?.onTraceUpdate,
+      beforeRedirect: options?.beforeRedirect,
+    });
+  } catch (error) {
+    writeStepUpAttempts(
+      server.name,
+      issuer,
+      decision.attempt,
+      operationKey,
+    );
+    writePendingStepUp(server.name, issuer, false, operationKey);
+    throw error;
+  }
+
+  // The resolver already bumped the per-session counter (it must persist BEFORE
+  // the redirect so the bound survives the round-trip). Roll it back to its
+  // pre-decision value ONLY on a transient failure that never navigated away
+  // and never completed a re-authorization — an OAuth-init `error` or a
+  // `reauth_required` — so a wasted attempt doesn't block retrying the tool in
+  // the same session.
+  //
+  // A `redirect` OR a `ready` KEEPS the consumed attempt. A `ready` here is NOT
+  // a genuine widened-scope grant — the redirect round-trip is what mints new
+  // scopes; a `ready` means `initiateOAuth` resolved without navigating (the
+  // server was already authorized / no redirect was needed), so the challenged
+  // scope was NOT obtained. Rolling that back would let a server stuck on
+  // `insufficient_scope` loop forever: every retry reads the un-bumped count,
+  // re-bumps, sees `ready`, rolls back, and never advances toward the cap.
+  // Keeping the bump advances the bounded budget until the §10.5 policy throws.
+  // A genuine step-up success clears the counter elsewhere — the caller's
+  // reset-on-successful-tool-call path — not here.
+  if (
+    reauthorization.kind === "error" ||
+    reauthorization.kind === "reauth_required"
+  ) {
+    writeStepUpAttempts(
+      server.name,
+      issuer,
+      decision.attempt,
+      operationKey,
+    );
+    writePendingStepUp(server.name, issuer, false, operationKey);
+  }
+
+  return {
+    action: decision.action,
+    scopes: decision.scopes,
+    attempt: decision.attempt,
+    reauthorization,
+  };
+}
+
+/**
+ * Clear the step-up counter after a SUCCESSFUL tool call (resolves the server's
+ * issuer, then {@link resetInsufficientScopeStepUp}). Call this on a completed
+ * result so a later legitimate step-up starts from zero.
+ */
+export function resetToolCallStepUp(
+  server: ServerWithName,
+  operation?: ToolCallStepUpOperation,
+): void {
+  const serverUrl = readServerUrlForStepUp(server);
+  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
+  resetInsufficientScopeStepUp(
+    server.name,
+    issuer,
+    operation
+      ? {
+          resourceUrl: canonicalizeStepUpResourceUrl(serverUrl ?? ""),
+          method: operation.method,
+          operation: operation.operation,
+        }
+      : undefined,
+  );
 }

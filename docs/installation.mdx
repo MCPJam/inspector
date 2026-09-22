@@ -22,13 +22,13 @@ MCPJam Inspector runs three ways: a hosted web app, a desktop app for Mac and Wi
 
 | Capability | Web App | Desktop | Terminal (`npx`) | Docker |
 | --- | :---: | :---: | :---: | :---: |
-| Install required | None | Mac/Windows download | Node.js | Docker |
+| Install required | None | Mac/Windows download | Node.js | Docker + Git |
 | HTTPS MCP servers | ✓ | ✓ | ✓ | ✓ |
 | HTTP MCP servers | — | ✓ | ✓ | ✓ |
 | Local STDIO servers | — | ✓ | ✓ | ✓ (with `--` args) |
 | Skills | — | ✓ | ✓ | ✓ |
 | Shareable server URLs | ✓ | — | — | — |
-| Always on latest version | ✓ | Re-download to update | Per-run (`@latest`) | Per-tag pull |
+| Always on latest version | ✓ | Re-download to update | Per-run (`@latest`) | Rebuild from source |
 
 If your server is local (running on `localhost`), the web app cannot reach it — pick **Desktop** or **Terminal**. If you want teammates to one-click into the same server, pick **Web App**.
 
@@ -71,6 +71,8 @@ After installing the package, you should see a link to `localhost`. Open that li
 
 <Info>
   **Widget rendering (Chromium):** On first startup, Inspector automatically downloads and installs the Playwright Chromium browser needed to render widgets. This happens in the background — you'll see download progress in the terminal. No manual `playwright install` step is required. Docker images already include Chromium and are unaffected.
+
+  If the download fails, the browser pane shows the reason and retries automatically (after 30 seconds, then 2 minutes, then 10 minutes). You can also click **Retry now** at any time to restart the download immediately. After three automatic retries, only **Retry now** will trigger another attempt.
 </Info>
 
 ### From your editor (VS Code, Cursor, Windsurf)
@@ -81,13 +83,32 @@ If you want the inspector to auto-launch from your project's `dev` script (so it
 
 ## Docker
 
-Run MCPJam Inspector using Docker, bound to localhost for security:
+There is no published image — build one from source, then run it bound to localhost for security:
 
 ```bash
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
+git clone https://github.com/MCPJam/inspector.git
+cd inspector
+docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
 The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
+
+### Accessing over the network
+
+Network access requires **Docker**. A native (`npx`) install binds to `127.0.0.1` (localhost only) and cannot be reached from another machine. The Docker image binds `0.0.0.0`, so it can.
+
+For security, the inspector only issues its session token to `localhost`. When you open a Docker install from another machine (e.g. `http://192.168.1.50:6274`), you'll land on an authentication error. To allow a specific host, set `MCPJAM_ALLOWED_HOSTS` to that hostname and publish the port on your network interface (drop the `127.0.0.1:` prefix from `-p`):
+
+```bash
+docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+```
+
+For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`. Comma-separate multiple hosts. Wildcards like `*.example.com` are supported — if you use a wildcard entry, also set `MCPJAM_ALLOW_WILDCARD_ORIGINS=true` so API calls are accepted (without it, the session token is issued but requests still 403).
+
+<Warning>
+Only add hosts you trust. Allowlisting a host also accepts it as a request origin, which exposes the local shell and agent-browser tools that are on by default in self-hosted mode. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and `MCPJAM_LOCAL_BROWSER_ENABLED=false` if you don't want that. Tunnel and relay domains are never allowed, even if listed.
+</Warning>
 
 ### Docker with Arguments
 
@@ -95,11 +116,11 @@ You can pass command-line arguments to the Docker container:
 
 ```bash
 # Launch with STDIO server
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local -- \
   npx -y @modelcontextprotocol/server-everything
 
 # Launch with HTTP server
-docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
+docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local -- \
   --url http://host.docker.internal:8080/mcp \
   --name "HTTP Server" \
   --tab tools
@@ -219,6 +240,16 @@ Example configuration file structure:
   }
 }
 ```
+
+The config parser accepts three equivalent wrapper shapes, so you can paste a config from any of these sources without reformatting:
+
+| Shape | Example |
+|-------|---------|
+| `mcpServers` wrapper (MCPJam / Claude Desktop style) | `{ "mcpServers": { "my-server": { ... } } }` |
+| `mcp_servers` wrapper (OpenAI plugin style) | `{ "mcp_servers": { "my-server": { ... } } }` |
+| Direct server map (OpenAI `.mcp.json` style) | `{ "my-server": { ... } }` |
+
+Declaring both `mcp_servers` and `mcpServers` in the same file is an error. A bare single-server object (top-level `command` or `url` string) is not accepted — wrap it in one of the shapes above.
 
 ### Mixing STDIO and HTTP/SHTTP servers
 

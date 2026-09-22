@@ -120,6 +120,34 @@ describe("OAuth copy log formatters", () => {
     expect(httpEntry.response.body).toContain("response-access-secret");
   });
 
+  it("copies a bearer-less 401's own copy without rewriting the sentence", () => {
+    // The `\bBearer\s+[^\s,;]+` rule used to fire on any word after the scheme
+    // word, so the hosted 401 the user actually gets — "Bearer token required"
+    // — was copied out of the debugger as "Bearer [REDACTED] required": prose
+    // with no secret in it, mangled in the text a triager reads.
+    const step = "received_401_unauthorized" as OAuthFlowStep;
+    const infoLog = {
+      id: "bearer-less-401",
+      step,
+      timestamp: 1,
+      level: "error",
+      label: "Request rejected",
+      error: { message: "Bearer token required" },
+    } as any;
+    const state = {
+      currentStep: step,
+      infoLogs: [infoLog],
+      httpHistory: [],
+    } as unknown as OAuthFlowState;
+
+    const raw = generateRawText(state, [
+      { type: "info", timestamp: 1, log: infoLog, key: "info" },
+    ]);
+
+    expect(raw).toContain("Bearer token required");
+    expect(raw).not.toContain("[REDACTED]");
+  });
+
   it("prints split request/response halves under their own step sections", () => {
     // The logger splits a reached exchange into a request item on the request
     // step and a response item on the paired received step; the guide text

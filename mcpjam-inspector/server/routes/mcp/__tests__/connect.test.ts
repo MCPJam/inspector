@@ -269,8 +269,13 @@ describe("POST /api/mcp/connect", () => {
         "X-Server-Default": "overridden-by-runtime",
       });
       expect(cfg.timeout).toBe(12345);
+      // The runtime overlay survives verbatim, and the local seam MERGES the
+      // SEP-2640 skills extension onto it — never replacing what the caller
+      // configured. In local mode the inspector IS the MCPJam client and ships
+      // the fulfiller, so advertise = enforce holds unconditionally here.
       expect(cfg.clientCapabilities).toEqual({
         sampling: { strategy: "auto" },
+        extensions: { "io.modelcontextprotocol/skills": {} },
       });
     });
 
@@ -412,10 +417,13 @@ describe("POST /api/mcp/connect", () => {
       const data = (await res.json()) as {
         error?: string;
         details?: string;
+        serverName?: string;
       };
-      expect(data.error).toContain(
-        `Connection failed for server ${SERVER_NAME}`
-      );
+      // The failure speaks for itself — no "Connection failed for server X:"
+      // preamble in front of it. Which server failed rides on `serverName`,
+      // for callers that need to attribute it without parsing prose.
+      expect(data.error).toBe("Connection refused");
+      expect(data.serverName).toBe(SERVER_NAME);
       expect(data.details).toBe("Connection refused");
       expect(mcpClientManager.removeServer).toHaveBeenCalledWith(SERVER_NAME);
     });

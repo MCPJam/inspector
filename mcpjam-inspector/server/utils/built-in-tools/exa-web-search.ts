@@ -13,6 +13,7 @@
  * model can relay the problem to the user instead of breaking the turn.
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
@@ -24,6 +25,15 @@ export interface ExaWebSearchToolOptions {
   projectId: string;
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
+  /**
+   * Set when the search happens inside a shared scenario. A redeemed link grant
+   * on it makes the scenario OWNER the payer — without it a visitor on a shared
+   * link cannot search at all: an anonymous one is told to sign in, and a
+   * signed-in one is told they are not a member of the owner's organization.
+   */
+  scenarioId?: string;
+  /** Mirrors the host's requireToolApproval. See the floor note on the tool. */
+  requireToolApproval?: boolean;
 }
 
 interface ExaWebSearchResult {
@@ -49,6 +59,18 @@ export function buildExaWebSearchTool(
         .max(400)
         .describe("Natural-language web search query"),
     }),
+    // Floor: setting, like every other built-in that reaches outside this
+    // process. "A read of the public web" understates it in both directions:
+    // the SEARCH TEXT is the user's, and it leaves for a third party (Exa)
+    // the moment the model decides to call — a host that turned approval on
+    // asked to see calls like that before they happen. It also spends MCPJam
+    // credits against the project's org, which is the same reason the
+    // connection-opening workspace ops follow the switch rather than sitting
+    // at `never` for being "just a read".
+    needsApproval: needsApprovalFor(
+      "setting",
+      opts.requireToolApproval === true,
+    ),
     execute: async ({ query }, { toolCallId, abortSignal }) => {
       const convexUrl = process.env.CONVEX_HTTP_URL;
       if (!convexUrl) {
@@ -64,6 +86,7 @@ export function buildExaWebSearchTool(
           body: JSON.stringify({
             projectId: opts.projectId,
             chatSessionId: opts.chatSessionId,
+            ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
             toolCallId,
             query,
           }),

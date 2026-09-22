@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   hostCapabilitiesOverrideToMatrix,
+  isMcpProfileEmpty,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
   setMcpAppsOverridesOnDraft,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
+import { HostStyleTokens } from "./HostStyleTokens";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface AppsExtensionTabProps {
@@ -97,6 +99,8 @@ const SEGMENT_BUTTON_CLASSES =
  *   sandbox.permissionsPolicy        Permissions Policy entries on the
  *                                    iframe `allow=` attribute beyond the
  *                                    4 SEP-blessed features
+ *   sandbox.browserStorage            observed browser storage APIs in the
+ *                                    sandboxed iframe (not an MCP concept)
  *
  * Inspector-internal resolver fields (`mode`, `extensions`) stay out of
  * the JSON entirely — they're owned by the structured editor and preserved
@@ -144,6 +148,16 @@ type SandboxDocCsp = SpecSandboxCsp & {
 type SandboxDoc = {
   csp?: SandboxDocCsp;
   permissions?: SpecSandboxPermissions;
+  /**
+   * Observed browser APIs available inside the sandboxed widget iframe.
+   * These are not negotiated MCP capabilities; each key is a browser API
+   * that a host probe measured separately.
+   */
+  browserStorage?: {
+    localStorage?: boolean;
+    sessionStorage?: boolean;
+    indexedDB?: boolean;
+  };
   /**
    * Inspector-only: extra tokens for the proxy iframe's HTML `sandbox=`
    * attribute, on top of the spec-required `allow-scripts allow-same-origin`.
@@ -253,6 +267,12 @@ function sandboxFromPolicy(
     }
     if (Object.keys(perms).length > 0) out.permissions = perms;
   }
+  // Kept immediately below CSP / permissions in the document: it describes
+  // the same iframe boundary, even though it is browser behavior rather than
+  // a portable MCP Apps field.
+  if (policy.browserStorage !== undefined) {
+    out.browserStorage = { ...policy.browserStorage };
+  }
 
   // Inspector-only knobs round-trip with their full undefined-vs-empty
   // semantics so the JSON faithfully represents what's in storage.
@@ -265,7 +285,6 @@ function sandboxFromPolicy(
   if (policy.allowFeatures !== undefined) {
     out.permissionsPolicy = { ...policy.allowFeatures };
   }
-
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -367,12 +386,14 @@ function liftSandboxIntoPolicy(args: {
   // block is present (absent under a present block = user cleared it).
   const nextSandboxAttrs = incoming?.iframeSandboxAttrs;
   const nextAllowFeatures = incoming?.permissionsPolicy;
+  const nextBrowserStorage = incoming?.browserStorage;
 
   if (
     !cspNonEmpty &&
     !permsNonEmpty &&
     nextSandboxAttrs === undefined &&
-    nextAllowFeatures === undefined
+    nextAllowFeatures === undefined &&
+    nextBrowserStorage === undefined
   ) {
     return undefined;
   }
@@ -381,6 +402,7 @@ function liftSandboxIntoPolicy(args: {
   if (permsNonEmpty) next.permissions = nextPerms;
   if (nextSandboxAttrs !== undefined) next.sandboxAttrs = nextSandboxAttrs;
   if (nextAllowFeatures !== undefined) next.allowFeatures = nextAllowFeatures;
+  if (nextBrowserStorage !== undefined) next.browserStorage = nextBrowserStorage;
   return next;
 }
 
@@ -458,11 +480,14 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   // preset". Surfaced only when non-empty (matches `openaiAppsOverrides`'
   // sparsity convention).
   const mcpAppsOverrides = draft.mcpProfile?.apps?.mcpAppsOverrides;
-  if (
-    mcpAppsOverrides !== undefined &&
-    Object.keys(mcpAppsOverrides).length > 0
-  ) {
-    doc.mcpAppsOverrides = { ...mcpAppsOverrides };
+  if (mcpAppsOverrides !== undefined) {
+    // `toolResult` is emitted alongside the `app.*` rows even though it is
+    // not one: this tab owns the card that edits it, and a JSON editor that
+    // hid a value the tab above it can change would read as data loss the
+    // first time someone toggled a part and saw nothing appear.
+    if (Object.keys(mcpAppsOverrides).length > 0) {
+      doc.mcpAppsOverrides = mcpAppsOverrides;
+    }
   }
 
   return doc;
@@ -520,6 +545,31 @@ export function applyJsonToDraft(
         (out as Record<string, unknown>)[key] = value;
       }
     }
+    // cspConnectDomains / cspResourceDomains are the only object-valued
+    // override keys. They are NOT in `booleanKeys`, so without this pass an
+    // apply would silently drop them — and seeded ChatGPT / Claude / Cursor
+    // rows carry them, so the user would lose their subtype policy by
+    // touching anything else in the editor. Soft-validate per leaf the same
+    // way the boolean rows do: keep known keys with boolean values, drop the
+    // rest, and only emit the object when at least one leaf survived.
+    for (const [key, leafKeys] of [
+      ["cspConnectDomains", ["fetch", "xhr", "websocket"]],
+      [
+        "cspResourceDomains",
+        ["script", "stylesheet", "image", "font", "media"],
+      ],
+    ] as const) {
+      const incomingMap = incoming[key];
+      if (!isPlainObject(incomingMap)) continue;
+      const leaves: Record<string, boolean> = {};
+      for (const leaf of leafKeys) {
+        const value = incomingMap[leaf];
+        if (typeof value === "boolean") leaves[leaf] = value;
+      }
+      if (Object.keys(leaves).length > 0) {
+        (out as Record<string, unknown>)[key] = leaves;
+      }
+    }
     const modes = incoming.availableDisplayModes;
     if (Array.isArray(modes)) {
       const filtered = modes.filter(
@@ -541,6 +591,46 @@ export function applyJsonToDraft(
       out.widgetDisplayModeRequests = widgetDisplayModeRequests;
     }
     if (Object.keys(out).length > 0) nextMcpAppsOverrides = out;
+  }
+
+  // `toolResult` round-trips through this editor rather than being preserved
+  // from `prev`: the card that edits it lives in this tab, so deleting the
+  // key here has to mean "clear it" like every other key. Validated per leaf
+  // because the matrix path strips unknown shapes and this one would
+  // otherwise persist whatever was typed.
+  const parsedOverridesRecord = isPlainObject(parsed.mcpAppsOverrides)
+    ? (parsed.mcpAppsOverrides as Record<string, unknown>)
+    : undefined;
+  const incomingToolResult = parsedOverridesRecord?.toolResult;
+  if (isPlainObject(incomingToolResult)) {
+    const nextToolResult: NonNullable<McpAppsCapabilities["toolResult"]> = {};
+    if (typeof incomingToolResult.structuredContent === "boolean") {
+      nextToolResult.structuredContent = incomingToolResult.structuredContent;
+    }
+    if (isPlainObject(incomingToolResult.content)) {
+      const content: NonNullable<
+        NonNullable<McpAppsCapabilities["toolResult"]>["content"]
+      > = {};
+      for (const key of [
+        "text",
+        "image",
+        "audio",
+        "resource",
+        "resourceLink",
+      ] as const) {
+        const value = (incomingToolResult.content as Record<string, unknown>)[
+          key
+        ];
+        if (typeof value === "boolean") content[key] = value;
+      }
+      if (Object.keys(content).length > 0) nextToolResult.content = content;
+    }
+    if (Object.keys(nextToolResult).length > 0) {
+      nextMcpAppsOverrides = {
+        ...(nextMcpAppsOverrides ?? {}),
+        toolResult: nextToolResult,
+      };
+    }
   }
 
   // hostCapabilities — the user sees the EFFECTIVE merged value, so on
@@ -694,6 +784,21 @@ export function applyJsonToDraft(
           if (typeof v === "string") pp[k] = v;
         }
         parsedSandbox.permissionsPolicy = pp;
+      }
+      if (isPlainObject(sandboxBlock.browserStorage)) {
+        const storage: NonNullable<SandboxDoc["browserStorage"]> = {};
+        for (const key of [
+          "localStorage",
+          "sessionStorage",
+          "indexedDB",
+        ] as const) {
+          if (typeof sandboxBlock.browserStorage[key] === "boolean") {
+            storage[key] = sandboxBlock.browserStorage[key];
+          }
+        }
+        // The parent key itself is meaningful: an empty record clears an
+        // earlier measurement when the JSON block is saved.
+        parsedSandbox.browserStorage = storage;
       }
       incomingSandbox = parsedSandbox;
     }
@@ -1389,7 +1494,7 @@ function McpAppsCapabilityMatrix({
 
   /** Set or clear a boolean dimension override. Pass `undefined` to revert to preset. */
   const setBooleanOverride = (
-    key: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">,
+    key: McpAppsDimensionKey,
     nextEffective: boolean
   ) => {
     onDraftChange((prev) => {
@@ -1710,6 +1815,213 @@ function McpAppsDimensionRow({
   );
 }
 
+/**
+ * Probe findings about browser storage inside the sandboxed widget iframe.
+ * This deliberately lives outside both Apps capability matrices: storage is
+ * a browser consequence of the iframe sandbox, not an MCP Apps `app.*`
+ * feature or an OpenAI compatibility shim method.
+ */
+function BrowserStorageCard({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+  ) => void;
+}) {
+  const storage = draft.mcpProfile?.apps?.sandbox?.browserStorage;
+  const setStorageApi = (
+    key: "localStorage" | "sessionStorage" | "indexedDB",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const apps = base.apps ?? {};
+      const sandbox = { ...(apps.sandbox ?? {}) };
+      const browserStorage = { ...(sandbox.browserStorage ?? {}) };
+      // Absence means the normal browser behavior is available, so only
+      // persist the non-default failure finding.
+      if (enabled) delete browserStorage[key];
+      else browserStorage[key] = false;
+      if (Object.keys(browserStorage).length > 0) {
+        sandbox.browserStorage = browserStorage;
+      } else {
+        delete sandbox.browserStorage;
+      }
+      const nextApps = { ...apps };
+      if (Object.keys(sandbox).length > 0) nextApps.sandbox = sandbox;
+      else delete nextApps.sandbox;
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
+      };
+      // Collapse to absence like every ProtocolTab setter. Without this,
+      // toggling an API off and back on leaves `{ profileVersion: 1 }`
+      // behind, which canonicalizes to a DIFFERENT hash than the absent
+      // profile the config started with — a user who changed nothing would
+      // mint a new config row just by flipping a switch twice.
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  return (
+    <section className="rounded-[10px] border border-border bg-background">
+      <div className="border-b border-border px-3.5 py-2.5">
+        <div className="text-[12px] font-medium">Browser storage</div>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          Storage your app can use while running in this client.
+        </p>
+      </div>
+      {(
+        [
+          ["localStorage", "localStorage"],
+          ["sessionStorage", "sessionStorage"],
+          ["indexedDB", "IndexedDB"],
+        ] as const
+      ).map(([key, label], index) => (
+        <div
+          key={key}
+          className={`flex items-center justify-between gap-3 px-3.5 py-2 ${
+            index > 0 ? "border-t border-border/50" : ""
+          }`}
+        >
+          <span className="font-mono text-[12px]">{label}</span>
+          <Switch
+            checked={storage?.[key] !== false}
+            onCheckedChange={(checked) => setStorageApi(key, checked)}
+            aria-label={`${label} available in sandbox`}
+          />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * `mcpProfile.apps.mcpAppsOverrides.toolResult` — which halves of a tool
+ * result the emulated host relays to a widget that called the tool.
+ *
+ * Deliberately its own card rather than a row in the capability matrix: the
+ * matrix gates whether an app.* handler EXISTS, while this shapes the value a
+ * live handler returns. `apps-capability-dimensions` excludes it for the same
+ * reason. It shares the matrix's storage only because its physical nesting
+ * sits under `mcpAppsOverrides`.
+ */
+function WidgetToolResultsCard({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+  ) => void;
+}) {
+  const toolResult = draft.mcpProfile?.apps?.mcpAppsOverrides?.toolResult;
+  const setToolResultPart = (
+    key:
+      | "structuredContent"
+      | "text"
+      | "image"
+      | "audio"
+      | "resource"
+      | "resourceLink",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const apps = base.apps ?? {};
+      const overrides = { ...(apps.mcpAppsOverrides ?? {}) };
+      const next = { ...(overrides.toolResult ?? {}) };
+      // Absence means the part is forwarded, so only the non-default finding
+      // is persisted — same discipline as every probe knob.
+      if (key === "structuredContent") {
+        if (enabled) delete next.structuredContent;
+        else next.structuredContent = false;
+      } else {
+        const content = { ...(next.content ?? {}) };
+        if (enabled) delete content[key];
+        else content[key] = false;
+        if (Object.keys(content).length > 0) next.content = content;
+        else delete next.content;
+      }
+      if (Object.keys(next).length > 0) overrides.toolResult = next;
+      else delete overrides.toolResult;
+
+      const nextApps = { ...apps };
+      if (Object.keys(overrides).length > 0) {
+        nextApps.mcpAppsOverrides = overrides;
+      } else {
+        delete nextApps.mcpAppsOverrides;
+      }
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
+      };
+      // Collapse to absence, or toggling a part off and back on leaves
+      // `{ profileVersion: 1 }` behind and mints a new config hash for a
+      // user who changed nothing.
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  return (
+    <section className="rounded-[10px] border border-border bg-background">
+      <div className="border-b border-border px-3.5 py-2.5">
+        <div className="text-[12px] font-medium">Widget tool results</div>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          Which parts of a tool result survive the trip back to a widget that
+          called it. Turn one off to emulate a host that drops it.
+        </p>
+      </div>
+      <div className="flex items-center justify-between gap-3 px-3.5 py-2">
+        <span className="text-[12px]">Structured content</span>
+        <Switch
+          checked={toolResult?.structuredContent !== false}
+          onCheckedChange={(checked) =>
+            setToolResultPart("structuredContent", checked)
+          }
+          aria-label="Structured content reaches widgets"
+        />
+      </div>
+      <div className="border-t border-border/50 bg-muted/30 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground">
+        Content
+      </div>
+      {(
+        [
+          ["text", "Text"],
+          ["image", "Image"],
+          ["audio", "Audio"],
+          ["resource", "Embedded resource"],
+          ["resourceLink", "Resource link"],
+        ] as const
+      ).map(([key, label]) => (
+        <div
+          key={key}
+          className="flex items-center justify-between gap-3 border-t border-border/50 px-3.5 py-2"
+        >
+          <span className="text-[12px]">{label}</span>
+          <Switch
+            checked={toolResult?.content?.[key] !== false}
+            onCheckedChange={(checked) => setToolResultPart(key, checked)}
+            aria-label={`${label} tool result reaches widgets`}
+          />
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function AppsExtensionTab({
   draft,
   onDraftChange,
@@ -1750,6 +2062,11 @@ export function AppsExtensionTab({
             subtitle on each section makes this explicit so users don't
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+        <BrowserStorageCard draft={draft} onDraftChange={onDraftChange} />
+        <WidgetToolResultsCard draft={draft} onDraftChange={onDraftChange} />
+        {/* Read-only companion to the two matrices: the capability rows say
+            what the host CAN do, this says what it LOOKS like to a view. */}
+        <HostStyleTokens draft={draft} />
         {/* `min-h-[320px]` guarantees the editor keeps a usable, scrollable
             height even when both matrices above are expanded — its own
             CodeMirror scroll then works instead of the editor collapsing. */}

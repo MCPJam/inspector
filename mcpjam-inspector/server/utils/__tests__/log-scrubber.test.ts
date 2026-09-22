@@ -89,6 +89,104 @@ describe("scrubLogPayload", () => {
       const result = scrubLogPayload({ note: "sk-abcdefghijklmnopqrstuvwx" }) as any;
       expect(result.note).toContain("[redacted-secret]");
     });
+
+    it("redacts secret-ish query params quoted inside error strings", () => {
+      // Raw upstream error messages routinely quote full request URLs; the
+      // key-based redaction can't see inside a string value.
+      const result = scrubLogPayload({
+        message:
+          "fetch failed for https://mcp.example.com/sse?api_key=plain-secret&x=1",
+      }) as any;
+      expect(result.message).not.toContain("plain-secret");
+      expect(result.message).toContain("api_key=[redacted]");
+    });
+
+    // The object-key scrubber redacts all of these names; a URL quoted inside
+    // a string value has to reach the same bar. `authorization` needed its own
+    // alternative — `auth` alone can't match it, since the trailing
+    // "orization" blocks the `[=:]` that has to follow.
+    it("redacts camelCase and authorization credentials in quoted URLs", () => {
+      const names = [
+        "accessToken",
+        "refreshToken",
+        "idToken",
+        "clientSecret",
+        "apiKey",
+        "authorization",
+      ];
+
+      for (const name of names) {
+        const result = scrubLogPayload({
+          message: `fetch failed for https://mcp.example.com/sse?${name}=plain-secret&x=1`,
+        }) as any;
+        expect(result.message, `${name} leaked`).not.toContain("plain-secret");
+        expect(result.message).toContain(`${name}=[redacted]`);
+        // The rest of the URL stays readable — that's the debugging value.
+        expect(result.message).toContain("https://mcp.example.com/sse");
+      }
+    });
+
+    // `SECRET_PARAM_LIKE` stops at the first whitespace — right for a query
+    // param, wrong for a header, where it redacted only the scheme word and
+    // left the credential. `Bearer` was covered incidentally by TOKEN_LIKE;
+    // these schemes were not.
+    it("redacts the whole Authorization header value for any scheme", () => {
+      const credentials: Array<[string, string]> = [
+        ["Basic", "dXNlcjpwYXNz"],
+        ["Digest", "username=alice, response=deadbeef"],
+        ["Negotiate", "YIIZkAYGKwYBBQUCoIIZ"],
+        ["Bearer", "abc.def.ghi"],
+      ];
+
+      for (const [scheme, credential] of credentials) {
+        const result = scrubLogPayload({
+          message: `Authorization: ${scheme} ${credential}`,
+        }) as any;
+        expect(result.message, `${scheme} leaked`).not.toContain(credential);
+        expect(result.message).toBe("Authorization: [redacted]");
+      }
+    });
+
+    it("does not swallow siblings of a JSON-embedded Authorization header", () => {
+      const result = scrubLogPayload({
+        message: '{"authorization":"Basic dXNlcjpwYXNz","keep":"me"}',
+      }) as any;
+
+      expect(result.message).not.toContain("dXNlcjpwYXNz");
+      expect(result.message).toContain('"keep":"me"');
+    });
+
+    it("still redacts authorization as a URL query param", () => {
+      const result = scrubLogPayload({
+        message: "https://h/mcp?authorization=urlsecret&x=1",
+      }) as any;
+
+      expect(result.message).not.toContain("urlsecret");
+      expect(result.message).toBe("https://h/mcp?authorization=[redacted]&x=1");
+    });
+
+    it("redacts key=value and key: value secret assignments", () => {
+      const result = scrubLogPayload({
+        message: 'connect failed (token=abc123, client_secret: "s3cr3t")',
+      }) as any;
+      expect(result.message).not.toContain("abc123");
+      expect(result.message).not.toContain("s3cr3t");
+    });
+
+    it("redacts basic-auth credentials in URLs", () => {
+      const result = scrubLogPayload({
+        message: "getaddrinfo ENOTFOUND for https://user:hunter2@internal.host/mcp",
+      }) as any;
+      expect(result.message).not.toContain("hunter2");
+      expect(result.message).toContain("[redacted]@internal.host");
+    });
+
+    it("leaves ordinary error strings readable", () => {
+      const message =
+        "connect ECONNREFUSED 127.0.0.1:8080 (timeout: 30000, retries: 1)";
+      const result = scrubLogPayload({ message }) as any;
+      expect(result.message).toBe(message);
+    });
   });
 
   describe("recursion", () => {

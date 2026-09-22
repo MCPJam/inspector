@@ -43,6 +43,48 @@ function resultGeneratedAt(result: unknown): number | undefined {
   return (result as { generatedAt?: number } | undefined)?.generatedAt;
 }
 
+/**
+ * First-view auto-request claims, shared by every hook instance in the tab.
+ *
+ * `hasAutoAttemptedRef` below is per-instance, which is why three components
+ * observing the same run — the suite insights band, the run detail pane and
+ * the test-case detail — each fired their own first-view request for it. All
+ * of them read `status === undefined` in the same tick, so all of them
+ * requested; the backend granted the first and the rest lost the race (Sentry
+ * CONVEX-AR). Whoever wins flips the status the others are watching, so one
+ * request is all the surfaces ever needed.
+ *
+ * Keyed by mutation as well as run, so run insights and server quality never
+ * block each other. Claims are released when a request FAILS, so a transient
+ * error doesn't disable first-view generation for that run for the rest of the
+ * session; a successful claim is kept, which costs nothing — the status it
+ * just moved off `undefined` is what the auto-request effect gates on anyway.
+ */
+const autoRequestClaims = new Set<string>();
+
+function autoRequestKey(mutation: string, runId: string): string {
+  return `${mutation}::${runId}`;
+}
+
+/** Returns true when THIS caller is the one that should issue the request. */
+function claimAutoRequest(mutation: string, runId: string): boolean {
+  const key = autoRequestKey(mutation, runId);
+  if (autoRequestClaims.has(key)) {
+    return false;
+  }
+  autoRequestClaims.add(key);
+  return true;
+}
+
+function releaseAutoRequest(mutation: string, runId: string): void {
+  autoRequestClaims.delete(autoRequestKey(mutation, runId));
+}
+
+/** Test-only: drops every claim so cases don't leak state into each other. */
+export function __resetAutoRequestClaims(): void {
+  autoRequestClaims.clear();
+}
+
 function classifyInsightError(err: unknown): {
   unavailable: boolean;
   permanent: boolean;
@@ -57,6 +99,15 @@ function classifyInsightError(err: unknown): {
   // hides the surface entirely (SuiteInsightsCollapsible returns null on
   // unavailable). These are *rejections*, not unavailability — the
   // feature works, the user is rate-limited / quota-bound.
+  // DEAD as written: the backend raises `billing_limit_reached` /
+  // `Limit "insightsPerDay"` from the entitlement helper, never this string,
+  // so an eval-surface cap currently falls through to the generic branch
+  // below and hides the band instead of explaining itself. Left in place
+  // rather than fixed here — this hook is document-keyed (it reads lifecycle
+  // off the `EvalSuiteRun` row with no subscription of its own) and pinned by
+  // its own suite, so it is deliberately NOT merged into `use-run-insights`.
+  // `classifyRunInsightError` there matches the strings the backend really
+  // emits, and is the reference when this one is repaired.
   if (raw.includes("insights_daily_limit_reached")) {
     return {
       unavailable: false,
@@ -115,7 +166,14 @@ export function useInsight<TResult extends { summary?: string }>(
     !unavailable;
 
   const requestInsight = useCallback(
-    (force?: boolean, extraArgs?: Record<string, unknown>) => {
+    (
+      force?: boolean,
+      extraArgs?: Record<string, unknown>,
+      // Set only by the auto-request effect below, which holds the shared
+      // first-view claim for this run and needs it released if the request
+      // never lands. Not part of the public `InsightHookResult` signature.
+      autoClaimedRunId?: string,
+    ) => {
       if (!run || unavailable) {
         return;
       }
@@ -124,6 +182,9 @@ export function useInsight<TResult extends { summary?: string }>(
       setRequested(true);
       requestMut({ suiteRunId: run._id, force, ...extraArgs } as any).catch(
         (err: unknown) => {
+          if (autoClaimedRunId) {
+            releaseAutoRequest(config.requestMutation, autoClaimedRunId);
+          }
           setRequested(false);
           const classified = classifyInsightError(err);
           if (classified.unavailable) {
@@ -137,7 +198,7 @@ export function useInsight<TResult extends { summary?: string }>(
         },
       );
     },
-    [run, unavailable, requestMut],
+    [run, unavailable, requestMut, config.requestMutation],
   );
 
   const cancelInsight = useCallback(async () => {
@@ -203,8 +264,26 @@ export function useInsight<TResult extends { summary?: string }>(
     }
 
     hasAutoAttemptedRef.current = true;
-    requestInsight(false);
-  }, [autoRequest, run, status, run?.status, unavailable, requestInsight]);
+
+    // Another mounted component already owns the first-view request for this
+    // run. Firing ours would only race it: the backend hands the job to one
+    // caller, and the losers used to surface the rejection as "feature
+    // unavailable" — hiding the insight surface on the run just opened, while
+    // generation ran fine underneath.
+    if (!claimAutoRequest(config.requestMutation, run._id)) {
+      return;
+    }
+
+    requestInsight(false, undefined, run._id);
+  }, [
+    autoRequest,
+    run,
+    status,
+    run?.status,
+    unavailable,
+    requestInsight,
+    config.requestMutation,
+  ]);
 
   return {
     canRequest,

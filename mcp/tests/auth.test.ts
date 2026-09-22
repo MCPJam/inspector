@@ -3,6 +3,7 @@ import { SignJWT, generateKeyPair } from "jose";
 import {
   authkitIssuerJwks,
   GUEST_ISSUER,
+  resourceIdentifier,
   verifyBearerToken,
   type VerifyConfig,
 } from "../src/auth.js";
@@ -135,6 +136,61 @@ describe("verifyBearerToken", () => {
     const result = await verifyBearerToken(request(token), config, ORIGIN);
 
     expect(result.ok).toBe(false);
+  });
+
+  it("accepts a token audienced to our resource indicator (third-party OAuth)", async () => {
+    // The regression this test exists for: with an MCP Resource Indicator
+    // configured in WorkOS, AuthKit stamps `aud` with the requested `resource`
+    // rather than the environment client id. Pinning to the client id alone
+    // 401'd every third-party client (Claude Code, Cursor, …) *after* a
+    // fully successful OAuth flow.
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const config: VerifyConfig = {
+      clientId: CLIENT_ID,
+      authkitDomain: AUTHKIT_DOMAIN,
+      resolveKey: (issuer) =>
+        authkitIssuerJwks(CLIENT_ID, AUTHKIT_DOMAIN).has(issuer)
+          ? publicKey
+          : null,
+    };
+    const token = await makeToken(privateKey, {
+      iss: `https://${AUTHKIT_DOMAIN}`,
+      aud: resourceIdentifier(ORIGIN),
+    });
+
+    const result = await verifyBearerToken(request(token), config, ORIGIN);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.verified.payload.sub).toBe("user_123");
+  });
+
+  it("rejects a token audienced to a different MCP resource", async () => {
+    // Accepting both audiences must not become "accept any audience": a token
+    // minted for the staging server (same issuer, same signing keys) must not
+    // be replayable against prod.
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const config: VerifyConfig = {
+      clientId: CLIENT_ID,
+      authkitDomain: AUTHKIT_DOMAIN,
+      resolveKey: (issuer) =>
+        authkitIssuerJwks(CLIENT_ID, AUTHKIT_DOMAIN).has(issuer)
+          ? publicKey
+          : null,
+    };
+    const token = await makeToken(privateKey, {
+      iss: `https://${AUTHKIT_DOMAIN}`,
+      aud: "https://mcp-staging.mcpjam.com/mcp",
+    });
+
+    const result = await verifyBearerToken(request(token), config, ORIGIN);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(401);
+  });
+
+  it("advertises the resource identifier it accepts as an audience", () => {
+    // The metadata document and the audience check must not drift apart.
+    expect(resourceIdentifier(ORIGIN)).toBe("https://mcp.mcpjam.com/mcp");
   });
 
   it("rejects a token signed by a different key (bad signature)", async () => {

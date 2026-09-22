@@ -1,0 +1,1695 @@
+import type { ReactNode, RefObject } from "react";
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import ForceGraph2D from "react-force-graph-2d";
+import {
+  AlertTriangle,
+  LoaderCircle,
+  LocateFixed,
+  Network,
+  RefreshCw,
+} from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import { SearchInput } from "@/components/ui/search-input";
+import {
+  UNLABELED_OUTCOME,
+  type UsageFilterChip,
+  type UsageFilterState,
+} from "@/hooks/scenario-usage-filters";
+import { useSessionMap, type TopicMapScope } from "@/hooks/useSessionMap";
+import type { InsightsScope } from "@/hooks/useUsageInsights";
+import { cn } from "@/lib/utils";
+
+const CLUSTER_COLORS = [
+  "#fb7185",
+  "#f59e0b",
+  "#facc15",
+  "#4ade80",
+  "#2dd4bf",
+  "#38bdf8",
+  "#60a5fa",
+  "#818cf8",
+  "#a78bfa",
+  "#e879f9",
+  "#f472b6",
+  "#f97316",
+];
+const GRAPH_SPREAD = 1400;
+const DEFAULT_GRAPH_WIDTH = 1200;
+const DEFAULT_GRAPH_HEIGHT = 840;
+const GRAPH_PADDING = 96;
+
+/** Dark `.app-theme-scope` fallbacks from `index.css` until the panel ref resolves tokens for canvas. */
+const DEFAULT_CANVAS_PALETTE = {
+  background: "oklch(0.2679 0.0036 106.6427)",
+  foreground: "oklch(0.8074 0.0142 93.0137)",
+  mutedForeground: "oklch(0.7713 0.0169 99.0657)",
+  border: "oklch(0.3618 0.0101 106.8928)",
+  card: "oklch(0.2679 0.0036 106.6427)",
+  primary: "oklch(0.6724 0.1308 38.7559)",
+  success: "oklch(0.648 0.15 152)",
+  warning: "oklch(0.75 0.183 55)",
+  destructive: "oklch(0.6368 0.2078 25.3313)",
+  info: "oklch(0.623 0.214 259)",
+} as const;
+
+type TopicMapCanvasPalette = {
+  background: string;
+  foreground: string;
+  mutedForeground: string;
+  border: string;
+  card: string;
+  primary: string;
+  success: string;
+  warning: string;
+  destructive: string;
+  info: string;
+};
+
+function useTopicMapCanvasPalette(containerRef: RefObject<HTMLElement | null>) {
+  const [palette, setPalette] = useState<TopicMapCanvasPalette | null>(null);
+
+  const refresh = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const token = (name: keyof typeof DEFAULT_CANVAS_PALETTE) => {
+      const cssName =
+        name === "mutedForeground" ? "--muted-foreground" : `--${name}`;
+      return (
+        cs.getPropertyValue(cssName).trim() || DEFAULT_CANVAS_PALETTE[name]
+      );
+    };
+    setPalette({
+      background: token("background"),
+      foreground: token("foreground"),
+      mutedForeground: token("mutedForeground"),
+      border: token("border"),
+      card: token("card"),
+      primary: token("primary"),
+      success: token("success"),
+      warning: token("warning"),
+      destructive: token("destructive"),
+      info: token("info"),
+    });
+  }, [containerRef]);
+
+  useLayoutEffect(() => {
+    refresh();
+    const el = containerRef.current;
+    if (!el || typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => {
+      refresh();
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+    const scope = el.closest(".app-theme-scope");
+    if (scope) {
+      observer.observe(scope, {
+        attributes: true,
+        attributeFilter: ["class", "style"],
+      });
+    }
+    return () => observer.disconnect();
+  }, [containerRef, refresh]);
+
+  return palette;
+}
+
+type GraphNode = {
+  id: string;
+  sessionId: string;
+  clusterId?: string;
+  clusterLabel?: string;
+  outcome?: string;
+  semanticTitle?: string;
+  semanticPreview: string;
+  messageCount: number;
+  startedAt: number;
+  lastActivityAt: number;
+  modelId?: string;
+  degree: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  fx?: number;
+  fy?: number;
+  radius: number;
+};
+
+type GraphLink = {
+  source: string | GraphNode;
+  target: string | GraphNode;
+  score: number;
+};
+
+type GraphData = {
+  nodes: GraphNode[];
+  links: GraphLink[];
+};
+
+type GraphHandle = {
+  zoomToFit?: (
+    durationMs?: number,
+    padding?: number,
+    nodeFilter?: (node: GraphNode) => boolean,
+  ) => void;
+  centerAt?: (x?: number, y?: number, durationMs?: number) => void;
+  zoom?: (scale: number, durationMs?: number) => void;
+  d3Force?: (forceName: string, forceFn?: unknown) => unknown;
+  d3ReheatSimulation?: () => void;
+};
+
+interface TopicMapPanelProps {
+  /** Which surface's map to render. Null renders the empty state. */
+  scope?: InsightsScope | TopicMapScope | null;
+  /**
+   * When set (swarm wave), hide nodes whose `journeyRunId` is outside this
+   * set. Nodes without a `journeyRunId` stay visible so older blobs still
+   * render.
+   */
+  journeyRunIds?: readonly string[];
+  filter: UsageFilterState;
+  onToggleChip: (chip: UsageFilterChip) => void;
+  onClearChip: (key: string) => void;
+  onRebuild: (args?: { force?: boolean }) => void;
+  rebuildBusy?: boolean;
+  /** Open the clicked node's session in the Sessions tab. */
+  onOpenSession?: (sessionId: string) => void;
+  /**
+   * Extra controls in the top-right toolbar (e.g. Session flow / Clusters
+   * toggle on swarms), rendered above the Color-by control.
+   */
+  headerActions?: ReactNode;
+}
+
+/** Neutral grey for a node with no cluster and for a node with no outcome. */
+export const NO_OUTCOME_COLOR = DEFAULT_CANVAS_PALETTE.mutedForeground;
+
+function colorForCluster(
+  clusterId: string | undefined,
+  fallbackIndex?: number,
+) {
+  if (!clusterId) return NO_OUTCOME_COLOR;
+  if (typeof fallbackIndex === "number" && Number.isFinite(fallbackIndex)) {
+    return CLUSTER_COLORS[Math.abs(fallbackIndex) % CLUSTER_COLORS.length];
+  }
+  let hash = 0;
+  for (let index = 0; index < clusterId.length; index += 1) {
+    hash = (hash * 31 + clusterId.charCodeAt(index)) >>> 0;
+  }
+  const colorIndex = hash % CLUSTER_COLORS.length;
+  return CLUSTER_COLORS[colorIndex];
+}
+
+export type TopicMapColorMode = "theme" | "outcome";
+
+/**
+ * Outcome tints come from role tokens, not the categorical cluster palette.
+ * Those two palettes used to share hexes (completed == a theme green, unclear
+ * == "no colour"), so flipping to Outcome left most dots looking uncoded.
+ */
+/**
+ * One mapping per palette object. `colorForNode` runs per node per repaint on
+ * a 10k-session map, so building a fresh record there was pure garbage.
+ */
+const OUTCOME_COLOR_CACHE = new WeakMap<
+  TopicMapCanvasPalette,
+  Record<string, string>
+>();
+
+function outcomeColorsForPalette(
+  palette: TopicMapCanvasPalette,
+): Record<string, string> {
+  const cached = OUTCOME_COLOR_CACHE.get(palette);
+  if (cached) return cached;
+  const built = buildOutcomeColors(palette);
+  OUTCOME_COLOR_CACHE.set(palette, built);
+  return built;
+}
+
+function buildOutcomeColors(
+  palette: TopicMapCanvasPalette,
+): Record<string, string> {
+  return {
+    completed: palette.success,
+    partial: palette.warning,
+    unresolved: palette.primary,
+    errored: palette.destructive,
+    unclear: palette.info,
+  };
+}
+
+/**
+ * Node color for the active mode. Tolerates an absent `outcome` — snapshots
+ * written before TOPIC_MAP_VERSION 2 carry no outcome on their nodes, and a
+ * session whose signals never extracted has none either. Absence is muted;
+ * `unclear` is a real verdict and gets its own tint.
+ */
+export function colorForNode(
+  node: { clusterId?: string; outcome?: string },
+  mode: TopicMapColorMode,
+  clusterColorIndex?: number,
+  palette: TopicMapCanvasPalette = DEFAULT_CANVAS_PALETTE,
+): string {
+  if (mode === "outcome") {
+    if (!node.outcome) return palette.mutedForeground;
+    return (
+      outcomeColorsForPalette(palette)[node.outcome] ?? palette.mutedForeground
+    );
+  }
+  return colorForCluster(node.clusterId, clusterColorIndex);
+}
+
+/** Legend entries for the outcome mode, in enum order. */
+const OUTCOME_LEGEND: Array<{
+  key: string;
+  label: string;
+  swatchClass: string;
+}> = [
+  { key: "completed", label: "Completed", swatchClass: "bg-success" },
+  { key: "partial", label: "Partial", swatchClass: "bg-warning" },
+  { key: "unresolved", label: "Unresolved", swatchClass: "bg-primary" },
+  { key: "errored", label: "Errored", swatchClass: "bg-destructive" },
+  { key: "unclear", label: "Unclear", swatchClass: "bg-info" },
+  {
+    key: "unlabeled",
+    label: "Not analyzed",
+    swatchClass: "bg-muted-foreground",
+  },
+];
+
+/** Snapshot version that first carried `nodes[].outcome`. */
+
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  const value =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((character) => character + character)
+          .join("")
+      : normalized;
+  const red = Number.parseInt(value.slice(0, 2), 16);
+  const green = Number.parseInt(value.slice(2, 4), 16);
+  const blue = Number.parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+/** Theme-aware translucent stroke for canvas (oklch-safe in modern browsers). */
+function faintLine(color: string, amountPercent: number) {
+  const base = color.trim() || DEFAULT_CANVAS_PALETTE.border;
+  return `color-mix(in oklch, ${base} ${amountPercent}%, transparent)`;
+}
+
+/** Soft fill for a node glow. Hex stays on the rgba path; role tokens use color-mix. */
+function toCanvasFill(color: string, alpha: number) {
+  const trimmed = color.trim();
+  if (trimmed.startsWith("#")) return hexToRgba(trimmed, alpha);
+  return faintLine(trimmed, Math.round(alpha * 100));
+}
+
+function matchesSearch(
+  query: string,
+  node: {
+    sessionId: string;
+    clusterLabel?: string;
+    semanticTitle?: string;
+    semanticPreview: string;
+    modelId?: string;
+  },
+) {
+  if (!query) return true;
+  const haystack = [
+    node.sessionId,
+    node.clusterLabel ?? "",
+    node.semanticTitle ?? "",
+    node.semanticPreview,
+    node.modelId ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+function getLinkEndpointId(
+  endpoint: GraphLink["source"] | GraphLink["target"],
+) {
+  if (typeof endpoint === "string") return endpoint;
+  return endpoint?.id ?? null;
+}
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const nextRadius = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + nextRadius, y);
+  ctx.arcTo(x + width, y, x + width, y + height, nextRadius);
+  ctx.arcTo(x + width, y + height, x, y + height, nextRadius);
+  ctx.arcTo(x, y + height, x, y, nextRadius);
+  ctx.arcTo(x, y, x + width, y, nextRadius);
+  ctx.closePath();
+}
+
+function useElementSize<T extends HTMLElement>(observeKey: unknown) {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({
+    width: DEFAULT_GRAPH_WIDTH,
+    height: DEFAULT_GRAPH_HEIGHT,
+  });
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    const readSize = () => {
+      const rect = element.getBoundingClientRect();
+      const w = element.clientWidth || rect.width;
+      const h = element.clientHeight || rect.height;
+      const width = Math.max(360, Math.round(w > 0 ? w : DEFAULT_GRAPH_WIDTH));
+      const height = Math.max(
+        420,
+        Math.round(h > 0 ? h : DEFAULT_GRAPH_HEIGHT),
+      );
+      return { width, height };
+    };
+
+    const update = () => {
+      const next = readSize();
+      setSize((current) =>
+        current.width === next.width && current.height === next.height
+          ? current
+          : next,
+      );
+    };
+
+    update();
+
+    let raf1 = 0;
+    let raf2 = 0;
+    const schedulePostLayoutMeasure = () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      raf1 = requestAnimationFrame(() => {
+        update();
+        raf2 = requestAnimationFrame(update);
+      });
+    };
+    schedulePostLayoutMeasure();
+
+    const onWindowResize = () => {
+      update();
+    };
+    window.addEventListener("resize", onWindowResize);
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+        window.removeEventListener("resize", onWindowResize);
+      };
+    }
+
+    const observer = new ResizeObserver(() => {
+      update();
+    });
+    observer.observe(element);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.removeEventListener("resize", onWindowResize);
+      observer.disconnect();
+    };
+  }, [observeKey]);
+
+  return { ref, size };
+}
+
+function linkDistance(score: number) {
+  return Math.max(56, 184 - score * 128);
+}
+
+function trimPreview(text: string) {
+  if (text.length <= 86) return text;
+  return `${text.slice(0, 83).trimEnd()}…`;
+}
+
+/**
+ * Stopwords removed when deriving a single-word topic label from a session's
+ * `semanticPreview`. Covers standard English function words plus the generic
+ * chat-context terms that almost every session summary opens with
+ * (e.g. "The user wants to...", "User asked about...").
+ */
+const TOPIC_LABEL_STOPWORDS: ReadonlySet<string> = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "so",
+  "if",
+  "nor",
+  "yet",
+  "of",
+  "to",
+  "for",
+  "in",
+  "on",
+  "at",
+  "with",
+  "by",
+  "from",
+  "about",
+  "into",
+  "onto",
+  "over",
+  "under",
+  "between",
+  "through",
+  "during",
+  "as",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "am",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "should",
+  "can",
+  "could",
+  "may",
+  "might",
+  "must",
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "me",
+  "him",
+  "her",
+  "us",
+  "them",
+  "my",
+  "your",
+  "his",
+  "its",
+  "our",
+  "their",
+  "this",
+  "that",
+  "these",
+  "those",
+  "user",
+  "users",
+  "assistant",
+  "chat",
+  "session",
+  "please",
+  "wants",
+  "want",
+  "wanted",
+  "needs",
+  "need",
+  "needed",
+  "asks",
+  "ask",
+  "asked",
+  "asking",
+  "requests",
+  "request",
+  "requested",
+  "requesting",
+  "seeks",
+  "seek",
+  "seeking",
+  "discusses",
+  "discussing",
+  "helps",
+  "help",
+  "helping",
+  "tries",
+  "trying",
+  "attempts",
+  "attempting",
+  "uses",
+  "use",
+  "using",
+]);
+
+function stripWordPunctuation(word: string): string {
+  return word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
+/**
+ * First topical word in a session's `semanticPreview`, skipping stopwords and
+ * generic chat framing ("the user asked...", "user wants..."). Falls back to
+ * the first raw token, then the session id, so callers always get something
+ * printable for the hover chip / selected bubble title.
+ */
+export function topicLabelFromPreview(preview: string): string {
+  const trimmed = preview.trim();
+  if (!trimmed) return "";
+  const tokens = trimmed.split(/\s+/).map(stripWordPunctuation).filter(Boolean);
+  for (const token of tokens) {
+    if (!TOPIC_LABEL_STOPWORDS.has(token.toLowerCase())) {
+      return token;
+    }
+  }
+  return tokens[0] ?? "";
+}
+
+/**
+ * Short per-node label shown on hover and as the title of the click bubble.
+ * Derived from the session's own summary so sibling nodes inside the same
+ * cluster surface their distinct topics (e.g. "dog" vs "cat") instead of
+ * collapsing to the shared cluster keyword.
+ */
+export function topicMapNodeHoverLabel(node: {
+  semanticTitle?: string;
+  semanticPreview: string;
+  sessionId: string;
+}): string {
+  const fromTitle = node.semanticTitle?.trim();
+  if (fromTitle) return fromTitle;
+  const fromPreview = topicLabelFromPreview(node.semanticPreview);
+  if (fromPreview) return fromPreview;
+  return node.sessionId;
+}
+
+export function TopicMapPanel({
+  scope: scopeProp,
+  journeyRunIds,
+  filter,
+  onToggleChip,
+  onClearChip: _onClearChip,
+  onRebuild,
+  rebuildBusy,
+  onOpenSession,
+  headerActions,
+}: TopicMapPanelProps) {
+  const topicMapScope = useMemo<TopicMapScope | null>(() => {
+    if (!scopeProp) return null;
+    if (scopeProp.kind === "swarm") {
+      return {
+        kind: "swarm",
+        projectId: scopeProp.projectId,
+        journeyRunIds: journeyRunIds
+          ? [...journeyRunIds]
+          : scopeProp.journeyRunIds,
+      };
+    }
+    // A benchmark run has no map to render — see `topicMapScopeFromInsights`.
+    // Null lands on the panel's own empty state rather than on a scenario
+    // query with no scenario.
+    if (scopeProp.kind === "benchmark") return null;
+    return { kind: "scenario", scenarioId: scopeProp.scenarioId };
+  }, [scopeProp, journeyRunIds]);
+
+  const { snapshot, snapshotError, isLoading, retry, scopeKey } = useSessionMap(
+    { scope: topicMapScope, enabled: topicMapScope !== null },
+  );
+  const analysis = snapshot?.analysis;
+  const analyzing =
+    (analysis?.pending ?? 0) +
+      (analysis?.running ?? 0) -
+      (analysis?.deferred ?? 0) >
+    0;
+  // What earns the header its retry (#5277 keeps failed-run recovery and
+  // hides voluntary rebuilds): sessions whose analysis or map projection
+  // failed, with nothing still in flight.
+  const analysisFailed =
+    !analyzing &&
+    (analysis?.failed ?? 0) + (analysis?.projectionFailed ?? 0) > 0;
+  const isSwarmScope = topicMapScope?.kind === "swarm";
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [colorMode, setColorMode] = useState<TopicMapColorMode>("theme");
+  const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase());
+  const graphRef = useRef<GraphHandle | null>(null);
+  const autoFitKeyRef = useRef<string | null>(null);
+  const topicMapSelectionRunIdRef = useRef<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const topicMapPalette = useTopicMapCanvasPalette(panelRef);
+  const canvasPalette = useMemo(
+    () => topicMapPalette ?? DEFAULT_CANVAS_PALETTE,
+    [topicMapPalette],
+  );
+  const graphLayoutKey = snapshot ? scopeKey : null;
+  const { ref: graphAreaRef, size } =
+    useElementSize<HTMLDivElement>(graphLayoutKey);
+
+  const activeClusterIds = useMemo(
+    () =>
+      new Set(
+        filter.chips.flatMap((chip) =>
+          chip.kind === "cluster" ? [chip.clusterId] : [],
+        ),
+      ),
+    [filter.chips],
+  );
+
+  // Outcome chips the filter is carrying. Now that nodes actually carry an
+  // outcome, a selected grid cell can narrow the map instead of highlighting
+  // the goal and silently leaving every outcome in it lit. Empty set = no
+  // outcome narrowing. (Other dimensions — device, language — are not
+  // represented on nodes at all, so the map cannot honor those.)
+  // Whether this stored snapshot can answer "color by outcome" at all. A
+  // pre-bump blob carries no outcome on its nodes, so offering the mode would
+  // paint every node neutral and look like a bug rather than like stale data.
+
+  const activeOutcomes = useMemo(
+    () =>
+      new Set(
+        filter.chips.flatMap((chip) =>
+          chip.kind === "dimension" && chip.key === "outcome"
+            ? [chip.value]
+            : [],
+        ),
+      ),
+    [filter.chips],
+  );
+
+  const clusterColorIndex = useMemo(
+    () =>
+      new Map(
+        (snapshot?.clusters ?? []).map((cluster) => [
+          cluster.clusterId,
+          cluster.colorIndex,
+        ]),
+      ),
+    [snapshot?.clusters],
+  );
+
+  const previousGraph = useRef<{ key: string; nodes: Map<string, GraphNode> }>({
+    key: scopeKey,
+    nodes: new Map(),
+  });
+  const graphData = useMemo<GraphData | null>(() => {
+    if (!snapshot) return null;
+    const visibleNodes = snapshot.nodes;
+    const visibleIds = new Set(visibleNodes.map((node) => node.sessionId));
+    const nodes = visibleNodes.map((node) => {
+      const previous =
+        previousGraph.current.key === scopeKey
+          ? previousGraph.current.nodes.get(node.sessionId)
+          : undefined;
+      const x = previous?.x ?? node.x * GRAPH_SPREAD;
+      const y = previous?.y ?? node.y * GRAPH_SPREAD;
+      return {
+        id: node.sessionId,
+        sessionId: node.sessionId,
+        clusterId: node.clusterId,
+        clusterLabel: node.clusterLabel,
+        outcome: node.outcome,
+        semanticTitle: node.semanticTitle,
+        semanticPreview: node.semanticPreview,
+        messageCount: node.messageCount,
+        startedAt: node.startedAt,
+        lastActivityAt: node.lastActivityAt,
+        modelId: node.modelId,
+        degree: node.degree,
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        radius: Math.max(
+          4.4,
+          Math.min(11.8, 4 + Math.log1p(node.degree + node.messageCount) * 1.3),
+        ),
+      } satisfies GraphNode;
+    });
+    const links = snapshot.edges
+      .filter(
+        (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
+      )
+      .map(
+        (edge) =>
+          ({
+            source: edge.source,
+            target: edge.target,
+            score: edge.score,
+          } satisfies GraphLink),
+      );
+    previousGraph.current = {
+      key: scopeKey,
+      nodes: new Map(nodes.map((node) => [node.id, node])),
+    };
+    return { nodes, links };
+  }, [snapshot, scopeKey]);
+
+  // Colour is resolved per frame, NOT baked onto the nodes. force-graph owns
+  // these node objects and mutates x/y/vx/vy on them as the simulation runs, so
+  // a new array is a new layout: it re-seeds every position and reheats, which
+  // is the visible "bounce". Storing the colour here would put `colorMode` in
+  // the memo above and make a Theme <-> Outcome flip — a repaint, not a data
+  // change — throw the settled layout away.
+  const nodeColor = useCallback(
+    (node: Pick<GraphNode, "clusterId" | "outcome">) =>
+      colorForNode(
+        node,
+        colorMode,
+        node.clusterId != null
+          ? clusterColorIndex.get(node.clusterId)
+          : undefined,
+        canvasPalette,
+      ),
+    [canvasPalette, clusterColorIndex, colorMode],
+  );
+
+  const nodeById = useMemo(
+    () => new Map((graphData?.nodes ?? []).map((node) => [node.id, node])),
+    [graphData?.nodes],
+  );
+
+  const neighborsByNode = useMemo(() => {
+    const adjacency = new Map<string, Set<string>>();
+    for (const link of graphData?.links ?? []) {
+      const sourceId = getLinkEndpointId(link.source);
+      const targetId = getLinkEndpointId(link.target);
+      if (!sourceId || !targetId) continue;
+      if (!adjacency.has(sourceId)) adjacency.set(sourceId, new Set());
+      if (!adjacency.has(targetId)) adjacency.set(targetId, new Set());
+      adjacency.get(sourceId)!.add(targetId);
+      adjacency.get(targetId)!.add(sourceId);
+    }
+    return adjacency;
+  }, [graphData?.links]);
+
+  const searchMatchIds = useMemo(() => {
+    if (!graphData || !deferredSearch) return null;
+    return new Set(
+      graphData.nodes
+        .filter((node) =>
+          matchesSearch(deferredSearch, {
+            sessionId: node.sessionId,
+            clusterLabel: node.clusterLabel,
+            semanticTitle: node.semanticTitle,
+            semanticPreview: node.semanticPreview,
+            modelId: node.modelId,
+          }),
+        )
+        .map((node) => node.id),
+    );
+  }, [deferredSearch, graphData]);
+
+  const focusNodeId = hoveredNodeId;
+
+  const focusedNeighborhood = useMemo(() => {
+    if (!focusNodeId) return null;
+    const focused = new Set<string>([focusNodeId]);
+    const neighbors = neighborsByNode.get(focusNodeId);
+    if (neighbors) {
+      for (const neighborId of neighbors) focused.add(neighborId);
+    }
+    return focused;
+  }, [focusNodeId, neighborsByNode]);
+
+  const isNodeDimmed = useCallback(
+    (node: GraphNode) => {
+      const clusterMatch =
+        activeClusterIds.size === 0 ||
+        (node.clusterId ? activeClusterIds.has(node.clusterId) : false);
+      // OR within the dimension, matching the chip semantics everywhere else.
+      // The sentinel selects nodes with NO outcome; a concrete value never
+      // matches a node missing one.
+      //
+      // A pre-bump snapshot is exempt entirely: none of its nodes carry an
+      // outcome, so a concrete outcome chip would match nothing and dim the
+      // whole map — a blank canvas reads as a broken map, not as stale data.
+      // The snapshot cannot honor the constraint, so it does not pretend to.
+      const outcomeMatch =
+        activeOutcomes.size === 0 ||
+        (node.outcome
+          ? activeOutcomes.has(node.outcome)
+          : activeOutcomes.has(UNLABELED_OUTCOME));
+      const searchMatch = searchMatchIds == null || searchMatchIds.has(node.id);
+      const focusMatch =
+        focusedNeighborhood == null || focusedNeighborhood.has(node.id);
+      return !(clusterMatch && outcomeMatch && searchMatch && focusMatch);
+    },
+    [activeClusterIds, activeOutcomes, focusedNeighborhood, searchMatchIds],
+  );
+
+  const communities = useMemo(
+    () =>
+      [...(snapshot?.clusters ?? [])].sort(
+        (left, right) => right.memberCount - left.memberCount,
+      ),
+    [snapshot?.clusters],
+  );
+
+  // A snapshot can be new enough to have the field yet still have nothing in
+  // it — every session unanalyzed. Distinguish that so the empty legend is
+  // explained instead of just looking broken.
+  const outcomeNodeCount = useMemo(
+    () => (snapshot?.nodes ?? []).filter((node) => !!node.outcome).length,
+    [snapshot?.nodes],
+  );
+
+  // Fall back to theme whenever the snapshot stops supporting outcomes (e.g. a
+  // rebuild rolled the blob back), so the mode can never be stuck on a source
+  // that has no data.
+
+  useEffect(() => {
+    if (!snapshot) {
+      topicMapSelectionRunIdRef.current = null;
+      setSelectedNodeId(null);
+      return;
+    }
+    const runId = scopeKey;
+    if (topicMapSelectionRunIdRef.current !== runId) {
+      topicMapSelectionRunIdRef.current = runId;
+      setSelectedNodeId(snapshot.nodes[0]?.sessionId ?? null);
+      return;
+    }
+    if (!selectedNodeId) {
+      return;
+    }
+    if (snapshot.nodes.some((node) => node.sessionId === selectedNodeId)) {
+      return;
+    }
+    setSelectedNodeId(snapshot.nodes[0]?.sessionId ?? null);
+  }, [selectedNodeId, snapshot]);
+
+  useEffect(() => {
+    if (!graphData) return;
+    const graph = graphRef.current;
+    if (!graph) return;
+
+    const chargeForce = graph.d3Force?.("charge");
+    if (
+      chargeForce &&
+      typeof (chargeForce as { strength?: unknown }).strength === "function"
+    ) {
+      (
+        chargeForce as {
+          strength: (value: (node: GraphNode) => number) => void;
+        }
+      ).strength((node) => -56 - node.degree * 14 - node.messageCount * 0.9);
+    }
+
+    const linkForce = graph.d3Force?.("link");
+    if (
+      linkForce &&
+      typeof (linkForce as { distance?: unknown }).distance === "function"
+    ) {
+      (
+        linkForce as {
+          distance: (value: (link: GraphLink) => number) => void;
+          strength?: (value: (link: GraphLink) => number) => void;
+        }
+      ).distance((link) => linkDistance(link.score));
+      if (
+        typeof (linkForce as { strength?: unknown }).strength === "function"
+      ) {
+        (
+          linkForce as {
+            strength: (value: (link: GraphLink) => number) => void;
+          }
+        ).strength((link) => Math.max(0.06, (link.score - 0.64) * 0.85));
+      }
+    }
+
+    graph.d3ReheatSimulation?.();
+  }, [graphData]);
+
+  const fitGraph = useCallback(
+    (durationMs = 420) => {
+      graphRef.current?.zoomToFit?.(
+        durationMs,
+        GRAPH_PADDING,
+        (node) => !isNodeDimmed(node),
+      );
+    },
+    [isNodeDimmed],
+  );
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const fitKey = `${scopeKey}:${size.width}x${size.height}`;
+    if (autoFitKeyRef.current === fitKey) return;
+    autoFitKeyRef.current = fitKey;
+    const timer = window.setTimeout(() => {
+      fitGraph(360);
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [fitGraph, size.height, size.width, snapshot]);
+
+  const drawNode = useCallback(
+    (node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const isSelected = node.id === selectedNodeId;
+      const isHovered = node.id === hoveredNodeId;
+      const isSearchMatch = searchMatchIds?.has(node.id) ?? false;
+      const dimmed = isNodeDimmed(node);
+      // Title for both the hover chip and the selected bubble comes from the
+      // session's own summary so the bubble on click reads like
+      // "dog" + "The user requested a drawing of a dog..." rather than
+      // echoing the cluster label (which is already visible in the sidebar).
+      const hoverWord = topicMapNodeHoverLabel(node);
+      const fullLabel = hoverWord || node.sessionId;
+      const color = nodeColor(node);
+
+      ctx.save();
+      ctx.globalAlpha = dimmed ? 0.16 : 1;
+
+      if (!dimmed) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = isSelected ? 32 : isHovered ? 22 : 16;
+      }
+
+      ctx.beginPath();
+      ctx.fillStyle = isSelected
+        ? toCanvasFill(color, 0.2)
+        : isHovered
+        ? toCanvasFill(color, 0.14)
+        : "transparent";
+      ctx.arc(
+        node.x,
+        node.y,
+        node.radius + (isSelected ? 6 : isHovered ? 4 : 0),
+        0,
+        2 * Math.PI,
+      );
+      ctx.fill();
+
+      if (!dimmed) {
+        ctx.beginPath();
+        ctx.fillStyle = toCanvasFill(
+          color,
+          isSelected ? 0.22 : isHovered ? 0.18 : 0.12,
+        );
+        ctx.arc(
+          node.x,
+          node.y,
+          node.radius + (isSelected ? 4.8 : isHovered ? 3.6 : 2.6),
+          0,
+          2 * Math.PI,
+        );
+        ctx.fill();
+      }
+
+      ctx.shadowBlur = 0;
+
+      if (deferredSearch && isSearchMatch) {
+        ctx.beginPath();
+        ctx.strokeStyle = isSelected
+          ? canvasPalette.foreground
+          : canvasPalette.mutedForeground;
+        ctx.lineWidth = 1.4 / globalScale;
+        ctx.arc(node.x, node.y, node.radius + 4.2, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.fillStyle = dimmed ? canvasPalette.mutedForeground : color;
+      ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.lineWidth = (isSelected ? 2.4 : isHovered ? 1.4 : 0.9) / globalScale;
+      ctx.strokeStyle = isSelected
+        ? canvasPalette.foreground
+        : canvasPalette.border;
+      ctx.stroke();
+
+      if (isHovered && !isSelected && hoverWord) {
+        const titleFontSize = 11 / globalScale;
+        const paddingX = 9 / globalScale;
+        const paddingY = 7 / globalScale;
+        const gap = 10 / globalScale;
+
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        const titleWidth = ctx.measureText(hoverWord).width;
+        const bubbleWidth = titleWidth + paddingX * 2;
+        const bubbleHeight = titleFontSize + paddingY * 2;
+        const bubbleX = node.x - bubbleWidth / 2;
+        const bubbleY = node.y - node.radius - gap - bubbleHeight;
+
+        ctx.save();
+        ctx.globalAlpha = dimmed ? 0.55 : 0.98;
+        drawRoundedRect(
+          ctx,
+          bubbleX,
+          bubbleY,
+          bubbleWidth,
+          bubbleHeight,
+          10 / globalScale,
+        );
+        ctx.fillStyle = canvasPalette.card;
+        ctx.globalAlpha = dimmed ? 0.45 : 0.96;
+        ctx.strokeStyle = canvasPalette.border;
+        ctx.lineWidth = 1 / globalScale;
+        ctx.fill();
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.fillStyle = canvasPalette.foreground;
+        ctx.fillText(
+          hoverWord,
+          bubbleX + paddingX,
+          bubbleY + paddingY + titleFontSize * 0.82,
+        );
+        ctx.restore();
+      }
+
+      if (isSelected) {
+        const titleFontSize = 13 / globalScale;
+        const previewFontSize = 10 / globalScale;
+        const paddingX = 10 / globalScale;
+        const paddingY = 8 / globalScale;
+        const gap = 12 / globalScale;
+        const preview = trimPreview(node.semanticPreview);
+
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        const titleWidth = ctx.measureText(fullLabel).width;
+        let bubbleWidth = titleWidth + paddingX * 2;
+        let bubbleHeight = titleFontSize + paddingY * 2;
+
+        ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        bubbleWidth = Math.max(
+          bubbleWidth,
+          ctx.measureText(preview).width + paddingX * 2,
+        );
+        bubbleHeight += previewFontSize + 6 / globalScale;
+
+        const bubbleX = node.x - bubbleWidth / 2;
+        const bubbleY = node.y + node.radius + gap;
+
+        ctx.save();
+        ctx.globalAlpha = dimmed ? 0.55 : 0.98;
+        drawRoundedRect(
+          ctx,
+          bubbleX,
+          bubbleY,
+          bubbleWidth,
+          bubbleHeight,
+          14 / globalScale,
+        );
+        ctx.fillStyle = canvasPalette.card;
+        ctx.globalAlpha = dimmed ? 0.45 : 0.96;
+        ctx.strokeStyle = canvasPalette.border;
+        ctx.lineWidth = 1 / globalScale;
+        ctx.fill();
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.fillStyle = canvasPalette.foreground;
+        ctx.fillText(
+          fullLabel,
+          bubbleX + paddingX,
+          bubbleY + paddingY + titleFontSize * 0.82,
+        );
+
+        ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.fillStyle = canvasPalette.mutedForeground;
+        ctx.fillText(
+          preview,
+          bubbleX + paddingX,
+          bubbleY + bubbleHeight - paddingY,
+        );
+        ctx.restore();
+      }
+
+      ctx.restore();
+    },
+    [
+      canvasPalette.border,
+      canvasPalette.card,
+      canvasPalette.foreground,
+      canvasPalette.mutedForeground,
+      deferredSearch,
+      hoveredNodeId,
+      isNodeDimmed,
+      nodeColor,
+      searchMatchIds,
+      selectedNodeId,
+    ],
+  );
+
+  const linkColor = useCallback(
+    (link: GraphLink) => {
+      const sourceId = getLinkEndpointId(link.source);
+      const targetId = getLinkEndpointId(link.target);
+      if (!sourceId || !targetId) {
+        return faintLine(canvasPalette.mutedForeground, 14);
+      }
+      const sourceNode = nodeById.get(sourceId);
+      const targetNode = nodeById.get(targetId);
+      const dimmed =
+        !sourceNode ||
+        !targetNode ||
+        isNodeDimmed(sourceNode) ||
+        isNodeDimmed(targetNode);
+      const touchesSelection =
+        selectedNodeId != null &&
+        (sourceId === selectedNodeId || targetId === selectedNodeId);
+      const touchesHover =
+        hoveredNodeId != null &&
+        (sourceId === hoveredNodeId || targetId === hoveredNodeId);
+
+      if (touchesSelection) return faintLine(canvasPalette.foreground, 42);
+      if (touchesHover && sourceNode)
+        return toCanvasFill(nodeColor(sourceNode), 0.34);
+      if (dimmed) return faintLine(canvasPalette.mutedForeground, 6);
+      if (
+        sourceNode &&
+        targetNode &&
+        sourceNode.clusterId &&
+        sourceNode.clusterId === targetNode.clusterId
+      ) {
+        return toCanvasFill(nodeColor(sourceNode), 0.22);
+      }
+      return faintLine(canvasPalette.border, 28);
+    },
+    [
+      canvasPalette.border,
+      canvasPalette.foreground,
+      canvasPalette.mutedForeground,
+      hoveredNodeId,
+      isNodeDimmed,
+      nodeById,
+      nodeColor,
+      selectedNodeId,
+    ],
+  );
+
+  const linkWidth = useCallback(
+    (link: GraphLink) => {
+      const sourceId = getLinkEndpointId(link.source);
+      const targetId = getLinkEndpointId(link.target);
+      const touchesSelection =
+        selectedNodeId != null &&
+        (sourceId === selectedNodeId || targetId === selectedNodeId);
+      const touchesHover =
+        hoveredNodeId != null &&
+        (sourceId === hoveredNodeId || targetId === hoveredNodeId);
+      if (touchesSelection) return 1.9;
+      if (touchesHover) return 1.2;
+      const sourceNode = sourceId ? nodeById.get(sourceId) : null;
+      const targetNode = targetId ? nodeById.get(targetId) : null;
+      if (
+        !sourceNode ||
+        !targetNode ||
+        isNodeDimmed(sourceNode) ||
+        isNodeDimmed(targetNode)
+      ) {
+        return 0.45;
+      }
+      return 0.9;
+    },
+    [hoveredNodeId, isNodeDimmed, nodeById, selectedNodeId],
+  );
+
+  const drawClusterFields = useCallback(
+    (ctx: CanvasRenderingContext2D) => {
+      if (!graphData) return;
+
+      const clusters = new Map<
+        string,
+        {
+          color: string;
+          nodes: GraphNode[];
+          sumX: number;
+          sumY: number;
+        }
+      >();
+
+      // Cluster halos are always rendered regardless of hover/selection/search
+      // dimming so operators can see the full cluster landscape at all times.
+      for (const node of graphData.nodes) {
+        const clusterKey = node.clusterId ?? `unclustered:${node.id}`;
+        const existing = clusters.get(clusterKey);
+        if (existing) {
+          existing.nodes.push(node);
+          existing.sumX += node.x ?? 0;
+          existing.sumY += node.y ?? 0;
+          continue;
+        }
+        clusters.set(clusterKey, {
+          // Theme mode: halo = cluster colour. Outcome mode: a faint neutral
+          // ring so grouping stays visible without fighting the outcome tint
+          // on the dots — a mixed-outcome cluster must not pick one member's
+          // colour and assert it for the whole goal.
+          color:
+            colorMode === "outcome"
+              ? canvasPalette.mutedForeground
+              : colorForCluster(
+                  node.clusterId,
+                  node.clusterId != null
+                    ? clusterColorIndex.get(node.clusterId)
+                    : undefined,
+                ),
+          nodes: [node],
+          sumX: node.x ?? 0,
+          sumY: node.y ?? 0,
+        });
+      }
+
+      for (const cluster of clusters.values()) {
+        if (cluster.nodes.length === 0) continue;
+
+        const centerX = cluster.sumX / cluster.nodes.length;
+        const centerY = cluster.sumY / cluster.nodes.length;
+
+        let spread = 0;
+        for (const node of cluster.nodes) {
+          const dx = (node.x ?? 0) - centerX;
+          const dy = (node.y ?? 0) - centerY;
+          spread = Math.max(spread, Math.hypot(dx, dy) + node.radius * 1.8);
+        }
+
+        const radius =
+          cluster.nodes.length === 1
+            ? Math.max(64, spread + 36)
+            : Math.max(120, spread + 92);
+        const gradient = ctx.createRadialGradient(
+          centerX,
+          centerY,
+          radius * 0.08,
+          centerX,
+          centerY,
+          radius,
+        );
+        gradient.addColorStop(
+          0,
+          toCanvasFill(cluster.color, cluster.nodes.length > 1 ? 0.16 : 0.08),
+        );
+        gradient.addColorStop(
+          0.52,
+          toCanvasFill(cluster.color, cluster.nodes.length > 1 ? 0.08 : 0.04),
+        );
+        gradient.addColorStop(1, "rgba(0,0,0,0)");
+
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+        ctx.fill();
+
+        if (cluster.nodes.length > 1) {
+          ctx.beginPath();
+          ctx.strokeStyle = toCanvasFill(cluster.color, 0.18);
+          ctx.lineWidth = 1.1;
+          ctx.arc(centerX, centerY, radius * 0.72, 0, 2 * Math.PI);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    },
+    [canvasPalette.mutedForeground, clusterColorIndex, colorMode, graphData],
+  );
+
+  if (!snapshot && (isLoading || analyzing)) {
+    return (
+      <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+        {headerActions ? (
+          <div className="absolute right-4 top-4 z-10">{headerActions}</div>
+        ) : null}
+        <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+          <LoaderCircle className="h-8 w-8 animate-spin text-primary" />
+          <div>
+            <p className="text-sm font-medium">
+              {isSwarmScope ? "Building cluster map" : "Building clusters"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isSwarmScope
+                ? "Laying out sessions for the graph. Session themes may already be available in Session flow."
+                : "Sessions are being summarized, clustered, and laid out for the graph."}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!snapshot) {
+    const emptyTitle = "No mapped sessions yet";
+    const emptyBody =
+      snapshotError ??
+      (isSwarmScope
+        ? "Sessions appear here as analysis completes."
+        : "Sessions appear here as analysis completes.");
+    return (
+      <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+        {headerActions ? (
+          <div className="absolute right-4 top-4 z-10">{headerActions}</div>
+        ) : null}
+        <div className="flex max-w-md flex-col items-center gap-3 text-center">
+          {snapshotError ? (
+            <AlertTriangle className="h-8 w-8 text-destructive" />
+          ) : (
+            <Network className="h-8 w-8 text-muted-foreground" />
+          )}
+          <div>
+            <p className="text-sm font-medium">{emptyTitle}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
+          </div>
+          {/* No voluntary rebuild here (#5277): before the first map read
+              there is no analysis state to retry from, and the one place to
+              ask for a re-analysis is the freshness chip's popover. */}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={panelRef}
+      className="flex h-full min-h-0 overflow-hidden bg-background text-foreground"
+    >
+      <div
+        ref={graphAreaRef}
+        className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
+      >
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-muted/50" />
+        <div className="pointer-events-none absolute inset-0 text-border/40 [background-image:linear-gradient(to_right,currentColor_1px,transparent_1px),linear-gradient(to_bottom,currentColor_1px,transparent_1px)] [background-size:40px_40px] opacity-60 [mask-image:radial-gradient(circle_at_50%_45%,black,transparent_100%)]" />
+
+        <div className="absolute left-4 right-4 top-4 z-10 flex flex-wrap items-start gap-3">
+          <div className="space-y-2">
+            {snapshotError ? (
+              <div
+                role="status"
+                className="rounded-md border bg-background/90 px-3 py-2 text-xs"
+              >
+                Showing the last available map. Refresh failed.{" "}
+                <button className="underline" onClick={retry}>
+                  Retry refresh
+                </button>
+              </div>
+            ) : null}
+            {snapshot.stats.unmappedSessionCount > 0 ? (
+              <div className="rounded-md bg-background/90 px-3 py-2 text-xs text-muted-foreground">
+                {snapshot.stats.unmappedSessionCount} sessions not mapped ·{" "}
+                {analysis?.projectionPending ?? 0} pending
+              </div>
+            ) : null}
+            {analyzing ? (
+              <div className="rounded-md bg-background/90 px-3 py-2 text-xs text-muted-foreground">
+                Analyzing sessions…
+              </div>
+            ) : null}
+            {snapshot.isSampled ? (
+              <div className="max-w-xl rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
+                Showing {snapshot.nodes.length.toLocaleString()} mapped sessions
+                from {snapshot.scopeTotals.mapped.toLocaleString()} mapped
+                sessions.
+              </div>
+            ) : null}
+          </div>
+
+          <div className="ml-auto flex flex-col items-end gap-2">
+            {headerActions}
+            <div
+              role="group"
+              aria-label="Color nodes by"
+              className="flex items-center gap-1 rounded-lg border border-border bg-background/80 p-1 shadow-sm backdrop-blur"
+            >
+              <span className="px-1.5 text-[11px] text-muted-foreground">
+                Color by
+              </span>
+              <button
+                type="button"
+                aria-pressed={colorMode === "theme"}
+                onClick={() => setColorMode("theme")}
+                className={cn(
+                  "rounded px-2 py-0.5 text-[11px] transition",
+                  colorMode === "theme"
+                    ? "bg-primary/15 font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60",
+                )}
+              >
+                Theme
+              </button>
+              <button
+                type="button"
+                aria-pressed={colorMode === "outcome"}
+                onClick={() => setColorMode("outcome")}
+                className={cn(
+                  "rounded px-2 py-0.5 text-[11px] transition",
+                  colorMode === "outcome"
+                    ? "bg-primary/15 font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60",
+                )}
+              >
+                Outcome
+              </button>
+            </div>
+
+            {colorMode === "outcome" ? (
+              <div className="flex flex-col items-end gap-1 rounded-lg border border-border bg-background/80 px-2.5 py-2 text-[11px] shadow-sm backdrop-blur">
+                {OUTCOME_LEGEND.map((entry) => (
+                  <div key={entry.key} className="flex items-center gap-1.5">
+                    <span
+                      className={cn("h-2 w-2 rounded-full", entry.swatchClass)}
+                    />
+                    <span className="text-muted-foreground">{entry.label}</span>
+                  </div>
+                ))}
+                {outcomeNodeCount === 0 ? (
+                  <span className="max-w-[200px] pt-1 text-right text-muted-foreground">
+                    No mapped session has an inferred outcome yet.
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="pointer-events-none absolute bottom-4 left-4 z-10 flex flex-wrap items-center gap-2">
+          <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-lg border border-border bg-background/80 p-1.5 shadow-sm backdrop-blur">
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Fit view"
+                  onClick={() => fitGraph()}
+                >
+                  <LocateFixed className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Fit view
+              </TooltipContent>
+            </Tooltip>
+            {/* Recovery only (#5277): the header keeps a retry for a failed
+                analysis. The voluntary Re-analyze lives in the freshness
+                chip's popover. */}
+            {analysisFailed ? (
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label="Retry analysis"
+                    disabled={rebuildBusy}
+                    onClick={() => onRebuild({ force: true })}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6}>
+                  Retry analysis
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+          </div>
+        </div>
+
+        <div
+          className="h-full min-h-0 w-full"
+          data-selected-session={selectedNodeId ?? ""}
+        >
+          <ForceGraph2D
+            ref={graphRef as never}
+            graphData={graphData ?? { nodes: [], links: [] }}
+            width={size.width}
+            height={size.height}
+            backgroundColor="rgba(0,0,0,0)"
+            nodeCanvasObjectMode={() => "replace"}
+            nodeCanvasObject={drawNode}
+            nodeLabel={() => ""}
+            linkColor={linkColor}
+            linkWidth={linkWidth}
+            linkCurvature={(link) => {
+              const sourceId = getLinkEndpointId((link as GraphLink).source);
+              const targetId = getLinkEndpointId((link as GraphLink).target);
+              const emphasized =
+                selectedNodeId != null &&
+                (sourceId === selectedNodeId || targetId === selectedNodeId);
+              return emphasized ? 0.12 : 0.045;
+            }}
+            autoPauseRedraw={false}
+            minZoom={0.35}
+            maxZoom={6}
+            warmupTicks={30}
+            cooldownTicks={150}
+            d3AlphaDecay={0.018}
+            d3VelocityDecay={0.28}
+            enableNodeDrag={false}
+            enablePanInteraction
+            enableZoomInteraction
+            showPointerCursor={(node) => !!node}
+            onNodeHover={(node) => {
+              setHoveredNodeId((node as GraphNode | null)?.id ?? null);
+            }}
+            onNodeClick={(node) => {
+              const graphNode = node as GraphNode;
+              setSelectedNodeId(graphNode.id);
+              onOpenSession?.(graphNode.sessionId);
+            }}
+            onBackgroundClick={() => {
+              setHoveredNodeId(null);
+              setSelectedNodeId(null);
+            }}
+            onRenderFramePre={(ctx) => {
+              drawClusterFields(ctx);
+              const gradient = ctx.createRadialGradient(
+                size.width * 0.52,
+                size.height * 0.48,
+                size.height * 0.04,
+                size.width * 0.52,
+                size.height * 0.48,
+                size.height * 0.58,
+              );
+              gradient.addColorStop(0, faintLine(canvasPalette.foreground, 3));
+              gradient.addColorStop(1, "transparent");
+              ctx.fillStyle = gradient;
+              ctx.fillRect(0, 0, size.width, size.height);
+            }}
+          />
+        </div>
+      </div>
+
+      <aside className="flex w-[372px] shrink-0 flex-col border-l border-border bg-muted/30">
+        <div className="space-y-3 border-b border-border bg-muted/20 p-4">
+          <SearchInput
+            value={searchQuery}
+            onValueChange={(value) =>
+              startTransition(() => setSearchQuery(value))
+            }
+            placeholder="Search nodes..."
+          />
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* Radix wraps the viewport's children in a `display: table` box,
+              which shrink-to-fits its content rather than taking the rail's
+              width. A cluster label is `truncate` — i.e. `nowrap` — so a long
+              one became that box's minimum width and pushed every card past
+              the 372px rail, where the viewport's `overflow-x: hidden` clipped
+              it with no scrollbar to reach the rest. Block layout takes the
+              rail's width, and the label truncates as it was meant to. */}
+          <ScrollArea className="min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
+            <div className="space-y-3 p-4">
+              {communities.map((community) => {
+                const isActive = activeClusterIds.has(community.clusterId);
+                const swatch = colorForCluster(
+                  community.clusterId,
+                  clusterColorIndex.get(community.clusterId) ?? 0,
+                );
+                return (
+                  <div
+                    key={community.clusterId}
+                    className={cn(
+                      "w-full rounded-lg border px-3 py-3 text-left transition",
+                      isActive
+                        ? "border-primary/40 bg-primary/10"
+                        : "border-border bg-card hover:bg-muted/50",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="w-full text-left"
+                      onClick={() =>
+                        onToggleChip({
+                          kind: "cluster",
+                          clusterId: community.clusterId,
+                          label: community.label,
+                        })
+                      }
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 rounded-full"
+                              style={{ backgroundColor: swatch }}
+                            />
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {community.label}
+                            </p>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {community.summary}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-secondary px-2 py-1 text-[11px] text-secondary-foreground">
+                          {community.memberCount}
+                        </span>
+                      </div>
+                    </button>
+                    {community.keywords.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {community.keywords.map((keyword) => (
+                          <span
+                            key={keyword}
+                            className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+                          >
+                            {keyword}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </div>
+      </aside>
+    </div>
+  );
+}

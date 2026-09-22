@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TraceViewModeTabs } from "../trace-view-mode-tabs";
 
 describe("TraceViewModeTabs", () => {
-  it("uses sidebar-accent active styling for the selected tab (default)", () => {
+  it("uses accent active styling for the selected tab (default)", () => {
     render(
       <TraceViewModeTabs
         mode="chat"
@@ -13,8 +13,8 @@ describe("TraceViewModeTabs", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-accent",
+      "text-accent-foreground",
     );
   });
 
@@ -29,12 +29,48 @@ describe("TraceViewModeTabs", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-accent",
+      "text-accent-foreground",
     );
   });
 
-  it("hides the App tab by default", () => {
+  it("leads with Chat in fullWidth order, then Trace then Raw", () => {
+    render(
+      <TraceViewModeTabs
+        mode="chat"
+        onModeChange={vi.fn()}
+        showToolsTab={false}
+        layout="fullWidth"
+      />,
+    );
+
+    const order = screen
+      .getAllByRole("button")
+      .map((btn) => btn.textContent?.trim());
+    expect(order).toEqual(["Chat", "Trace", "Raw"]);
+  });
+
+  it("keeps Chat leading in fullWidth even when the Tool Calls tab is shown", () => {
+    // Guards the PUR-14 intent: `chatTab` must sit ahead of the optional
+    // `toolsTab`/`browserTab` in the array, not merely appear first because
+    // consumers happen to pass showToolsTab={false} today.
+    render(
+      <TraceViewModeTabs
+        mode="chat"
+        onModeChange={vi.fn()}
+        showToolsTab
+        showBrowserTab
+        layout="fullWidth"
+      />,
+    );
+
+    const order = screen
+      .getAllByRole("button")
+      .map((btn) => btn.textContent?.trim());
+    expect(order).toEqual(["Chat", "Tool Calls", "Trace", "Replay", "Raw"]);
+  });
+
+  it("hides the Replay tab by default", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -42,10 +78,10 @@ describe("TraceViewModeTabs", () => {
         showToolsTab={false}
       />,
     );
-    expect(screen.queryByRole("button", { name: "App" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Replay" })).toBeNull();
   });
 
-  it("shows the App tab when showBrowserTab is set", () => {
+  it("shows the Replay tab when showBrowserTab is set", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -55,7 +91,7 @@ describe("TraceViewModeTabs", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "App" }),
+      screen.getByRole("button", { name: "Replay" }),
     ).toBeInTheDocument();
   });
 
@@ -75,7 +111,7 @@ describe("TraceViewModeTabs", () => {
     );
   });
 
-  it("applies active styling to the App tab when browserActive is set", () => {
+  it("applies active styling to the Replay tab when browserActive is set", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -85,13 +121,87 @@ describe("TraceViewModeTabs", () => {
         browserActive
       />,
     );
-    expect(screen.getByRole("button", { name: "App" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+    expect(screen.getByRole("button", { name: "Replay" })).toHaveClass(
+      "bg-accent",
+      "text-accent-foreground",
     );
-    // With App active, no standard tab is highlighted.
+    // With Replay active, no standard tab is highlighted.
     expect(screen.getByRole("button", { name: "Trace" })).not.toHaveClass(
-      "bg-sidebar-accent",
+      "bg-accent",
     );
   });
+});
+
+describe("TraceViewModeTabs — the Scorecard tab", () => {
+  it("stays absent unless the surface offers one", () => {
+    render(
+      <TraceViewModeTabs
+        mode="chat"
+        onModeChange={() => {}}
+        showToolsTab={false}
+        showStepsTab
+      />,
+    );
+    expect(
+      screen.queryByTestId("trace-viewer-scorecard-tab"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leads, and moves Steps after Trace", () => {
+    // The scorecard answers "did this case's scorers hold", which is the
+    // question; Steps answers "in what order did it run", the follow-up.
+    render(
+      <TraceViewModeTabs
+        mode="chat"
+        onModeChange={() => {}}
+        showToolsTab
+        showStepsTab
+        showScorecardTab
+        onSelectScorecard={() => {}}
+      />,
+    );
+    const labels = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+    expect(labels).toEqual([
+      "Scorecard",
+      "Chat",
+      "Tool Calls",
+      "Trace",
+      "Steps",
+      "Raw",
+    ]);
+  });
+
+  it("reports its own selection", () => {
+    const onSelectScorecard = vi.fn();
+    render(
+      <TraceViewModeTabs
+        mode="chat"
+        onModeChange={() => {}}
+        showToolsTab={false}
+        showScorecardTab
+        onSelectScorecard={onSelectScorecard}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("trace-viewer-scorecard-tab"));
+    expect(onSelectScorecard).toHaveBeenCalled();
+  });
+});
+
+it("does not highlight Chat while the Scorecard tab is selected", () => {
+  render(
+    <TraceViewModeTabs
+      mode="chat"
+      onModeChange={vi.fn()}
+      showScorecardTab
+      scorecardActive
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Scorecard" })).toHaveClass(
+    "bg-accent",
+  );
+  expect(screen.getByRole("button", { name: "Chat" })).not.toHaveClass(
+    "bg-accent",
+  );
 });

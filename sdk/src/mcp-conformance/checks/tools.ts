@@ -14,7 +14,7 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.listTools(ctx.serverId);
+        const result = await ctx.manager.listTools(ctx.serverId, undefined, { cacheMode: "bypass" });
         const invalidTools = (result.tools ?? [])
           .map((tool, index) => ({ tool, index }))
           .filter(({ tool }) => !tool.name || !tool.inputSchema)
@@ -55,7 +55,7 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.listTools(ctx.serverId);
+        const result = await ctx.manager.listTools(ctx.serverId, undefined, { cacheMode: "bypass" });
         const tools = result.tools ?? [];
 
         if (tools.length === 0) {

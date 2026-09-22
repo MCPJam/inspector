@@ -1,8 +1,14 @@
-import { MCPAuthError, MCPClientManager } from "../src/mcp-client-manager";
+import {
+  MCPAuthError,
+  MCPClientManager,
+  LogLevelMetaClient,
+  TraceContextMetaClient,
+} from "../src/mcp-client-manager";
 import { realpathSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  everythingServerConfig,
   startMockHttpServer,
   startMockStreamableHttpServer,
   MOCK_TOOLS,
@@ -192,10 +198,7 @@ describe("MCPClientManager", () => {
 
     beforeAll(async () => {
       manager = new MCPClientManager();
-      await manager.connectToServer("everything", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("everything", everythingServerConfig());
     }, 60000);
 
     afterAll(async () => {
@@ -271,10 +274,7 @@ describe("MCPClientManager", () => {
     it("inherits parent process env for stdio servers", async () => {
       process.env[inheritedEnvKey] = "from-parent";
 
-      await manager.connectToServer("env-inherit", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("env-inherit", everythingServerConfig());
 
       const result = await manager.executeTool("env-inherit", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
@@ -285,13 +285,14 @@ describe("MCPClientManager", () => {
     it("lets explicit stdio env override inherited parent values", async () => {
       process.env[overrideEnvKey] = "from-parent";
 
-      await manager.connectToServer("env-override", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-        env: {
-          [overrideEnvKey]: "from-config",
-        },
-      });
+      await manager.connectToServer(
+        "env-override",
+        everythingServerConfig({
+          env: {
+            [overrideEnvKey]: "from-config",
+          },
+        })
+      );
 
       const result = await manager.executeTool("env-override", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
@@ -335,6 +336,9 @@ describe("MCPClientManager", () => {
     }, 10000);
 
     it("keeps stdio server context for silent initialization failures", async () => {
+      // stdio now auto-negotiates the era (always on), so a silent server
+      // times out during the `server/discover` probe rather than the plain
+      // initialize — the "via stdio" server context is still preserved.
       await expect(
         manager.connectToServer("silent-timeout", {
           command: process.execPath,
@@ -346,7 +350,7 @@ describe("MCPClientManager", () => {
           timeout: 200,
         })
       ).rejects.toThrow(
-        /Failed to connect to MCP server "silent-timeout" via stdio: Request timed out/
+        /Failed to connect to MCP server "silent-timeout" via stdio: Version negotiation probe timed out/
       );
     }, 10000);
 
@@ -636,16 +640,10 @@ describe("MCPClientManager", () => {
     });
 
     it("should throw when connecting to already connected server", async () => {
-      await manager.connectToServer("duplicate", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("duplicate", everythingServerConfig());
 
       await expect(
-        manager.connectToServer("duplicate", {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-everything"],
-        })
+        manager.connectToServer("duplicate", everythingServerConfig())
       ).rejects.toThrow('MCP server "duplicate" is already connected');
     }, 30000);
 
@@ -828,6 +826,71 @@ describe("MCPClientManager", () => {
       await expect(manager.pingServer("retry-ping")).resolves.toBeUndefined();
 
       expect(fakeClient.ping).toHaveBeenCalledTimes(2);
+    });
+
+    it("probes with server/discover instead of ping on a modern-era connection", async () => {
+      // `ping` was removed from the 2026-07-28 vocabulary — the upstream
+      // client throws MethodNotSupportedByProtocolVersion rather than send it
+      // on a modern-classified connection. The modern liveness probe is
+      // `server/discover`; the ping contract's EmptyResult is preserved.
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        discover: jest.fn().mockResolvedValue({ supportedVersions: ["2026-07-28"] }),
+        ping: jest.fn(),
+      };
+
+      seedRegisteredServer(manager, "modern-ping", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-ping", { client: fakeClient });
+
+      await expect(manager.pingServer("modern-ping")).resolves.toEqual({});
+
+      expect(fakeClient.discover).toHaveBeenCalledTimes(1);
+      expect(fakeClient.ping).not.toHaveBeenCalled();
+    });
+
+    it("falls back to ping when a modern-shaped client lacks discover", async () => {
+      // Test doubles / non-upstream adapters may not carry `discover` — the
+      // probe must not become a TypeError.
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        ping: jest.fn().mockResolvedValue({}),
+      };
+
+      seedRegisteredServer(manager, "modern-noprobe", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-noprobe", { client: fakeClient });
+
+      await expect(manager.pingServer("modern-noprobe")).resolves.toEqual({});
+      expect(fakeClient.ping).toHaveBeenCalledTimes(1);
+    });
+
+    it("still falls back to ping when a discover-less client is wrapped in the meta decorators", async () => {
+      // The decorators must propagate `discover` ABSENCE, not synthesize a
+      // stub — otherwise `pingServer` sees a truthy `discover` on the
+      // outermost client, sends nothing, and reports a healthy connection
+      // without any wire traffic.
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        ping: jest.fn().mockResolvedValue({}),
+      };
+      const decorated = new TraceContextMetaClient(
+        new LogLevelMetaClient(fakeClient as any, () => undefined),
+        () => undefined
+      );
+      expect(decorated.discover).toBeUndefined();
+
+      seedRegisteredServer(manager, "modern-decorated-noprobe", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-decorated-noprobe", { client: decorated });
+
+      await expect(
+        manager.pingServer("modern-decorated-noprobe")
+      ).resolves.toEqual({});
+      expect(fakeClient.ping).toHaveBeenCalledTimes(1);
     });
 
     it("retries read operations without tearing down an existing live session", async () => {

@@ -4,7 +4,6 @@ import {
   serversHaveChanged,
   serializeServersForPersistence,
   serializeServersForSharing,
-  deserializeServersFromConvex,
 } from "../project-serialization";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -377,6 +376,45 @@ describe("serversHaveChanged redacted secrets", () => {
   });
 });
 
+describe("XAA DCR runtime serialization boundary", () => {
+  it("hydrates sanitized status but never writes runtime registration state", () => {
+    const hydrated = deserializeServersFromConvex([
+      {
+        name: "dcr-server",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        registrationMode: "dcr",
+        xaaDcrStatus: "registered",
+        xaaDcrClientId: "runtime-client",
+        xaaDcrIssuer: "https://as.example",
+        xaaDcrRegisteredAt: 123,
+        xaaDcrClientSecretExpiresAt: 456,
+        xaaDcrTokenEndpointAuthMethod: "client_secret_post",
+        hasXaaDcrRegistration: true,
+      },
+    ]);
+    expect(hydrated["dcr-server"]).toMatchObject({
+      xaaDcrStatus: "registered",
+      xaaDcrClientId: "runtime-client",
+      hasXaaDcrRegistration: true,
+    });
+
+    for (const serialized of [
+      serializeServersForPersistence(hydrated),
+      serializeServersForSharing(hydrated),
+    ]) {
+      const output = serialized["dcr-server"] as Record<string, unknown>;
+      expect(output.registrationMode).toBe("dcr");
+      expect(Object.keys(output).some((key) => key.startsWith("xaaDcr"))).toBe(
+        false,
+      );
+      expect(output).not.toHaveProperty("hasXaaDcrRegistration");
+      expect(JSON.stringify(output)).not.toContain("runtime-client");
+    }
+  });
+});
+
 describe("project-serialization xaaAuthzIssuer round-trip", () => {
   // The XAA "Configure Server to Test" modal reads the Authorization Server
   // Issuer from server.xaaAuthzIssuer. If serialize/deserialize drops it, the
@@ -469,6 +507,41 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.registrationStrategy).toBe("preregistered");
     expect(profile.protocolVersion).toBe("2025-06-18");
     expect(profile.clientId).toBe("client_abc");
+    expect(servers.prereg.oauthProtocolMode).toBe("2025-06-18");
+  });
+
+  it("keeps canonical Auto separate from the last resolved concrete profile", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "auto",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthProtocolMode: "auto",
+        oauthProtocolVersion: "2026-07-28",
+      },
+    ]);
+
+    expect(servers.auto.oauthProtocolMode).toBe("auto");
+    expect(servers.auto.oauthFlowProfile?.protocolVersion).toBe("2026-07-28");
+  });
+
+  it("survives a 2026-07-28 draft-era protocol version through the round-trip", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "draft-2026",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client_abc",
+        oauthProtocolVersion: "2026-07-28",
+        oauthRegistrationStrategy: "dcr",
+      },
+    ]);
+
+    const profile = servers["draft-2026"].oauthFlowProfile!;
+    expect(profile.protocolVersion).toBe("2026-07-28");
+    expect(profile.registrationStrategy).toBe("dcr");
   });
 
   it("builds a profile even when only the strategy columns are present", () => {
@@ -506,6 +579,33 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.clientId).toBe("client_abc");
   });
 
+  it("does not repeatedly resync an unknown future flat protocol version", () => {
+    const local: Record<string, ServerWithName> = {
+      future: {
+        name: "future",
+        enabled: true,
+        useOAuth: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+      } as ServerWithName,
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "future",
+          enabled: true,
+          useOAuth: true,
+          url: "https://example.test/mcp",
+          oauthProtocolMode: null,
+          oauthProtocolVersion: "2099-01-01",
+        },
+      ])
+    ).toBe(false);
+  });
+
   it("legacy rows without the columns keep no strategy on the profile", () => {
     const servers = deserializeServersFromConvex([
       {
@@ -520,5 +620,64 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     const profile = servers.legacy.oauthFlowProfile as any;
     expect(profile.registrationStrategy).toBeUndefined();
     expect(profile.protocolVersion).toBeUndefined();
+  });
+});
+
+describe("oauthAllowPathScopedIssuer round-trip", () => {
+  // Regression: the flag first shipped nested inside `oauthFlowProfile`, which
+  // the serializer rebuilds from a fixed field list — so it was dropped on every
+  // save and the OAuth Debugger toggle read back off. It has to be a top-level
+  // server field, like the XAA equivalent.
+  it("survives serialize for persistence", () => {
+    const out = serializeServersForPersistence(
+      makeOAuthHttpServer("read write", { oauthAllowPathScopedIssuer: true })
+    ) as Record<string, any>;
+    expect(out.s1.oauthAllowPathScopedIssuer).toBe(true);
+  });
+
+  it("keeps an explicit false rather than dropping it to undefined", () => {
+    const out = serializeServersForPersistence(
+      makeOAuthHttpServer("read write", { oauthAllowPathScopedIssuer: false })
+    ) as Record<string, any>;
+    expect(out.s1.oauthAllowPathScopedIssuer).toBe(false);
+  });
+
+  it("round-trips a true flag back through deserialize", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthAllowPathScopedIssuer: true,
+      },
+    ]);
+    expect(servers.s1.oauthAllowPathScopedIssuer).toBe(true);
+  });
+
+  it("stays absent for legacy rows that predate the column", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+      },
+    ]);
+    expect(servers.s1.oauthAllowPathScopedIssuer).toBeUndefined();
+  });
+
+  it("is independent of the XAA toggle", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        xaaAllowPathScopedIssuer: true,
+      },
+    ]);
+    expect(servers.s1.xaaAllowPathScopedIssuer).toBe(true);
+    expect(servers.s1.oauthAllowPathScopedIssuer).toBeUndefined();
   });
 });

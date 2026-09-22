@@ -26,8 +26,18 @@ import { createAuthorizedManager } from "../routes/web/auth.js";
 import {
   prepareEvalRun,
   type PreparedEvalRun,
+  shouldSkipExecution,
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
+import { createConvexClient } from "./evals/route-helpers.js";
+import {
+  environmentServerIds,
+  environmentServerNames,
+  resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
+  type ResolvedEnvironmentForLaunch,
+} from "./environments/resolve.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -44,6 +54,14 @@ type ClaimedScheduledRun = {
   projectId: string | null;
   createdByExternalId: string;
   scheduledFor: number;
+  /**
+   * The schedule's pinned project environment (required for multi-env
+   * suites, defaulted for single-env, null for legacy suites). The worker
+   * MUST forward it to `prepareEvalRun` regardless of any browser feature
+   * flag — claims are data-driven. Optional for wire tolerance against a
+   * backend that predates the field.
+   */
+  environmentId?: string | null;
 };
 
 export function isScheduledEvalsWorkerEnabled(): boolean {
@@ -128,9 +146,10 @@ async function reportComplete(args: {
 
 /**
  * Map a setup-phase failure to the completion reason the backend pauses
- * schedules on. Deliberately anchored to the two CANONICAL markers — the
- * backend's `billing_limit_reached` billing-error code and this server's
- * own delegated-mint failure message — because pausing a schedule on a
+ * schedules on. Deliberately anchored to CANONICAL markers — the backend's
+ * `billing_limit_reached` and `spend_budget_reached` codes and this
+ * server's own delegated-mint failure message — because pausing a
+ * schedule on a
  * loose substring (an MCP server error that merely mentions "quota")
  * would stop monitoring for a transient, retryable failure. Everything
  * else records a plain failure and the schedule tries again next window.
@@ -138,6 +157,14 @@ async function reportComplete(args: {
 export function classifyFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/billing_limit_reached/i.test(message)) return "quota_exhausted";
+  // The org's admin-set spend budget refused the launch. Same outcome as a
+  // billing limit — pause the schedule rather than retry into the same cap
+  // every window — so it shares `quota_exhausted`. Both canonical markers
+  // are matched: the `/stream` wire code and the launch mutation's
+  // ConvexError code, since either can be what stringifies into `message`.
+  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+    return "quota_exhausted";
+  }
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
     return "auth";
   }
@@ -169,11 +196,34 @@ export async function executeClaimedRun(
       claimed.createdByExternalId,
       claimed.organizationId,
     );
-    const selection = await fetchSuiteRunServerSelection(
-      bearer,
-      claimed.suiteId,
-      undefined,
-    );
+    // Environment claims connect the environment's authoritatively resolved
+    // closed set, not the suite's saved selection — the saved selection
+    // predates (or ignores) the pinned environment. The SAME resolution is
+    // handed to prepareEvalRun (`resolvedEnvironment`), so the revision the
+    // run-start mutation asserts matches the set the manager connected; an
+    // environment edit after this point loses the revision check and the
+    // trigger's idempotency path retries cleanly.
+    const selection: {
+      serverIds: string[];
+      serverNames: string[];
+      resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    } = claimed.environmentId
+      ? await (async () => {
+          const resolved = await resolveEnvironmentForLaunch(
+            createConvexClient(bearer),
+            {
+              serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+              projectId: claimed.projectId!,
+              environmentId: claimed.environmentId!,
+            },
+          );
+          return {
+            serverIds: environmentServerIds(resolved),
+            serverNames: environmentServerNames(resolved),
+            resolvedEnvironment: resolved,
+          };
+        })()
+      : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);
 
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
@@ -200,12 +250,20 @@ export async function executeClaimedRun(
     try {
       prepared = await prepareEvalRun(manager, {
         suiteId: claimed.suiteId,
+        // Non-null here (the no-project guard above returned already).
+        projectId: claimed.projectId ?? undefined,
         tests: [],
         serverIds: selection.serverIds,
         serverNames: selection.serverNames,
         convexAuthToken: bearer,
         suiteRerun: true,
         source: "schedule",
+        ...(claimed.environmentId
+          ? { environmentId: claimed.environmentId }
+          : {}),
+        ...(selection.resolvedEnvironment
+          ? { resolvedEnvironment: selection.resolvedEnvironment }
+          : {}),
         // Claim retries can never double-create a run: the mutation's
         // idempotency lookup wins over the 30s fingerprint window.
         idempotencyKey: claimed.triggerId,
@@ -215,7 +273,20 @@ export async function executeClaimedRun(
       await reportComplete({
         triggerId: claimed.triggerId,
         ok: false,
-        failureReason: classifyFailure(error),
+        failureReason: classifyFailure(translateEnvironmentResolveError(error)),
+      });
+      return;
+    }
+
+    // The trigger id IS this run's idempotency key, so a redelivered trigger
+    // replays the run it already started. If that run has finished, there is
+    // nothing left to do — executing would re-run the suite and bill the
+    // organization a second time for a scheduled run it only asked for once.
+    if (shouldSkipExecution(prepared)) {
+      logger.info("[scheduled-evals] trigger already ran — not re-executing", {
+        ...logContext,
+        runId: prepared.runId,
+        status: prepared.status,
       });
       return;
     }
@@ -248,7 +319,7 @@ export async function executeClaimedRun(
     await reportComplete({
       triggerId: claimed.triggerId,
       ok: false,
-      failureReason: classifyFailure(error),
+      failureReason: classifyFailure(translateEnvironmentResolveError(error)),
     });
   } finally {
     if (manager) {

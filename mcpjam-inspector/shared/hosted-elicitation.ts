@@ -103,10 +103,34 @@ export interface HostedElicitationUrlRequiredEvent {
   }>;
 }
 
+/**
+ * A `tools/call` inside the chat/agent tool loop failed with a runtime
+ * `403 insufficient_scope` (SEP-2350). The AI-SDK collapses the thrown
+ * `InsufficientScopeError` into a model-facing error-text part, so the raw
+ * challenge is routed out-of-band on this display channel instead (mirroring
+ * `url_required`).
+ *
+ * Display-only — no rendezvous row, no JSON-RPC response owed. The client
+ * drives the union-scope step-up re-authorization from `requiredScope`. The
+ * fields originate from the resource server's `WWW-Authenticate` header, so
+ * treat them as untrusted when rendering.
+ */
+export interface HostedElicitationInsufficientScopeEvent {
+  kind: "insufficient_scope";
+  serverId: string;
+  serverName?: string;
+  /** The tool call that failed, so the UI can anchor the notice to it. */
+  toolCallId?: string;
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  errorDescription?: string;
+}
+
 export type HostedElicitationEvent =
   | HostedElicitationRequestEvent
   | HostedElicitationResolvedEvent
-  | HostedElicitationUrlRequiredEvent;
+  | HostedElicitationUrlRequiredEvent
+  | HostedElicitationInsufficientScopeEvent;
 
 /** Wire literal for the stream data part carrying a `HostedElicitationEvent`. */
 export const HOSTED_ELICITATION_DATA_PART_TYPE = "data-elicitation" as const;
@@ -198,6 +222,27 @@ export function isHostedElicitationEvent(
           typeof entry.elicitationId === "string" &&
           isOptionalString(entry.message),
       )
+    );
+  }
+
+  if (value.kind === "insufficient_scope") {
+    return (
+      typeof value.serverId === "string" &&
+      isOptionalString(value.serverName) &&
+      isOptionalString(value.toolCallId) &&
+      isOptionalString(value.requiredScope) &&
+      isOptionalString(value.resourceMetadataUrl) &&
+      isOptionalString(value.errorDescription) &&
+      // Wire-shape validation only: require at least one challenge field so a
+      // bare kind match is rejected. This deliberately stays permissive and
+      // accepts an errorDescription-only event as WELL-FORMED — the
+      // actionability decision (does this challenge warrant a redirect?) lives
+      // in the consumer, which gates the step-up on `requiredScope` /
+      // `resourceMetadataUrl`. The server already avoids emitting
+      // errorDescription-only events, so this branch is defense in depth.
+      (typeof value.requiredScope === "string" ||
+        typeof value.resourceMetadataUrl === "string" ||
+        typeof value.errorDescription === "string")
     );
   }
 

@@ -13,6 +13,7 @@ import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import {
   getStepInfo,
   getStepIndex,
+  isUnauthenticatedProbeChallenge,
   type HttpHistoryEntry,
   type OAuthFlowState,
   type OAuthFlowStep,
@@ -37,6 +38,18 @@ import {
   splitHttpEntriesForDisplay,
   type HttpEntryView,
 } from "@/lib/http-entry-views";
+
+// The unauthenticated probe answered with an auth challenge — what the flow
+// expects, so the exchange is not an error. A 403 carrying a Bearer challenge
+// counts: the flow continues from it and reports the status violation as a
+// warning, and a red step card would contradict that.
+const isExpectedProbeChallenge = (entry: HttpHistoryEntry): boolean =>
+  isUnauthenticatedProbeChallenge({
+    step: entry.step,
+    status: entry.response?.status,
+    statusText: entry.response?.statusText,
+    wwwAuthenticateHeader: entry.response?.headers?.["www-authenticate"],
+  });
 
 interface OAuthFlowLoggerProps {
   oauthFlowState: OAuthFlowState;
@@ -64,6 +77,13 @@ interface OAuthFlowLoggerProps {
     onContinue?: () => void;
     continueLabel?: string;
     continueDisabled?: boolean;
+    /**
+     * The advance is in flight. Matches the sibling Connect/Refresh buttons'
+     * convention ("Connecting..."/"Refreshing..."): without it, Continue looked
+     * inert for the whole round trip and users clicked it again — the single
+     * biggest rageclick hotspot on this surface.
+     */
+    continuePending?: boolean;
     resetDisabled?: boolean;
     onConnectServer?: () => void;
     onRefreshTokens?: () => void;
@@ -445,10 +465,15 @@ export function OAuthFlowLogger({
                   <Button
                     size="sm"
                     onClick={actions.onContinue}
-                    disabled={actions.continueDisabled}
+                    disabled={
+                      actions.continueDisabled || actions.continuePending
+                    }
+                    aria-busy={actions.continuePending || undefined}
                     className="h-7"
                   >
-                    {actions.continueLabel || "Continue"}
+                    {actions.continuePending
+                      ? "Continuing..."
+                      : actions.continueLabel || "Continue"}
                   </Button>
                 )}
                 {!actions?.onContinue && actions?.continueLabel && (
@@ -622,11 +647,8 @@ export function OAuthFlowLogger({
                     // under the paired received card — count it there.
                     if (item.view === "request") return false;
                     const status = entry.response?.status;
-                    // Don't treat 401 on initial request as error
-                    if (
-                      entry.step === "request_without_token" &&
-                      status === 401
-                    ) {
+                    // Don't treat the probe's auth challenge as an error
+                    if (isExpectedProbeChallenge(entry)) {
                       return false;
                     }
                     // Don't treat 4xx on authenticated_mcp_request as error if deprecated transport was detected
@@ -652,10 +674,7 @@ export function OAuthFlowLogger({
                     httpEntries.find((item) => {
                       if (item.view === "request") return false;
                       const status = item.entry.response?.status;
-                      if (
-                        item.entry.step === "request_without_token" &&
-                        status === 401
-                      ) {
+                      if (isExpectedProbeChallenge(item.entry)) {
                         return false;
                       }
                       return (
@@ -743,7 +762,12 @@ export function OAuthFlowLogger({
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2">
+                            <p
+                              className={cn(
+                                "text-xs text-muted-foreground",
+                                !isExpanded && "line-clamp-2"
+                              )}
+                            >
                               {info.summary}
                             </p>
                             {hasError && firstErrorMessage && (
@@ -962,8 +986,7 @@ export function OAuthFlowLogger({
                   const displayStep = entry.step ?? httpEntry.step;
                   const status = httpEntry.response?.status;
                   const isExpectedAuthChallenge =
-                    httpEntry.step === "request_without_token" &&
-                    status === 401;
+                    isExpectedProbeChallenge(httpEntry);
                   const isHttpError =
                     Boolean(httpEntry.error) ||
                     (typeof status === "number" &&

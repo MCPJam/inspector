@@ -9,6 +9,7 @@ vi.mock("../src/sentry", () => ({
 }));
 
 import {
+  __resetPrintedRunUrls,
   reportEvalResults,
   reportEvalResultsSafely,
 } from "../src/report-eval-results";
@@ -467,6 +468,7 @@ describe("reportEvalResults", () => {
 
     expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverNames).toEqual(["manager"]);
     expect(requestBody.serverReplayConfigs).toEqual([
       {
         serverId: "manager",
@@ -608,6 +610,7 @@ describe("reportEvalResults", () => {
     });
 
     const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverNames).toEqual(["remote"]);
     expect(startBody.serverReplayConfigs).toEqual([
       {
         serverId: "remote",
@@ -618,21 +621,10 @@ describe("reportEvalResults", () => {
     ]);
   });
 
-  it("uploads widget snapshots before reporting results", async () => {
-    const fetchMock = jest
+  it("keeps widget evidence inline so retries have identical content before server storage", async () => {
+    const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        okResponse({
-          uploadUrl: "https://upload.example.com/widget-1",
-        })
-      )
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({ storageId: "storage_1" }),
-      })
-      .mockResolvedValueOnce(
+      .mockResolvedValue(
         okResponse({
           suiteId: "suite_1",
           runId: "run_1",
@@ -642,7 +634,6 @@ describe("reportEvalResults", () => {
         })
       );
     global.fetch = fetchMock as any;
-
     await reportEvalResults({
       apiKey: "sk_test_key",
       baseUrl: "https://example.com",
@@ -672,40 +663,43 @@ describe("reportEvalResults", () => {
       ],
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/artifacts/upload-url"
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("eval-ingest/report");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.results[0].widgetSnapshots[0].widgetHtml).toBe(
+      "<html>cached</html>"
     );
-    expect(fetchMock.mock.calls[1][0]).toBe(
-      "https://upload.example.com/widget-1"
-    );
-    expect(fetchMock.mock.calls[2][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/report"
-    );
-
-    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
-    expect(requestBody.results[0].widgetSnapshots[0]).toEqual(
-      expect.objectContaining({
-        toolCallId: "call-1",
-        widgetHtmlBlobId: "storage_1",
-      })
-    );
-    expect(
-      requestBody.results[0].widgetSnapshots[0].widgetHtml
-    ).toBeUndefined();
+    expect(body.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
   });
 
-  it("warns and continues when widget snapshot upload fails", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fetchMock = jest
-      .fn()
-      .mockResolvedValueOnce(
-        okResponse({
-          uploadUrl: "https://upload.example.com/widget-1",
-        })
-      )
-      .mockResolvedValueOnce(errorResponse(400, "upload failed"))
-      .mockResolvedValueOnce(
+  it("offloads widget evidence to storage when one result is too large to send inline", async () => {
+    // Two calls of a ~600KB built app: over the 1MB body limit, and chunking
+    // cannot help because it only splits between results.
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    const snapshot = (toolCallId: string) => ({
+      toolCallId,
+      toolName: "create_view",
+      protocol: "mcp-apps" as const,
+      serverId: "server-1",
+      resourceUri: "ui://widget/create-view.html",
+      toolMetadata: { ui: { resourceUri: "ui://widget/create-view.html" } },
+      widgetCsp: null,
+      widgetPermissions: null,
+      widgetPermissive: true,
+      prefersBorder: true,
+      widgetHtml: bigWidgetHtml,
+    });
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(
+          okResponse({ uploadUrl: "https://example.com/upload" })
+        );
+      }
+      if (String(url) === "https://example.com/upload") {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
         okResponse({
           suiteId: "suite_1",
           runId: "run_1",
@@ -714,62 +708,193 @@ describe("reportEvalResults", () => {
           summary: successSummary,
         })
       );
+    });
     global.fetch = fetchMock as any;
 
-    const result = await reportEvalResults({
+    await reportEvalResults({
       apiKey: "sk_test_key",
       baseUrl: "https://example.com",
-      suiteName: "widget-snapshots-best-effort",
+      suiteName: "widget-snapshots",
       results: [
         {
           caseTitle: "happy-path",
           passed: true,
+          widgetSnapshots: [snapshot("call-1"), snapshot("call-2")],
+        },
+      ],
+    });
+
+    const reportCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("eval-ingest/report")
+    );
+    expect(reportCall).toBeDefined();
+    const body = JSON.parse(reportCall![1].body);
+    for (const sent of body.results[0].widgetSnapshots) {
+      expect(sent.widgetHtml).toBeUndefined();
+      expect(sent.widgetHtmlBlobId).toBe("storage_1");
+    }
+    // The point of the offload: the request now fits.
+    expect(new TextEncoder().encode(reportCall![1].body).length).toBeLessThan(
+      1024 * 1024
+    );
+  });
+
+  it("leaves a small widget inline while offloading the oversized one beside it", async () => {
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    const widget = (toolCallId: string, widgetHtml: string) => ({
+      toolCallId,
+      toolName: "create_view",
+      protocol: "mcp-apps" as const,
+      serverId: "server-1",
+      resourceUri: "ui://widget/create-view.html",
+      toolMetadata: { ui: { resourceUri: "ui://widget/create-view.html" } },
+      widgetCsp: null,
+      widgetPermissions: null,
+      widgetPermissive: true,
+      prefersBorder: true,
+      widgetHtml,
+    });
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(
+          okResponse({ uploadUrl: "https://example.com/upload" })
+        );
+      }
+      if (String(url) === "https://example.com/upload") {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [
+        {
+          caseTitle: "small-widget",
+          passed: true,
+          widgetSnapshots: [widget("call-1", "<html>small</html>")],
+        },
+        {
+          caseTitle: "big-widget",
+          passed: true,
           widgetSnapshots: [
-            {
-              toolCallId: "call-1",
-              toolName: "create_view",
-              protocol: "mcp-apps",
-              serverId: "server-1",
-              resourceUri: "ui://widget/create-view.html",
-              toolMetadata: {
-                ui: { resourceUri: "ui://widget/create-view.html" },
-              },
-              widgetCsp: null,
-              widgetPermissions: null,
-              widgetPermissive: true,
-              prefersBorder: true,
-              widgetHtml: "<html>cached</html>",
-            },
+            widget("call-2", bigWidgetHtml),
+            widget("call-3", bigWidgetHtml),
           ],
         },
       ],
     });
 
-    expect(result.runId).toBe("run_1");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'skipped widget snapshot upload for "create_view"'
-      )
+    const reportCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("eval-ingest/report")
     );
+    expect(reportCall).toBeDefined();
+    const sent = JSON.parse(reportCall![1].body).results;
+    // Order is preserved and the small case is untouched.
+    expect(sent.map((result: any) => result.caseTitle)).toEqual([
+      "small-widget",
+      "big-widget",
+    ]);
+    expect(sent[0].widgetSnapshots[0].widgetHtml).toBe("<html>small</html>");
+    expect(sent[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
+    for (const snapshot of sent[1].widgetSnapshots) {
+      expect(snapshot.widgetHtml).toBeUndefined();
+      expect(snapshot.widgetHtmlBlobId).toBe("storage_1");
+    }
+  });
 
-    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
-    expect(requestBody.results[0].widgetSnapshots[0]).toEqual(
-      expect.objectContaining({
-        toolCallId: "call-1",
+  const oversizedWidgetResult = () => {
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    return {
+      caseTitle: "big-widget",
+      passed: true,
+      // Two of them: one alone still fits, so only a pair forces the offload.
+      widgetSnapshots: ["call-1", "call-2"].map((toolCallId) => ({
+        toolCallId,
         toolName: "create_view",
-        widgetHtml: "<html>cached</html>",
-      })
-    );
+        protocol: "mcp-apps" as const,
+        serverId: "server-1",
+        resourceUri: "ui://widget/create-view.html",
+        toolMetadata: {},
+        widgetCsp: null,
+        widgetPermissions: null,
+        widgetPermissive: true,
+        prefersBorder: true,
+        widgetHtml: bigWidgetHtml,
+      })),
+    };
+  };
+
+  const mockUploadUrl = (uploadUrl: string) =>
+    vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(okResponse({ uploadUrl }));
+      }
+      if (String(url) === uploadUrl) {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+
+  it.each([
+    "https://example.com/upload",
+    "http://127.0.0.1:3210/upload",
+    "http://localhost:3210/upload",
+  ])("uploads widget evidence through %s", async (uploadUrl) => {
+    const fetchMock = mockUploadUrl(uploadUrl);
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [oversizedWidgetResult()],
+    });
+
     expect(
-      requestBody.results[0].widgetSnapshots[0].widgetHtmlBlobId
-    ).toBeUndefined();
-    expect(sentryMocks.addBreadcrumb).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "eval-reporting.widget-upload",
-        level: "warning",
+      fetchMock.mock.calls.some((call) => String(call[0]) === uploadUrl)
+    ).toBe(true);
+  });
+
+  it("never sends widget evidence to a cleartext URL off the machine", async () => {
+    const uploadUrl = "http://cdn.example.com/upload";
+    const fetchMock = mockUploadUrl(uploadUrl);
+    global.fetch = fetchMock as any;
+
+    // The widget app is not put on a cleartext wire. Reporting then fails,
+    // because the snapshot stays inline and the payload is over the limit —
+    // a loud failure is the right outcome for a server handing out http URLs.
+    await expect(
+      reportEvalResults({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "widget-snapshots",
+        results: [oversizedWidgetResult()],
       })
-    );
-    expect(sentryMocks.captureEvalReportingFailure).not.toHaveBeenCalled();
+    ).rejects.toThrow();
+    expect(
+      fetchMock.mock.calls.some((call) => String(call[0]) === uploadUrl)
+    ).toBe(false);
   });
 
   it("wraps reporting failures in EvalReportingError and captures once", async () => {
@@ -894,5 +1019,224 @@ describe("reportEvalResults", () => {
     expect(
       sentryMocks.captureEvalReportingFailure.mock.calls[0][1]
     ).not.toHaveProperty("serverReplayConfigs");
+  });
+});
+
+/**
+ * The terminal deep link. The SDK used to upload results and say nothing
+ * about where they went; these cover the seam that fixes that, including the
+ * paths where it must stay QUIET.
+ */
+describe("printRunUrl", () => {
+  const originalFetch = global.fetch;
+  const originalMcpjamBaseUrl = process.env.MCPJAM_BASE_URL;
+  const originalProjectId = process.env.MCPJAM_PROJECT_ID;
+
+  beforeEach(() => {
+    // The print-once guard is module-level and keyed on runId, so fixtures
+    // that reuse a run id across cases would silently suppress each other.
+    __resetPrintedRunUrls();
+    delete process.env.MCPJAM_BASE_URL;
+    delete process.env.MCPJAM_PROJECT_ID;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalMcpjamBaseUrl === undefined) delete process.env.MCPJAM_BASE_URL;
+    else process.env.MCPJAM_BASE_URL = originalMcpjamBaseUrl;
+    if (originalProjectId === undefined) delete process.env.MCPJAM_PROJECT_ID;
+    else process.env.MCPJAM_PROJECT_ID = originalProjectId;
+    sentryMocks.addBreadcrumb.mockClear();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  function logLines(spy: ReturnType<typeof vi.spyOn>): string[] {
+    return spy.mock.calls.map((call) => String(call[0]));
+  }
+
+  it("prints the run URL with the project the backend resolved", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_print_1",
+        runId: "run_print_1",
+        projectId: "proj_resolved",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    ) as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "printing",
+      results: [{ caseTitle: "case", passed: true }],
+    });
+
+    // The public Evaluate link preserves the exact uploaded run.
+    expect(logLines(logSpy)).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_print_1/runs/run_print_1?project=proj_resolved",
+    ]);
+  });
+
+  it("omits ?project= against a backend that does not echo projectId", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_print_2",
+        runId: "run_print_2",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    ) as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "printing",
+      results: [{ caseTitle: "case", passed: true }],
+    });
+
+    // Degrades to the app's active-project fallback rather than emitting a
+    // `?project=default` that resolves to nothing.
+    const [line] = logLines(logSpy);
+    expect(line).toBe(
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_print_2/runs/run_print_2"
+    );
+  });
+
+  it("uses a caller-configured project when the backend is silent", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_print_3",
+        runId: "run_print_3",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    ) as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      project: "jd7configured",
+      suiteName: "printing",
+      results: [{ caseTitle: "case", passed: true }],
+    });
+
+    expect(logLines(logSpy)[0]).toContain("?project=jd7configured");
+  });
+
+  it("prints once for a chunked upload, at finalize", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, init: RequestInit) => {
+        if (String(url).endsWith("/runs/start")) {
+          return Promise.resolve(
+            okResponse({
+              suiteId: "suite_chunk",
+              runId: "run_chunk",
+              projectId: "proj_chunk",
+            })
+          );
+        }
+        if (String(url).endsWith("/runs/iterations")) {
+          return Promise.resolve(
+            okResponse({
+              inserted: JSON.parse(init.body as string).results.length,
+              skipped: 0,
+              total: JSON.parse(init.body as string).results.length,
+            })
+          );
+        }
+        return Promise.resolve(
+          okResponse({
+            suiteId: "suite_chunk",
+            runId: "run_chunk",
+            projectId: "proj_chunk",
+            status: "completed",
+            result: "passed",
+            summary: successSummary,
+          })
+        );
+      });
+    global.fetch = fetchMock as any;
+
+    // Over the one-shot result limit, so the chunked path is taken.
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "chunked",
+      results: Array.from({ length: 250 }, (_, index) => ({
+        caseTitle: `case-${index}`,
+        passed: true,
+      })),
+    });
+
+    expect(logLines(logSpy)).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_chunk/runs/run_chunk?project=proj_chunk",
+    ]);
+  });
+
+  it("prints once on the idempotent-reuse short-circuit (the CI-retry path)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, init: RequestInit) => {
+        if (String(url).endsWith("/runs/iterations")) {
+          const count = JSON.parse(String(init.body)).results.length;
+          return Promise.resolve(
+            okResponse({ inserted: 0, skipped: count, total: count })
+          );
+        }
+        if (String(url).endsWith("/runs/start")) {
+          return Promise.resolve(
+            okResponse({
+              suiteId: "suite_reuse",
+              runId: "run_reuse",
+              projectId: "proj_reuse",
+              reused: true,
+              status: "completed",
+              result: "passed",
+              summary: successSummary,
+            })
+          );
+        }
+        throw new Error(`unexpected request to ${url}`);
+      });
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "reused",
+      externalRunId: "ci-run-1",
+      results: Array.from({ length: 250 }, (_, index) => ({
+        caseTitle: `case-${index}`,
+        passed: true,
+      })),
+    });
+
+    expect(logLines(logSpy)).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_reuse/runs/run_reuse?project=proj_reuse",
+    ]);
+  });
+
+  it("prints nothing when the upload fails", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // 400, not 500: a retryable status makes `requestWithRetry` sleep through
+    // its whole backoff ladder before this can assert. The claim under test —
+    // no link on failure — holds for any failure status.
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(400, "boom")) as any;
+
+    await expect(
+      reportEvalResults({
+        apiKey: "sk_test_key",
+        suiteName: "failing",
+        results: [{ caseTitle: "case", passed: true }],
+      })
+    ).rejects.toBeInstanceOf(EvalReportingError);
+
+    expect(logLines(logSpy)).toEqual([]);
   });
 });

@@ -1,3 +1,6 @@
+// Inspector transcript renderer for Playground, Evals, and session review
+// (Sessions, User Testing, Swarms, and share dialogs). Provider-free external
+// embedders use @mcpjam/chat-ui; shared adaptation and primitives live there.
 import {
   useCallback,
   useEffect,
@@ -7,9 +10,9 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -22,9 +25,9 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import {
-  getChatboxChatBackground,
-  getChatboxHostFamily,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  getScenarioHostFamily,
+} from "@/lib/scenario-client-style";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
@@ -36,12 +39,16 @@ import {
   WidgetSurfaceHostProvider,
 } from "./thread/mcp-apps/widget-surface-host";
 import { InspectorWidgetHostProvider } from "./thread/mcp-apps/use-widget-host";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
 import type {
   AppToolInvocation,
   AppToolInvocationUpdate,
 } from "./thread/app-tool-invocations";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
+
+/** Shared transcript width and alignment; each scroll owner supplies vertical inset. */
+export const TRANSCRIPT_COLUMN_CLASS = "min-w-0 w-full max-w-4xl mx-auto px-4";
 
 interface ThreadProps {
   chatSessionId?: string;
@@ -72,6 +79,7 @@ interface ThreadProps {
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   focusMessageId?: string | null;
@@ -86,6 +94,19 @@ interface ThreadProps {
    * is active; other consumers can omit it.
    */
   renderUserMessageActions?: TranscriptThreadProps["renderUserMessageActions"];
+  /**
+   * Optional slot under each assistant message. ChatTabV2 wires the per-turn
+   * rating widget here for hosted User Testing sessions; the transcript
+   * suppresses it on the message that is still streaming.
+   */
+  renderAssistantTurnFooter?: TranscriptThreadProps["renderAssistantTurnFooter"];
+  /**
+   * Enables the per-user-message edit affordance. Saving rewinds the thread to
+   * that message and re-runs the turn from the edited text.
+   */
+  onEditUserMessage?: TranscriptThreadProps["onEditUserMessage"];
+  /** Blocks editing while a response is streaming. */
+  editDisabled?: TranscriptThreadProps["editDisabled"];
   /**
    * Per-message sender attribution in shared sessions. Both must be supplied
    * for avatars to render; otherwise the transcript looks identical to today.
@@ -155,6 +176,7 @@ export function Thread({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   focusMessageId = null,
@@ -164,6 +186,9 @@ export function Thread({
   contentClassName,
   getMessageWrapperProps,
   renderUserMessageActions,
+  renderAssistantTurnFooter,
+  onEditUserMessage,
+  editDisabled,
   showSenderAvatars,
   resolveSenderAvatar,
   recorder,
@@ -288,13 +313,13 @@ export function Thread({
     !fullscreenChatSendBlocked &&
     fullscreenChatInput.trim().length > 0;
 
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const hasBrandIndicator =
     useResolvedHostStyleForIndicator(model.provider) !== null;
   const isChatgptDark =
-    getChatboxHostFamily(chatboxHostStyle) === "chatgpt" &&
-    chatboxHostTheme === "dark";
+    getScenarioHostFamily(scenarioHostStyle) === "chatgpt" &&
+    scenarioHostTheme === "dark";
   const lastRenderableMessage = useMemo(
     () => getLastRenderableConversationMessage(messages),
     [messages]
@@ -315,7 +340,7 @@ export function Thread({
   // Cursor #1f1f1f. Leaves the `isChatgptDark` gating unchanged so we
   // don't paint a background where one wasn't painted before.
   const chatgptFamilyDarkBackground = isChatgptDark
-    ? getChatboxChatBackground(chatboxHostStyle, "dark")
+    ? getScenarioChatBackground(scenarioHostStyle, "dark")
     : undefined;
 
   return (
@@ -361,6 +386,7 @@ export function Thread({
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}
           interactive={interactive}
+          widgetPolicy={widgetPolicy}
           reasoningDisplayMode={reasoningDisplayMode}
           mcpToolResultImageRendering={mcpToolResultImageRendering}
           focusMessageId={focusMessageId}
@@ -371,10 +397,13 @@ export function Thread({
           lastRenderableMessageId={lastRenderableMessageId}
           contentClassName={
             contentClassName ??
-            "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+            cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-16 space-y-8")
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}
+          renderAssistantTurnFooter={renderAssistantTurnFooter}
+          onEditUserMessage={onEditUserMessage}
+          editDisabled={editDisabled}
           showSenderAvatars={showSenderAvatars}
           resolveSenderAvatar={resolveSenderAvatar}
           recorder={recorder}
@@ -383,8 +412,19 @@ export function Thread({
           <WidgetSurfaceHost chatSessionId={chatSessionId} />
         </InspectorWidgetHostProvider>
 
+        {/* PR7 (§12.6) — an MCP App's App-initiated `tools/call` can return
+            `input_required`; the same SDK MRTR driver that backs `callTool`
+            collects each round through this reused dialog, which portals above
+            the App surface (dialog z-50 > fullscreen widget z-40) so the App
+            keeps rendering underneath and only the FINAL result is returned
+            over the App bridge. Mounted on every `Thread` (local chat, agent,
+            multi-model, playground) so the overlay is present wherever an App
+            is interactive; the host self-elects a single active dialog and the
+            store no-ops in hosted mode. */}
+        <MrtrElicitationHost />
+
         {shouldShowStandaloneThinkingIndicator && (
-          <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
+          <div className={TRANSCRIPT_COLUMN_CLASS}>
             <ThinkingIndicator model={model} />
           </div>
         )}

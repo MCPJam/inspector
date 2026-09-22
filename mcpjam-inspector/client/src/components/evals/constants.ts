@@ -17,14 +17,12 @@ export const RUN_FILTER_ALL = "all";
 export const RUN_FILTER_LEGACY = "legacy";
 
 export type RunFilterValue =
-  | typeof RUN_FILTER_ALL
-  | typeof RUN_FILTER_LEGACY
-  | string;
+  typeof RUN_FILTER_ALL | typeof RUN_FILTER_LEGACY | string;
 
 // Default values
 export const DEFAULTS = {
   MIN_PASS_RATE: 100,
-  RUNS_PER_TEST: 1,
+  RUNS_PER_TEST: 5,
   CHART_HEIGHT: "h-32",
   MAX_QUERY_DISPLAY_LENGTH: 100,
   BATCH_DELETE_CONFIRMATION_DELAY: 0,
@@ -41,7 +39,6 @@ export type ViewMode = (typeof VIEW_MODES)[keyof typeof VIEW_MODES];
 
 // Storage keys
 export const STORAGE_KEYS = {
-  EVAL_RUNNER_PREFERENCES: "mcp-inspector-eval-runner-preferences",
   SUITE_PASS_CRITERIA: (suiteId: string) => `suite-${suiteId}-criteria-rate`,
 } as const;
 
@@ -60,6 +57,14 @@ export type ResultStatus = (typeof RESULT_STATUS)[keyof typeof RESULT_STATUS];
 export const RUN_STATUS = {
   PENDING: "pending",
   RUNNING: "running",
+  /**
+   * Every trial finished; the run is HELD for its gating judge.
+   *
+   * Not terminal, and `result` is still `pending` — the backend's
+   * `finalizeAfterJudge` is what will decide it, within 30 minutes. Anything
+   * that reads this as done reports a run with no verdict as though it had one.
+   */
+  GRADING: "grading",
   COMPLETED: "completed",
   CANCELLED: "cancelled",
   TIMED_OUT: "timed_out",
@@ -91,8 +96,18 @@ export const EVAL_DESTRUCTIVE_BUTTON_CLASS =
 export const EVAL_FAIL_BAR_CLASS = "bg-destructive/50";
 
 /** Compact failed-outcome badges — pastel surface `/50`, neutral foreground. */
-export const EVAL_FAILED_BADGE_CLASS =
-  "bg-destructive/50 text-foreground";
+export const EVAL_FAILED_BADGE_CLASS = "bg-destructive/50 text-foreground";
+
+/**
+ * Tint + role-token text for pass/fail chips. Hue comes from `--success` /
+ * `--destructive` (Figma fill/success, fill/danger) — not Tailwind palette
+ * greens/reds, which sit outside the design system.
+ */
+export const EVAL_PASSED_BADGE_STRONG_CLASS = "bg-success/15 text-success";
+export const EVAL_FAILED_BADGE_STRONG_CLASS =
+  "bg-destructive/15 text-destructive";
+/** Authored Warn/Report severity — not a computed verdict. */
+export const EVAL_WARN_BADGE_STRONG_CLASS = "bg-warning/15 text-warning";
 
 // UI configuration
 export const UI_CONFIG = {

@@ -14,12 +14,18 @@ vi.mock("@/lib/generate-agent-brief", () => ({
   generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
 }));
 
+const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
+
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => false,
+  // ServerConnectionCard gates "Add to org registry" on
+  // `registry-enabled`. Default off so existing tests keep the pre-flag
+  // menu; org-registry cases turn it on per-suite.
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("@/lib/analytics", () => ({
@@ -115,6 +121,8 @@ describe("ServerConnectionCard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseFeatureFlagEnabled.mockReset();
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
   });
 
   describe("rendering", () => {
@@ -162,6 +170,148 @@ describe("ServerConnectionCard", () => {
       fireEvent.click(target);
 
       expect(onMoveToProject).toHaveBeenCalledWith("test-server", "project-2");
+    });
+
+    /**
+     * "Add to org registry" is the promote door. Its eligibility rules are
+     * the interesting part: an org entry carries an ADDRESS and an auth
+     * posture and nothing else, so a stdio server has nothing to share and a
+     * header-authed one has something that cannot be shared. The
+     * `registry-enabled` flag is the rollout door on top of those rules.
+     */
+    describe("add to org registry", () => {
+      const remoteServer = () =>
+        createServer({
+          name: "remote-server",
+          config: { url: "https://mcp.example.com/mcp" },
+        });
+
+      const openMenu = async (name: string) => {
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: `Open actions menu for ${name}`,
+          }),
+          { button: 0, ctrlKey: false }
+        );
+        return await screen.findByText("Add to org registry");
+      };
+
+      beforeEach(() => {
+        mockUseFeatureFlagEnabled.mockImplementation(
+          (flag: unknown) => flag === "registry-enabled"
+        );
+      });
+
+      it("offers a remote HTTP server to the organization", async () => {
+        const onShareToOrgRegistry = vi.fn();
+        const server = remoteServer();
+        render(
+          <ServerConnectionCard
+            server={server}
+            {...defaultProps}
+            onShareToOrgRegistry={onShareToOrgRegistry}
+          />
+        );
+
+        fireEvent.click(await openMenu("remote-server"));
+
+        expect(onShareToOrgRegistry).toHaveBeenCalledWith(server);
+      });
+
+      it("hides the action for a stdio server — there is no address to share", async () => {
+        render(
+          <ServerConnectionCard
+            server={createServer()}
+            {...defaultProps}
+            onShareToOrgRegistry={vi.fn()}
+          />
+        );
+
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: "Open actions menu for test-server",
+          }),
+          { button: 0, ctrlKey: false }
+        );
+
+        // The menu mounts asynchronously, so wait for an item that ALWAYS
+        // renders first. A synchronous `queryByText` here returns null before
+        // the menu exists at all and would pass whether or not the action
+        // eventually appeared — proving nothing.
+        await screen.findByText("Configure");
+        expect(screen.queryByText("Add to org registry")).toBeNull();
+      });
+
+      it.each([
+        ["custom headers", { hasHeaders: true }],
+        ["a bearer token", { hasBearerToken: true }],
+      ])(
+        "refuses a server authed with %s, and says why",
+        async (_label, credentialFlags) => {
+          const onShareToOrgRegistry = vi.fn();
+          render(
+            <ServerConnectionCard
+              server={createServer({
+                name: "remote-server",
+                config: { url: "https://mcp.example.com/mcp" },
+                ...credentialFlags,
+              })}
+              {...defaultProps}
+              onShareToOrgRegistry={onShareToOrgRegistry}
+            />
+          );
+
+          fireEvent.click(await openMenu("remote-server"));
+
+          // Shown then refused, rather than hidden: "where did the option go?"
+          // is a worse answer than a sentence saying why.
+          expect(onShareToOrgRegistry).not.toHaveBeenCalled();
+          // The app's toast wrapper renders the message inside a copyable
+          // element, so the assertion reads the element's text rather than
+          // the first argument.
+          const [rendered] = vi.mocked(toast.error).mock.calls[0] as [
+            { props?: { text?: string } }
+          ];
+          expect(rendered?.props?.text).toContain("can't be shared");
+        }
+      );
+
+      it("hides the action entirely when the caller cannot add", async () => {
+        render(
+          <ServerConnectionCard server={remoteServer()} {...defaultProps} />
+        );
+
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: "Open actions menu for remote-server",
+          }),
+          { button: 0, ctrlKey: false }
+        );
+
+        await screen.findByText("Configure");
+        expect(screen.queryByText("Add to org registry")).toBeNull();
+      });
+
+      it("hides the action when the registry flag is off, even if the caller can add", async () => {
+        mockUseFeatureFlagEnabled.mockReturnValue(false);
+        render(
+          <ServerConnectionCard
+            server={remoteServer()}
+            {...defaultProps}
+            onShareToOrgRegistry={vi.fn()}
+          />
+        );
+
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: "Open actions menu for remote-server",
+          }),
+          { button: 0, ctrlKey: false }
+        );
+
+        await screen.findByText("Configure");
+        expect(screen.queryByText("Add to org registry")).toBeNull();
+      });
     });
 
     it("hides the move action when there are no target projects", () => {
@@ -253,7 +403,7 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
       expect(
-        screen.queryByText(/Complete sign-in in the browser/),
+        screen.queryByText(/Complete sign-in in the browser/)
       ).not.toBeInTheDocument();
     });
 
@@ -266,34 +416,6 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Failed (3)")).toBeInTheDocument();
-    });
-
-    it("shows a connection settings indicator without reconnect badge copy", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(
-        <ServerConnectionCard
-          server={server}
-          {...defaultProps}
-          needsReconnect
-        />
-      );
-
-      expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-      expect(
-        screen.queryByLabelText("Reconnect needed")
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByLabelText("Connection settings changed")
-      ).toBeInTheDocument();
-    });
-
-    it("does not show the connection settings indicator when settings match", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(<ServerConnectionCard server={server} {...defaultProps} />);
-
-      expect(
-        screen.queryByLabelText("Connection settings changed")
-      ).not.toBeInTheDocument();
     });
   });
 
@@ -399,6 +521,90 @@ describe("ServerConnectionCard", () => {
     });
   });
 
+  describe("actions menu reconnect", () => {
+    const clickMenuReconnect = async (server: ServerWithName) => {
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onReconnect={onReconnect}
+        />
+      );
+
+      fireEvent.pointerDown(
+        screen.getByRole("button", {
+          name: `Open actions menu for ${server.name}`,
+        }),
+        { button: 0, ctrlKey: false }
+      );
+      fireEvent.click(await screen.findByText("Reconnect"));
+
+      return onReconnect;
+    };
+
+    // A tokenless Auto server carries `useOAuth: true` as a derived mirror
+    // once it connects, even though it never authorized. Forcing the flow
+    // here redirected open servers into an OAuth they have no authorization
+    // server for, and the reconnect failed on "Authorizing in browser...".
+    it("does not force OAuth for a tokenless auto server", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "auto",
+          useOAuth: true,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+    });
+
+    it("forces OAuth for an auto server that already holds tokens", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "auto",
+          useOAuth: true,
+          oauthTokens: { access_token: "token" } as any,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    it("forces OAuth for an explicitly configured OAuth server", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "oauth",
+          useOAuth: true,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    it("does not force OAuth for a server saved without authentication", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "none",
+          useOAuth: false,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+    });
+  });
+
   describe("error display", () => {
     it("shows error message when connection failed", () => {
       const server = createServer({
@@ -407,14 +613,14 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
     });
 
     it("renders long error messages via the ErrorCard", () => {
-      // The ErrorCard owns details disclosure; we just confirm the rich
-      // surface shows up (title + Learn more link) rather than the old
-      // ad-hoc truncation. The full message lives in the collapsed
-      // details panel.
+      // The ErrorCard owns details disclosure. On the server card that
+      // disclosure is an info glyph; Learn more lives in the panel so the
+      // failed card stays one row.
       const longError = "A".repeat(150);
       const server = createServer({
         connectionStatus: "failed",
@@ -422,18 +628,34 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
+      expect(screen.queryByText("Learn more")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
       expect(screen.getByText("Learn more")).toBeInTheDocument();
     });
 
-    it("shows troubleshooting link when connection failed", () => {
+    it("shows troubleshooting link when a failure carries no error card", () => {
+      // The generic troubleshooting index is the fallback for a failed server
+      // with nothing to describe. When there IS an error card it carries its
+      // own "Learn more" aimed at that specific error, and offering both put
+      // two docs links under one failure with the weaker one lower down.
       const server = createServer({
         connectionStatus: "failed",
-        lastError: "Error",
+        lastError: undefined,
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Having trouble?")).toBeInTheDocument();
       expect(screen.getByText("Check troubleshooting")).toBeInTheDocument();
+    });
+
+    it("drops the generic troubleshooting link when an error card is shown", () => {
+      const server = createServer({
+        connectionStatus: "failed",
+        lastError: "Connection refused",
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.queryByText("Having trouble?")).not.toBeInTheDocument();
     });
   });
 
@@ -986,5 +1208,92 @@ describe("ServerConnectionCard", () => {
       // The rejected poll must not clear the retained snapshot or crash.
       expect(await screen.findByText("initialize")).toBeInTheDocument();
     });
+  });
+});
+
+describe("ServerConnectionCard — protocol version pin", () => {
+  const failedServer = (
+    slug: string,
+    message = 'MCP server "acme" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.'
+  ): ServerWithName => ({
+    name: "acme",
+    lastConnectionTime: new Date(),
+    connectionStatus: "failed",
+    enabled: true,
+    retryCount: 0,
+    useOAuth: false,
+    config: { url: new URL("https://acme.example/mcp") },
+    lastError: message,
+    lastNormalizedError: {
+      slug,
+      title: "t",
+      oneLine: message,
+      likelyCauses: [],
+      nextSteps: [],
+      docsAnchor: "/troubleshooting/error-codes#x",
+      severity: "error",
+      rawMessage: message,
+    },
+  });
+
+  const props = {
+    onDisconnect: vi.fn(),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
+    onRemove: vi.fn(),
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("offers the fix when the pin is what failed", () => {
+    // Prathmesh's case, on the surface he actually hit first: a connect
+    // failure whose entire cause is one dropdown.
+    render(
+      <ServerConnectionCard
+        server={failedServer("sdk/protocol_version_pin_unsupported")}
+        projectId="proj_1"
+        {...props}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /change protocol version/i })
+    ).toBeInTheDocument();
+  });
+
+  it("stays out of the way for every other connect failure", () => {
+    // Most failures here are the user's server being down. A button that
+    // navigates somewhere vaguely related is worse than no button.
+    render(
+      <ServerConnectionCard
+        server={failedServer(
+          "transport/econnrefused",
+          "connect ECONNREFUSED 127.0.0.1:8080"
+        )}
+        projectId="proj_1"
+        {...props}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /change protocol version/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("still offers it when only the message survives", () => {
+    // The slug is the better signal but it comes from whichever copy of the
+    // describer the bundle happens to hold; a client one version behind
+    // resolves this to a generic transport slug. The sentence is authored by
+    // MCPJam and cannot be echoed by a server, so it carries the fallback.
+    render(
+      <ServerConnectionCard
+        server={failedServer("transport/fetch_failed")}
+        projectId="proj_1"
+        {...props}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /change protocol version/i })
+    ).toBeInTheDocument();
   });
 });

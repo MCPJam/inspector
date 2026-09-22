@@ -1,9 +1,16 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
-import { Switch } from "@mcpjam/design-system/switch";
+import { ServersAutoConnectSwitch } from "./ServersAutoConnectSwitch";
 import {
   Plus,
   FileText,
@@ -31,6 +38,13 @@ import {
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { AddPluginModal } from "./plugins/AddPluginModal";
+import { PluginsSection } from "./plugins/PluginsSection";
+import {
+  permalinkUnavailableMessage,
+  resolvePermalinkTarget,
+} from "@/lib/permalink-target";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { ServerFormData } from "@/shared/types.js";
 import {
   createInspectorCommandClientError,
@@ -60,13 +74,23 @@ import {
   type EnrichedRegistryServer,
 } from "@/hooks/useRegistryServers";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
+import {
+  useOrgRegistryServers,
+  type OrgRegistrySubmission,
+} from "@/hooks/useOrgRegistryServers";
+import {
+  OrgRegistryServerDialog,
+  type OrgRegistryDialogSeed,
+} from "./registry/OrgRegistryServerDialog";
 import { track } from "@/lib/analytics";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
 import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -78,10 +102,13 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import type {
-  ProjectServerConfigDto,
-  ProjectServerConfigInput,
+import { useAuth } from "@workos-inc/authkit-react";
+import {
+  applyMcpProtocolVersionOverride,
+  type ProjectServerConfigDto,
+  type ProjectServerConfigInput,
 } from "@/lib/project-server-config";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
@@ -98,12 +125,10 @@ import {
 } from "@/lib/quick-connect-pending";
 import {
   useProjectServers as useRemoteProjectServers,
-  useProjectMembers,
   useServerMutations,
   shouldQueryProjectId,
   type RemoteServer,
 } from "@/hooks/useProjects";
-import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -430,7 +455,6 @@ function SortableServerCard({
   id,
   dndDisabled,
   server,
-  needsReconnect,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -440,11 +464,11 @@ function SortableServerCard({
   moveTargets,
   onMoveToProject,
   isMovingToProject,
+  onShareToOrgRegistry,
 }: {
   id: string;
   dndDisabled: boolean;
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
@@ -466,6 +490,7 @@ function SortableServerCard({
     targetProjectId: string
   ) => void | Promise<void>;
   isMovingToProject?: boolean;
+  onShareToOrgRegistry?: (server: ServerWithName) => void;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
@@ -490,7 +515,6 @@ function SortableServerCard({
   const cardContent = (
     <ServerConnectionCard
       server={server}
-      needsReconnect={needsReconnect}
       onDisconnect={onDisconnect}
       onReconnect={onReconnect}
       onRemove={onRemove}
@@ -500,6 +524,7 @@ function SortableServerCard({
       moveTargets={moveTargets}
       onMoveToProject={onMoveToProject}
       isMovingToProject={isMovingToProject}
+      onShareToOrgRegistry={onShareToOrgRegistry}
     />
   );
 
@@ -561,8 +586,20 @@ interface ServersTabProps {
   areServersHydrated?: boolean;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   onLeaveProject?: () => void;
+  /**
+   * The saved server named by a `/servers/:serverId` permalink, if any.
+   *
+   * A HOSTED (Convex) server id, not a name: a permalink has to survive a
+   * rename, and the id is what an agent returned. Resolved against the
+   * project's remote server rows below.
+   */
+  routeServerId?: string | null;
+  /** The plugin named by a `/servers/plugins/:pluginId` permalink, if any. */
+  routePluginId?: string | null;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 export function ServersTab({
@@ -582,12 +619,18 @@ export function ServersTab({
   isAuthHydrating = false,
   areServersHydrated = true,
   onProjectShared: _onProjectShared,
+  routeServerId,
+  routePluginId,
   isRegistryEnabled = false,
   onNavigateToRegistry,
+  suspendAutoConnect = false,
 }: ServersTabProps) {
-  const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
+  const hostsConnectAddServerSlot = useContext(
+    HostsConnectAddServerSlotContext
+  );
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
+  const { user: signedInUser } = useAuth();
 
   // Auto-connect the previewed host's REQUIRED servers once per host scope.
   // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
@@ -686,31 +729,14 @@ export function ServersTab({
     [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
   );
 
-  // Project-wide auto-connect toggle. Single switch in the header that
-  // either enrolls every catalog server in project.serverIds (ON) or
-  // clears the set (OFF). Overrides on still-included servers are
-  // preserved on ON so existing per-server header/timeout config isn't
-  // wiped by a toggle round-trip. Per-server granularity is intentionally
-  // deferred — this is the simplest user-facing surface for the project-
-  // scoped server config rollout.
-  //
-  // Stale-server note: when this is ON and a user adds a new server to
-  // the catalog later, the new server isn't auto-included — they'd
-  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
-  // newly-added servers in automatically when the toggle is on.
-  // Permission gate for the Auto-connect toggle. Backend
-  // `projectServerConfig:setConfig` requires project admin
-  // (`canManageProjectMembers`); mirror that check on the client so
-  // non-admins see a disabled switch instead of an enabled control that
-  // toasts an authorization error when toggled. Matches the
-  // canManageProjectSettings pattern in ProjectSettingsTab.
-  const { canManageMembers: canManageProjectServers } = useProjectMembers({
-    isAuthenticated,
-    projectId: sharedProjectIdForHostScope,
-  });
+  // Project server config (`projects.serverIds` + per-server overrides).
+  // Only the protocol-pin path below still writes it; the header
+  // Auto-connect switch is a personal preference and no longer touches it
+  // (see `ServersAutoConnectSwitch`).
+  const isUserReady = useDbUserReady();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
-    sharedProjectIdForHostScope && isAuthenticated
+    sharedProjectIdForHostScope && isAuthenticated && isUserReady
       ? ({ projectId: sharedProjectIdForHostScope } as any)
       : "skip"
   ) as ProjectServerConfigDto | null | undefined;
@@ -720,113 +746,37 @@ export function ServersTab({
     projectId: string;
     input: ProjectServerConfigInput;
   }) => Promise<ProjectServerConfigDto>;
-  const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
-  const catalogServerIds = useMemo(
-    () => (viewProjectServersList ?? []).map((s) => s._id),
+  const projectServerNames = useMemo(
+    () => (viewProjectServersList ?? []).map((s) => s.name),
     [viewProjectServersList]
   );
-  const autoConnectAll = useMemo(() => {
-    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
-    const enrolled = new Set(projectServerConfigDto.serverIds);
-    if (enrolled.size !== catalogServerIds.length) return false;
-    return catalogServerIds.every((id) => enrolled.has(id));
-  }, [projectServerConfigDto, catalogServerIds]);
-  const handleToggleAutoConnect = useCallback(
-    async (next: boolean) => {
-      if (!sharedProjectIdForHostScope) return;
-      setIsTogglingAutoConnect(true);
-      // Treat an explicit project toggle like a fresh host transition so the
-      // current host re-runs reconciliation instead of reusing stale attempts.
+  // Flipping the personal switch ON is a fresh intent: clear the attempt
+  // log so servers connect now instead of waiting for the next client
+  // switch. OFF needs nothing — the hook simply stops firing.
+  const handleAutoConnectToggled = useCallback(
+    (next: boolean) => {
+      if (!next) return;
       resetAutoConnectAttempts(activeProjectId);
-      resetAutoConnectAttempts(sharedProjectIdForHostScope);
-      try {
-        if (next) {
-          // Preserve overrides for servers that remain in the catalog —
-          // backend rejects override keys not in serverIds, so we filter
-          // before sending.
-          const catalogIdSet = new Set(catalogServerIds);
-          const preservedOverrides = Object.fromEntries(
-            Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
-              ([id]) => catalogIdSet.has(id)
-            )
-          );
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: {
-              serverIds: catalogServerIds,
-              overrides: preservedOverrides,
-            },
-          });
-        } else {
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: { serverIds: [], overrides: {} },
-          });
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to update project auto-connect";
-        toast.error(message);
-      } finally {
-        setIsTogglingAutoConnect(false);
+      if (sharedProjectIdForHostScope) {
+        resetAutoConnectAttempts(sharedProjectIdForHostScope);
       }
     },
-    [
-      activeProjectId,
-      sharedProjectIdForHostScope,
-      catalogServerIds,
-      projectServerConfigDto,
-      setProjectServerConfigMutation,
-    ]
+    [activeProjectId, sharedProjectIdForHostScope]
   );
 
   const renderAutoConnectToggle = () => {
-    // Hide entirely when the project hasn't synced or when there's no
-    // catalog to toggle against. Both states make the switch
-    // semantically meaningless.
+    // Hide when there's no cloud project or no catalog to connect — the
+    // switch would have nothing to act on.
     if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
-    if (catalogServerIds.length === 0) return null;
-    if (projectServerConfigDto === undefined) return null;
-    const disabled = isTogglingAutoConnect || !canManageProjectServers;
-    return (
-      <label
-        className={cn(
-          "flex items-center gap-2 text-xs text-muted-foreground select-none",
-          disabled ? "cursor-not-allowed" : "cursor-pointer"
-        )}
-        title={
-          canManageProjectServers
-            ? "Auto-connect every project server when a client opens"
-            : "Only project admins can change auto-connect"
-        }
-      >
-        <Switch
-          checked={autoConnectAll}
-          disabled={disabled}
-          onCheckedChange={handleToggleAutoConnect}
-          aria-label="Auto-connect project servers"
-        />
-        <span>Auto-connect</span>
-      </label>
-    );
+    if (projectServerNames.length === 0) return null;
+    return <ServersAutoConnectSwitch onToggled={handleAutoConnectToggled} />;
   };
 
-  const previewedHostRequiredNames = useMemo(() => {
-    const requiredIds = previewedHost?.config?.serverIds ?? [];
-    if (requiredIds.length === 0 || !viewProjectServersList) return [];
-    const byId = new Map(
-      viewProjectServersList.map((s) => [s._id, s.name] as const)
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
-    requiredServerNames: previewedHostRequiredNames,
+    serverNames: projectServerNames,
+    suspendAutoConnect,
   });
 
   const appReady = useAppReady();
@@ -848,7 +798,9 @@ export function ServersTab({
     isLoading: isRegistryCatalogLoading,
     connect: connectRegistryServer,
   } = useRegistryServers({
-    enabled: isRegistryEnabled,
+    // The hand-curated catalog is retired. Keep the hook mounted so
+    // connection helpers stay imported, but do not fetch those cards.
+    enabled: false,
     projectId: registryProjectId,
     isAuthenticated,
     liveServers: projectServers,
@@ -874,6 +826,11 @@ export function ServersTab({
     Partial<ServerFormData> | undefined
   >(undefined);
   const [isImportingJson, setIsImportingJson] = useState(false);
+  // Connect → Add plugin (INS-2). Flag-gated behind `plugins-enabled`
+  // (fail-closed); the modal itself stays MOUNTED while the flag is on so an
+  // in-flight import survives closing the dialog and resumes on reopen.
+  const isPluginsEnabled = usePluginsEnabled();
+  const [isAddingPlugin, setIsAddingPlugin] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
@@ -954,36 +911,6 @@ export function ServersTab({
   };
 
   const activeServer = activeId ? projectServers[activeId] : null;
-  const reconnectWarningByServerName = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(projectServers).map(([serverName, server]) => {
-          // Only fires when the user edited the per-server clientCapabilities
-          // override after connecting. Host-driven caps changes are handled by
-          // the auto-reconciler, which disconnect/reconnects affected servers
-          // on host switch — comparing against host-blended caps here just
-          // produced false positives (server fresh-reconnects under the new
-          // host, but the SDK strips runtime-gated caps like `elicitation`
-          // when no handler is wired, so the comparator never matched).
-          const override = server.config.clientCapabilities;
-          const hasOverride =
-            override != null &&
-            typeof override === "object" &&
-            !Array.isArray(override);
-          const stale =
-            hasOverride &&
-            server.connectionStatus === "connected" &&
-            server.initializationInfo?.clientCapabilities != null &&
-            projectClientCapabilitiesNeedReconnect({
-              desiredCapabilities: override as Record<string, unknown>,
-              initializedCapabilities: server.initializationInfo
-                .clientCapabilities as Record<string, unknown>,
-            });
-          return [serverName, stale];
-        })
-      ),
-    [projectServers]
-  );
 
   const detailModalLiveServer = detailModalState.serverName
     ? projectServers[detailModalState.serverName] ?? null
@@ -1151,13 +1078,136 @@ export function ServersTab({
 
   const activeProject = projects[activeProjectId];
   const sharedProjectId = activeProject?.sharedProjectId;
-  const hostedProjectId = sharedProjectId ?? activeProjectId;
-  const { serversRecord: sharedProjectServersRecord } = useRemoteProjectServers(
-    {
-      projectId: sharedProjectId ?? null,
-      isAuthenticated,
-    }
+  // Convex-only. Falling back to `activeProjectId` leaked a LOCAL project id
+  // (a `crypto.randomUUID()` value) into `ServerDetailModal`, which passes it
+  // straight to `projectServerConfig:getConfig` — a `v.id("projects")` arg.
+  // The rejection throws during render and, with no route ErrorBoundary,
+  // took down the whole page when opening a server's Config. Null here is
+  // what every other project-scoped Convex consumer expects for local mode,
+  // and matches `sharedProjectIdForHostScope` on the Add Server modal.
+  const hostedProjectId = sharedProjectId ?? null;
+  const {
+    serversRecord: sharedProjectServersRecord,
+    // The RAW array, which is `undefined` until the query settles. The record
+    // beside it is `{}` in that state AND for a project with no servers, so it
+    // cannot tell "still loading" from "loaded, empty" — and a permalink
+    // resolved against the empty one flashes the deleted-or-forbidden notice
+    // before the target arrives.
+    servers: sharedProjectServers,
+  } = useRemoteProjectServers({
+    projectId: sharedProjectId ?? null,
+    isAuthenticated,
+  });
+
+  // ── Permalink targets ──────────────────────────────────────────────
+  //
+  // `/servers/:serverId` and `/servers/plugins/:pluginId` are exact
+  // addresses an agent hands to a human. Resolving them HERE, against the
+  // rows this viewer can actually see, is what keeps a link to a deleted or
+  // inaccessible resource from quietly rendering the collection instead —
+  // the wrong-resource failure the permalink work exists to end.
+  const routeServerState = resolvePermalinkTarget(
+    routeServerId,
+    // `undefined` until the query settles, so a cold load waits instead of
+    // deciding. A project with no servers at all still answers with a real
+    // empty array, which resolves to `unavailable` — the honest answer.
+    isAuthenticated && hostedProjectId ? sharedProjectServers : undefined,
+    (row) => row?._id
   );
+  const routeServerName =
+    routeServerState.kind === "found" ? routeServerState.target?.name : null;
+
+  useEffect(() => {
+    if (!routeServerName) return;
+    const server = projectServers[routeServerName];
+    if (!server) return;
+    setDetailModalState((prev) =>
+      prev.isOpen && prev.serverName === server.name
+        ? prev
+        : {
+            isOpen: true,
+            serverName: server.name,
+            defaultTab: "configuration",
+            sessionKey: prev.sessionKey + 1,
+            serverSnapshot: server,
+          }
+    );
+  }, [routeServerName, projectServers]);
+
+
+  /**
+   * PROMOTE: share a server that is already connected here on the
+   * organization's shelf.
+   *
+   * NO PROBE. The facts are already in this browser — `initializationInfo`
+   * holds what the server said during initialize, which is the same handshake
+   * the paste flow's probe performs. Asking the server again would be slower
+   * and no more true.
+   *
+   * `sourceServerId` is what makes the source project show the new entry as
+   * connected: the mutation writes a provenance row pointing at THIS server,
+   * so the card joins through the record rather than through the display name
+   * it happens to share.
+   */
+  const orgRegistry = useOrgRegistryServers({
+    // The SYNCED project id, not `activeProjectId`. The latter is this app's
+    // own project key, which for an unsynced or local-mode project is not a
+    // Convex document id at all — sending it to a Convex query (or to the
+    // derive route, which forwards it to one) is not a lookup that can
+    // succeed.
+    projectId: sharedProjectIdForHostScope,
+    enabled: isRegistryEnabled,
+    isAuthenticated,
+    onConnect: () => {
+      /* promote never connects — the server is already here */
+    },
+  });
+  const [orgRegistrySeed, setOrgRegistrySeed] =
+    useState<OrgRegistryDialogSeed | null>(null);
+
+  const handleShareToOrgRegistry = useCallback(
+    (server: ServerWithName) => {
+      const remote = sharedProjectServersRecord[server.name];
+      // No Convex row means no `sourceServerId`, and the dialog reads that
+      // field to decide it is a PROMOTE at all — without it the user asked to
+      // share the server in front of them and would instead get a blank-slate
+      // add with an unlocked URL and no provenance, so the source project
+      // would never show the entry as connected. Say why instead.
+      if (!remote?._id) {
+        toast.error(
+          `"${server.name}" hasn't finished syncing yet. Try again in a moment.`
+        );
+        return;
+      }
+      const info = server.initializationInfo as
+        | { serverInfo?: { name?: string; version?: string; title?: string } }
+        | undefined;
+      setOrgRegistrySeed({
+        displayName:
+          info?.serverInfo?.title ?? info?.serverInfo?.name ?? server.name,
+        url: server.config?.url ? String(server.config.url) : "",
+        useOAuth: server.useOAuth,
+        derived: {
+          probedAt: Date.now(),
+          endpointUrl: server.config?.url ? String(server.config.url) : "",
+          serverName: info?.serverInfo?.name,
+          serverVersion: info?.serverInfo?.version,
+          authRequired: server.useOAuth === true,
+        },
+        sourceServerId: remote._id,
+      });
+    },
+    [sharedProjectServersRecord]
+  );
+
+  const handleOrgRegistrySubmit = useCallback(
+    async (submission: OrgRegistrySubmission) => {
+      await orgRegistry.add(submission);
+      toast.success("Added to your organization's registry");
+    },
+    [orgRegistry]
+  );
+
   const detailModalHostedServerId = detailModalServer
     ? sharedProjectServersRecord[detailModalServer.name]?._id
     : undefined;
@@ -1304,6 +1354,68 @@ export function ServersTab({
     [focusLoggerOnServer, onReconnect, isAppBootstrapping, appReadyMessage]
   );
 
+  // Protocol pin chosen in the Add Server modal. The pin is persisted on
+  // the project layer (`projectServerConfig` overrides) keyed by the hosted
+  // server row's `_id` — which doesn't exist until the add flow's Convex
+  // sync lands. Stash the (name, version) pair here and let the effect
+  // below apply it once the hosted row appears in `remoteServersByName`,
+  // then reconnect so the pin actually takes effect on the wire (mirrors
+  // the edit flow's save→reconnect behavior in `ServerDetailModal`).
+  const [pendingAddProtocolPin, setPendingAddProtocolPin] = useState<{
+    serverName: string;
+    version: McpProtocolVersion;
+  } | null>(null);
+  // Guards double-fire while the async apply is in flight (the effect
+  // re-runs on every reactive update of the DTO / server list).
+  const isApplyingAddProtocolPinRef = useRef(false);
+  useEffect(() => {
+    if (!pendingAddProtocolPin) return;
+    if (isApplyingAddProtocolPinRef.current) return;
+    if (!sharedProjectIdForHostScope) return;
+    // Wait for BOTH the hosted server row and the config DTO to hydrate —
+    // `applyMcpProtocolVersionOverride` replaces the whole (serverIds,
+    // overrides) pair, so writing against a still-loading DTO would wipe
+    // other servers' overrides. `null` (no row yet) is a valid baseline.
+    if (projectServerConfigDto === undefined) return;
+    const serverId = remoteServersByName[pendingAddProtocolPin.serverName]?._id;
+    if (!serverId) return;
+    const { serverName, version } = pendingAddProtocolPin;
+    isApplyingAddProtocolPinRef.current = true;
+    void (async () => {
+      try {
+        await applyMcpProtocolVersionOverride({
+          projectId: sharedProjectIdForHostScope,
+          serverId,
+          current: projectServerConfigDto,
+          next: version,
+          setConfig: setProjectServerConfigMutation,
+        });
+        // Reconnect so the just-saved pin governs the live connection.
+        // Non-interactive on purpose: the add flow may already be running
+        // an OAuth escalation; don't stack a second interactive flow.
+        await handleReconnectServer(serverName, {
+          allowInteractiveOAuthFlow: false,
+        });
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? `Server added, but saving its protocol version failed: ${err.message}`
+            : "Server added, but saving its protocol version failed."
+        );
+      } finally {
+        isApplyingAddProtocolPinRef.current = false;
+        setPendingAddProtocolPin(null);
+      }
+    })();
+  }, [
+    pendingAddProtocolPin,
+    sharedProjectIdForHostScope,
+    projectServerConfigDto,
+    remoteServersByName,
+    setProjectServerConfigMutation,
+    handleReconnectServer,
+  ]);
+
   const clearPendingQuickConnectIfMatches = useCallback(
     (serverName: string) => {
       if (pendingQuickConnect?.serverName !== serverName) {
@@ -1335,7 +1447,19 @@ export function ServersTab({
     setPendingQuickConnect(nextPendingQuickConnect);
     try {
       await connectRegistryServer(server);
-    } catch {
+    } catch (err) {
+      // This used to swallow the failure entirely: the pending state was
+      // cleared and the user was left with a card that silently never
+      // connected.
+      reportCaught(err, {
+        source: "registry_quick_connect",
+        extra: { registryServerId: server._id },
+      });
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : `Failed to connect ${server.displayName ?? serverName}`
+      );
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
     }
@@ -1567,6 +1691,16 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
+  // Deliberately NOT behind `serverCreationGate`: importing a plugin creates
+  // plugin-component servers, which are a plugin version's read-only
+  // projection rather than standalone catalog servers, and the backend gates
+  // import on project-admin authorization instead.
+  const handleAddPluginClick = () => {
+    track("add_plugin_button_clicked", { location: "servers_tab" });
+    setIsAddingPlugin(true);
+    setIsActionMenuOpen(false);
+  };
+
   const renderServerActionsMenu = () => (
     <>
       <HoverCard
@@ -1603,6 +1737,17 @@ export function ServersTab({
               <FileText className="h-4 w-4 mr-2" />
               Import JSON
             </Button>
+            {isPluginsEnabled ? (
+              <Button
+                variant="ghost"
+                className="justify-start"
+                onClick={handleAddPluginClick}
+                data-testid="servers-tab-add-plugin"
+              >
+                <Package className="h-4 w-4 mr-2" />
+                Add plugin
+              </Button>
+            ) : null}
           </div>
         </HoverCardContent>
       </HoverCard>
@@ -1742,6 +1887,63 @@ export function ServersTab({
     );
   };
 
+  // Installed plugin GROUP cards, above the standalone server grid. Plugin
+  // component servers never appear in that grid (the backend excludes
+  // `lifecycleScope: 'plugin_component'` rows from the standalone list), so
+  // this section is the only place their health is visible on Connect.
+  const renderPluginsSection = () => {
+    if (isPluginsEnabled) {
+      return (
+        <PluginsSection
+          projectId={sharedProjectIdForHostScope}
+          expandedPluginId={routePluginId ?? null}
+        />
+      );
+    }
+    // The flag is a per-viewer PostHog rollout, and `list_project_plugins` is
+    // NOT flag-gated — so an agent working for someone inside the rollout can
+    // hand a `/servers/plugins/:pluginId` link to someone outside it. Dropping
+    // the section silently would render ordinary Connect and never mention
+    // that the link went nowhere. Same message as a missing plugin: whether
+    // the resource exists is not something this screen should disclose.
+    if (!routePluginId) return null;
+    return (
+      <div
+        role="status"
+        data-testid="plugin-permalink-unavailable"
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+      >
+        {permalinkUnavailableMessage("plugin")}
+      </div>
+    );
+  };
+
+  /**
+   * What a permalink to a gone-or-forbidden resource renders.
+   *
+   * Deliberately says one thing for BOTH "deleted" and "you cannot see it":
+   * two messages would confirm to someone without access that the id exists.
+   * Rendered ABOVE the collection rather than instead of it, so the recipient
+   * can still use the screen — but never without being told the link they
+   * followed did not land.
+   */
+  const renderPermalinkNotice = () => {
+    // The PLUGIN half of the same question is answered inside
+    // `PluginsSection`, which is where the plugin list lives — duplicating
+    // that query here to render one sentence would put two sources of truth
+    // behind one message.
+    if (routeServerState.kind !== "unavailable") return null;
+    return (
+      <div
+        role="status"
+        data-testid="permalink-unavailable"
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+      >
+        {permalinkUnavailableMessage("server")}
+      </div>
+    );
+  };
+
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
       {/* Main Server List Panel */}
@@ -1750,6 +1952,7 @@ export function ServersTab({
         minSize={70}
       >
         <div className="space-y-6 p-8 h-full overflow-auto">
+          {renderPermalinkNotice()}
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
@@ -1776,6 +1979,8 @@ export function ServersTab({
 
           {renderQuickConnectSection()}
 
+          {renderPluginsSection()}
+
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
           <DndContext
             sensors={sensors}
@@ -1799,7 +2004,6 @@ export function ServersTab({
                       id={name}
                       dndDisabled={false}
                       server={displayServer}
-                      needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
                         onDisconnect(serverName);
@@ -1815,6 +2019,11 @@ export function ServersTab({
                       moveTargets={moveTargets}
                       onMoveToProject={handleMoveServerToProject}
                       isMovingToProject={movingServerName === name}
+                      onShareToOrgRegistry={
+                        isRegistryEnabled && orgRegistry.canAdd
+                          ? handleShareToOrgRegistry
+                          : undefined
+                      }
                     />
                   );
                 })}
@@ -1825,9 +2034,6 @@ export function ServersTab({
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
                     server={getDisplayServer(activeServer)}
-                    needsReconnect={
-                      reconnectWarningByServerName[activeServer.name]
-                    }
                     onDisconnect={(serverName) => {
                       clearPendingQuickConnectIfMatches(serverName);
                       onDisconnect(serverName);
@@ -1888,6 +2094,11 @@ export function ServersTab({
 
   const renderEmptyContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
+      {/* Rendered in BOTH branches: a permalink to a server this viewer
+          cannot see most often lands on a project with no servers at all,
+          which is exactly when the collection fallback would say only "No
+          servers connected" and the link's failure would go unmentioned. */}
+      {renderPermalinkNotice()}
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
@@ -1909,6 +2120,8 @@ export function ServersTab({
       </div>
 
       {renderQuickConnectSection()}
+
+      {renderPluginsSection()}
 
       {/* Empty State */}
       <Card className="p-12 text-center">
@@ -1980,87 +2193,124 @@ export function ServersTab({
     // hostDefaultMcpProtocolVersion prop (prop wins; see the modal's
     // resolution comment) — the provider is additive, not a replacement.
     <ActiveMcpProfileProvider value={previewedHost?.config?.mcpProfile}>
-    <div className="h-full flex flex-col">
-      {isAuthHydrating ||
-      isBillingContextPending ||
-      isLoadingProjects ||
-      !areServersHydrated
-        ? renderLoadingContent()
-        : !selectedProject
-        ? shouldQueryProjectId(activeProjectId)
+      <div className="h-full flex flex-col">
+        {isAuthHydrating ||
+        isBillingContextPending ||
+        isLoadingProjects ||
+        !areServersHydrated
           ? renderLoadingContent()
-          : renderNoProjectContent()
-        : hasAnyServers
-        ? renderConnectedContent()
-        : renderEmptyContent()}
+          : !selectedProject
+          ? shouldQueryProjectId(activeProjectId)
+            ? renderLoadingContent()
+            : renderNoProjectContent()
+          : hasAnyServers
+          ? renderConnectedContent()
+          : renderEmptyContent()}
 
-      {/* Add Server Modal */}
-      <AddServerModal
-        isOpen={isAddingServer}
-        initialData={prefilledServerDraft}
-        onClose={() => {
-          setIsAddingServer(false);
-          setPrefilledServerDraft(undefined);
-        }}
-        onSubmit={(formData) => {
-          track("connecting_server", {
-            location: "servers_tab",
-          });
-          handleConnectServer(formData);
-        }}
-        projectClientConfig={selectedProject?.clientConfig}
-        projectXaaDefaultIdentity={
-          selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
-        }
-      />
-
-      {/* JSON Import Modal */}
-      <JsonImportModal
-        isOpen={isImportingJson}
-        onClose={() => setIsImportingJson(false)}
-        onImport={handleJsonImport}
-      />
-
-      {detailModalServer && (
-        <ServerDetailModal
-          key={detailModalState.sessionKey}
-          isOpen={detailModalState.isOpen}
-          onClose={handleCloseDetailModal}
-          server={detailModalServer}
-          needsReconnect={reconnectWarningByServerName[detailModalServer.name]}
-          defaultTab={detailModalState.defaultTab}
-          onSubmit={handleSubmitDetailModal}
-          onDisconnect={onDisconnect}
-          onReconnect={handleReconnectServer}
-          existingServerNames={Object.keys(projectServers)}
+        {/* Add Server Modal */}
+        <AddServerModal
+          isOpen={isAddingServer}
+          initialData={prefilledServerDraft}
+          onClose={() => {
+            setIsAddingServer(false);
+            setPrefilledServerDraft(undefined);
+          }}
+          onSubmit={(formData) => {
+            track("connecting_server", {
+              location: "servers_tab",
+            });
+            // The wire-version pin can't be written until the hosted server
+            // row exists — stash it and let the watcher effect apply it once
+            // the Convex sync surfaces the row, then reconnect with the pin.
+            if (formData.mcpProtocolVersionOverride) {
+              setPendingAddProtocolPin({
+                serverName: formData.name,
+                version: formData.mcpProtocolVersionOverride,
+              });
+            }
+            handleConnectServer(formData);
+          }}
           projectClientConfig={selectedProject?.clientConfig}
-          projectId={hostedProjectId}
-          hostedServerId={detailModalHostedServerId}
-          // The tab now mounts under ActiveMcpProfileProvider (see the
-          // root wrapper), which is the source for general host-profile
-          // reads (e.g. the auth section's enterprise-policy guidance).
-          // The protocol chip stays PROP-FIRST: this explicit value wins
-          // over the provider (see the modal's resolution comment), so
-          // its source attribution is unchanged.
-          hostDefaultMcpProtocolVersion={
-            previewedHost?.config?.mcpProfile?.mcpProtocolVersion
-          }
+          organizationId={selectedProject?.organizationId ?? null}
+          isSignedIn={Boolean(signedInUser)}
           projectXaaDefaultIdentity={
             selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
           }
+          projectId={sharedProjectIdForHostScope}
         />
-      )}
 
-      {showServerActionsInHostsHeader && hostsConnectAddServerSlot
-        ? createPortal(
-            <>
-              {renderAutoConnectToggle()}
-              {renderServerActionsMenu()}
-            </>,
-            hostsConnectAddServerSlot
-          )
-        : null}
-    </div>
+        {/* Promote a connected server onto the organization's registry. */}
+        {orgRegistrySeed && (
+          <OrgRegistryServerDialog
+            open
+            onOpenChange={(open) => {
+              if (!open) setOrgRegistrySeed(null);
+            }}
+            projectId={sharedProjectIdForHostScope}
+            seed={orgRegistrySeed}
+            onSubmit={handleOrgRegistrySubmit}
+          />
+        )}
+
+        {/* JSON Import Modal */}
+        <JsonImportModal
+          isOpen={isImportingJson}
+          onClose={() => setIsImportingJson(false)}
+          onImport={handleJsonImport}
+        />
+
+        {/* Add Plugin Modal. Mounted (not conditionally rendered) while the
+          flag is on so an import in flight — or a preview awaiting a
+          decision — survives closing the dialog and resumes on reopen. */}
+        {isPluginsEnabled ? (
+          <AddPluginModal
+            isOpen={isAddingPlugin}
+            onClose={() => setIsAddingPlugin(false)}
+            projectId={sharedProjectIdForHostScope}
+          />
+        ) : null}
+
+        {detailModalServer && (
+          <ServerDetailModal
+            key={detailModalState.sessionKey}
+            isOpen={detailModalState.isOpen}
+            onClose={handleCloseDetailModal}
+            server={detailModalServer}
+            defaultTab={detailModalState.defaultTab}
+            onSubmit={handleSubmitDetailModal}
+            onDisconnect={onDisconnect}
+            onReconnect={handleReconnectServer}
+            existingServerNames={Object.keys(projectServers)}
+            projectClientConfig={selectedProject?.clientConfig}
+            projectId={hostedProjectId}
+            hostedServerId={detailModalHostedServerId}
+            organizationId={selectedProject?.organizationId ?? null}
+            isSignedIn={Boolean(signedInUser)}
+            // The tab now mounts under ActiveMcpProfileProvider (see the
+            // root wrapper), which is the source for general host-profile
+            // reads (e.g. the auth section's enterprise-policy guidance).
+            // The protocol chip stays PROP-FIRST: this explicit value wins
+            // over the provider (see the modal's resolution comment), so
+            // its source attribution is unchanged.
+            hostDefaultMcpProtocolVersion={
+              previewedHost?.config?.mcpProfile?.mcpProtocolVersion
+            }
+            projectXaaDefaultIdentity={
+              selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
+            }
+          />
+        )}
+
+        {showServerActionsInHostsHeader && hostsConnectAddServerSlot
+          ? createPortal(
+              <>
+                {renderAutoConnectToggle()}
+                {renderServerActionsMenu()}
+              </>,
+              hostsConnectAddServerSlot
+            )
+          : null}
+      </div>
     </ActiveMcpProfileProvider>
   );
 }

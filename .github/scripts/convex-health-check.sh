@@ -5,7 +5,7 @@
 #   .github/scripts/convex-health-check.sh <CONVEX_HTTP_URL> <query-path>
 #
 # Example:
-#   .github/scripts/convex-health-check.sh https://foo-123.convex.site chatboxes:listChatboxes
+#   .github/scripts/convex-health-check.sh https://foo-123.convex.site scenarios:listScenarios
 #
 # Why: before this script, the pipeline would happily report "preview ready"
 # even when the Convex deployment it points at was missing the functions the

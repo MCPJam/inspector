@@ -163,12 +163,15 @@ export async function collectConnectedServerSnapshot<TTarget = unknown>(
   dependencies: Pick<ServerSnapshotDependencies, "now"> = {}
 ): Promise<CollectedServerSnapshot<TTarget>> {
   const now = dependencies.now ?? (() => new Date());
+  // Raw-evidence surface: a snapshot must reflect what the server sends NOW, so
+  // every list bypasses the SEP-2549 response cache (`cacheMode: "bypass"`) —
+  // it neither consults nor writes a cached body.
   const [toolsResult, resourcesResult, resourceTemplatesResult, promptsResult] =
     await Promise.all([
-      listAllTools(manager, { serverId }),
-      listAllResources(manager, { serverId }),
-      listAllResourceTemplates(manager, { serverId }),
-      listAllPrompts(manager, { serverId }),
+      listAllTools(manager, { serverId, cacheMode: "bypass" }),
+      listAllResources(manager, { serverId, cacheMode: "bypass" }),
+      listAllResourceTemplates(manager, { serverId, cacheMode: "bypass" }),
+      listAllPrompts(manager, { serverId, cacheMode: "bypass" }),
     ]);
 
   return {

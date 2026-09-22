@@ -7,16 +7,19 @@ import {
 } from "../src/host-config/templates/index.js";
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
+import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
   "claude",
+  "claude-desktop",
   "claude-code",
   "chatgpt",
   "mistral",
   "goose",
   "slack",
   "cursor",
+  "cursor-cli",
   "codex",
   "copilot",
   "vscode",
@@ -52,8 +55,8 @@ describe("seedHostTemplate", () => {
   it("advertises EMA on the mcpjam template and on no other", () => {
     for (const id of ALL_IDS) {
       const config = seedHostTemplate(id, { theme: "dark" });
-      const exts =
-        (config.clientCapabilities as { extensions?: unknown })?.extensions;
+      const exts = (config.clientCapabilities as { extensions?: unknown })
+        ?.extensions;
       const hasEma =
         typeof exts === "object" &&
         exts !== null &&
@@ -88,6 +91,37 @@ describe("seedHostTemplate", () => {
     expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
   });
 
+  it("keeps Claude protocol and app capabilities faithful to the probe", () => {
+    const config = seedHostTemplate("claude", { theme: "dark" });
+    const profile = config.mcpProfile;
+
+    expect(profile).toMatchObject({
+      mcpProtocolVersion: "auto",
+      mrtrModes: { requestState: false, elicitation: false },
+      initialize: {
+        supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+        clientInfo: { name: "claude-ai", version: "0.1.0" },
+      },
+    });
+    expect(profile?.apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen"],
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      requestTeardown: false,
+      resourceCacheTtl: true,
+    });
+    expect(profile).not.toHaveProperty("toolCallCancellation");
+    expect(profile?.apps?.mcpAppsOverrides).not.toHaveProperty("toolCancelled");
+  });
+
   it("seeds the real Claude Code harness + a personal computer", () => {
     const config = seedHostTemplate("claude-code", { theme: "dark" });
     expect(config.hostStyle).toBe("claude-code");
@@ -97,6 +131,8 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
+    // Bumped with the 2026-09-03 re-probe, from 2.1.237.
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.246");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -106,6 +142,21 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // Codex (like Claude Code) can't pause for interactive approval.
     expect(config.requireToolApproval).toBe(false);
+    expect(config.clientCapabilities).toMatchObject({
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
+        },
+      },
+      elicitation: { form: {}, url: {} },
+    });
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {
@@ -141,6 +192,102 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  it("keeps ChatGPT raw host capabilities faithful to the probe", () => {
+    const config = seedHostTemplate("chatgpt", { theme: "dark" });
+
+    expect(config.hostCapabilitiesOverride).toMatchObject({
+      serverResources: {},
+      logging: {},
+    });
+    expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+    expect(config.mcpProfile?.mcpProtocolVersion).toBe("auto");
+    expect(config.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+      "2025-06-18",
+      "2025-11-25",
+    ]);
+    // `connect-src` is one directive, so its subtypes cannot diverge: the
+    // declared wss endpoint connected while an undeclared one took a real
+    // violation, so the declared list is honored for fetch and XHR too.
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
+      "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "frame-src": ["'self'", "data:", "blob:"],
+    });
+  });
+
+  it("keeps Cursor CSP subtype findings in the SDK seed", () => {
+    const config = seedHostTemplate("cursor", { theme: "dark" });
+    expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
+      "3.14.27"
+    );
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+  });
+
+  it("labels and persists the Copilot documented runtime surface", () => {
+    const config = seedHostTemplate("copilot", { theme: "dark" });
+    const profile = config.mcpProfile;
+
+    // Probed 2026-08-26: the real handshake sends `mcs` 1.0.0 plus Copilot's
+    // routing fields. hostInfo below stays at the vendor-doc profile — no
+    // ui/initialize was ever observed, so nothing measured contradicts it.
+    expect(profile?.initialize?.clientInfo).toEqual({
+      name: "mcs",
+      version: "1.0.0",
+      channelId: "pva-studio",
+      lcat: "M365_COPILOT_USER",
+      agentAuthenticationMode: "Integrated",
+    });
+    expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Copilot",
+      version: "1.0.1",
+    });
+    expect(profile?.apps?.compatRuntime).toMatchObject({
+      openaiApps: true,
+      openaiAppsOverrides: {
+        callTool: true,
+        sendFollowUpMessage: true,
+        requestDisplayMode: "fullscreen-only",
+        uploadFile: false,
+        getFileDownloadUrl: false,
+        requestModal: false,
+      },
+    });
+    expect(config.hostCapabilitiesOverride).toEqual({
+      openLinks: {},
+      serverTools: {},
+      message: { text: {} },
+      updateModelContext: { text: {} },
+    });
+  });
+
   it("keeps Goose host capabilities faithful to the raw probe", () => {
     const config = seedHostTemplate("goose", { theme: "dark" });
     const apps = config.mcpProfile?.apps as any;
@@ -156,10 +303,21 @@ describe("seedHostTemplate", () => {
       sandboxPermissions: false,
       cspFrameDomains: false,
       cspBaseUriDomains: false,
-      resourcePrefersBorder: false,
+      cspConnectDomains: { fetch: false, xhr: false },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      resourcePrefersBorder: true,
       downloadFile: false,
       requestTeardown: false,
     });
+    expect(apps?.mcpAppsOverrides.cspConnectDomains).not.toHaveProperty(
+      "websocket"
+    );
   });
 
   it("keeps Slack HostContext and capabilities faithful to the raw probe", () => {
@@ -168,6 +326,9 @@ describe("seedHostTemplate", () => {
 
     expect(config.clientCapabilities).toEqual({
       extensions: {
+        "io.slack/block-kit": {
+          mimeTypes: ["application/vnd.slack.blocks+json"],
+        },
         "io.modelcontextprotocol/ui": {
           mimeTypes: ["text/html;profile=mcp-app"],
         },
@@ -178,6 +339,7 @@ describe("seedHostTemplate", () => {
       serverTools: {},
       serverResources: {},
       logging: {},
+      message: { text: {} },
     });
     expect((config.hostContext as any).theme).toBe("dark");
     expect((config.hostContext as any).containerDimensions).toEqual({
@@ -206,9 +368,92 @@ describe("seedHostTemplate", () => {
       serverResources: true,
       logging: true,
       updateModelContext: false,
-      message: false,
+      message: true,
       sandboxPermissions: false,
     });
+  });
+
+  it("keeps VS Code 1.134 handshake facts and deliberate emulator defaults", () => {
+    const config = seedHostTemplate("vscode", { theme: "dark" });
+    const profile = config.mcpProfile;
+    const hostContext = config.hostContext as {
+      styles: { variables: Record<string, string> };
+    };
+
+    expect(config.clientCapabilities).toMatchObject({
+      roots: { listChanged: true },
+      sampling: {},
+      elicitation: { form: {}, url: {} },
+      tasks: {
+        list: {},
+        cancel: {},
+        requests: {
+          sampling: { createMessage: {} },
+          elicitation: { create: {} },
+        },
+      },
+    });
+    expect(config.hostCapabilitiesOverride).toMatchObject({
+      serverTools: { listChanged: true },
+      serverResources: { listChanged: true },
+      updateModelContext: {
+        audio: {},
+        image: {},
+        resourceLink: {},
+        resource: {},
+        structuredContent: {},
+      },
+      downloadFile: {},
+    });
+    expect(config.hostContext).toMatchObject({
+      theme: "dark",
+      availableDisplayModes: ["inline"],
+      containerDimensions: { width: 494, maxHeight: 720 },
+      locale: "en-us",
+      deviceCapabilities: { touch: false, hover: true },
+    });
+    expect(hostContext.styles.variables["--font-text-md-size"]).toBe("13px");
+    expect(hostContext.styles.variables["--color-background-primary"]).toBe(
+      "#1e1e1e"
+    );
+    const lightConfig = seedHostTemplate("vscode", { theme: "light" });
+    expect(
+      (lightConfig.hostContext as typeof hostContext).styles.variables[
+        "--color-background-primary"
+      ]
+    ).toBe("#ffffff");
+    expect(profile?.initialize).toEqual({
+      // Widened beyond the single version VS Code negotiates by default: it
+      // accepts all three 2025 revisions.
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+      clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
+    });
+    expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Visual Studio Code",
+      version: "1.134.0",
+    });
+    expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
+    expect(profile?.apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline"],
+      toolInputPartial: true,
+      toolCancelled: true,
+      hostContextChanged: true,
+      resourceTeardown: true,
+      toolInfo: false,
+      updateModelContext: true,
+      message: false,
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
+      resourcePrefersBorder: true,
+      requestTeardown: true,
+      widgetDisplayModeRequests: "accept",
+    });
+    expect(profile?.apps?.sandbox?.sandboxAttrs).toEqual([
+      "allow-pointer-lock",
+      "allow-downloads",
+      "allow-forms",
+    ]);
+    expect(profile?.apps?.sandbox?.csp).toEqual({ mode: "declared" });
   });
 
   it("emptyHostConfigInputV2 deep-clones inputs (no aliasing)", () => {

@@ -11,6 +11,7 @@ export function EvalTabGate({
   user,
   projectId,
   isDirectGuest = false,
+  header,
   children,
 }: {
   variant: EvalTabGateVariant;
@@ -24,12 +25,31 @@ export function EvalTabGate({
    * wall for the Playground variant only.
    */
   isDirectGuest?: boolean;
+  /**
+   * Chrome rendered ABOVE every gate state, including the sign-in wall and the
+   * loading spinner. The Suites | Runs switcher lives here: Runs mode is
+   * guest-reachable (it hosts the SDK quickstart), so a signed-out user stuck
+   * on the Suites wall must still be able to get there.
+   */
+  header?: ReactNode;
   children: ReactNode;
 }) {
   const Icon = variant === "playground" ? FlaskConical : GitBranch;
 
+  const withHeader = (body: ReactNode) =>
+    header ? (
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        {header}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {body}
+        </div>
+      </div>
+    ) : (
+      <>{body}</>
+    );
+
   if (isLoading) {
-    return (
+    return withHeader(
       <div className="p-6">
         <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
           <div className="text-center">
@@ -45,11 +65,11 @@ export function EvalTabGate({
 
   if (variant === "playground") {
     if (isDirectGuest) {
-      return <>{children}</>;
+      return withHeader(children);
     }
 
     if (!isAuthenticated || (!user && !projectId)) {
-      return (
+      return withHeader(
         <div className="p-6">
           <EmptyState
             icon={Icon}
@@ -62,7 +82,7 @@ export function EvalTabGate({
     }
 
     if (!projectId) {
-      return (
+      return withHeader(
         <div className="p-6">
           <EmptyState
             icon={Icon}
@@ -75,5 +95,5 @@ export function EvalTabGate({
     }
   }
 
-  return <>{children}</>;
+  return withHeader(children);
 }

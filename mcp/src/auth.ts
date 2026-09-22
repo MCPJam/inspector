@@ -93,7 +93,11 @@ type KeyResolver =
   | Uint8Array;
 
 export interface VerifyConfig {
-  /** WorkOS client id; also the expected token `aud`. */
+  /**
+   * WorkOS client id. One of two accepted token audiences — the other is this
+   * server's resource identifier; see the `audience` array in
+   * `verifyBearerToken` for why both are legitimate.
+   */
   clientId: string;
   /** Custom AuthKit domain (`env.AUTHKIT_DOMAIN`), added to the issuer set. */
   authkitDomain: string | undefined;
@@ -132,6 +136,16 @@ function extractBearerToken(header: string | null): string | undefined {
   if (!header) return undefined;
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header);
   return match?.[1];
+}
+
+/**
+ * This resource server's canonical identifier (RFC 8707). It is the `resource`
+ * of our protected-resource metadata AND one of the two audiences a token may
+ * legitimately carry, so both must be derived here — if they ever drift, we
+ * advertise one identifier and accept a different one.
+ */
+export function resourceIdentifier(origin: string): string {
+  return `${origin}/mcp`;
 }
 
 function resourceMetadataUrl(origin: string): string {
@@ -197,9 +211,26 @@ export async function verifyBearerToken(
     typeof key === "function" ? (key as JWTVerifyGetKey) : async () => key;
 
   try {
+    // Two audiences, because AuthKit legitimately mints either one and which
+    // we get is a dashboard setting, not a property of the token or client:
+    //
+    //  - `resourceIdentifier(origin)` — when an MCP Resource Indicator is
+    //    configured for this server (it is, in prod and staging), AuthKit
+    //    stamps `aud` with the `resource` the client requested. Every
+    //    third-party MCP client (Claude Code, Cursor, …) lands here.
+    //  - `config.clientId` — AuthKit's fallback `aud` when no Resource
+    //    Indicator applies, and what first-party browser session tokens carry.
+    //
+    // jose treats an array as "any of", so a token matching either passes.
+    // Accepting only the client id is what broke third-party OAuth entirely:
+    // the flow completed, then every request 401'd on the audience check.
+    //
+    // This is still a pin, not a loosening — the audience must be US. Dropping
+    // it would let any token from the same issuer, minted for any other
+    // resource, be replayed here (token substitution).
     const { payload } = await jwtVerify(token, getKey, {
       issuer,
-      audience: config.clientId,
+      audience: [config.clientId, resourceIdentifier(origin)],
       algorithms: ["RS256"],
       clockTolerance: 5,
     });

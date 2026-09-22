@@ -1,6 +1,7 @@
 import {
   getStepInfo,
   getStepIndex,
+  isCredentialShapedAuthValue,
   type OAuthFlowState,
   type OAuthFlowStep,
 } from "@mcpjam/sdk/browser";
@@ -105,9 +106,19 @@ function sanitizeCopyString(value: string): unknown {
     }
   }
 
-  return value
-    .replace(/\bBearer\s+[^\s,;]+/gi, `Bearer ${REDACTED}`)
-    .replace(sensitiveStringAssignmentPattern, `$1${REDACTED}`);
+  return (
+    value
+      // `\bBearer\s+[^\s,;]+` used to fire here unconditionally, so a copied
+      // log carrying the hosted 401's own copy — "Bearer token required" —
+      // came out as "Bearer [REDACTED] required": a redaction of prose that
+      // held no secret, in the text a triager reads to reconstruct the
+      // failure. The credential-vs-vocabulary call belongs to the SDK
+      // redaction owner, not to a private pattern here.
+      .replace(/\bBearer(\s+)(\S+)/gi, (match, gap: string, token: string) =>
+        isCredentialShapedAuthValue(token) ? `Bearer${gap}${REDACTED}` : match
+      )
+      .replace(sensitiveStringAssignmentPattern, `$1${REDACTED}`)
+  );
 }
 
 function sanitizeCopyValue(value: unknown): unknown {

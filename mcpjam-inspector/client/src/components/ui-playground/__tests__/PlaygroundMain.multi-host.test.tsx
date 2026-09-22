@@ -25,6 +25,11 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  loadSelectedHostIds,
+  saveSelectedHostIds,
+} from "@/lib/selected-host-storage";
+import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -114,9 +119,40 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   },
 }));
 
+// Project Environments (Phase 2) is flag-gated; default OFF so every existing
+// multi-host assertion keeps exercising the unchanged host path.
+const {
+  environmentsFlag,
+  environmentPreviewFixture,
+  environmentPreviewLoading,
+} = vi.hoisted(() => ({
+  environmentsFlag: { value: false as boolean | undefined },
+  environmentPreviewFixture: { value: null as unknown },
+  // Separate from the body on purpose: a live EDIT of the SELECTED
+  // environment refetches while KEEPING the previous body on screen, so
+  // "loading" and "has a preview" are simultaneously true and the fixture
+  // has to be able to express that pair.
+  environmentPreviewLoading: { value: false },
+}));
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "project-environments-enabled" ? environmentsFlag.value : false,
+}));
+// The preview is a network read (`/api/web/environments/:id/preview`); the
+// fixture stands in for the resolver so the test drives what the environment
+// resolves to.
+vi.mock("@/hooks/use-environment-preview", () => ({
+  useEnvironmentPreview: (
+    projectId: string | null,
+    environmentId: string | null
+  ) => ({
+    preview:
+      projectId && environmentId ? environmentPreviewFixture.value : null,
+    isLoading: environmentPreviewLoading.value,
+    error: null,
+    refresh: vi.fn(),
+  }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -126,10 +162,37 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+// `setting` is the MEMBER's stored answer, the one `useBrowserToolIds` reads
+// from `hosts:getLocalBrowserSettings` (see the convex mock below). A guest
+// never reaches that query, so guest rows drive the host config's
+// `localBrowserEnabled` instead.
+const browserFixture = vi.hoisted(() => ({
+  guest: false,
+  granted: false,
+  setting: null as boolean | null,
+}));
+const browserConsent = vi.hoisted(() => () => ({
+  status: browserFixture.granted ? "granted" : "absent",
+  granted: browserFixture.granted,
+  token: browserFixture.granted ? "device-consent" : null,
+  grant: async () => true,
+  revoke: async () => {},
+}));
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: "local", selectedEngine: "local", localAvailable: true,
+    consent: browserConsent(),
+  }),
+}));
+// The same store the engine hook reads — `useBrowserToolIds` subscribes to it
+// directly, and the two must not be able to disagree about one device grant.
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => browserConsent(),
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     signUp: vi.fn(),
-    user: { id: "u1" },
+    user: browserFixture.guest ? null : { id: "u1" },
     isLoading: false,
   }),
 }));
@@ -139,9 +202,19 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-  useQuery: (_name: string, args: unknown) =>
-    args === "skip" ? undefined : null,
+  useQuery: (name: string, args: unknown) => {
+    if (args === "skip") return undefined;
+    // Shaped like the real query: an object whose `enabled` is null when the
+    // member has stored nothing. Returning a bare null would read as "still
+    // loading" and mask what these tests are asserting.
+    if (name === "hosts:getLocalBrowserSettings")
+      return { enabled: browserFixture.setting };
+    return null;
+  },
   useMutation: () => () => Promise.resolve(),
+  // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
+  // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
+  useAction: () => () => Promise.resolve({ token: "test-token" }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -228,8 +301,12 @@ const mockUseChatSession = {
   submitBlocked: false,
 } as any;
 
+let capturedChatSessionOptions: any = null;
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => mockUseChatSession,
+  useChatSession: (options: any) => {
+    capturedChatSessionOptions = options;
+    return mockUseChatSession;
+  },
 }));
 
 vi.mock("use-stick-to-bottom", () => {
@@ -294,7 +371,7 @@ vi.mock(
   "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog",
   () => ({
     ConfirmChatResetDialog: () => null,
-  }),
+  })
 );
 
 vi.mock("@/components/chat-v2/fullscreen-chat-overlay", () => ({
@@ -387,10 +464,9 @@ vi.mock("@/state/app-state-context", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@/components/chat-v2/shared/chat-helpers")
-    >();
+  const actual = await importOriginal<
+    typeof import("@/components/chat-v2/shared/chat-helpers")
+  >();
   return {
     ...actual,
     formatErrorMessage: (error: any) =>
@@ -419,6 +495,55 @@ const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
 const mockCreateHost = vi.hoisted(() => vi.fn());
+const mockHostMutations = vi.hoisted(() => ({
+  createHost: undefined as unknown as ReturnType<typeof vi.fn>,
+  updateHost: vi.fn(),
+  deleteHost: vi.fn(),
+  duplicateHost: vi.fn(),
+}));
+mockHostMutations.createHost = mockCreateHost;
+
+// Local Claude Code execution, forced ON so the per-column wiring is
+// observable. Left to the real controller this would settle to "unavailable"
+// under jsdom, every column would read `requested: false`, and a test asserting
+// that would pass just as happily with the bug in place.
+const localHarnessFixture = vi.hoisted(() => ({
+  requestedTarget: "local-native" as string | null,
+}));
+vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+  // ONLY `requestedTarget` is meaningful here — it is what the per-column
+  // derivation reads, and it is what these tests assert on. The rest is filler
+  // to satisfy the shape. `needs-consent` rather than `ready` because `ready`
+  // means a verified runtime AND a live grant, and `consent: null` below would
+  // make that an impossible state for anyone who later renders the dialog from
+  // this file.
+  useLocalHarnessController: () => ({
+    requestedTarget: localHarnessFixture.requestedTarget,
+    effectiveTarget: "hosted",
+    phase: "needs-consent",
+    reason: null,
+    availability: null,
+    loading: false,
+    availabilityError: null,
+    runtimeStatus: { state: "ready", packVersion: "3.4.0" },
+    statusFetchFailed: false,
+    consent: null,
+    workspace: { workspaceGrantId: "ws_1", displayRoot: "~/code/project" },
+    pendingApproval: null,
+    hostedAvailable: false,
+    select: vi.fn(),
+    refresh: vi.fn(),
+    chooseWorkspace: vi.fn(),
+    adoptWorkspace: vi.fn(),
+    captureApproval: vi.fn(),
+    cancelApproval: vi.fn(),
+    startInstall: vi.fn(),
+    authorize: vi.fn(),
+    revoke: vi.fn(),
+    resolveSendTarget: vi.fn(() => null),
+  }),
+  useLocalHarnessRunsHere: () => false,
+}));
 
 vi.mock("@/hooks/use-persisted-host", () => ({
   usePersistedHost: (projectId: string | null) => {
@@ -435,7 +560,7 @@ vi.mock("@/hooks/use-persisted-host", () => ({
 vi.mock("@/hooks/use-playground-host-slots", () => ({
   usePlaygroundHostSlots: (
     _isAuthenticated: boolean,
-    ids: (string | null | undefined)[],
+    ids: (string | null | undefined)[]
   ) => {
     const resolve = (id: string | null | undefined) =>
       id ? multiHostFixture.hosts[id] ?? null : null;
@@ -453,12 +578,87 @@ vi.mock("@/hooks/useClients", () => ({
     hosts: multiHostFixture.hostList,
     isLoading: false,
   }),
-  useHostMutations: () => ({
-    createHost: mockCreateHost,
-    updateHost: vi.fn(),
-    deleteHost: vi.fn(),
-    duplicateHost: vi.fn(),
-  }),
+  // Every mutation is a STABLE reference, matching Convex's `useMutation`
+  // (which memoizes per mutation). Minting fresh `vi.fn()`s here instead
+  // would change these identities on every render, and the seed effect
+  // depends on `createHost`/`deleteHost` — so the effect would re-run on
+  // every render and quietly retry a failed seed on its own, hiding whether
+  // the real retry path works at all.
+  useHostMutations: () => mockHostMutations,
+}));
+
+// PUR-11 seed backstop reads live catalog templates (chatgpt/claude/
+// cursor) to seed a guest's first 3 clients. `getCatalogHost` /
+// `getCatalogTemplate` are the REAL sdk functions running against this fake
+// "live" catalog — only the network-fetching hook is mocked.
+const seedCatalogFixture = {
+  status: "live" as const,
+  version: 1,
+  source: "test",
+  catalog: {
+    hostsById: {
+      chatgpt: {
+        id: "chatgpt",
+        label: "ChatGPT",
+        provenance: "assumed",
+        rendersMcpApps: false,
+        modelId: "openai/gpt-5.6-luna",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
+        clientCapabilities: {},
+        hostContext: {},
+      },
+      claude: {
+        id: "claude",
+        label: "Claude",
+        provenance: "assumed",
+        rendersMcpApps: true,
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "",
+        temperature: 1,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
+        clientCapabilities: {},
+        hostContext: {},
+      },
+      cursor: {
+        id: "cursor",
+        label: "Cursor",
+        provenance: "probe",
+        rendersMcpApps: true,
+        modelId: "anthropic/claude-sonnet-4.5",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
+        clientCapabilities: {},
+        hostContext: {},
+      },
+    },
+  },
+};
+
+// The catalog is fetched once per page load and memoized for the session, so
+// a degraded status is permanent — the seed has to cope with it rather than
+// wait it out. Tests override this to exercise "fallback"/"error"; the
+// `beforeEach` resets it to the live fixture above.
+let seedCatalogState: {
+  status: "live" | "fallback" | "error";
+  version: number | null;
+  source: string | null;
+  catalog: unknown;
+} = seedCatalogFixture;
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => seedCatalogState,
 }));
 
 function readPreviewedHostId(projectId = "default"): string | null {
@@ -470,7 +670,7 @@ function readPreviewedHostId(projectId = "default"): string | null {
 function makeHost(
   id: string,
   name: string,
-  config: Partial<HostConfigDtoV2>,
+  config: Partial<HostConfigDtoV2>
 ): HostDetail {
   return {
     hostId: id,
@@ -502,6 +702,9 @@ describe("PlaygroundMain — multi-host render path", () => {
   };
 
   beforeEach(() => {
+    browserFixture.guest = false;
+    browserFixture.granted = false;
+    browserFixture.setting = null;
     vi.clearAllMocks();
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     useHostContextStore.setState({
@@ -527,11 +730,16 @@ describe("PlaygroundMain — multi-host render path", () => {
     });
     mockMultiModelPlaygroundCard.mockClear();
     mockChatInput.mockClear();
-    mockSetSelectedHostIds.mockClear();
-    mockSetMultiHostEnabled.mockClear();
+    // `mockReset`, not `mockClear`: the seed test installs a
+    // `mockImplementation` that mirrors its argument into `multiHostFixture`,
+    // and neither `mockClear` nor `vi.clearAllMocks()` drops implementations —
+    // so it would leak into every later test and quietly rewrite the fixture
+    // out from under their own assertions.
+    mockSetSelectedHostIds.mockReset();
+    mockSetMultiHostEnabled.mockReset();
     mockCreateHost.mockResolvedValue({
-      hostId: "seeded-mcpjam",
-      hostConfigId: "seeded-mcpjam-config",
+      hostId: "seeded-host",
+      hostConfigId: "seeded-host-config",
     });
     usePersistedHostProjectIds.length = 0;
     localStorage.clear();
@@ -540,10 +748,16 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = [];
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
+    localHarnessFixture.requestedTarget = "local-native";
     // Reset shared-app-state to the default project; the shared-project
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
     mockSharedAppState.activeProjectId = "default";
+    capturedChatSessionOptions = null;
+    seedCatalogState = seedCatalogFixture;
+    environmentsFlag.value = false;
+    environmentPreviewFixture.value = null;
+    environmentPreviewLoading.value = false;
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -561,75 +775,536 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  it("selects the seeded MCPJam host for empty projects", async () => {
+  // PUR-11: guests land with 3 pre-selected clients (Claude, ChatGPT, Cursor)
+  // instead of a single blank "MCPJam" host + a toggle to find first.
+  it("seeds 3 default clients (Claude, ChatGPT, Cursor) for empty projects", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
-    mockCreateHost.mockResolvedValueOnce({
-      hostId: "h-seeded-mcpjam",
-      hostConfigId: "h-seeded-mcpjam-config",
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-claude",
+        hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
+      });
+
+    // So the grid-render assertion below is actually wired to what the seed
+    // effect calls `setSelectedHostIds` with — not a value hardcoded to
+    // match it — mirror the fixture from the real call's argument, the same
+    // way `usePersistedHost`'s own state would update.
+    mockSetSelectedHostIds.mockImplementation((ids: string[]) => {
+      multiHostFixture.selectedHostIds = ids;
+    });
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "default", name: "Claude" })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "ChatGPT",
+        // Straight from the catalog template — the seed no longer carries a
+        // per-host model override on top of it.
+        input: expect.objectContaining({ modelId: "openai/gpt-5.6-luna" }),
+      })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Cursor",
+        // The seed pins each template's default model — a modelless host
+        // breaks synthetic/swarm runs (no picker fallback on that path).
+        input: expect.objectContaining({
+          modelId: "anthropic/claude-sonnet-4.5",
+        }),
+      })
+    );
+
+    // Lead is the first seed template (Claude); the compare lineup is
+    // seeded alongside it — no manual toggle needed for a guest to land in
+    // a 3-way compare.
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-claude");
+    });
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+      "h-claude",
+      "h-chatgpt",
+      "h-cursor",
+    ]);
+
+    // The acceptance criterion end to end: once the host-list query catches
+    // up to the 3 just-created hosts (simulated here the same way a live
+    // Convex subscription would resolve shortly after — this half is
+    // necessarily manual, standing in for an external subscription this
+    // mock setup has no live path to), the guest actually lands in the
+    // 3-way compare grid. `multiHostFixture.selectedHostIds` is NOT set
+    // here — it was already updated above by the real `setSelectedHostIds`
+    // call via `mockSetSelectedHostIds`'s implementation, so a regression
+    // that seeds the wrong ids would show up as the wrong (or zero) cards
+    // below rather than being masked by a hardcoded fixture value.
+    multiHostFixture.hostList = [
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    multiHostFixture.hosts = {
+      "h-chatgpt": makeHost("h-chatgpt", "ChatGPT", { hostStyle: "chatgpt" }),
+      "h-claude": makeHost("h-claude", "Claude", { hostStyle: "claude" }),
+      "h-cursor": makeHost("h-cursor", "Cursor", {
+        hostStyle: "cursor",
+      }),
+    };
+    rerender(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-multi-host-grid")).toBeTruthy();
+    });
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(3);
+  });
+
+  // A "fallback" catalog is the server serving its own bundled copy, which
+  // carries all 3 seed templates — so the guest still gets the full lineup.
+  // Waiting for "live" instead would strand them with zero clients for the
+  // whole session: the catalog is fetched once per page load and memoized, so
+  // a degraded status never upgrades without a reload, and the playground
+  // hides the global host bar that would otherwise seed a default host.
+  it("seeds the full 3-client lineup from a bundled ('fallback') catalog", async () => {
+    seedCatalogState = { ...seedCatalogFixture, status: "fallback" };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-claude",
+        hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    await waitFor(() => {
+      expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+        "h-chatgpt",
+        "h-claude",
+        "h-cursor",
+      ]);
+    });
+  });
+
+  // "error" means no catalog at all, so there are no templates to clone —
+  // but zero clients on a surface with no host bar is a dead end. Fall back
+  // to the pre-PUR-11 backstop (one blank "MCPJam" host, no compare lineup)
+  // rather than leaving the project empty.
+  it("seeds a single blank MCPJam host when the catalog failed to load", async () => {
+    seedCatalogState = {
+      status: "error",
+      version: null,
+      source: null,
+      catalog: null,
+    };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost.mockResolvedValue({
+      hostId: "h-mcpjam",
+      hostConfigId: "h-mcpjam-config",
     });
 
     render(<PlaygroundMain {...defaultProps} />);
 
     await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "default",
-          name: "MCPJam",
-        }),
-      );
+      expect(mockCreateHost).toHaveBeenCalledTimes(1);
     });
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "MCPJam",
+        input: expect.objectContaining({
+          modelId: "anthropic/claude-haiku-4.5",
+        }),
+      })
+    );
     await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-seeded-mcpjam");
+      expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    // A single-host lineup, not an empty one: `usePersistedHost` derives the
+    // lineup from the lead anyway, and writing it explicitly is what keeps a
+    // stale array from surviving (see the orphaned-lineup test below).
+    await waitFor(() => {
+      expect(loadSelectedHostIds("default")).toEqual(["h-mcpjam"]);
+    });
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith(["h-mcpjam"]);
+  });
+
+  // The fallback promises "one host, no compare" — but leaving the stored
+  // lineup alone doesn't deliver that for a project whose hosts were deleted:
+  // the dead ids are still in storage, and `usePersistedHost` PRESERVES the
+  // stored column count at read time (replacing slot 0 with the lead rather
+  // than shrinking), so they'd come back as a 3-column compare lineup around
+  // one real host and flip `isComparingHosts` (`selectedHostIds.length > 1`)
+  // on. The fallback has to overwrite the lineup, not skip it.
+  it("collapses an orphaned compare lineup when falling back to a single host", async () => {
+    saveSelectedHostIds("default", [
+      "h-deleted-1",
+      "h-deleted-2",
+      "h-deleted-3",
+    ]);
+    seedCatalogState = {
+      status: "error",
+      version: null,
+      source: null,
+      catalog: null,
+    };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost.mockResolvedValue({
+      hostId: "h-mcpjam",
+      hostConfigId: "h-mcpjam-config",
+    });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(loadSelectedHostIds("default")).toEqual(["h-mcpjam"]);
+    });
+    expect(readPreviewedHostId()).toBe("h-mcpjam");
+  });
+
+  // Clearing the per-project "seeded" marker only PERMITS a retry — nothing
+  // in the effect's dependency list changes when a create rejects, so
+  // without an explicit re-trigger the guest is stuck on an empty playground
+  // for the rest of the session. This is the surface with no global host bar
+  // to fall back on, so the backstop itself has to be recoverable.
+  it("retries the single-host fallback after the create fails", async () => {
+    seedCatalogState = {
+      status: "error",
+      version: null,
+      source: null,
+      catalog: null,
+    };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockRejectedValueOnce(new Error("backend blip"))
+      .mockResolvedValueOnce({
+        hostId: "h-mcpjam",
+        hostConfigId: "h-mcpjam-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(1);
+    });
+    // The retry is scheduled on a real (backed-off) timer, so this waits it
+    // out rather than asserting synchronously.
+    await waitFor(
+      () => {
+        expect(mockCreateHost).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 4000 }
+    );
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-mcpjam");
     });
   });
 
-  it("seeds a default MCPJam host for each empty project", async () => {
+  // A project can go back to `hostList.length === 0` after being fully
+  // seeded once, if all 3 hosts are later deleted — but the array in
+  // storage isn't cleared just because the hosts it points at are gone, so
+  // `loadSelectedHostIds` still returns the 3 (now orphaned) ids. A naive
+  // "is the stored array non-empty" check would misread that leftover data
+  // as a manual selection made mid-reseed and skip applying the new lineup,
+  // permanently stranding the project. The reseed must go through as long
+  // as nothing has changed the lineup since the seed effect itself started.
+  it("reseeds a project whose hosts were all deleted, even though the stale array is non-empty", async () => {
+    saveSelectedHostIds("default", [
+      "h-deleted-1",
+      "h-deleted-2",
+      "h-deleted-3",
+    ]);
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     mockCreateHost
       .mockResolvedValueOnce({
-        hostId: "h-first-mcpjam",
-        hostConfigId: "h-first-mcpjam-config",
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-second-mcpjam",
-        hostConfigId: "h-second-mcpjam-config",
+        hostId: "h-claude",
+        hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-cursor",
+        hostConfigId: "h-cursor-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    await waitFor(() => {
+      expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+        "h-chatgpt",
+        "h-claude",
+        "h-cursor",
+      ]);
+    });
+  });
+
+  // The lead moves independently of the compare array: the global host bar
+  // switches the previewed client through `savePreviewedHostId` alone and
+  // never touches the lineup. So a mid-seed guard that compares only the
+  // array sees "nothing changed" and the seed's own `savePreviewedHostId`
+  // overwrites the client the user just switched to.
+  it("keeps a previewed client switched mid-seed, even though the compare lineup is untouched", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    // Hold the three creates open so the switch below lands strictly between
+    // the seed effect's snapshot and its completion — the only window in
+    // which this bug is reachable.
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // The user picks a client in the global host bar while the creates are
+    // still in flight. Lead only — the lineup stays exactly as snapshotted.
+    savePreviewedHostId("default", "h-user-picked");
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-chatgpt" });
+      releaseCreate[1]({ hostId: "h-claude" });
+      releaseCreate[2]({ hostId: "h-cursor" });
+    });
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    expect(readPreviewedHostId()).toBe("h-user-picked");
+    expect(loadSelectedHostIds("default")).toEqual([]);
+    expect(mockSetSelectedHostIds).not.toHaveBeenCalledWith([
+      "h-chatgpt",
+      "h-claude",
+      "h-cursor",
+    ]);
+  });
+
+  it("chooses a fallback lead after a user changes only the compare lineup mid-seed", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // The user changes only the compare lineup. With no previewed host yet,
+    // the fallback is deferred until the seed finishes so this choice is not
+    // overwritten by the seed itself.
+    saveSelectedHostIds("default", ["h-chatgpt"]);
+    multiHostFixture.selectedHostIds = ["h-chatgpt"];
+    multiHostFixture.hostList = [
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    expect(readPreviewedHostId()).toBeNull();
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-claude" });
+      releaseCreate[1]({ hostId: "h-chatgpt" });
+      releaseCreate[2]({ hostId: "h-cursor" });
+    });
+
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-chatgpt");
+    });
+    expect(loadSelectedHostIds("default")).toEqual(["h-chatgpt"]);
+  });
+
+  it("keeps Claude as lead when ChatGPT reaches the host list first", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // ChatGPT resolves before the first seed (Claude), so a generic fallback
+    // would otherwise make ChatGPT the automatic default.
+    await act(async () => {
+      releaseCreate[1]({ hostId: "h-chatgpt" });
+    });
+    multiHostFixture.hostList = [{ hostId: "h-chatgpt", name: "ChatGPT" }];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBeNull();
+    });
+
+    multiHostFixture.hostList = [
+      { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-cursor", name: "Cursor" },
+    ];
+    rerender(<PlaygroundMain {...defaultProps} />);
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-claude" });
+      releaseCreate[2]({ hostId: "h-cursor" });
+    });
+
+    await waitFor(() => {
+      expect(loadSelectedHostIds("default")).toEqual([
+        "h-claude",
+        "h-chatgpt",
+        "h-cursor",
+      ]);
+    });
+    expect(readPreviewedHostId()).toBe("h-claude");
+  });
+
+  it("seeds 3 default clients for each empty project", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-first-chatgpt",
+        hostConfigId: "h-first-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-first-claude",
+        hostConfigId: "h-first-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-first-cursor",
+        hostConfigId: "h-first-cursor-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-chatgpt",
+        hostConfigId: "h-second-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-claude",
+        hostConfigId: "h-second-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-cursor",
+        hostConfigId: "h-second-cursor-config",
       });
 
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
 
     await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "default",
-          name: "MCPJam",
-          // The seed pins a cheap default model — a modelless host breaks
-          // synthetic/swarm runs (no picker fallback on that path).
-          input: expect.objectContaining({
-            modelId: "anthropic/claude-haiku-4.5",
-          }),
-        }),
-      );
+      expect(readPreviewedHostId("default")).toBe("h-first-chatgpt");
     });
-    await waitFor(() => {
-      expect(readPreviewedHostId("default")).toBe("h-first-mcpjam");
-    });
+    expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+      "h-first-chatgpt",
+      "h-first-claude",
+      "h-first-cursor",
+    ]);
 
     rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
 
     await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "second",
-          name: "MCPJam",
-        }),
+      expect(readPreviewedHostId("second")).toBe("h-second-chatgpt");
+    });
+    expect(mockCreateHost).toHaveBeenCalledTimes(6);
+    // Assert the SECOND project's seed the same way as the first: a
+    // regression that seeds the wrong templates (or leaves compare off) for
+    // a later empty project shouldn't slip through just because it isn't the
+    // first one seeded.
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "second", name: "ChatGPT" })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "second", name: "Claude" })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "second", name: "Cursor" })
+    );
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+      "h-second-chatgpt",
+      "h-second-claude",
+      "h-second-cursor",
+    ]);
+  });
+
+  // EVERY COLUMN ANSWERS LIKE THE SINGLE PANE. The grid resolves each column
+  // through `useBrowserToolIds` — the same hook the pane uses — so the rule
+  // itself is pinned at that hook's altitude (a member's stored setting needs
+  // a queryable project scope, which this harness deliberately does not have).
+  // What matters here is that the grid asks the question at all, per column,
+  // and does not re-answer it with a copy that drifts.
+  it.each([
+    { guest: true, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: true, granted: false, enabled: undefined, expected: [] },
+    { guest: true, granted: true, enabled: false, expected: [] },
+    { guest: false, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: false, granted: true, enabled: false, expected: [] },
+  ])("resolves comparison Browser tools: guest=$guest consent=$granted host=$enabled", ({ guest, granted, enabled, expected }) => {
+    browserFixture.guest = guest;
+    browserFixture.granted = granted;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "A" }, { hostId: "h-B", name: "B" }];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "A", { builtInToolIds: [], localBrowserEnabled: enabled }),
+      "h-B": makeHost("h-B", "B", { builtInToolIds: ["web_search"], localBrowserEnabled: enabled }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.executionConfig.builtInToolIds).toEqual(
+        props.compareId === "h-B" ? ["web_search", ...expected] : expected,
       );
-    });
-    await waitFor(() => {
-      expect(readPreviewedHostId("second")).toBe("h-second-mcpjam");
-    });
-    expect(mockCreateHost).toHaveBeenCalledTimes(2);
+    }
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {
@@ -653,9 +1328,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
     multiHostFixture.multiHostEnabled = true;
 
-    render(
-      <PlaygroundMain {...defaultProps} />,
-    );
+    render(<PlaygroundMain {...defaultProps} />);
 
     const grid = screen.getByTestId("playground-multi-host-grid");
     expect(grid).toBeTruthy();
@@ -666,6 +1339,70 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-host-style")).toBe("chatgpt");
     expect(cards[1].getAttribute("data-host-style")).toBe("claude");
     expect(cards[0].getAttribute("data-compare-kind")).toBe("host");
+  });
+
+  // ── Local execution is per-LANE ────────────────────────────────────────
+  //
+  // The regression: `localHarnessExecution` was computed once from the
+  // PREVIEWED host and handed to every column. In a grid whose lead runs
+  // Claude Code, a Codex column inherited `requested: true` — a local
+  // authorization it can never satisfy, because the local target is not a
+  // thing a Codex turn can have. `use-chat-session` then refuses the send,
+  // and the only screen that could clear it authorizes a different host.
+  //
+  // Each column runs its own host, so each answers this for itself.
+  it("asks the local-execution question per column, not once per page", () => {
+    const claudeCode = makeHost("h-cc", "Claude Code", {
+      hostStyle: "claude",
+      harness: "claude-code",
+    } as Partial<HostConfigDtoV2>);
+    const codex = makeHost("h-codex", "Codex", {
+      hostStyle: "chatgpt",
+      harness: "codex",
+    } as Partial<HostConfigDtoV2>);
+    multiHostFixture.hostList = [
+      { hostId: "h-cc", name: "Claude Code" },
+      { hostId: "h-codex", name: "Codex" },
+    ];
+    multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
+    multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const byColumn = new Map<string, boolean>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      byColumn.set(props.compareId, props.localHarnessExecution?.requested);
+    }
+    expect(byColumn.get("h-cc")).toBe(true);
+    expect(byColumn.get("h-codex")).toBe(false);
+  });
+
+  // The other half of the same rule: nothing is local when nothing asked for
+  // it, so a Claude Code column is not special-cased into running here.
+  it("leaves every column non-local when local execution is not requested", () => {
+    localHarnessFixture.requestedTarget = "hosted";
+    const claudeCode = makeHost("h-cc", "Claude Code", {
+      hostStyle: "claude",
+      harness: "claude-code",
+    } as Partial<HostConfigDtoV2>);
+    const codex = makeHost("h-codex", "Codex", {
+      hostStyle: "chatgpt",
+      harness: "codex",
+    } as Partial<HostConfigDtoV2>);
+    multiHostFixture.hostList = [
+      { hostId: "h-cc", name: "Claude Code" },
+      { hostId: "h-codex", name: "Codex" },
+    ];
+    multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
+    multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.localHarnessExecution?.requested).toBe(false);
+    }
   });
 
   it("shares selectedServers across all columns (project-scoped invariant)", () => {
@@ -762,7 +1499,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(leadProps.compareSubLabel).toBe(secondaryProps.compareSubLabel);
   });
 
-  it("multi-host card chrome is hidden — Trace/Chat/Raw tab strip is the only header content", () => {
+  it("multi-host cards hide Latency/Tokens chrome but show host identity", () => {
     const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
     const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
     multiHostFixture.hostList = [
@@ -777,10 +1514,13 @@ describe("PlaygroundMain — multi-host render path", () => {
     const calls = mockMultiModelPlaygroundCard.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     // `showComparisonChrome=false` removes the per-card model title +
-    // Latency/Tokens block. The tab strip stays because it's gated on
-    // `showTraceTabs` inside `ModelCompareCardHeader`.
+    // Latency/Tokens block. Identity header brands each column; the tab
+    // strip stays via `showTraceTabs` inside `ModelCompareCardHeader`.
     for (const [props] of calls) {
       expect(props.showComparisonChrome).toBe(false);
+      expect(props.showIdentityHeader).toBe(true);
+      expect(typeof props.logoSrc).toBe("string");
+      expect(props.logoSrc.length).toBeGreaterThan(0);
     }
   });
 
@@ -871,9 +1611,13 @@ describe("PlaygroundMain — multi-host render path", () => {
         .clientSelector;
     expect(clientSelector).toBeDefined();
     expect(clientSelector.selectedHostIds).toBe(
-      multiHostFixture.selectedHostIds,
+      multiHostFixture.selectedHostIds
     );
-    expect(clientSelector.multiHostEnabled).toBe(true);
+    // PUR-11 removed the "Multiple clients" toggle, and with it the selector's
+    // `multiHostEnabled` input — compare state is derived from the lineup
+    // length. The `onMultiHostEnabledChange` callback stays: it's how the
+    // selector keeps the parent's multi-model mutual exclusion in sync.
+    expect(clientSelector.multiHostEnabled).toBeUndefined();
     expect(typeof clientSelector.onSelectedHostIdsChange).toBe("function");
     expect(typeof clientSelector.onMultiHostEnabledChange).toBe("function");
     expect(typeof clientSelector.onPromoteLead).toBe("function");
@@ -910,10 +1654,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
     render(
-      <PlaygroundMain
-        {...defaultProps}
-        activeProjectId="local-project"
-      />,
+      <PlaygroundMain {...defaultProps} activeProjectId="local-project" />
     );
 
     // Grid's `usePersistedHost` is scoped to `convexProjectId`.
@@ -925,7 +1666,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       mockChatInput.mock.calls[mockChatInput.mock.calls.length - 1][0]
         .clientSelector;
     expect(clientSelector?.selectedHostIds).toBe(
-      multiHostFixture.selectedHostIds,
+      multiHostFixture.selectedHostIds
     );
   });
 
@@ -997,10 +1738,10 @@ describe("PlaygroundMain — multi-host render path", () => {
       requireToolApproval: false,
     };
     expect(lastByCompareId.get("h-A").executionConfig).toEqual(
-      expectedExecutionConfig,
+      expectedExecutionConfig
     );
     expect(lastByCompareId.get("h-C").executionConfig).toEqual(
-      expectedExecutionConfig,
+      expectedExecutionConfig
     );
   });
 
@@ -1228,7 +1969,7 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
     rerender(
-      <PlaygroundMain {...defaultProps} pendingExecution={pendingExecution} />,
+      <PlaygroundMain {...defaultProps} pendingExecution={pendingExecution} />
     );
 
     // Every visible card should have received the broadcast.
@@ -1281,7 +2022,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       });
 
       const compareSection = screen.getByTestId(
-        "playground-multi-host-compare-section",
+        "playground-multi-host-compare-section"
       );
       expect(compareSection).toHaveAttribute("aria-hidden", "false");
 
@@ -1302,7 +2043,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       rerender(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByTestId("playground-multi-host-compare-section"),
+        screen.getByTestId("playground-multi-host-compare-section")
       ).toHaveAttribute("aria-hidden", "false");
     } finally {
       mockUseChatSession.selectedModel = previousSelectedModel;
@@ -1327,10 +2068,9 @@ describe("PlaygroundMain — multi-host render path", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     const stopRequestIdsBefore = mockMultiModelPlaygroundCard.mock.calls.map(
-      ([props]) => props.stopRequestId,
+      ([props]) => props.stopRequestId
     );
-    const baselineStopRequestId =
-      stopRequestIdsBefore.at(-1) ?? 0;
+    const baselineStopRequestId = stopRequestIdsBefore.at(-1) ?? 0;
 
     const inputProps = mockChatInput.mock.calls.at(-1)![0];
     act(() => {
@@ -1402,5 +2142,157 @@ describe("PlaygroundMain — multi-host render path", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+  });
+});
+
+// ── Project Environments — Phase 2 (Playground integration) ────────────────
+describe("PlaygroundMain — environment mode", () => {
+  const defaultProps = {
+    activeProjectId: "default",
+    serverName: "test-server",
+    pendingExecution: null,
+    onExecutionInjected: vi.fn(),
+  };
+
+  const preview = {
+    specVersion: 1,
+    environment: { environmentId: "env_1", name: "Staging", revision: 3 },
+    host: {
+      hostId: "h-A",
+      hostName: "Host A",
+      hostConfigId: "cfg_1",
+      modelId: null,
+      hostStyle: null,
+      harness: null,
+    },
+    servers: [
+      { serverId: "srv_plugin", name: "Docs", source: "plugin" as const },
+    ],
+    skills: [],
+    plugins: [],
+    capabilities: {
+      requireToolApproval: null,
+      respectToolVisibility: null,
+      progressiveToolDiscovery: null,
+      builtInToolIds: [],
+      hasComputer: false,
+      serverCount: 1,
+      skillCount: 0,
+      skillDelivery: "emulated" as const,
+      pluginCount: 0,
+      serversOverridden: false,
+    },
+  };
+
+  function selectEnvironment() {
+    environmentsFlag.value = true;
+    environmentPreviewFixture.value = preview;
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ default: "env_1" })
+    );
+  }
+
+  it("does not touch the hosted context while the flag is off", () => {
+    // Everything shipped before this phase was inert; that must stay true for
+    // users without the flag even if they somehow have a persisted selection.
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ default: "env_1" })
+    );
+    environmentPreviewFixture.value = preview;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
+      undefined,
+    );
+  });
+
+  it("targets the environment and stops sending a legacy hostId", () => {
+    selectEnvironment();
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const hostedContext = capturedChatSessionOptions?.hostedContext;
+    expect(hostedContext?.executionTarget).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+    });
+    // `hostId` + `executionTarget` in one body is a 400, not a precedence
+    // question — the environment's host is presentation only.
+    expect(hostedContext?.hostId).toBeUndefined();
+    // No override until the user asks for one.
+    expect(hostedContext?.environmentOverrides).toBeUndefined();
+    // The environment's servers resolve server-side (some are plugin-owned and
+    // invisible to the browser catalog), so the turn must use /api/web/chat-v2
+    // and must NOT run the name→id persistence preflight.
+    expect(hostedContext?.requiresWebChatApi).toBe(true);
+    expect(hostedContext?.ensureServerIds).toBeUndefined();
+  });
+
+  it("blocks sends while the selected environment is still resolving", () => {
+    // Activating the target is synchronous; the scope re-key and the
+    // preview→previewed-host sync are not. A turn submitted in that window
+    // carries the NEW environment id with the PREVIOUS host's model, system
+    // prompt and approval setting, and the scope reset that follows can drop
+    // the in-flight message.
+    environmentsFlag.value = true;
+    environmentPreviewFixture.value = null;
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ default: "env_1" })
+    );
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
+  });
+
+  it("re-opens sends once the environment has resolved", () => {
+    // Control for the gate above — it must be a transition gate, not a
+    // permanent block on environment mode.
+    selectEnvironment();
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(false);
+  });
+
+  it("blocks sends while a live EDIT of the selected environment is refetching", () => {
+    // The gap the other two gates cannot see. Editing the SELECTED environment
+    // refetches without blanking the panel (live-config semantics), so the
+    // preview on screen is the STALE one: a preview exists, so nothing is
+    // "resolving", and the previewed host still matches the OLD host id the
+    // stale body reports. If that edit repointed the environment at another
+    // host, a turn sent here resolves server-side against the NEW host while
+    // carrying the PREVIOUS host's model, system prompt and approval setting.
+    selectEnvironment();
+    environmentPreviewLoading.value = true;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
+  });
+
+  it("exits multi-host comparison when an environment is selected", () => {
+    // An environment names exactly one host; comparison exists to run one turn
+    // against several. Both being true would misreport what ran.
+    selectEnvironment();
+    multiHostFixture.multiHostEnabled = true;
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
   });
 });

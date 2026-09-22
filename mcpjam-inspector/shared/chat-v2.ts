@@ -1,14 +1,52 @@
 import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
-import type { UiToolAnnotations } from "./client-fulfilled-tools";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config";
+import type {
+  EnvironmentOverrides,
+  HostedExecutionTarget,
+} from "./execution-target";
+import type {
+  ScopeStepUpCancelRequest,
+  ScopeStepUpResumeRequest,
+} from "./scope-step-up";
+
+export interface ChatRewind {
+  parentChatSessionId: string;
+  rewoundFromMessageId: string;
+  reason: "message_edit";
+}
 
 export interface ChatV2Request {
   messages: UIMessage[];
+  /**
+   * WHAT this turn executes against (Project Environments — Phase 1.1). One
+   * pointer, ids only; the server re-resolves the authoritative configuration.
+   *
+   * Mutually exclusive with the legacy top-level `hostId` and with the
+   * access-bearing `scenarioId` — the hosted ingress REJECTS those combinations
+   * rather than picking a winner (`shared/execution-target.ts`). Absent ⇒ the
+   * legacy behavior is unchanged.
+   */
+  executionTarget?: HostedExecutionTarget;
+  /**
+   * Per-turn narrowing of an environment target's server set. Only valid
+   * alongside an `environment` execution target. Absent means "use the
+   * environment"; `[]` means "no MCP servers this turn" — the two are
+   * deliberately different.
+   */
+  environmentOverrides?: EnvironmentOverrides;
   chatSessionId?: string;
+  /** Bind browser discovery and execution to this chatSessionId. */
+  browserScope?: "conversation";
+  /** Lineage for a new session created by editing an earlier user message. */
+  rewind?: ChatRewind;
+  /** Userless retry of a tool call suspended for SEP-2350 authorization. */
+  scopeStepUpResume?: ScopeStepUpResumeRequest;
+  /** Userless resolution when the user denied or failed authorization. */
+  scopeStepUpCancel?: ScopeStepUpCancelRequest;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   serverName?: string;
@@ -52,13 +90,27 @@ export interface ChatV2Request {
   requireToolApproval?: boolean;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
-   * advertised this turn. For chatbox-bound requests the server re-resolves
+   * advertised this turn. For scenario-bound requests the server re-resolves
    * from the host's pinned config (host wins); for playground/direct chat the
    * body value is used as-is. Billing authorization happens server-side in
    * Convex (bearer + projectId), so a tampered body can't bill a project the
    * caller isn't authorized on.
    */
   builtInToolIds?: string[];
+  /**
+   * What the hosted `browser_*` tools may do in an UNATTENDED run (eval,
+   * swarm, journey). Those runs never pause, so approval — the mechanism
+   * every interactive surface relies on — does not exist for them; a declared
+   * policy is the substitute, and WITHOUT one the browser tools are simply
+   * not advertised (fail-closed, see `built-in-tools/browser.ts`).
+   *
+   * Ignored on interactive surfaces, which gate through approval instead.
+   */
+  browserToolPolicy?: {
+    mode: "allow_all" | "read_only" | "allowlist";
+    originAllowlist?: string[];
+    toolAllowlist?: string[];
+  };
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
@@ -71,7 +123,7 @@ export interface ChatV2Request {
    * SEP-1865 visibility filter switch (see HostConfigInputV2.respectToolVisibility).
    * Optional — `undefined` means "use the spec default" (filter app-only
    * tools). The server re-resolves from the persisted host config when
-   * the request is chatbox-bound, so the host value wins.
+   * the request is scenario-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
@@ -106,16 +158,19 @@ export interface ChatV2Request {
    */
   appTools?: AppToolSnapshotEntry[];
   /**
-   * WebMCP-shaped MCPJam UI tools snapshot — per chat POST.
+   * WebMCP tools registered by a page the WebMCP Inspector has open, snapshotted
+   * per turn from the inspector store.
    *
-   * Registered by the client catalog into the UI tools registry
-   * (`client/src/lib/webmcp/ui-tools-registry.ts`) and snapshotted fresh at
-   * POST time, exactly like `appTools`. The server defends the boundary in
-   * `validateUiToolEntries` (caps, `ui_` name regex, schema size) and
-   * registers them as no-execute AI SDK tools; `useChat.onToolCall` fulfills
-   * them in-page.
+   * Client-fulfilled like `appTools`: the model's call comes back to the browser,
+   * which invokes it through the inspector session and supplies the result. The
+   * server validates the boundary again in `validatePageToolEntries` and gates
+   * EVERY call for approval — these run code on a third-party site, and the only
+   * claims about what they do come from that site.
+   *
+   * Local surfaces only: the inspector session lives in the local server's
+   * process, so a hosted turn has nothing to resolve these against.
    */
-  uiTools?: UiToolSnapshotEntry[];
+  pageTools?: PageToolSnapshotEntry[];
   /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
@@ -149,25 +204,21 @@ export interface AppToolSnapshotEntry {
 }
 
 /**
- * WebMCP-shaped MCPJam UI tool snapshot entry. Mirrors `UiToolEntry` in
- * `server/utils/chat-v2-orchestration.ts` so the client snapshotter and the
- * server validator share a single shape.
+ * One WebMCP page tool as the client advertises it for a turn.
  *
- * Unlike app tools, UI tools are first-party and curated: `name` is the
- * model-facing tool name directly (reserved `ui_` prefix, validated at the
- * boundary), with no alias indirection.
- *
- * `annotations` carries the MCP `ToolAnnotations` hints and is what drives
- * approval policy (`uiToolCallNeedsApproval`). `readOnly` predates it and is
- * retained for wire compatibility: an old client ships only `readOnly`, and
- * the validator rejects a snapshot whose `readOnlyHint` contradicts it.
+ * `alias` is what the model sees (page-authored names are arbitrary and would
+ * not survive the provider tool-name charset); `toolKey` is what the inspector
+ * invokes by, and `sessionId` says which open browser it belongs to.
  */
-export interface UiToolSnapshotEntry {
-  name: string;
-  description: string;
+export interface PageToolSnapshotEntry {
+  binding?: import("./webmcp-inspector-protocol").WebMcpRegistrationBinding;
+  alias: string;
+  sessionId: string;
+  toolKey: string;
+  rawName: string;
+  origin: string;
+  description?: string;
   inputSchema?: Record<string, unknown>;
-  readOnly: boolean;
-  annotations?: UiToolAnnotations;
 }
 
 export interface WidgetModelContextEntry {

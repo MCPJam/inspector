@@ -1,15 +1,25 @@
-import { useCallback, useRef, useState } from "react";
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
+import {
+  DataManagementSettings,
+  PermissionGroupsDialog,
+  enterpriseContactHref,
+} from "./organization/EnterpriseSettings";
+import { Badge } from "@mcpjam/design-system/badge";
+import { ApiKeysRoute } from "./settings/ApiKeysRoute";
+import { DeleteOrganizationDialog } from "./organization/DeleteOrganizationDialog";
+import {
+  MemberSearch,
+  MemberListHeader,
+  matchesMember,
+} from "./settings/MemberSearch";
+import { OrganizationGeneralDetails } from "./organization/OrganizationGeneralDetails";
+import { useCallback, useRef, useState, type ReactNode } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { EditableText } from "@/components/ui/editable-text";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@mcpjam/design-system/avatar";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,24 +31,17 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import {
-  AlertTriangle,
   Building2,
-  Camera,
   CreditCard,
   Loader2,
   LogOut,
+  LockKeyhole,
   RefreshCw,
   Trash2,
   UserPlus,
-  Users,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@mcpjam/design-system/card";
+import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import {
   Alert,
   AlertDescription,
@@ -67,23 +70,45 @@ import {
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
-import { SettingsNav } from "@/components/settings/SettingsNav";
+import { SettingsPageShell } from "@/components/settings/SettingsPageShell";
+import { SettingsStatePanel } from "@/components/settings/SettingsStatePanel";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
-import { cn } from "@/lib/utils";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
+import { OrganizationSharingPolicyCard } from "./organization/OrganizationSharingPolicyCard";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
-import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
+import {
+  resolveSlackSettingsTab,
+  SlackAgentSettingsSection,
+  type SlackSettingsTabId,
+} from "./organization/slack/SlackAgentSettingsSection";
+import {
+  DiscordAgentSettingsSection,
+  resolveDiscordSettingsTab,
+  type DiscordSettingsTabId,
+} from "./organization/discord/DiscordAgentSettingsSection";
+import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
+import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
+import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
+import { TraceDestinationsSection } from "./organization/observability/TraceDestinationsSection";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import {
+  useAppNavigate,
+  useCurrentSearchParam,
+  buildOrganizationPath,
+} from "@/lib/app-navigation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface OrganizationsTabProps {
   organizationId?: string;
   section?: OrganizationRouteSection;
+  children?: ReactNode;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
   onCheckoutIntentNavigationStarted?: () => void;
@@ -124,19 +149,19 @@ function formatBillingIntervalLabel(interval: BillingInterval): string {
 
 function formatPlanDescriptor(
   plan: OrganizationPlan,
-  billingInterval: BillingInterval | null
+  billingInterval: BillingInterval | null,
 ): string {
   if (billingInterval == null) {
     return formatPlanName(plan);
   }
 
   return `${formatPlanName(plan)} ${formatBillingIntervalLabel(
-    billingInterval
+    billingInterval,
   )}`;
 }
 
 function getScheduledBillingChangeCancellationState(
-  billingStatus: OrganizationBillingStatus | undefined
+  billingStatus: OrganizationBillingStatus | undefined,
 ): ScheduledBillingChangeCancellationState | null {
   if (
     !billingStatus?.canManageBilling ||
@@ -152,7 +177,7 @@ function getScheduledBillingChangeCancellationState(
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
   if (
-    currentPlan !== "team" ||
+    (currentPlan !== "team" && currentPlan !== "pro") ||
     currentBillingInterval == null ||
     scheduledPlan == null ||
     scheduledBillingInterval == null
@@ -168,14 +193,14 @@ function getScheduledBillingChangeCancellationState(
   }
 
   const currentIntervalLabel = formatBillingIntervalLabel(
-    currentBillingInterval
+    currentBillingInterval,
   );
   const scheduledIntervalLabel = formatBillingIntervalLabel(
-    scheduledBillingInterval
+    scheduledBillingInterval,
   );
   const currentPlanName = formatPlanName(currentPlan);
   const effectiveDate = formatBillingDate(
-    billingStatus.stripeScheduledEffectiveAt
+    billingStatus.stripeScheduledEffectiveAt,
   );
   const keepCurrentPlanLabel = `Keep ${currentPlanName} ${currentIntervalLabel} plan`;
   const effectiveDateSuffix = effectiveDate ? ` on ${effectiveDate}` : "";
@@ -209,31 +234,66 @@ function PendingSeatPaymentNotice({
   onFinish: () => void;
   onCancel: () => void;
 }) {
+  const needsRetry = intent.needsRetry === true;
+  const cleanupPending = intent.status === "cleanup_pending";
+
   return (
     <Alert
-      className="border-primary/20 bg-primary/[0.04]"
-      data-testid="pending-seat-payment-notice"
+      className={
+        needsRetry
+          ? "border-destructive/30 bg-destructive/[0.04]"
+          : "border-primary/20 bg-primary/[0.04]"
+      }
+      data-testid={
+        needsRetry
+          ? "failed-seat-payment-notice"
+          : "pending-seat-payment-notice"
+      }
     >
-      <CreditCard className="size-4 text-primary" />
-      <AlertTitle>Seat payment required</AlertTitle>
+      <CreditCard
+        className={
+          needsRetry ? "size-4 text-destructive" : "size-4 text-primary"
+        }
+      />
+      <AlertTitle>
+        {needsRetry
+          ? "Seat payment didn't go through"
+          : "Seat payment required"}
+      </AlertTitle>
       <AlertDescription className="space-y-3">
         <p>
-          Finish payment to add {intent.email}. They will not get access or
-          credits until payment succeeds.
+          {cleanupPending ? (
+            <>
+              Stripe is closing {intent.email}'s declined invoice. Retry will
+              unlock as soon as cleanup is confirmed.
+            </>
+          ) : needsRetry ? (
+            <>
+              We couldn't charge for {intent.email}'s seat. They won't get
+              access or credits until it's paid.
+            </>
+          ) : (
+            <>
+              Finish payment to add {intent.email}. They will not get access or
+              credits until payment succeeds.
+            </>
+          )}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
             onClick={onFinish}
-            disabled={isFinishingSeatPayment || isCancelingSeatPayment}
+            disabled={
+              cleanupPending || isFinishingSeatPayment || isCancelingSeatPayment
+            }
           >
-            {isFinishingSeatPayment ? (
+            {cleanupPending || isFinishingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : (
               <CreditCard className="mr-2 size-4" />
             )}
-            Finish payment
+            {needsRetry ? "Retry payment" : "Finish payment"}
           </Button>
           <Button
             type="button"
@@ -245,7 +305,7 @@ function PendingSeatPaymentNotice({
             {isCancelingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : null}
-            Cancel
+            {needsRetry ? "Remove invite" : "Cancel"}
           </Button>
         </div>
       </AlertDescription>
@@ -338,25 +398,29 @@ function OrganizationAccessRestricted({
   const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
     useLeaveOrganization(organization);
 
+  // A member without admin rights is still ON the Organization section, so the
+  // tab stays and stays current — they just cannot manage what is behind it.
+  // Losing the shell here left them with no route to the other Settings
+  // sections at all.
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8">
-      <div className="text-center space-y-4 max-w-md">
-        <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-        <h2 className="text-2xl font-bold">Access restricted</h2>
-        <p className="text-muted-foreground">
-          You don't have permission to view organization settings. Contact an
-          admin or owner for access.
-        </p>
-        <div className="flex flex-col items-center gap-3">
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-          <button
-            type="button"
-            onClick={() => setLeaveConfirmOpen(true)}
-            className="text-sm text-muted-foreground transition-colors hover:text-destructive"
-          >
-            Leave organization
-          </button>
-        </div>
+    <OrganizationStateShell organizationId={organization._id}>
+      <Building2 className="size-8 text-muted-foreground/50" aria-hidden />
+      <h2 className="text-lg font-semibold">Access restricted</h2>
+      <p className="max-w-prose text-sm text-muted-foreground">
+        You don't have permission to view organization settings. Contact an
+        admin or owner for access.
+      </p>
+      <div className="flex flex-col items-center gap-3">
+        <Button variant="outline" onClick={() => appNavigate("/servers")}>
+          Go to Servers
+        </Button>
+        <button
+          type="button"
+          onClick={() => setLeaveConfirmOpen(true)}
+          className="rounded-sm text-sm text-muted-foreground outline-none transition-colors hover:text-destructive focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          Leave organization
+        </button>
       </div>
 
       <LeaveOrganizationDialog
@@ -366,13 +430,36 @@ function OrganizationAccessRestricted({
         isLeaving={isLeaving}
         onConfirm={handleLeave}
       />
-    </div>
+    </OrganizationStateShell>
+  );
+}
+
+/**
+ * The org page's pre-content states — still a Settings section, so they keep
+ * the shell. Rendering them bare used to strand the user: signing out and
+ * clicking Organization replaced the whole page, tab strip included, with a
+ * lone sign-in button and no way back to the other sections.
+ *
+ * `organizationId` is what the Organization tab would point at, so it is passed
+ * only when this org is real and reachable — not for a deleted or bogus id.
+ */
+function OrganizationStateShell({
+  children,
+}: {
+  organizationId?: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsPageShell>
+      <SettingsStatePanel>{children}</SettingsStatePanel>
+    </SettingsPageShell>
   );
 }
 
 export function OrganizationsTab({
   organizationId,
   section = "overview",
+  children,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
   onCheckoutIntentNavigationStarted,
@@ -394,61 +481,70 @@ export function OrganizationsTab({
 
   if (isAuthLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="flex items-center gap-2 text-muted-foreground">
+      <OrganizationStateShell organizationId={organizationId}>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <RefreshCw className="size-4 animate-spin" />
           Completing sign-in...
         </div>
-      </div>
+      </OrganizationStateShell>
     );
   }
 
   if (!user || !isAuthenticated) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <h2 className="text-2xl font-bold">
-            Sign in to manage organizations
-          </h2>
-          <Button onClick={() => signIn()} size="lg">
-            Sign In
-          </Button>
-        </div>
-      </div>
+      <OrganizationStateShell organizationId={organizationId}>
+        <h2 className="text-lg font-semibold">
+          Sign in to manage organizations
+        </h2>
+        <p className="max-w-prose text-sm text-muted-foreground">
+          Members, models, and billing live on your organization. Sign in to
+          manage them.
+        </p>
+        <Button
+          onClick={() => {
+            // Remember where they were, so WorkOS returns them here rather
+            // than to the app's front door.
+            captureAppSignInReturnPath();
+            signIn(permalinkSignInOptions());
+          }}
+        >
+          Sign in
+        </Button>
+      </OrganizationStateShell>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="flex items-center gap-2 text-muted-foreground">
+      <OrganizationStateShell organizationId={organizationId}>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <RefreshCw className="size-4 animate-spin" />
           Loading organization...
         </div>
-      </div>
+      </OrganizationStateShell>
     );
   }
 
   if (!organization) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-          <h2 className="text-2xl font-bold">Organization not found</h2>
-          <p className="text-muted-foreground">
-            This organization may have been deleted or you don't have access to
-            it.
-          </p>
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-        </div>
-      </div>
+      <OrganizationStateShell>
+        <Building2 className="size-8 text-muted-foreground/50" aria-hidden />
+        <h2 className="text-lg font-semibold">Organization not found</h2>
+        <p className="max-w-prose text-sm text-muted-foreground">
+          This organization may have been deleted or you don't have access to
+          it.
+        </p>
+        <Button variant="outline" onClick={() => appNavigate("/servers")}>
+          Go to Servers
+        </Button>
+      </OrganizationStateShell>
     );
   }
 
   const myRole = organization.myRole;
   const hasAccess = myRole === "owner" || myRole === "admin";
 
-  if (!hasAccess) {
+  if (!hasAccess && !children) {
     return <OrganizationAccessRestricted organization={organization} />;
   }
 
@@ -456,6 +552,7 @@ export function OrganizationsTab({
     <OrganizationPage
       organization={organization}
       section={section}
+      children={children}
       checkoutIntent={
         checkoutIntent?.organizationId === organization._id
           ? checkoutIntent
@@ -472,6 +569,7 @@ export function OrganizationsTab({
 interface OrganizationPageProps {
   organization: Organization;
   section: OrganizationRouteSection;
+  children?: ReactNode;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
   onCheckoutIntentNavigationStarted?: () => void;
@@ -487,6 +585,7 @@ interface CheckoutNavigationOptions {
 function OrganizationPage({
   organization,
   section,
+  children,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
   onCheckoutIntentNavigationStarted,
@@ -520,7 +619,7 @@ function OrganizationPage({
   } = useOrganizationMutations();
 
   const currentMember = activeMembers.find(
-    (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase()
+    (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const currentRole: OrganizationMembershipRole | null = currentMember
     ? resolveOrganizationRole(currentMember)
@@ -552,21 +651,59 @@ function OrganizationPage({
     openIntervalChangePortal,
     cancelScheduledBillingChange,
     finishSeatPayment,
+    retrySeatPayment,
     cancelSeatPayment,
   } = useOrganizationBilling(organization._id, {
     enabled: isAuthenticated,
     includeSeatPaymentIntent: true,
   });
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui"
+    "billing-entitlements-ui",
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
+  const discordAgentEnabled = useDiscordAgentEnabled();
+  // The client flag decides whether to ADVERTISE the section. The section
+  // itself re-checks the server's answer, which is the one that governs
+  // access; see the hook's docblock for why this component cannot ask.
+  const traceDestinationsEnabled = useTraceDestinationsEnabled();
+  // One `?tab=` param, read once and resolved per section — each resolver
+  // falls back to its own Connections, so a Slack tab id in a Discord URL
+  // lands somewhere real instead of on a blank panel.
+  const rawSurfaceTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
-    section === "models"
+    section === "api-keys" ||
+    section === "plans" ||
+    section === "data-management"
+      ? section
+      : section === "models"
       ? "models"
       : section === "billing"
       ? "billing"
+      : // Flag OFF collapses the Slack section back to the overview rather
+      // than rendering an empty page: a user who kept the URL from a
+      // flagged-in session should land somewhere real.
+      section === "slack" && slackAgentSettingsEnabled
+      ? "slack"
+      : // Same collapse for Discord, and it matters more here: the agent is
+      // dark, so nearly everyone hitting this URL is flagged OFF.
+      section === "discord" && discordAgentEnabled
+      ? "discord"
+      : // Same collapse again for Observability.
+      section === "observability" && traceDestinationsEnabled
+      ? "observability"
+      : section === "members" || section === "sharing"
+      ? "members"
+      : section === "audit-log"
+      ? section
       : "overview";
+  // The sub-tab lives in `?tab=` — views of one settings section, not separate
+  // org routes. Read from the URL rather than component state so a link to a
+  // specific tab works, and through the router's location context so switching
+  // tabs actually re-renders.
+  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSurfaceTab);
+  const discordTab: DiscordSettingsTabId =
+    resolveDiscordSettingsTab(rawSurfaceTab);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -583,7 +720,7 @@ function OrganizationPage({
     intent: "members",
   });
   const memberUpsellCtaLabel = getBillingUpsellCtaLabel(
-    memberInviteGate.upgradePlan
+    memberInviteGate.upgradePlan,
   );
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
@@ -614,7 +751,7 @@ function OrganizationPage({
   const [inviteEmail, setInviteEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(
-    null
+    null,
   );
   const [transferTargetMember, setTransferTargetMember] =
     useState<OrganizationMember | null>(null);
@@ -634,17 +771,8 @@ function OrganizationPage({
   const scheduledBillingChangeCancellation =
     getScheduledBillingChangeCancellationState(billingStatus);
 
-  const handleSaveName = async (name: string) => {
-    try {
-      await updateOrganization({
-        organizationId: organization._id,
-        name: name.trim(),
-      });
-    } catch (error) {
-      toast.error((error as Error).message || "Failed to update name");
-    }
-  };
-
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberRoleFilter, setMemberRoleFilter] = useState("all");
   const handleLogoClick = () => {
     if (canEdit) {
       fileInputRef.current?.click();
@@ -652,7 +780,7 @@ function OrganizationPage({
   };
 
   const handleLogoFileChange = async (
-    e: React.ChangeEvent<HTMLInputElement>
+    e: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -714,7 +842,8 @@ function OrganizationPage({
     }
     if (memberInviteGate.isDenied) {
       toast.error(
-        memberInviteGate.denialMessage ?? "Upgrade required to add more members"
+        memberInviteGate.denialMessage ??
+          "Upgrade required to add more members",
       );
       return;
     }
@@ -732,7 +861,7 @@ function OrganizationPage({
       }
       if (result.isPending) {
         toast.success(
-          `Invitation sent to ${email}. They'll get access once they sign up.`
+          `Invitation sent to ${email}. They'll get access once they sign up.`,
         );
       } else {
         toast.success(`${email} added to the organization.`);
@@ -743,8 +872,8 @@ function OrganizationPage({
         getBillingErrorMessage(
           error,
           "Failed to invite member",
-          billingStatus?.canManageBilling ?? false
-        )
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     } finally {
       setIsInviting(false);
@@ -753,58 +882,146 @@ function OrganizationPage({
 
   const handleFinishSeatPayment = async (
     seatPaymentIntentId?: string,
-    email?: string
+    email?: string,
   ) => {
     try {
       const result = await finishSeatPayment(seatPaymentIntentId);
       if (result.status === "paid") {
         toast.success(
-          `${email ?? activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`
+          `${
+            email ?? activeSeatPaymentIntent?.email ?? "Member"
+          } added to the organization.`,
         );
       }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Payment was not completed. The member was not added."
+          : "Payment was not completed. The member was not added.",
+      );
+    }
+  };
+
+  const seatInviteRemovalInFlightRef = useRef(false);
+  const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
+
+  const handleRetrySeatPayment = async () => {
+    if (activeSeatPaymentIntent?.status === "cleanup_pending") return;
+    try {
+      const result = await retrySeatPayment();
+      if (result?.status === "paid") {
+        toast.success(
+          `${
+            activeSeatPaymentIntent?.email ?? "Member"
+          } added to the organization.`,
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed. The member was not added.",
       );
     }
   };
 
   const handleCancelSeatPayment = async () => {
+    // For a terminal charge the button says "Remove invite", and that is what
+    // it has to do: cancelSeatPayment returns immediately for anything not
+    // still active, so calling it here left the invite and the notice exactly
+    // where they were while claiming success.
+    const isInviteRemoval = activeSeatPaymentIntent?.needsRetry === true;
+    // Removal has no spinner of its own — the shared one belongs to
+    // cancelSeatPayment, which this path never calls — so a second click would
+    // fire a concurrent removeMember that finds no row and reports "Member not
+    // found" on top of the first one's success. The state below disables the
+    // button and is what normally prevents that; the ref keeps the handler
+    // self-guarding rather than depending on its own button being disabled.
+    if (isInviteRemoval) {
+      if (seatInviteRemovalInFlightRef.current) return;
+      seatInviteRemovalInFlightRef.current = true;
+      setIsRemovingSeatInvite(true);
+    }
     try {
-      await cancelSeatPayment();
-      toast.success("Pending seat payment canceled.");
+      if (isInviteRemoval && activeSeatPaymentIntent) {
+        await removeMember({
+          organizationId: organization._id,
+          email: activeSeatPaymentIntent.email,
+        });
+        toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
+        return;
+      }
+      const result = await cancelSeatPayment();
+      if (result.outcome === "canceled") {
+        toast.success("Pending seat payment canceled.");
+      } else if (result.outcome === "deferred") {
+        toast.error(
+          "Stripe could not confirm cancellation yet. The payment is still pending; try again.",
+        );
+      } else if (result.outcome === "paid") {
+        toast.success(
+          "Payment completed before cancellation; the member was added.",
+        );
+      } else {
+        toast.error("This seat payment is no longer active.");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to cancel pending seat payment"
+          : "Failed to cancel pending seat payment",
       );
+    } finally {
+      if (isInviteRemoval) {
+        seatInviteRemovalInFlightRef.current = false;
+        setIsRemovingSeatInvite(false);
+      }
     }
   };
 
-  const handleRemoveMember = async (email: string) => {
+  const [memberToRemove, setMemberToRemove] = useState<{
+    email: string;
+    pending: boolean;
+  } | null>(null);
+  const [isRemovingMember, setIsRemovingMember] = useState(false);
+  const removingMemberRef = useRef(false);
+  const [removeMemberError, setRemoveMemberError] = useState("");
+  const requestMemberRemoval = (email: string, pending = false) => {
+    setRemoveMemberError("");
+    setMemberToRemove({ email, pending });
+  };
+
+  const handleRemoveMember = async () => {
+    if (!memberToRemove || removingMemberRef.current) return;
+    removingMemberRef.current = true;
+    setIsRemovingMember(true);
+    setRemoveMemberError("");
     try {
       await removeMember({
         organizationId: organization._id,
-        email,
+        email: memberToRemove.email,
       });
-      toast.success("Member removed");
+      toast.success(
+        memberToRemove.pending ? "Invitation canceled" : "Member removed",
+      );
+      setMemberToRemove(null);
     } catch (error) {
-      toast.error(
+      setRemoveMemberError(
         getBillingErrorMessage(
           error,
-          "Failed to remove member",
-          billingStatus?.canManageBilling ?? false
-        )
+          "Could not remove this member. Please try again.",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
+    } finally {
+      removingMemberRef.current = false;
+      setIsRemovingMember(false);
     }
   };
 
   const handleChangeMemberRole = async (
     member: OrganizationMember,
-    role: "admin" | "member" | "guest"
+    role: "admin" | "member" | "guest",
   ) => {
     if (!isOwner) return;
 
@@ -847,7 +1064,7 @@ function OrganizationPage({
       setTransferTargetMember(null);
     } catch (error) {
       toast.error(
-        (error as Error).message || "Failed to transfer organization ownership"
+        (error as Error).message || "Failed to transfer organization ownership",
       );
     } finally {
       setIsTransferringOwnership(false);
@@ -871,11 +1088,20 @@ function OrganizationPage({
     }
   };
 
-  const initial = organization.name.charAt(0).toUpperCase();
   const auditLogLocked =
     billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
     appNavigate(buildOrganizationPath(organization._id, nextSection));
+  };
+  const navigateToSlackTab = (tab: SlackSettingsTabId) => {
+    appNavigate(
+      `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`,
+    );
+  };
+  const navigateToDiscordTab = (tab: DiscordSettingsTabId) => {
+    appNavigate(
+      `${buildOrganizationPath(organization._id, "discord")}?tab=${tab}`,
+    );
   };
   const handleViewBilling = () => navigateToSection("billing");
 
@@ -891,16 +1117,16 @@ function OrganizationPage({
 
       window.open(url, "_blank", "noopener,noreferrer");
     },
-    [navigateBillingInSameTab]
+    [navigateBillingInSameTab],
   );
 
   const getBillingReturnUrl = useCallback(
     () =>
       `${window.location.origin}${buildOrganizationPath(
         organization._id,
-        "billing"
+        "billing",
       )}`,
-    [organization._id]
+    [organization._id],
   );
 
   const handleManageBilling = async () => {
@@ -909,36 +1135,42 @@ function OrganizationPage({
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to open billing portal"
+        error instanceof Error
+          ? error.message
+          : "Failed to open billing portal",
       );
     }
   };
 
   const handleChangeBillingInterval = async (
-    targetBillingInterval: BillingInterval
+    targetBillingInterval: BillingInterval,
   ) => {
     try {
       const billingUrl = await openIntervalChangePortal(
         getBillingReturnUrl(),
-        targetBillingInterval
+        targetBillingInterval,
       );
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to open billing interval change"
+          : "Failed to open billing interval change",
       );
     }
   };
 
   const handleDowngradePlan = async (
     targetPlan: OrganizationPlan,
-    _targetBillingInterval: BillingInterval
+    _targetBillingInterval: BillingInterval,
   ) => {
     const currentPlan = billingStatus?.plan;
 
-    if (currentPlan === "team" && targetPlan === "free" && billingStatus) {
+    if (
+      (currentPlan === "team" || currentPlan === "pro") &&
+      targetPlan === "free" &&
+      billingStatus
+    ) {
       setPendingDowngradeConfirmation({
         targetPlan: "free",
         targetBillingInterval: null,
@@ -948,6 +1180,10 @@ function OrganizationPage({
       return;
     }
 
+    if (targetPlan === "pro" || targetPlan === "team") {
+      await handlePlanChange(targetPlan, _targetBillingInterval);
+      return;
+    }
     await handleManageBilling();
   };
 
@@ -967,7 +1203,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to cancel scheduled billing change"
+          : "Failed to cancel scheduled billing change",
       );
     }
   };
@@ -983,27 +1219,29 @@ function OrganizationPage({
       setPendingDowngradeConfirmation(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan"
+        error instanceof Error ? error.message : "Failed to change plan",
       );
     }
   };
 
   const executeManualPlanChange = async (
-    tier: "team",
+    tier: "pro" | "team",
     billingInterval: "monthly" | "annual",
-    options: CheckoutNavigationOptions = {}
+    options: CheckoutNavigationOptions = {},
   ) => {
     try {
       const result = await startPlanChange(
         getBillingReturnUrl(),
         tier,
         billingInterval,
-        { confirmPaidPlanChange: true }
+        { confirmPaidPlanChange: true },
       );
 
       if (result.kind === "updated") {
         toast.success(
-          `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`
+          `Plan updated to ${formatPlanName(
+            result.subscription.plan ?? tier,
+          )}.`,
         );
         return;
       }
@@ -1019,50 +1257,50 @@ function OrganizationPage({
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan"
+        error instanceof Error ? error.message : "Failed to change plan",
       );
     }
   };
 
   const handlePlanChange = async (
-    tier: "team",
+    tier: "pro" | "team",
     billingInterval: "monthly" | "annual",
-    options: CheckoutNavigationOptions = {}
+    options: CheckoutNavigationOptions = {},
   ) => {
     await executeManualPlanChange(tier, billingInterval, options);
   };
 
   const pendingDowngradeEffectiveDate = formatBillingDate(
-    billingStatus?.stripeCurrentPeriodEnd ?? null
+    billingStatus?.stripeCurrentPeriodEnd ?? null,
   );
   const pendingDowngradeTargetLabel = pendingDowngradeConfirmation
     ? formatPlanDescriptor(
         pendingDowngradeConfirmation.targetPlan,
-        pendingDowngradeConfirmation.targetBillingInterval
+        pendingDowngradeConfirmation.targetBillingInterval,
       )
     : null;
   const pendingDowngradeCurrentLabel = pendingDowngradeConfirmation
     ? formatPlanDescriptor(
         pendingDowngradeConfirmation.currentPlan,
-        pendingDowngradeConfirmation.currentBillingInterval
+        pendingDowngradeConfirmation.currentBillingInterval,
       )
     : null;
 
   const handleAutoPlanChange = useCallback(
-    async (tier: "team", billingInterval: "monthly" | "annual") => {
+    async (tier: "pro" | "team", billingInterval: "monthly" | "annual") => {
       try {
         const result = await startPlanChange(
           getBillingReturnUrl(),
           tier,
           billingInterval,
-          { confirmPaidPlanChange: false }
+          { confirmPaidPlanChange: false },
         );
 
         if (result.kind === "updated") {
           toast.success(
             `Plan updated to ${formatPlanName(
-              result.subscription.plan ?? tier
-            )}.`
+              result.subscription.plan ?? tier,
+            )}.`,
           );
           return;
         }
@@ -1084,7 +1322,7 @@ function OrganizationPage({
           )
         ) {
           toast.error(
-            error instanceof Error ? error.message : "Failed to change plan"
+            error instanceof Error ? error.message : "Failed to change plan",
           );
         }
         throw error;
@@ -1095,7 +1333,7 @@ function OrganizationPage({
       onCheckoutIntentNavigationStarted,
       openBillingUrl,
       startPlanChange,
-    ]
+    ],
   );
 
   const pendingSeatPaymentNotice =
@@ -1104,137 +1342,99 @@ function OrganizationPage({
         intent={activeSeatPaymentIntent}
         isFinishingSeatPayment={isFinishingSeatPayment}
         isCompletingSeatPayment={isCompletingSeatPayment}
-        isCancelingSeatPayment={isCancelingSeatPayment}
-        onFinish={() => void handleFinishSeatPayment()}
+        isCancelingSeatPayment={isCancelingSeatPayment || isRemovingSeatInvite}
+        onFinish={() =>
+          void (activeSeatPaymentIntent.needsRetry
+            ? handleRetrySeatPayment()
+            : handleFinishSeatPayment())
+        }
         onCancel={() => void handleCancelSeatPayment()}
       />
     ) : null;
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
-        <SettingsNav
-          active="organization"
-          activeOrganizationId={organization._id}
+    <SettingsPageShell>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleLogoFileChange}
+      />
+      {activeSection === "overview" && !children ? (
+        <OrganizationGeneralDetails
+          key={organization._id}
+          organizationId={organization._id}
+          name={organization.name}
+          logoUrl={organization.logoUrl}
+          canEdit={canEdit}
+          isUploading={isUploadingLogo}
+          onUpload={handleLogoClick}
+          onSave={(name) =>
+            updateOrganization({ organizationId: organization._id, name })
+          }
         />
-        <Card className="overflow-hidden border-border/60">
-          <CardContent className="space-y-5 p-5">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center">
-              <div className="relative shrink-0">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleLogoFileChange}
-                />
-                <Avatar
-                  className={`h-24 w-24 ${canEdit ? "cursor-pointer" : ""}`}
-                  onClick={handleLogoClick}
-                >
-                  <AvatarImage
-                    src={organization.logoUrl}
-                    alt={organization.name}
-                  />
-                  <AvatarFallback className="bg-muted text-3xl">
-                    {initial}
-                  </AvatarFallback>
-                </Avatar>
-                {canEdit ? (
-                  <button
-                    onClick={handleLogoClick}
-                    disabled={isUploadingLogo}
-                    className="absolute -bottom-1 -right-1 rounded-full border bg-background p-2"
-                    aria-label="Upload organization logo"
-                  >
-                    {isUploadingLogo ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                    ) : (
-                      <Camera className="h-3.5 w-3.5 text-muted-foreground" />
-                    )}
-                  </button>
-                ) : null}
-              </div>
+      ) : null}
 
-              <div className="flex-1 space-y-1">
-                {canEdit ? (
-                  <EditableText
-                    value={organization.name}
-                    onSave={handleSaveName}
-                    className="text-3xl font-semibold -ml-2"
-                    placeholder="Organization name"
-                  />
-                ) : (
-                  <h1 className="text-3xl font-semibold">
-                    {organization.name}
-                  </h1>
-                )}
-                {billingUiEnabled ? (
-                  <p className="text-sm text-muted-foreground">
-                    Organization settings
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </CardContent>
-          <nav
-            className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
-            aria-label="Organization settings sections"
-          >
-            <button
-              type="button"
-              onClick={() => navigateToSection("overview")}
-              aria-current={activeSection === "overview" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "overview"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              General
-            </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection("models")}
-              aria-current={activeSection === "models" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "models"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Models
-            </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection("billing")}
-              aria-current={activeSection === "billing" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "billing"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Billing
-            </button>
-          </nav>
-        </Card>
+      {(activeSection === "billing" || activeSection === "plans") &&
+        !children && (
+          <header className="space-y-1">
+            <h1 className="text-2xl font-semibold text-accent-foreground">
+              {activeSection === "plans" ? "Plans" : "Usage & billing"}
+            </h1>
+            <SettingsPageDescription>
+              {activeSection === "plans"
+                ? "Compare plans and manage your subscription."
+                : "Review usage, manage credits, and update your billing details."}
+            </SettingsPageDescription>
+            {activeSection === "billing" && (
+              <a
+                href={`/organizations/${organization._id}/billing/byok`}
+                className="inline-block text-sm text-primary underline-offset-4 hover:underline"
+              >
+                BYOK and credits
+              </a>
+            )}
+          </header>
+        )}
 
-        {activeSection === "models" ? (
+      {children ??
+        (activeSection === "api-keys" ? (
+          <ApiKeysRoute organizationId={organization._id} />
+        ) : activeSection === "models" ? (
           <OrganizationModelsSection
             organizationId={organization._id}
             isAdmin={canEdit}
           />
-        ) : activeSection === "billing" ? (
+        ) : activeSection === "slack" ? (
+          <SlackAgentSettingsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+            tab={slackTab}
+            onTabChange={navigateToSlackTab}
+          />
+        ) : activeSection === "discord" ? (
+          <DiscordAgentSettingsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+            tab={discordTab}
+            onTabChange={navigateToDiscordTab}
+          />
+        ) : activeSection === "observability" ? (
+          <ErrorBoundary name="organization_observability">
+            <TraceDestinationsSection
+              organizationId={organization._id}
+              isAdmin={canEdit}
+            />
+          </ErrorBoundary>
+        ) : activeSection === "billing" || activeSection === "plans" ? (
           <>
             {pendingSeatPaymentNotice}
             <OrganizationBillingSection
               organizationId={organization._id}
               showPlanBilling={billingUiEnabled}
-              showCredits
+              showCredits={activeSection === "billing"}
+              showPlanComparison={activeSection === "plans"}
               billingStatus={billingStatus}
               organizationName={organization.name}
               canManageCredits={canEdit || organization.isCreator === true}
@@ -1251,17 +1451,21 @@ function OrganizationPage({
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
               currentPlanPanel={
                 billingUiEnabled ? (
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center gap-2 text-xl">
-                        <CreditCard className="size-4 text-muted-foreground" />
-                        Billing
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground">
-                        Review your current plan and subscription.
-                      </p>
-                    </CardHeader>
-                    <CardContent className="space-y-3 pt-0">
+                  <Card className="gap-3 border-0 bg-transparent py-0 shadow-none">
+                    {activeSection !== "plans" ? (
+                      <CardHeader className="flex flex-row items-center justify-between gap-3 p-0">
+                        <h2 className="text-lg font-semibold">Current plan</h2>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0"
+                          onClick={() => navigateToSection("plans")}
+                        >
+                          Compare plans
+                        </Button>
+                      </CardHeader>
+                    ) : null}
+                    <CardContent className="space-y-3 p-0">
                       {isLoadingBilling ? (
                         <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
                           Loading billing details...
@@ -1311,244 +1515,386 @@ function OrganizationPage({
           </>
         ) : (
           <>
-            <Card className="border-border/60">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-xl">
-                  <Users className="size-4 text-muted-foreground" />
-                  Members
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Active members ({activeMembers.length})
-                  {pendingMembers.length > 0
-                    ? ` • Pending invites (${pendingMembers.length})`
-                    : ""}
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-0">
-                {canInvite ? (
-                  <div className="space-y-3">
-                    {pendingSeatPaymentNotice}
-                    <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
-                      <Input
-                        placeholder="Email address"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && void handleInvite()
-                        }
-                        className="h-9 w-full sm:w-80"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-9"
-                        onClick={handleInvite}
-                        disabled={
-                          !inviteEmail.trim() ||
-                          isInviting ||
-                          isHandlingSeatPayment ||
-                          memberInviteGate.isLoading ||
-                          memberInviteGate.isDenied
-                        }
-                      >
-                        <UserPlus className="mr-2 size-4" />
-                        {isInviting || isHandlingSeatPayment
-                          ? "Working..."
-                          : "Add member"}
-                      </Button>
+            {activeSection === "members" && (
+              <Card className="gap-4 border-0 bg-transparent py-0 shadow-none">
+                <CardHeader className="px-0">
+                  <h1 className="text-2xl font-semibold text-accent-foreground">
+                    Members & sharing
+                  </h1>
+                  <SettingsPageDescription>
+                    Manage organization members, roles, invitations, and sharing
+                    access.
+                  </SettingsPageDescription>
+                </CardHeader>
+                <CardContent className="space-y-6 p-0">
+                  {canInvite ? (
+                    <div className="space-y-3">
+                      {pendingSeatPaymentNotice}
+                      <div className="space-y-2">
+                        <label
+                          htmlFor="organization-invite-email"
+                          className="text-sm font-medium"
+                        >
+                          Invite with email
+                        </label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="organization-invite-email"
+                            type="email"
+                            placeholder="Email address"
+                            value={inviteEmail}
+                            onChange={(e) => setInviteEmail(e.target.value)}
+                            onKeyDown={(e) =>
+                              e.key === "Enter" && void handleInvite()
+                            }
+                            className="min-w-0 flex-1"
+                          />
+                          <Button
+                            className="shrink-0"
+                            onClick={handleInvite}
+                            disabled={
+                              !inviteEmail.trim() ||
+                              isInviting ||
+                              isHandlingSeatPayment ||
+                              memberInviteGate.isLoading ||
+                              memberInviteGate.isDenied
+                            }
+                          >
+                            <UserPlus aria-hidden="true" className="size-4" />
+                            {isInviting || isHandlingSeatPayment
+                              ? "Working..."
+                              : "Invite"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {billingStatus?.plan &&
+                      planCatalog?.plans[billingStatus.plan]?.billingModel ===
+                        "per_seat" ? (
+                        <p className="text-xs text-muted-foreground">
+                          Pending invites are free. You'll be billed for this
+                          seat once the invite is accepted.
+                        </p>
+                      ) : null}
+
+                      {memberInviteGate.isDenied ? (
+                        <Alert
+                          className="border-primary/20 bg-primary/[0.04]"
+                          data-testid="member-limit-upsell"
+                        >
+                          <CreditCard className="size-4 text-primary" />
+                          <AlertTitle>Need more members?</AlertTitle>
+                          <AlertDescription className="gap-2">
+                            {memberInviteGate.denialMessage ? (
+                              <p>{memberInviteGate.denialMessage}</p>
+                            ) : null}
+                            {memberUpsellTeaser ? (
+                              <p className="text-foreground/80">
+                                {memberUpsellTeaser}
+                              </p>
+                            ) : null}
+                            {billingStatus?.canManageBilling ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="mt-1"
+                                onClick={handleViewBilling}
+                              >
+                                {memberUpsellCtaLabel}
+                              </Button>
+                            ) : (
+                              <p className="font-medium text-foreground/80">
+                                Ask an organization owner to review billing
+                                options.
+                              </p>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
                     </div>
+                  ) : null}
 
-                    {billingStatus?.plan &&
-                    planCatalog?.plans[billingStatus.plan]?.billingModel ===
-                      "per_seat" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Pending invites are free. You'll be billed for this seat
-                        once the invite is accepted.
-                      </p>
-                    ) : null}
-
-                    {memberInviteGate.isDenied ? (
-                      <Alert
-                        className="border-primary/20 bg-primary/[0.04]"
-                        data-testid="member-limit-upsell"
-                      >
-                        <CreditCard className="size-4 text-primary" />
-                        <AlertTitle>Need more members?</AlertTitle>
-                        <AlertDescription className="gap-2">
-                          {memberInviteGate.denialMessage ? (
-                            <p>{memberInviteGate.denialMessage}</p>
-                          ) : null}
-                          {memberUpsellTeaser ? (
-                            <p className="text-foreground/80">
-                              {memberUpsellTeaser}
-                            </p>
-                          ) : null}
-                          {billingStatus?.canManageBilling ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="mt-1"
-                              onClick={handleViewBilling}
-                            >
-                              {memberUpsellCtaLabel}
-                            </Button>
-                          ) : (
-                            <p className="font-medium text-foreground/80">
-                              Ask an organization owner to review billing
-                              options.
-                            </p>
-                          )}
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {membersLoading ? (
-                  <div className="flex items-center gap-2 py-3 text-muted-foreground">
-                    <RefreshCw className="size-4 animate-spin" />
-                    Loading members...
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {activeMembers.map((member) => {
-                      const memberRole = resolveOrganizationRole(member);
-                      return (
-                        <OrganizationMemberRow
-                          key={member._id}
-                          member={member}
-                          role={memberRole}
-                          currentUserEmail={currentUserEmail}
-                          canEditRole={isOwner && memberRole !== "owner"}
-                          isRoleUpdating={roleUpdatingEmail === member.email}
-                          onRoleChange={
-                            isOwner && memberRole !== "owner"
-                              ? (role) =>
-                                  void handleChangeMemberRole(member, role)
-                              : undefined
-                          }
-                          onTransferOwnership={
-                            isOwner && memberRole !== "owner"
-                              ? () => setTransferTargetMember(member)
-                              : undefined
-                          }
-                          isTransferringOwnership={
-                            isTransferringOwnership &&
-                            transferTargetMember?.email === member.email
-                          }
-                          onRemove={
-                            canRemoveMember(member)
-                              ? () => handleRemoveMember(member.email)
-                              : undefined
-                          }
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-
-                {pendingMembers.length > 0 ? (
-                  <div className="space-y-1 pt-2">
-                    {pendingMembers.map((member) => (
-                      <OrganizationMemberRow
-                        key={member._id}
-                        member={member}
-                        currentUserEmail={currentUserEmail}
-                        isPending
-                        onRemove={
-                          canRemovePendingMember()
-                            ? () => handleRemoveMember(member.email)
-                            : undefined
+                  <MemberSearch
+                    query={memberSearch}
+                    onQueryChange={setMemberSearch}
+                    role={memberRoleFilter}
+                    onRoleChange={setMemberRoleFilter}
+                    roles={["owner", "admin", "member", "guest", "pending"]}
+                    actions={
+                      <PermissionGroupsDialog
+                        enterprise={
+                          billingStatus?.effectivePlan === "enterprise"
                         }
                       />
-                    ))}
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-xl">
-                  <Building2 className="size-4 text-muted-foreground" />
-                  Audit Log
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Review organization activity and export it as CSV.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3 pt-0">
-                {billingUiEnabled &&
-                (isLoadingEntitlements || isLoadingOrganizationPremiumness) ? (
-                  <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                    Loading audit log access...
-                  </div>
-                ) : auditLogLocked ? (
-                  <div className="rounded-md border border-border/70 p-4">
-                    <div className="space-y-1.5">
-                      <h3 className="text-sm font-medium">
-                        Audit Log requires Enterprise
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Audit Log is not included on your current plan.
-                        {billingStatus?.canManageBilling
-                          ? " Upgrade this organization to Enterprise to restore access."
-                          : " Ask an organization owner to upgrade to Enterprise."}
-                      </p>
-                    </div>
-                    {billingUiEnabled ? (
-                      <Button className="mt-3" onClick={handleViewBilling}>
-                        View billing options
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : (
-                  <OrganizationAuditLog
-                    organizationId={organization._id}
-                    organizationName={organization.name}
-                    isAuthenticated={isAuthenticated}
+                    }
                   />
-                )}
-              </CardContent>
-            </Card>
+                  <div className="overflow-hidden rounded-lg border border-border">
+                    <MemberListHeader
+                      activeCount={
+                        membersLoading ? undefined : activeMembers.length
+                      }
+                      pendingCount={pendingMembers.length}
+                    />
+                    {membersLoading ? (
+                      <div className="flex items-center gap-2 py-3 text-muted-foreground">
+                        <RefreshCw className="size-4 animate-spin" />
+                        Loading members...
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {activeMembers
+                          .filter((member) =>
+                            matchesMember(
+                              member,
+                              memberSearch,
+                              resolveOrganizationRole(member),
+                              memberRoleFilter,
+                            ),
+                          )
+                          .map((member) => {
+                            const memberRole = resolveOrganizationRole(member);
+                            return (
+                              <OrganizationMemberRow
+                                key={member._id}
+                                member={member}
+                                role={memberRole}
+                                currentUserEmail={currentUserEmail}
+                                canEditRole={isOwner && memberRole !== "owner"}
+                                isRoleUpdating={
+                                  roleUpdatingEmail === member.email
+                                }
+                                onRoleChange={
+                                  isOwner && memberRole !== "owner"
+                                    ? (role) =>
+                                        void handleChangeMemberRole(
+                                          member,
+                                          role,
+                                        )
+                                    : undefined
+                                }
+                                onTransferOwnership={
+                                  isOwner && memberRole !== "owner"
+                                    ? () => setTransferTargetMember(member)
+                                    : undefined
+                                }
+                                isTransferringOwnership={
+                                  isTransferringOwnership &&
+                                  transferTargetMember?.email === member.email
+                                }
+                                onRemove={
+                                  canRemoveMember(member)
+                                    ? () => requestMemberRemoval(member.email)
+                                    : undefined
+                                }
+                              />
+                            );
+                          })}
+                      </div>
+                    )}
 
-            <Card className="border-destructive/40">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-xl text-destructive">
-                  <AlertTriangle className="size-4" />
+                    {pendingMembers.length > 0 ? (
+                      <div className="space-y-1 pt-2">
+                        {pendingMembers
+                          .filter((member) =>
+                            matchesMember(
+                              member,
+                              memberSearch,
+                              "pending",
+                              memberRoleFilter,
+                            ),
+                          )
+                          .map((member) => (
+                            <OrganizationMemberRow
+                              key={member._id}
+                              member={member}
+                              currentUserEmail={currentUserEmail}
+                              isPending
+                              onRemove={
+                                canRemovePendingMember()
+                                  ? () =>
+                                      requestMemberRemoval(member.email, true)
+                                  : undefined
+                              }
+                            />
+                          ))}
+                      </div>
+                    ) : null}
+                    {!membersLoading &&
+                      ![...activeMembers, ...pendingMembers].some((member) =>
+                        matchesMember(
+                          member,
+                          memberSearch,
+                          pendingMembers.includes(member)
+                            ? "pending"
+                            : resolveOrganizationRole(member),
+                          memberRoleFilter,
+                        ),
+                      ) && (
+                        <p
+                          role="status"
+                          className="p-6 text-center text-sm text-foreground"
+                        >
+                          No members found.
+                        </p>
+                      )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            {activeSection === "members" && (
+              <div className="border-t border-border pt-5">
+                <OrganizationSharingPolicyCard
+                  organizationId={organization._id}
+                  isAdmin={canEdit}
+                />
+              </div>
+            )}
+
+            {activeSection === "data-management" && (
+              <DataManagementSettings
+                enterprise={billingStatus?.effectivePlan === "enterprise"}
+              />
+            )}
+            {activeSection === "audit-log" && (
+              <section className="space-y-8">
+                <header className="space-y-1">
+                  <div className="flex items-center gap-3">
+                    <h1 className="text-2xl font-semibold text-accent-foreground">
+                      Audit log
+                    </h1>
+                    <Badge
+                      variant="secondary"
+                      className="text-xs uppercase tracking-wide"
+                    >
+                      Enterprise
+                    </Badge>
+                  </div>
+                  <SettingsPageDescription>
+                    Review organization activity and export it as CSV.
+                  </SettingsPageDescription>
+                </header>
+                <div className="space-y-3">
+                  {billingUiEnabled &&
+                  (isLoadingEntitlements ||
+                    isLoadingOrganizationPremiumness) ? (
+                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                      Loading audit log access...
+                    </div>
+                  ) : auditLogLocked ? (
+                    <div className="flex min-h-56 flex-col items-center justify-center gap-5 rounded-lg border border-border bg-muted/20 px-6 py-10 text-center">
+                      <LockKeyhole
+                        aria-hidden="true"
+                        className="size-7 text-muted-foreground"
+                      />
+                      <p className="text-base text-muted-foreground">
+                        Audit logs are available on Enterprise plans.
+                      </p>
+                      {billingUiEnabled ? (
+                        <Button asChild>
+                          <a href={enterpriseContactHref}>Contact us</a>
+                        </Button>
+                      ) : null}
+                      {!billingStatus?.canManageBilling ? (
+                        <p className="text-xs text-muted-foreground">
+                          Ask an organization owner to upgrade your plan.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <OrganizationAuditLog
+                      organizationId={organization._id}
+                      organizationName={organization.name}
+                      isAuthenticated={isAuthenticated}
+                    />
+                  )}
+                </div>
+              </section>
+            )}
+            {activeSection === "overview" && (
+              <section className="max-w-2xl space-y-4 border-t border-border pt-7">
+                <h2 className="text-lg font-semibold text-accent-foreground">
                   Danger Zone
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  These actions are permanent and may remove access for members.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-2.5 pt-0">
-                {!membersLoading && !isOwner ? (
-                  <Button
-                    variant="outline"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setLeaveConfirmOpen(true)}
-                  >
-                    <LogOut className="mr-2 size-4" />
-                    Leave Organization
-                  </Button>
-                ) : null}
-                {!membersLoading && isOwner ? (
-                  <Button
-                    variant="outline"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setDeleteConfirmOpen(true)}
-                  >
-                    <Trash2 className="mr-2 size-4" />
-                    Delete Organization
-                  </Button>
-                ) : null}
-              </CardContent>
-            </Card>
+                </h2>
+                {!membersLoading && (
+                  <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-destructive/40 p-4">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <h3 className="text-sm font-semibold text-accent-foreground">
+                        {isOwner ? "Delete organization" : "Leave organization"}
+                      </h3>
+                      <p className="text-sm text-foreground">
+                        {isOwner
+                          ? "Permanently delete this organization. This action cannot be undone."
+                          : "You’ll lose access to this organization and its projects."}
+                      </p>
+                    </div>
+                    <Button
+                      variant={isOwner ? "destructive" : "outline"}
+                      onClick={() =>
+                        isOwner
+                          ? setDeleteConfirmOpen(true)
+                          : setLeaveConfirmOpen(true)
+                      }
+                    >
+                      {isOwner ? (
+                        <Trash2 aria-hidden="true" className="size-4" />
+                      ) : (
+                        <LogOut aria-hidden="true" className="size-4" />
+                      )}
+                      {isOwner ? "Delete Organization" : "Leave Organization"}
+                    </Button>
+                  </div>
+                )}
+              </section>
+            )}
           </>
-        )}
-      </div>
+        ))}
 
       {/* Ownership Transfer Confirmation */}
+      <AlertDialog
+        open={!!memberToRemove}
+        onOpenChange={(open) => {
+          if (!open && !removingMemberRef.current) setMemberToRemove(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {memberToRemove?.pending
+                ? "Cancel invitation?"
+                : "Remove member?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {memberToRemove?.pending
+                ? `Cancel the invitation for ${memberToRemove.email} to join ${organization.name}?`
+                : `Remove ${memberToRemove?.email ?? "this member"} from ${
+                    organization.name
+                  }? They will lose their organization membership and the access it grants. You can invite them again later.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {removeMemberError && (
+            <p role="alert" className="text-sm text-destructive">
+              {removeMemberError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRemovingMember}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={isRemovingMember}
+              onClick={() => void handleRemoveMember()}
+            >
+              {isRemovingMember
+                ? "Removing…"
+                : memberToRemove?.pending
+                ? "Cancel invitation"
+                : "Remove member"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog
         open={!!transferTargetMember}
         onOpenChange={(open) => {
@@ -1693,27 +2039,13 @@ function OrganizationPage({
       </AlertDialog>
 
       {/* Delete Confirmation */}
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete "{organization.name}" and remove all
-              members. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? "Deleting..." : "Delete Organization"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteOrganizationDialog
+        open={deleteConfirmOpen}
+        onOpenChange={setDeleteConfirmOpen}
+        name={organization.name}
+        pending={isDeleting}
+        onConfirm={handleDelete}
+      />
 
       {/* Leave Confirmation */}
       <LeaveOrganizationDialog
@@ -1723,7 +2055,7 @@ function OrganizationPage({
         isLeaving={isLeaving}
         onConfirm={handleLeave}
       />
-    </div>
+    </SettingsPageShell>
   );
 }
 const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =

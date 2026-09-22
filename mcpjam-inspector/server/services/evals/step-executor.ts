@@ -1,3 +1,4 @@
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * step-executor.ts — the single sequential executor over a unified `TestStep[]`.
  *
@@ -30,6 +31,7 @@ import type {
 } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
+  checkRole,
   evaluatePredicates,
   extractFinalAssistantMessage,
   summarizeRenderObservations,
@@ -159,8 +161,36 @@ export interface StepEngineOutcome {
    * server not connected). Stops the executor; the caller's verdict gate reads
    * it via the returned `iterationError`.
    */
+  timeout?: TimeoutMetadata;
   iterationError?: string;
   iterationErrorDetails?: string;
+  /**
+   * This step's engine reported that the turn was CANCELLED — aborted from
+   * outside rather than finished, well or badly.
+   *
+   * Carried across the bridge because it is not an error and not a result:
+   * without it a cancelled turn arrives as an empty delta, indistinguishable
+   * from a turn that simply produced nothing, and the executor marches on to
+   * the next step of a run somebody already stopped. Cancellation used to
+   * survive only because the iteration runner separately re-read the run's
+   * abort signal — true in production, but a second source of truth for a
+   * fact this outcome already knows.
+   */
+  cancelled?: boolean;
+  /**
+   * WHICH LAYER produced `iterationError`, reported by the catch site that
+   * raised it rather than inferred from its text.
+   *
+   * `model` is the model-call layer — our provider, not the MCP server under
+   * test. The chain uses it to stop filing an outage or an exhausted credit
+   * balance as an unattributed server failure. Absent when the caller does
+   * not know, which reads as "unclassified" and changes nothing.
+   */
+  errorSource?: "model" | "setup";
+  /** The engine's structured code, when the failure carried one. */
+  errorCode?: string;
+  /** HTTP status, when the failure came from a non-OK response. */
+  errorHttpStatus?: number;
   /**
    * When true, the iterationError is a SETUP failure (status:"failed"), not an
    * assertion failure (status:"completed"+error). Mirrors the pinned
@@ -212,8 +242,15 @@ export interface StepExecutorHandlers {
 export interface StepExecutorResult {
   state: StepExecutionState;
   /** Set when a `prompt`/`toolCall` step reported a fatal error. */
+  timeout?: TimeoutMetadata;
   iterationError?: string;
   iterationErrorDetails?: string;
+  /** Which layer raised `iterationError` — see `StepEngineOutcome`. */
+  errorSource?: "model" | "setup";
+  errorCode?: string;
+  errorHttpStatus?: number;
+  /** A step's engine reported cancellation — see `StepEngineOutcome`. */
+  cancelled?: boolean;
   /** True when `iterationError` is a setup (not assertion) failure. */
   setupFailure: boolean;
 }
@@ -340,7 +377,10 @@ async function drainAndDriveFollowUps(
   browser: Pick<BrowserSessionContext, "drainFollowUps">,
   handlers: StepExecutorHandlers,
   state: StepExecutionState,
-): Promise<string | undefined> {
+  // The failing OUTCOME, not just its message. Reducing it to a string here
+  // discarded the layer attribution, so a provider failure on a widget
+  // follow-up turn stayed uncategorised even once the hosted bridge carried it.
+): Promise<StepEngineOutcome | undefined> {
   if (!handlers.onFollowUp) return undefined;
   let remaining = MAX_WIDGET_FOLLOWUP_TURNS;
   while (remaining > 0) {
@@ -362,7 +402,12 @@ async function drainAndDriveFollowUps(
       remaining -= 1;
       const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
       applyOutcome(state, outcome, turn);
-      if (outcome.iterationError) return outcome.iterationError;
+      // `cancelled` as well as `iterationError`: a follow-up turn the engine
+      // saw cancelled carries no error, so returning only on `iterationError`
+      // applied the outcome and then dropped the one fact that mattered —
+      // the caller marked the source step `ok` and the run finished without
+      // ever reporting that it had been stopped.
+      if (outcome.cancelled || outcome.iterationError) return outcome;
     }
   }
   return undefined;
@@ -507,7 +552,7 @@ export async function executeSteps(args: {
     sIdx: number,
     turn: number,
   ): Promise<StepExecutorResult | undefined> => {
-    const err = await drainAndDriveFollowUps(
+    const failed = await drainAndDriveFollowUps(
       label,
       sIdx,
       turn,
@@ -515,16 +560,45 @@ export async function executeSteps(args: {
       handlers,
       state,
     );
-    if (!err) return undefined;
+    if (!failed) return undefined;
     emitStatus(sIdx, "fail");
     recordSkippedSteps(
       state,
       steps,
       sIdx + 1,
-      `widget follow-up turn errored (step ${sIdx}): ${err}`,
+      // A cancelled follow-up has NO error, so the errored wording would
+      // interpolate `undefined` into the reason every skipped step carries.
+      failed.cancelled
+        ? `widget follow-up turn cancelled (step ${sIdx})`
+        : `widget follow-up turn errored (step ${sIdx}): ${failed.iterationError}`,
     );
     emitSkipped(sIdx + 1);
-    return { state, iterationError: err, setupFailure: false };
+    // The SAME shape the prompt-step failure path returns. A follow-up turn
+    // dying on the provider is the same event as a prompt turn dying on it, and
+    // reporting one and not the other made the attribution depend on which
+    // turn the model happened to fail.
+    return {
+      state,
+      // Carried across THIS boundary too. Making `drainAndDriveFollowUps`
+      // return on a cancelled outcome only moved the drop one frame up: a
+      // cancellation has no `iterationError`, so a result built solely from
+      // that field told the callers nothing, and execution continued past a
+      // follow-up the engine had already stopped. The runners recovered only
+      // when their separate abort signal happened to be set — which is the
+      // second-source-of-truth fragility this change set out to remove.
+      ...(failed.cancelled ? { cancelled: true } : {}),
+      ...(failed.timeout ? { timeout: failed.timeout } : {}),
+      iterationError: failed.iterationError,
+      ...(failed.iterationErrorDetails
+        ? { iterationErrorDetails: failed.iterationErrorDetails }
+        : {}),
+      ...(failed.errorSource ? { errorSource: failed.errorSource } : {}),
+      ...(failed.errorCode ? { errorCode: failed.errorCode } : {}),
+      ...(typeof failed.errorHttpStatus === "number"
+        ? { errorHttpStatus: failed.errorHttpStatus }
+        : {}),
+      setupFailure: false,
+    };
   };
 
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
@@ -543,6 +617,9 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       const outcome = await handlers.onPrompt({ step, stepIndex, turnOrdinal });
       applyOutcome(state, outcome, turnOrdinal);
+      // Before the error check: a cancelled turn has no error to report, and
+      // continuing to the next step of a stopped run is the thing to avoid.
+      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -554,8 +631,14 @@ export async function executeSteps(args: {
         emitSkipped(stepIndex + 1);
         return {
           state,
+          ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
+          ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
+          ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+          ...(typeof outcome.errorHttpStatus === "number"
+            ? { errorHttpStatus: outcome.errorHttpStatus }
+            : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -580,6 +663,7 @@ export async function executeSteps(args: {
         turnOrdinal,
       });
       applyOutcome(state, outcome, turnOrdinal);
+      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -591,8 +675,14 @@ export async function executeSteps(args: {
         emitSkipped(stepIndex + 1);
         return {
           state,
+          ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
+          ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
+          ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+          ...(typeof outcome.errorHttpStatus === "number"
+            ? { errorHttpStatus: outcome.errorHttpStatus }
+            : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -643,8 +733,14 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       await runAssertStep(step, stepIndex, browser, state);
       const last = state.assertionResults[state.assertionResults.length - 1];
-      if (last && !last.passed) {
-        // Fail-fast: a failed assertion halts the run; later steps are Skipped.
+      const gatingFailed =
+        last &&
+        !last.passed &&
+        checkRole(last.predicateResult?.predicate) !== "advisory";
+      if (gatingFailed) {
+        // Fail-fast: a failed GATING assertion halts the run; later steps
+        // are Skipped. An advisory (Warn) failure records the result and
+        // continues — it must never halt a trial.
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
           state,
@@ -682,7 +778,10 @@ export function stepsVerdict(state: StepExecutionState): {
   passed: boolean;
   failedAsserts: StepAssertionResult[];
 } {
-  const failedAsserts = state.assertionResults.filter((r) => !r.passed);
+  const failedAsserts = state.assertionResults.filter(
+    (r) =>
+      !r.passed && checkRole(r.predicateResult?.predicate) !== "advisory"
+  );
   const passed =
     failedAsserts.length === 0 && state.interactionFailures.length === 0;
   return { passed, failedAsserts };

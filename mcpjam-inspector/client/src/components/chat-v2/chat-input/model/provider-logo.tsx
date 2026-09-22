@@ -4,7 +4,7 @@ import { getProviderColor, getProviderLogo } from "@/lib/provider-registry";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/chat-utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 
 interface ProviderLogoProps {
   provider: string;
@@ -33,8 +33,8 @@ export function ProviderLogo({
   hosted,
 }: ProviderLogoProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const chatboxHostTheme = useChatboxHostTheme();
-  const resolvedThemeMode = chatboxHostTheme ?? themeMode;
+  const scenarioHostTheme = useScenarioHostTheme();
+  const resolvedThemeMode = scenarioHostTheme ?? themeMode;
   const logoSrc = getProviderLogo(provider, resolvedThemeMode);
 
   // A hosted model whose provider has no logo → monogram. Report it once so a

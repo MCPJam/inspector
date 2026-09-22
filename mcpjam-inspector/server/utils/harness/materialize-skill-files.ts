@@ -5,7 +5,10 @@
  * no concept of supporting files (`scripts/`, `references/`, `assets/`). This
  * pass — run in `onSandboxSession` right AFTER `reconcileSkillDirs` — fetches
  * each visible skill's file blobs from Convex and writes them onto the box under
- * `~/.claude/skills/<name>/<path>` via `writeBinaryFile` (no 16k exec cap).
+ * `<runtime skills root>/<name>/<path>` via `writeBinaryFile` (no 16k exec cap).
+ * The root is the ADAPTER's (`HarnessRuntimeAdapter.skillsBaseDir`: Claude Code
+ * `~/.claude/skills`, Codex `~/.agents/skills`) so this pass always lands beside
+ * the SKILL.md the adapter itself wrote.
  *
  * Invariants:
  *  - Fail-soft ALWAYS: a bad URL / write error skips that file, never the turn.
@@ -22,10 +25,10 @@
 import { isPathWithinDirectory } from "../skill-parser.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
 import { shellQuote } from "./shell-quote.js";
+import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 import { reserveUploadBytes } from "../computers/control-plane-client.js";
 
-const SKILLS_BASE = "/home/user/.claude/skills";
 /** Per-turn write budget across ALL skills (matches the backend per-skill cap). */
 const MATERIALIZE_BUDGET_BYTES = 20 * 1024 * 1024;
 /** Per-file download ceiling so one stalled blob can't hang the whole turn. */
@@ -56,6 +59,7 @@ export interface MaterializeSession {
  */
 async function pruneStaleSkillFiles(
   session: MaterializeSession,
+  skillsBase: string,
   deliveredDirs: Set<string>,
   keepByDir: Map<string, Set<string>>
 ): Promise<void> {
@@ -64,7 +68,7 @@ async function pruneStaleSkillFiles(
     // One sweep: every file under a skill dir, excluding each dir's SKILL.md.
     const ls = await session.run({
       command: `find ${shellQuote(
-        SKILLS_BASE
+        skillsBase
       )} -mindepth 2 -type f ! -name SKILL.md`,
     });
     if (ls.exitCode !== 0) return;
@@ -73,10 +77,10 @@ async function pruneStaleSkillFiles(
       .map((s) => s.trim())
       .filter(Boolean);
     for (const p of onBox) {
-      if (!p.startsWith(`${SKILLS_BASE}/`)) continue;
-      const rel = p.slice(SKILLS_BASE.length + 1);
+      if (!p.startsWith(`${skillsBase}/`)) continue;
+      const rel = p.slice(skillsBase.length + 1);
       const name = rel.split("/")[0];
-      const skillDir = `${SKILLS_BASE}/${name}`;
+      const skillDir = `${skillsBase}/${name}`;
       // Only prune dirs we delivered this turn — never a foreign/hand-placed skill.
       if (!deliveredDirs.has(skillDir)) continue;
       if (p === `${skillDir}/SKILL.md`) continue; // belt-and-suspenders
@@ -104,13 +108,14 @@ async function pruneStaleSkillFiles(
  * never under).
  */
 async function getOnBoxFileSizes(
-  session: MaterializeSession
+  session: MaterializeSession,
+  skillsBase: string
 ): Promise<Map<string, number>> {
   const sizes = new Map<string, number>();
   try {
     const ls = await session.run({
       command: `find ${shellQuote(
-        SKILLS_BASE
+        skillsBase
       )} -mindepth 2 -type f ! -name SKILL.md -printf '%s\\t%p\\n'`,
     });
     if (ls.exitCode !== 0) return sizes;
@@ -140,6 +145,9 @@ export async function materializeSkillFiles(args: {
   session: MaterializeSession;
   files: RuntimeSkillFile[];
   skillNamesById: Map<string, string>;
+  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
+   *  to Claude Code's for legacy callers. */
+  skillsBase?: string;
   /** Convex computer row id. When present, each write reserves its NET-NEW bytes
    *  against the computer's cumulative-upload quota (a file already on the box at
    *  the same size reserves nothing); over quota → that file is skipped. Absent
@@ -147,12 +155,13 @@ export async function materializeSkillFiles(args: {
   computerId?: string;
   signal?: AbortSignal;
 }): Promise<{ written: number; skipped: number }> {
+  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
   let written = 0;
   let skipped = 0;
   let budget = MATERIALIZE_BUDGET_BYTES;
   // Only pay for the size sweep when we're actually metering.
   const onBoxSizes = args.computerId
-    ? await getOnBoxFileSizes(args.session)
+    ? await getOnBoxFileSizes(args.session, skillsBase)
     : new Map<string, number>();
 
   // Every delivered skill dir is a prune candidate (even with zero files this
@@ -160,13 +169,13 @@ export async function materializeSkillFiles(args: {
   // a delivered dir absent from `keepByDir` prunes all its supporting files.
   const deliveredDirs = new Set<string>();
   for (const name of args.skillNamesById.values()) {
-    deliveredDirs.add(`${SKILLS_BASE}/${name}`);
+    deliveredDirs.add(`${skillsBase}/${name}`);
   }
   const keepByDir = new Map<string, Set<string>>();
   for (const file of args.files) {
     const skillName = args.skillNamesById.get(file.skillId);
     if (!skillName) continue;
-    const skillDir = `${SKILLS_BASE}/${skillName}`;
+    const skillDir = `${skillsBase}/${skillName}`;
     if (!isPathWithinDirectory(skillDir, file.path)) continue;
     let keep = keepByDir.get(skillDir);
     if (!keep) {
@@ -176,7 +185,12 @@ export async function materializeSkillFiles(args: {
     keep.add(`${skillDir}/${file.path}`);
   }
   if (!args.signal?.aborted) {
-    await pruneStaleSkillFiles(args.session, deliveredDirs, keepByDir);
+    await pruneStaleSkillFiles(
+      args.session,
+      skillsBase,
+      deliveredDirs,
+      keepByDir
+    );
   }
 
   for (const file of args.files) {
@@ -186,7 +200,7 @@ export async function materializeSkillFiles(args: {
       skipped += 1;
       continue; // dir wouldn't exist (skill not delivered this turn)
     }
-    const skillDir = `${SKILLS_BASE}/${skillName}`;
+    const skillDir = `${skillsBase}/${skillName}`;
     // Defense-in-depth: the target must stay within the skill dir.
     if (!isPathWithinDirectory(skillDir, file.path)) {
       logger.info("[materialize-skill-files] skip: path escapes skill dir", {

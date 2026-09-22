@@ -23,9 +23,9 @@ import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";
 import type { ProjectThreadOwnerAvatar } from "./project-thread-owner-avatar";
 import {
-  getChatboxHostFamily,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioHostFamily,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 
 function formatChatHistoryModelLabel(
@@ -65,7 +65,7 @@ interface ChatHistoryRowProps {
   isStreaming: boolean;
   sharedThreadsEnabled?: boolean;
   /** Which host aesthetic governs the active-row highlight (defaults to "claude"). */
-  hostStyle?: ChatboxHostStyle;
+  hostStyle?: ScenarioHostStyle;
   onSelect: (session: ChatHistorySession) => void;
   /** Fired on pointer-enter so callers can warm caches for the click path. */
   onPrefetch?: (session: ChatHistorySession) => void;
@@ -113,7 +113,7 @@ export function ChatHistoryRow({
   const [relativeTime, setRelativeTime] = useState(
     formatRelativeTime(session.lastActivityAt),
   );
-  const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
+  const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);

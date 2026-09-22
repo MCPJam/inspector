@@ -42,7 +42,7 @@ interface ActionEdgeData extends Record<string, unknown> {
   label: string;
   description: string;
   status: NodeStatus;
-  details?: Array<{ label: string; value: ReactNode }>;
+  details?: Array<{ label: string; value: ReactNode; sensitive?: boolean }>;
   error?: string | null;
   input?: {
     label: string;
@@ -63,7 +63,7 @@ interface ActionNodeData extends Record<string, unknown> {
   description: string;
   status: NodeStatus;
   direction: "request" | "response";
-  details?: Array<{ label: string; value: ReactNode }>;
+  details?: Array<{ label: string; value: ReactNode; sensitive?: boolean }>;
   error?: string | null;
   input?: {
     label: string;
@@ -112,10 +112,24 @@ const formatList = (values?: readonly string[]) => {
   return values.join(", ");
 };
 
-const DetailRow = ({ label, value }: { label: string; value: ReactNode }) => (
+const DetailRow = ({
+  label,
+  value,
+  sensitive,
+}: {
+  label: string;
+  value: ReactNode;
+  sensitive?: boolean;
+}) => (
   <div className="space-y-1">
     <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-    <div className="text-[11px] leading-5 break-words text-foreground">
+    <div
+      className={cn(
+        "text-[11px] leading-5 break-words text-foreground",
+        sensitive && "ph-no-capture rr-block"
+      )}
+      data-ph-no-capture={sensitive ? true : undefined}
+    >
       {value ?? "—"}
     </div>
   </div>
@@ -288,7 +302,7 @@ interface StepDetailsPanelProps {
     label: string;
     description: string;
     status: NodeStatus;
-    details?: Array<{ label: string; value: ReactNode }>;
+    details?: Array<{ label: string; value: ReactNode; sensitive?: boolean }>;
     input?: {
       label: string;
       value: string;
@@ -351,7 +365,13 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
                   <p className="text-xs font-medium text-muted-foreground">
                     {detail.label}
                   </p>
-                  <div className="text-xs leading-relaxed break-words text-foreground bg-muted/50 rounded-md p-2 font-mono">
+                  <div
+                    className={cn(
+                      "text-xs leading-relaxed break-words text-foreground bg-muted/50 rounded-md p-2 font-mono",
+                      detail.sensitive && "ph-no-capture rr-block"
+                    )}
+                    data-ph-no-capture={detail.sensitive ? true : undefined}
+                  >
                     {detail.value ?? "—"}
                   </div>
                 </div>
@@ -650,7 +670,9 @@ export const OAuthFlowProgress = ({
       label: string;
       description: string;
       step: OAuthStep;
-      getDetails?: () => Array<{ label: string; value: ReactNode }> | undefined;
+      getDetails?: () =>
+        | Array<{ label: string; value: ReactNode; sensitive?: boolean }>
+        | undefined;
       getInput?: () => ActionNodeData["input"];
       getSecondaryAction?: () => ActionNodeData["secondaryAction"];
       getError?: () => string | null;
@@ -822,11 +844,13 @@ export const OAuthFlowProgress = ({
                 {
                   label: "Access Token",
                   value: truncateValue(flowState.oauthTokens.access_token),
+                  sensitive: true,
                 },
                 flowState.oauthTokens.refresh_token
                   ? {
                       label: "Refresh Token",
                       value: truncateValue(flowState.oauthTokens.refresh_token),
+                      sensitive: true,
                     }
                   : undefined,
                 flowState.oauthTokens.expires_in
@@ -835,7 +859,11 @@ export const OAuthFlowProgress = ({
                       value: `${flowState.oauthTokens.expires_in}s`,
                     }
                   : undefined,
-              ].filter(Boolean) as Array<{ label: string; value: string }>)
+              ].filter(Boolean) as Array<{
+                label: string;
+                value: string;
+                sensitive?: boolean;
+              }>)
             : undefined,
       },
       {

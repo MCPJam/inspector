@@ -65,4 +65,20 @@ describe("deriveOAuthProfileFromServer stored-credential fallback", () => {
     expect(profile.clientId).toBe("");
     expect(profile.scopes).toBe("");
   });
+
+  it("keeps an explicit 2026-07-28 OAuth profile version", () => {
+    const profile = deriveOAuthProfileFromServer(
+      httpServer({
+        oauthFlowProfile: {
+          serverUrl: "http://localhost:8787/mcp",
+          clientId: "",
+          clientSecret: "",
+          scopes: "",
+          customHeaders: [],
+          protocolVersion: "2026-07-28",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    );
+    expect(profile.protocolVersion).toBe("2026-07-28");
+  });
 });

@@ -22,7 +22,7 @@ import {
   navigationTargetToPath,
 } from "@/lib/app-navigation";
 import {
-  isHostedHashTabBlocked,
+  isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import { HOSTED_MODE } from "@/lib/config";
@@ -122,7 +122,7 @@ export type ResolvedNavigationTarget =
 export function listUiNavigationTargets(): string[] {
   const all = listKnownAppTabSegments();
   if (!HOSTED_MODE) return all.sort();
-  return all.filter((tab) => !isHostedHashTabBlocked(tab)).sort();
+  return all.filter((tab) => !isHostedTabBlocked(tab)).sort();
 }
 
 /**
@@ -147,7 +147,7 @@ export function resolveUiNavigationTarget(
       reason: `Unknown navigation target "${rawTarget}". Valid targets: ${listUiNavigationTargets().join(", ")}.`,
     };
   }
-  if (HOSTED_MODE && isHostedHashTabBlocked(tab)) {
+  if (HOSTED_MODE && isHostedTabBlocked(tab)) {
     trackNavigationRejected(tab, "hosted_blocked");
     return {
       ok: false,

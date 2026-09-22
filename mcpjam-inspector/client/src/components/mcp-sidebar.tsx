@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Hammer,
   House,
@@ -11,16 +11,19 @@ import {
   Boxes,
   Workflow,
   ListTodo,
-  SquareSlash,
   MessageCircleQuestionIcon,
   GraduationCap,
   Network,
-  PackageOpen,
   LayoutGrid,
-  GitBranch,
   UserPlus,
+  Users,
   ShieldCheck,
   Loader2,
+  ExternalLink,
+  Layers,
+  Cable,
+  MessagesSquare,
+  Globe,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -36,9 +39,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -47,12 +47,14 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
+import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
-import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
-//World Cup 2026 TODO remove after the tournament (see world-cup-ball.tsx)
-import { WorldCupBall } from "@/components/world-cup-ball";
+import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
+import { InviteTeamMembersDialog } from "@/components/organization/InviteTeamMembersDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -63,24 +65,18 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
-  isHostedSidebarTabAllowed,
+  isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import {
-  buildCiEvalsPath,
-  buildEvalsPath,
-  navigateApp,
-  useAppNavigate,
-} from "@/lib/app-navigation";
-import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
+import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;
@@ -98,23 +94,54 @@ interface NavItem {
   matchTabs?: string[];
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
-  /** Nested Playground / Runs entries; omit from the flat main menu */
-  evalsSubnav?: boolean;
 }
 
 interface NavSection {
   id: string;
+  /**
+   * Section heading rendered above the items ("Explore", "Measure", …).
+   * The nav is grouped by what you do with a feature, not by internals.
+   */
+  label: string;
   items: NavItem[];
 }
+
+/**
+ * Every flag key the sidebar actually RESOLVES into the `featureFlags` map
+ * inside `MCPSidebar`. A nav item's `featureFlag` / `hiddenByFlag` must appear
+ * here or the item is invisible forever: `filterByFeatureFlags` reads
+ * `flags[key]` as `undefined`, treats it as off, and nothing ever calls the
+ * flag — so PostHog shows it as never evaluated and the cause looks like a
+ * rollout problem rather than a missing map entry. The Sessions item shipped
+ * exactly that way. `mcp-sidebar-feature-flags.test.ts` fails if the two lists
+ * drift again.
+ */
+export const SIDEBAR_RESOLVED_FLAG_KEYS = [
+  "mcpjam-learning",
+  "sandboxes-enabled",
+  "registry-enabled",
+  "mcpjam-conformance",
+  "mcpjam-compatibility",
+  "hosts-enabled",
+  "home-page-enabled",
+  "xaa",
+  "project-environments-enabled",
+  "unified-sessions-enabled",
+  "evaluate-enabled",
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
+] as const;
 
 /**
  * Filter navigation items based on active feature flags.
  * Items with `featureFlag` are shown only when that flag is enabled.
  * Items with `hiddenByFlag` are hidden when that flag is enabled.
+ *
+ * A key missing from `flags` counts as OFF — see
+ * {@link SIDEBAR_RESOLVED_FLAG_KEYS}.
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>
+  flags: Record<string, boolean>,
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -142,7 +169,7 @@ export function applyBillingGateNavState(
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
-  }
+  },
 ): NavSection[] {
   const { billingUiEnabled, gateDenied, enforcementActive } = options;
   if (!billingUiEnabled || !enforcementActive) {
@@ -168,10 +195,19 @@ export function applyBillingGateNavState(
   }));
 }
 
-// Define sections with their respective items
-const navigationSections: NavSection[] = [
+// Define sections with their respective items.
+// Grouped by intent (Explore / Measure / Verify / Inspect / Educate) per the
+// Production Redesign, so the nav reads as five short lists instead of one flat
+// column. Flag-gated items that the design didn't enumerate are placed in the
+// section that matches what they do: Registry + Environments under Explore,
+// Sessions under Measure (it's the cross-surface run feed), Compatibility under
+// Verify next to its sibling Conformance.
+// Exported so tests can assert against the real nav data (e.g. that Skills is
+// not a sidebar item — it lives in the Connect tab switcher).
+export const navigationSections: NavSection[] = [
   {
-    id: "connection",
+    id: "explore",
+    label: "Explore",
     items: [
       {
         title: "Home",
@@ -182,14 +218,15 @@ const navigationSections: NavSection[] = [
       {
         title: "Connect",
         url: "/servers",
-        icon: MCPIcon,
+        icon: Cable,
         featureFlag: "hosts-enabled",
-        matchTabs: ["clients", "host-compare", "computer"],
+        matchTabs: ["clients", "host-compare", "computer", "skills"],
       },
       {
+        // Legacy fallback for signed-out users (pre-hosts-enabled nav).
         title: "Servers",
         url: "/servers",
-        icon: MCPIcon,
+        icon: Cable,
         hiddenByFlag: "hosts-enabled",
       },
       {
@@ -203,52 +240,88 @@ const navigationSections: NavSection[] = [
         url: "/playground",
         icon: MessageCircle,
       },
+      {
+        title: "Environments",
+        url: "/environments",
+        icon: Layers,
+        featureFlag: "project-environments-enabled",
+      },
     ],
   },
   {
-    id: "mcp-apps",
+    id: "measure",
+    label: "Measure",
     items: [
-      {
-        title: "Chatbox",
-        url: "/chatboxes",
-        icon: PackageOpen,
-        featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
-      },
+      // Both are behind `sandboxes-enabled`, which is the rollout control.
+      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
+      // signed-out visitor sees the items too, and the route decides what they
+      // get — a signed-out visitor gets the preview, a member the real tab.
+      //
+      // Swarms before User Testing (Vig): less set-up is required to get value
+      // out of it, so it is the better first stop.
       {
         title: "Swarms",
         url: "/swarms",
         icon: Network,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        // Same pill XAA Debugger carries. It marks a NEW feature, not an
+        // access state: the earlier LOG IN / UPGRADE markers described who the
+        // reader was, and there is no longer a plan to report on.
+        badge: "New",
+        billingFeature: "scenarios",
+      },
+      {
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
+        featureFlag: "sandboxes-enabled",
+        badge: "New",
+        billingFeature: "scenarios",
+      },
+      {
+        title: "Evaluate (Legacy)",
+        url: "/evals",
+        featureFlag: "evaluate-enabled",
+        icon: FlaskConical,
+        billingFeature: "evals",
       },
       {
         title: "Evaluate",
-        url: "/evals",
+        url: "/evaluate",
         icon: FlaskConical,
         billingFeature: "evals",
-        evalsSubnav: true,
+      },
+      {
+        // Cross-surface session feed (Playground + User Testing + Evals +
+        // Swarms). Route-guarded on the same flag (`SessionsRoute`).
+        title: "Sessions",
+        url: "/sessions",
+        icon: MessagesSquare,
+        featureFlag: "unified-sessions-enabled",
       },
     ],
   },
   {
-    id: "others",
+    // Auth-flow debuggers and the spec checkers: everything that answers
+    // "is this implementation correct?".
+    id: "verify",
+    label: "Verify",
     items: [
       {
-        title: "Skills",
-        url: "/skills",
-        icon: SquareSlash,
+        title: "OAuth Debugger",
+        url: "/oauth-flow",
+        icon: Workflow,
       },
       {
-        title: "Learning",
-        url: "/learning",
-        icon: GraduationCap,
-        featureFlag: "mcpjam-learning",
+        title: "XAA Debugger",
+        url: "/xaa-flow",
+        icon: ShieldCheck,
+        featureFlag: "xaa",
       },
       {
         title: "Conformance",
         url: "/conformance",
-        icon: FlaskConical,
+        icon: MCPIcon,
         // MCPJam-internal flag: rollout is restricted to the MCPJam team in
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
@@ -261,34 +334,14 @@ const navigationSections: NavSection[] = [
         // MCPJam-internal flag (same convention as `mcpjam-conformance`).
         featureFlag: "mcpjam-compatibility",
       },
-      // {
-      //   title: "Tracing",
-      //   url: "/tracing",
-      //   icon: Activity,
-      // },
     ],
   },
   {
-    // Auth-flow debuggers get their own section so they read as a related
-    // pair, separated from the surrounding nav by the section dividers.
-    id: "debuggers",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "/oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "XAA Debugger",
-        url: "/xaa-flow",
-        icon: ShieldCheck,
-        badge: "New",
-        featureFlag: "xaa",
-      },
-    ],
-  },
-  {
-    id: "primitives",
+    // Raw MCP primitives. Skills is deliberately absent: it's execution-context
+    // config, so it lives as a Connect tab (Servers | Client | Computer |
+    // Skills) and is reached through that switcher.
+    id: "inspect",
+    label: "Inspect",
     items: [
       {
         title: "Tools",
@@ -310,6 +363,28 @@ const navigationSections: NavSection[] = [
         url: "/tasks",
         icon: ListTodo,
       },
+      {
+        // Tools a live web PAGE registers, rather than an MCP server — the
+        // same primitive from the other side of the browser boundary, which is
+        // why it sits here and not under Explore.
+        title: "WebMCP",
+        url: "/webmcp",
+        icon: Globe,
+        badge: "New",
+        featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
+      },
+    ],
+  },
+  {
+    id: "educate",
+    label: "Educate",
+    items: [
+      {
+        title: "Learning",
+        url: "/learning",
+        icon: GraduationCap,
+        featureFlag: "mcpjam-learning",
+      },
     ],
   },
 ];
@@ -320,7 +395,7 @@ const navigationSections: NavSection[] = [
 const signedOutUtilityItems: NavItem[] = [
   {
     title: "Support",
-    url: "/support",
+    url: "/settings/support",
     icon: MessageCircleQuestionIcon,
   },
   {
@@ -351,33 +426,29 @@ function SidebarNavSkeleton() {
   );
 }
 
+/**
+ * Drop the nav items a hosted deployment cannot serve. Only `hostedBlocked`
+ * surfaces are dropped: this filter runs BEFORE `filterByFeatureFlags`, so
+ * anything it removes is gone with no flag able to bring it back — which is
+ * how the Sessions item stayed invisible on app.mcpjam.com (#4210) while it
+ * was an allow-list.
+ */
 export function getHostedNavigationSections(
-  sections: NavSection[]
+  sections: NavSection[],
 ): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.replace(/^[#/]+/, "")
+          item.url.replace(/^[#/]+/, ""),
         );
 
-        if (isHostedSidebarTabAllowed(normalizedTab)) {
-          return [item];
+        if (isHostedTabBlocked(normalizedTab)) {
+          return [];
         }
 
-        if (normalizedTab === "skills") {
-          return [
-            {
-              ...item,
-              disabled: true,
-              disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
-              hiddenByFlag: undefined,
-            },
-          ];
-        }
-
-        return [];
+        return [item];
       }),
     }))
     .filter((section) => section.items.length > 0);
@@ -386,35 +457,6 @@ export function getHostedNavigationSections(
 const hostedNavigationSections =
   getHostedNavigationSections(navigationSections);
 
-/**
- * Resolve the hosted Skills nav item against the `skills-enabled` PostHog flag.
- * `getHostedNavigationSections` runs at module load (no hooks) and marks Skills
- * disabled by default. Hosted skills are a **project-membership** resource
- * (authored in Convex, available even without a Computer), but are gated behind
- * the flag until QA completes:
- *   - flag on  ⇒ flip the item to enabled (access is still enforced server-side);
- *   - flag off ⇒ drop the item entirely, rather than leave it grayed with the
- *     "local only" tooltip, which would misrepresent why it's unavailable.
- */
-export function resolveHostedSkillsNav(
-  sections: NavSection[],
-  enabled: boolean
-): NavSection[] {
-  return sections
-    .map((section) => ({
-      ...section,
-      items: section.items.flatMap((item) => {
-        const isSkills =
-          normalizeHostedHashTab(item.url.replace(/^[#/]+/, "")) === "skills";
-        if (!isSkills) return [item];
-        return enabled
-          ? [{ ...item, disabled: false, disabledTooltip: undefined }]
-          : [];
-      }),
-    }))
-    .filter((section) => section.items.length > 0);
-}
-
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
@@ -422,16 +464,29 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   projects: Record<string, Project>;
   activeProjectId: string;
   onSwitchProject: (projectId: string) => void;
-  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  /**
+   * The switcher's per-row settings gear. Takes the project id because the
+   * gear opens THAT project's settings directly — `/p/<id>/project-settings`
+   * — rather than switching the active project and then navigating to
+   * whatever the settings route resolves to afterwards.
+   */
+  onOpenProjectSettings?: (projectId: string) => void;
+  /**
+   * Creates a project and lands the user in it. The optional organization is
+   * the one chosen in the create dialog; omitted means the active one.
+   */
+  onCreateProject: (name: string, organizationId?: string) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
   activeOrganizationId?: string;
   activeOrganizationName?: string;
-  onSwitchOrganization?: (
-    organizationId: string,
-    section?: OrganizationRouteSection
-  ) => void;
-  onSwitchActiveOrganization?: (organizationId: string) => void;
+  /**
+   * Switches the active organization. The handler NAVIGATES into that
+   * organization (see `buildOrganizationSwitchTarget`) rather than writing
+   * hidden state, so there is no section to open — the switcher's gears are
+   * gone with the old layout.
+   */
+  onSwitchOrganization?: (organizationId: string) => void;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
@@ -441,155 +496,19 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onBeforeSignOut?: () => void | Promise<void>;
 }
 
-function navigateToEvalsExploreList() {
-  navigateApp(buildEvalsPath({ type: "list" }));
-}
-
-function navigateToEvalsRunsList() {
-  navigateApp(buildCiEvalsPath({ type: "list" }));
-}
-
-type EvalsSubnavItem = {
-  title: "Runs";
-  href: string;
-  icon: typeof GitBranch;
-  isActive: (activeTab?: string) => boolean;
-  onClick: () => void;
-};
-
-export function getEvalsSubnavItems(options: {
-  evaluateRunsEnabled: boolean;
-}): EvalsSubnavItem[] {
-  if (!options.evaluateRunsEnabled) return [];
-  return [
-    {
-      title: "Runs",
-      href: "/ci-evals",
-      icon: GitBranch,
-      isActive: (activeTab) => activeTab === "ci-evals",
-      onClick: navigateToEvalsRunsList,
-    },
-  ];
-}
-
-export function SidebarEvalsNavGroup({
-  title,
-  Icon,
-  disabled,
-  disabledTooltip,
-  activeTab,
-  showRuns = true,
-}: {
-  title: string;
-  Icon: React.ComponentType<{ className?: string }>;
-  disabled?: boolean;
-  disabledTooltip?: string;
-  activeTab?: string;
-  showRuns?: boolean;
-}) {
-  const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
-  const subnavItems = getEvalsSubnavItems({
-    evaluateRunsEnabled: showRuns,
-  });
-  const hasSubnav = subnavItems.length > 0;
-
-  const parentButton = (
-    <SidebarMenuButton
-      tooltip={title}
-      isActive={!disabled && isEvalsFamily}
-      onClick={() => {
-        if (disabled) return;
-        navigateToEvalsExploreList();
-      }}
-      aria-disabled={disabled || undefined}
-      tabIndex={disabled ? -1 : undefined}
-      className={
-        disabled
-          ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
-          : isEvalsFamily
-          ? "[&[data-active=true]]:bg-accent cursor-pointer"
-          : "cursor-pointer"
-      }
-    >
-      <Icon className="h-4 w-4" />
-      <span>{title}</span>
-    </SidebarMenuButton>
-  );
-
-  return (
-    <SidebarGroup>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            {disabled ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    className="w-full cursor-not-allowed"
-                    title={disabledTooltip}
-                  >
-                    {parentButton}
-                  </div>
-                </TooltipTrigger>
-                {disabledTooltip ? (
-                  <TooltipContent side="right" align="center">
-                    {disabledTooltip}
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
-            ) : (
-              parentButton
-            )}
-            {hasSubnav ? (
-              <SidebarMenuSub>
-                {subnavItems.map((item) => {
-                  const ItemIcon = item.icon;
-
-                  return (
-                    <SidebarMenuSubItem key={item.title}>
-                      <SidebarMenuSubButton
-                        isActive={!disabled && item.isActive(activeTab)}
-                        href={item.href}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (disabled) return;
-                          item.onClick();
-                        }}
-                        aria-disabled={disabled || undefined}
-                        className={cn(
-                          disabled &&
-                            "pointer-events-none cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
-                        )}
-                      >
-                        <ItemIcon className="h-4 w-4" />
-                        <span className="min-w-0 truncate">{item.title}</span>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  );
-                })}
-              </SidebarMenuSub>
-            ) : null}
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
 export function MCPSidebar({
   onNavigate,
   activeTab,
   projects,
   activeProjectId,
   onSwitchProject,
+  onOpenProjectSettings,
   onCreateProject,
   onDeleteProject,
   isLoadingProjects,
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onSwitchActiveOrganization,
-  onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -601,14 +520,20 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  // Hosted Cloud Skills nav is gated until QA completes; fail-closed (absent /
-  // loading flag ⇒ hidden). See `useSkillsEnabled`.
-  const skillsEnabled = useFeatureFlagEnabled("skills-enabled");
+  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
+    "project-environments-enabled",
+  );
+  const unifiedSessionsEnabled = useFeatureFlagEnabled(
+    "unified-sessions-enabled",
+  );
+  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
+  const webmcpInspectorEnabled = useFeatureFlagEnabled(
+    WEBMCP_INSPECTOR_FEATURE_FLAG,
+  );
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -619,36 +544,64 @@ export function MCPSidebar({
     HOSTED_MODE && !user && (isWorkOsAuthLoading || isConvexAuthLoading);
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { status: updateStatus, restartAndInstall } = useUpdateNotification();
+  const {
+    status: updateStatus,
+    restartRequested,
+    downloadManually,
+    restartAndInstall,
+  } = useUpdateNotification();
   const showUpdateButton =
-    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+    updateStatus.kind === "pending" ||
+    updateStatus.kind === "downloaded" ||
+    updateStatus.kind === "manual";
+  // Auto-update announced a build it then failed to install. The pill has to
+  // stay — there IS a newer version — but it must stop offering an in-app
+  // install that has already proven it cannot happen, or the user is back to
+  // clicking a control that does nothing.
+  const updateIsManual = updateStatus.kind === "manual";
+  // Two ways to be mid-install, and both must disable the button: waiting on a
+  // download that was asked to install when it finishes, and waiting on the
+  // app to quit for one already downloaded. The second is the one a repeat
+  // click used to get through.
   const updateInstalling =
-    updateStatus.kind === "pending" && updateStatus.installRequested;
+    !updateIsManual &&
+    (restartRequested ||
+      (updateStatus.kind === "pending" && updateStatus.installRequested));
   const handleUpdateClick = () => {
+    if (updateIsManual) {
+      downloadManually();
+      return;
+    }
     if (!updateInstalling) {
       restartAndInstall();
     }
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
   const learnMore = useLearnMore();
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
-  const inviteableProjects = useMemo(() => {
-    if (!activeProject?.organizationId) {
-      return projects;
-    }
-
-    return Object.fromEntries(
-      Object.entries(projects).filter(
-        ([, project]) => project.organizationId === activeProject.organizationId
-      )
-    );
-  }, [activeProject?.organizationId, projects]);
-  const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
+  const canOpenInviteDialog =
+    isAuthenticated && !!user && !!activeOrganizationId;
+  // Guests get the CTA too (hosted only — a local/self-hosted install has no
+  // WorkOS to sign up through). The click opens a sign-up nudge instead of the
+  // share dialog, and the nudge's marker reopens it after the round trip.
+  // Hidden while auth resolves so signed-in users never see a guest control.
+  const showGuestInviteCta = HOSTED_MODE && !user && !authResolving;
+  const shouldShowInviteCta = canOpenInviteDialog || showGuestInviteCta;
+  // Reopen the invite dialog for a guest who left through the sign-up nudge:
+  // the marker outlives the WorkOS page reload in sessionStorage, and this
+  // effect holds off consuming it until everything the dialog needs (authed
+  // user + active project) has actually resolved.
+  useEffect(() => {
+    if (!canOpenInviteDialog) return;
+    if (!consumePendingInviteDialog()) return;
+    setShowInviteDialog(true);
+  }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId }
+    { enabled: billingUiEnabled && !!activeProject?.organizationId },
   );
   const trialActive =
     billingUiEnabled &&
@@ -674,7 +627,9 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
+      // reach the REEV-6 preview once the flag is on.
+      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
@@ -683,6 +638,18 @@ export function MCPSidebar({
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
+      "project-environments-enabled":
+        projectEnvironmentsEnabled === true && isAuthenticated,
+      // Project-scoped like the two above: the feed needs a project, and
+      // `SessionsRoute` renders a "needs a project" empty state without one.
+      "unified-sessions-enabled":
+        unifiedSessionsEnabled === true && isAuthenticated,
+      // Project-scoped like the rows above: every screen behind it needs a
+      // project to resolve suites against.
+      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
+      // Deployment-specific Browser rollout; local guests are eligible too.
+      // Hosted execution retains its server-side sign-in/entitlement checks.
+      [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
     }),
     [
       learningEnabled,
@@ -691,15 +658,17 @@ export function MCPSidebar({
       conformanceEnabled,
       compatibilityEnabled,
       xaaEnabled,
+      projectEnvironmentsEnabled,
+      unifiedSessionsEnabled,
+      evaluateEnabled,
+      webmcpInspectorEnabled,
       isAuthenticated,
-    ]
+    ],
   );
   const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
-    HOSTED_MODE
-      ? resolveHostedSkillsNav(hostedNavigationSections, skillsEnabled === true)
-      : navigationSections,
-    featureFlags
+    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    featureFlags,
   );
 
   // Signed-in users reach Settings/Support via the account menu; only
@@ -709,18 +678,31 @@ export function MCPSidebar({
 
   const isNavItemActive = (item: NavItem) =>
     normalizeHostedHashTab(
-      item.url.replace(/^[#/]+/, "").split("/")[0] || "servers"
+      item.url.replace(/^[#/]+/, "").split("/")[0] || "servers",
     ) === activeTab ||
     (activeTab !== undefined && (item.matchTabs?.includes(activeTab) ?? false));
 
   return (
     <>
-      <Sidebar collapsible="icon" {...props}>
+      {/* Production Redesign chrome (BB-127): no divider between the linen
+          sidebar and the linen top bar — the inset panel's rounded top edge and
+          shadow are what separate chrome from content.
+          Drop the width, not the color: the border sits on sidebar-container,
+          which has no fill of its own (the linen is on sidebar-inner), so a
+          transparent border still reveals a 1px strip of the page behind it.
+          The variant prefix has to match the primitive's
+          `group-data-[side=left]:border-r` or tailwind-merge keeps both and the
+          more specific variant rule wins. */}
+      <Sidebar
+        collapsible="icon"
+        className="group-data-[side=left]:border-r-0"
+        {...props}
+      >
         <SidebarHeader className="gap-1 px-2 pt-1.5 pb-2">
           <div
             className={cn(
               "no-drag",
-              state === "collapsed" && !isMobile && "flex justify-center px-0"
+              state === "collapsed" && !isMobile && "flex justify-center px-0",
             )}
           >
             {isMobile ? (
@@ -738,8 +720,6 @@ export function MCPSidebar({
                   alt="MCP Jam"
                   className="h-4 w-auto"
                 />
-                {/*World Cup 2026, TODO remove after the tournament */}
-                <WorldCupBall className="ml-1.5" />
               </button>
             ) : state === "expanded" ? (
               <div className="relative isolate w-full">
@@ -747,10 +727,13 @@ export function MCPSidebar({
                   type="button"
                   onClick={() => handleNavClick(hubNavHash)}
                   className={cn(
-                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
-                    /* Reserve space for the collapse control so the logo stays visually centered and
-                       clicks on the logo never compete with the invisible hit target. */
-                    "px-2 pr-10 hover:opacity-80"
+                    "relative z-0 flex w-full cursor-pointer items-center justify-start py-2 transition-opacity duration-200",
+                    /* Left-aligned, which lands the mark 16px from the sidebar edge — the
+                       same inset the nav rows and the divider use, so the whole rail shares
+                       one left margin. It used to be centered, which read as pushed right.
+                       `pr-10` still reserves the collapse control's slot so a wider logo
+                       can never slide under its hit target. */
+                    "px-2 pr-10 hover:opacity-80",
                   )}
                 >
                   <img
@@ -762,8 +745,6 @@ export function MCPSidebar({
                     alt="MCP Jam"
                     className="h-4 w-auto"
                   />
-                  {/*World Cup 2026, TODO remove after the tournament */}
-                  <WorldCupBall className="ml-1.5" />
                 </button>
                 <SidebarTrigger
                   className={cn(
@@ -774,7 +755,7 @@ export function MCPSidebar({
                     "pointer-events-auto opacity-0 transition-opacity duration-200",
                     /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
                     "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
-                    "[@media(hover:none)]:opacity-100"
+                    "[@media(hover:none)]:opacity-100",
                   )}
                   aria-label="Collapse sidebar"
                 />
@@ -793,7 +774,20 @@ export function MCPSidebar({
             onCreateProject={onCreateProject}
             onDeleteProject={onDeleteProject}
             isLoading={isLoadingProjects || authResolving}
-            onNavigateToSettings={() => handleNavClick("#project-settings")}
+            onNavigateToSettings={(projectId) => {
+              // Tracked with the SECTION, never the project id: this event is
+              // an aggregate over navigation, and an id would make it a
+              // per-customer series.
+              track("sidebar_nav_clicked", {
+                location: "mcp_sidebar",
+                section: "project-settings",
+              });
+              if (onOpenProjectSettings) {
+                onOpenProjectSettings(projectId);
+                return;
+              }
+              onNavigate?.("project-settings");
+            }}
             isCreateDisabled={isCreateProjectDisabled}
             createDisabledReason={createProjectDisabledReason}
             onLearnMoreExpand={
@@ -801,7 +795,6 @@ export function MCPSidebar({
             }
             activeOrganizationId={activeOrganizationId}
             onSwitchOrganization={onSwitchOrganization}
-            onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
           {showUpdateButton && (
             <div className="px-3 pt-2">
@@ -811,13 +804,20 @@ export function MCPSidebar({
                 aria-disabled={updateInstalling}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary"
+                  updateInstalling && "pointer-events-none hover:bg-primary",
                 )}
               >
                 {updateInstalling && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateInstalling ? "Updating…" : "Update"}
+                {updateIsManual && (
+                  <ExternalLink className="size-2.5" aria-hidden />
+                )}
+                {updateIsManual
+                  ? "Download update"
+                  : updateInstalling
+                  ? "Updating…"
+                  : "Update"}
               </Button>
             </div>
           )}
@@ -827,26 +827,11 @@ export function MCPSidebar({
             <SidebarNavSkeleton />
           ) : (
             visibleNavigationSections.map((section, sectionIndex) => {
-              const rawEvalsEntry = section.items.find(
-                (item) => item.evalsSubnav
-              );
-              // Only render Evaluate through the SidebarEvalsNavGroup wrapper
-              // (which adds its own SidebarGroup padding) when there's actually
-              // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
-              // so it sits flush with Views and matches sibling spacing.
-              const useEvalsSubnavWrapper =
-                !!rawEvalsEntry && evaluateRunsEnabled === true;
-              const evalsEntry = useEvalsSubnavWrapper
-                ? rawEvalsEntry
-                : undefined;
-              const flatItems = section.items.filter(
-                (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
-              );
-
               return (
                 <React.Fragment key={section.id}>
                   <NavMain
-                    items={flatItems.map((item) => ({
+                    label={section.label}
+                    items={section.items.map((item) => ({
                       ...item,
                       isActive: isNavItemActive(item),
                     }))}
@@ -859,16 +844,6 @@ export function MCPSidebar({
                         : null
                     }
                   />
-                  {evalsEntry ? (
-                    <SidebarEvalsNavGroup
-                      title={evalsEntry.title}
-                      Icon={evalsEntry.icon}
-                      disabled={evalsEntry.disabled}
-                      disabledTooltip={evalsEntry.disabledTooltip}
-                      activeTab={activeTab}
-                      showRuns={evaluateRunsEnabled === true}
-                    />
-                  ) : null}
                   {/* Add subtle divider between sections (except after the last section) */}
                   {sectionIndex < visibleNavigationSections.length - 1 && (
                     <div className="mx-4 my-1 border-t border-border/50" />
@@ -889,9 +864,9 @@ export function MCPSidebar({
                       aria-label={item.title}
                       onClick={() => handleNavClick(item.url)}
                       className={cn(
-                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                         isNavItemActive(item) &&
-                          "bg-sidebar-accent text-sidebar-accent-foreground"
+                          "bg-sidebar-accent text-sidebar-accent-foreground",
                       )}
                     >
                       {item.icon ? <item.icon className="size-4" /> : null}
@@ -902,12 +877,27 @@ export function MCPSidebar({
               ))}
             </div>
           ) : null}
+          {isAuthenticated && user && activeOrganizationId ? (
+            <SidebarCredits
+              organizationId={activeOrganizationId}
+              billingUiEnabled={billingUiEnabled}
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+            />
+          ) : null}
           {shouldShowInviteCta ? (
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="Invite team members"
-                  onClick={() => setShowInviteDialog(true)}
+                  onClick={() =>
+                    showGuestInviteCta
+                      ? setShowInviteSignUpNudge(true)
+                      : setShowInviteDialog(true)
+                  }
                 >
                   <UserPlus className="h-4 w-4" />
                   <span className="group-data-[collapsible=icon]:hidden">
@@ -917,7 +907,7 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          {shouldShowInviteCta && trialActive && trialBilling?.trialEndsAt ? (
+          {canOpenInviteDialog && trialActive && trialBilling?.trialEndsAt ? (
             <SidebarTrialCountdown
               trialEndsAt={trialBilling.trialEndsAt}
               trialStartedAt={trialBilling.trialStartedAt}
@@ -928,20 +918,25 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
-      {shouldShowInviteCta && user && activeProject ? (
-        <ShareProjectDialog
-          isOpen={showInviteDialog}
-          onClose={() => setShowInviteDialog(false)}
-          projectName={activeProject.name}
-          projectServers={activeProject.servers}
-          sharedProjectId={activeProject.sharedProjectId}
-          organizationId={activeProject.organizationId}
-          visibility={activeProject.visibility}
+      {!authResolving && (
+        <PlatformLaunchAnnouncement
+          onNavigate={appNavigate}
+          audience={user ? "signed_in" : "guest"}
+          sandboxesEnabled={sandboxesEnabled === true}
+        />
+      )}
+      {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
+        <InviteTeamMembersDialog
+          key={activeOrganizationId}
+          organizationId={activeOrganizationId}
           organizationName={activeOrganizationName}
-          currentUser={user}
-          onProjectShared={onProjectShared}
-          availableProjects={inviteableProjects}
-          activeProjectId={activeProjectId}
+          onClose={() => setShowInviteDialog(false)}
+        />
+      ) : null}
+      {showGuestInviteCta ? (
+        <InviteTeamSignUpDialog
+          isOpen={showInviteSignUpNudge}
+          onClose={() => setShowInviteSignUpNudge(false)}
         />
       ) : null}
       {learnMoreEnabled && (

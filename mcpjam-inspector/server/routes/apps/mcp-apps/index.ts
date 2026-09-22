@@ -12,13 +12,17 @@ import { logger } from "../../../utils/logger";
 import { getRequestLogger } from "../../../utils/request-logger";
 import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  McpUiResourceCsp,
-  McpUiResourceMeta,
-} from "@modelcontextprotocol/ext-apps";
-import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
-import { RECORDER_SHIM_JS } from "./recorder-shim";
+import {
+  buildSandboxProxyFrameAncestors,
+  renderSandboxProxyHtml,
+} from "./sandbox-proxy-html";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
+import {
+  canSkipListingLookup,
+  findListingMetaForUri,
+  resolveUiResourceMeta,
+} from "../../../utils/ui-resource-meta";
+import { viewOriginLabelForConfig } from "../../../utils/view-origin-label";
 
 const apps = new Hono();
 
@@ -60,7 +64,6 @@ const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
  * CSP mode types - matches client-side CspMode type
  */
 type CspMode = "permissive" | "widget-declared";
-type MetadataSource = "content" | "listing" | "legacy" | "mixed" | "none";
 
 interface WidgetContentRequest {
   serverId: string;
@@ -107,35 +110,6 @@ interface WidgetContentRequest {
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
-}
-
-/**
- * Fallback CSP extraction for legacy Apps SDK widgets that declare CSP
- * via `_meta["openai/widgetCSP"]` (snake_case fields:
- * `connect_domains`, `resource_domains`, `frame_domains`) instead of the
- * SEP-1865 `_meta.ui.csp` shape (camelCase). Returns the camelCase shape
- * the proxy's buildCSP expects, or undefined when no legacy CSP is set
- * or only contains non-array values.
- */
-function extractLegacyOpenAICsp(
-  resourceMeta: Record<string, unknown> | undefined
-): McpUiResourceCsp | undefined {
-  if (!resourceMeta) return undefined;
-  const legacy = resourceMeta["openai/widgetCSP"];
-  if (!legacy || typeof legacy !== "object") return undefined;
-  const src = legacy as Record<string, unknown>;
-  const readArr = (v: unknown): string[] | undefined =>
-    Array.isArray(v)
-      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
-      : undefined;
-  const out: McpUiResourceCsp = {};
-  const connect = readArr(src.connect_domains);
-  const resource = readArr(src.resource_domains);
-  const frame = readArr(src.frame_domains);
-  if (connect && connect.length > 0) out.connectDomains = connect;
-  if (resource && resource.length > 0) out.resourceDomains = resource;
-  if (frame && frame.length > 0) out.frameDomains = frame;
-  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 // Serve widget content with CSP metadata (SEP-1865)
@@ -257,102 +231,37 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
-    // SEP-1865 effective UI metadata resolution (PR 2026-01):
-    //   1. content-item `_meta.ui` from the `resources/read` content   (canonical)
-    //   2. listing `_meta.ui` from `resources/list`                    (fallback)
-    //   3. legacy Apps SDK `openai/widget*` keys on either source      (last resort)
-    //
-    // The fallback chain is per-field, not all-or-nothing: a widget
-    // that publishes only `csp` at the content level and only
-    // `prefersBorder` at the listing level should see both honored.
-    // Listing lookup is best-effort — older servers that don't
-    // implement `resources/list` (or that fail to return the URI) just
-    // leave the listing source undefined and the content source wins.
+    // SEP-1865 effective UI metadata resolution — see
+    // utils/ui-resource-meta.ts for the per-field precedence chain
+    // (content `_meta.ui` → listing `_meta.ui` → legacy `openai/widget*`).
+    // Listing lookup is best-effort: older servers that don't implement
+    // `resources/list` (or that fail to return the URI) just leave the
+    // listing source undefined and the content source wins.
     const resourceMeta = content._meta as Record<string, unknown> | undefined;
-    const contentUiMeta = (
-      resourceMeta as { ui?: McpUiResourceMeta } | undefined
-    )?.ui;
 
-    let listingMeta: Record<string, unknown> | undefined;
-    let listingUiMeta: McpUiResourceMeta | undefined;
-    const metadataSources: {
-      csp: Exclude<MetadataSource, "mixed">;
-      permissions: Exclude<MetadataSource, "mixed">;
-      prefersBorder: Exclude<MetadataSource, "mixed">;
-    } = {
-      csp: "none",
-      permissions: "none",
-      prefersBorder: "none",
-    };
-    try {
-      const listing = await mcpClientManager.listResources(serverId);
-      const match = listing?.resources?.find(
-        (r: { uri?: unknown }) => r?.uri === resolvedResourceUri
-      ) as { _meta?: Record<string, unknown> } | undefined;
-      if (match?._meta) {
-        listingMeta = match._meta;
-        listingUiMeta = (match._meta as { ui?: McpUiResourceMeta }).ui;
-      }
-    } catch (err) {
-      logger.debug("[MCP Apps] resources/list fallback skipped", {
-        resourceUri: resolvedResourceUri,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
+    // A content item that already declares every field can't be improved by
+    // a lower-precedence source, so skip the round-trip entirely.
+    const listingMeta = canSkipListingLookup(resourceMeta)
+      ? undefined
+      : await findListingMetaForUri(
+          mcpClientManager,
+          serverId,
+          resolvedResourceUri,
+          (reason) =>
+            logger.debug("[MCP Apps] resources/list fallback skipped", {
+              resourceUri: resolvedResourceUri,
+              reason,
+            })
+        );
 
-    const contentLegacyCsp = extractLegacyOpenAICsp(resourceMeta);
-    const listingLegacyCsp = extractLegacyOpenAICsp(listingMeta);
-    let csp: McpUiResourceCsp | undefined;
-    if (contentUiMeta?.csp) {
-      csp = contentUiMeta.csp;
-      metadataSources.csp = "content";
-    } else if (listingUiMeta?.csp) {
-      csp = listingUiMeta.csp;
-      metadataSources.csp = "listing";
-    } else if (contentLegacyCsp) {
-      csp = contentLegacyCsp;
-      metadataSources.csp = "legacy";
-    } else if (listingLegacyCsp) {
-      csp = listingLegacyCsp;
-      metadataSources.csp = "legacy";
-    }
-    const permissions =
-      contentUiMeta?.permissions ?? listingUiMeta?.permissions;
-    if (contentUiMeta?.permissions) {
-      metadataSources.permissions = "content";
-    } else if (listingUiMeta?.permissions) {
-      metadataSources.permissions = "listing";
-    }
-    const prefersBorderLegacy = (m: Record<string, unknown> | undefined) =>
-      typeof m?.["openai/widgetPrefersBorder"] === "boolean"
-        ? (m["openai/widgetPrefersBorder"] as boolean)
-        : undefined;
-    const contentLegacyPrefersBorder = prefersBorderLegacy(resourceMeta);
-    const listingLegacyPrefersBorder = prefersBorderLegacy(listingMeta);
-    let prefersBorder: boolean | undefined;
-    if (contentUiMeta?.prefersBorder !== undefined) {
-      prefersBorder = contentUiMeta.prefersBorder;
-      metadataSources.prefersBorder = "content";
-    } else if (listingUiMeta?.prefersBorder !== undefined) {
-      prefersBorder = listingUiMeta.prefersBorder;
-      metadataSources.prefersBorder = "listing";
-    } else if (contentLegacyPrefersBorder !== undefined) {
-      prefersBorder = contentLegacyPrefersBorder;
-      metadataSources.prefersBorder = "legacy";
-    } else if (listingLegacyPrefersBorder !== undefined) {
-      prefersBorder = listingLegacyPrefersBorder;
-      metadataSources.prefersBorder = "legacy";
-    }
-
-    const usedMetadataSources = new Set(
-      Object.values(metadataSources).filter((source) => source !== "none")
-    );
-    const metadataSource: MetadataSource =
-      usedMetadataSources.size === 0
-        ? "none"
-        : usedMetadataSources.size === 1
-        ? Array.from(usedMetadataSources)[0]
-        : "mixed";
+    const {
+      csp,
+      permissions,
+      prefersBorder,
+      domain: declaredDomain,
+      metadataSources,
+      metadataSource,
+    } = resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
@@ -378,8 +287,9 @@ apps.post("/widget-content", async (c) => {
         : null,
     });
 
-    // When in permissive mode, skip CSP entirely (for testing/debugging)
-    // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
+    // `permissive` tells the sandbox proxy to skip CSP injection entirely.
+    // It does NOT change what the resource declared, so the response always
+    // reports `csp` verbatim (see the `csp` field below).
     const isPermissive = effectiveCspMode === "permissive";
 
     // Optionally inject the OpenAI Apps SDK `window.openai` shim.
@@ -424,11 +334,26 @@ apps.post("/widget-content", async (c) => {
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html,
-      csp: isPermissive ? undefined : csp,
+      // Always report what the resource declared. The request's `cspMode`
+      // decides whether a CSP is *injected* (`permissive` below), never what
+      // the resource *declared* — withholding the declaration here made the
+      // client's `resolveSandboxCsp` fall back to the empty secure default
+      // under a `mode: "declared"` host profile, producing the strictest
+      // possible CSP on exactly the surfaces that asked for permissive
+      // (scenario / minimal). Returning it cannot loosen anything:
+      // `permissive: true` already means "no CSP injected at all".
+      csp,
       permissions, // Include permissions metadata
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
+      declaredDomain,
+      // The subdomain this server's views get once per-app origins are on.
+      // Optional-called: the route tests stand up managers that expose no
+      // config accessor, and an absent label just means the default origin.
+      viewOriginLabel: viewOriginLabelForConfig(
+        mcpClientManager.getServerConfig?.(serverId),
+      ),
       // Echoed for trace clarity. The renderer's reload-key already
       // uses the flag it sent (not this echoed value), but persisting
       // the server-confirmed value alongside cached HTML makes saved
@@ -469,23 +394,14 @@ apps.post("/widget-content", async (c) => {
   }
 });
 
-// Inject the Tier 2 recorder shim (a JS string from recorder-shim.ts) into the
-// proxy's `RECORDER_SHIM` placeholder at serve time, so the heavy, unit-tested
-// shim source lives in one TS module and never drifts from a copy in the HTML.
-const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
-  '"__MCPJAM_RECORDER_SHIM__"',
-  () => JSON.stringify(RECORDER_SHIM_JS)
-);
-
 apps.get("/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  c.header(
-    "Content-Security-Policy",
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-  );
+  // Same list the proxy pins its host origin against — see
+  // sandbox-proxy-html.ts for why these two must not drift.
+  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(SANDBOX_PROXY_HTML_WITH_RECORDER);
+  return c.body(renderSandboxProxyHtml());
 });
 
 export default apps;

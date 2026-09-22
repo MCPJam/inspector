@@ -5,6 +5,8 @@ import type {
   EvalSuiteRun,
 } from "@/components/evals/types";
 import type { ServerWithName } from "@/state/app-types";
+import { snapshotTestModels } from "@/components/evals/helpers";
+import { isOpaqueId, mintCaseId } from "@mcpjam/sdk/contract";
 import {
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
@@ -102,7 +104,7 @@ export type SdkTestFileInput = {
 };
 
 export function normalizeEvalCaseForExport(
-  testCase: EvalCase
+  testCase: EvalCase,
 ): EvalExportCaseInput {
   return {
     id: testCase._id,
@@ -118,14 +120,14 @@ export function normalizeEvalCaseForExport(
       stripPromptTurnsFromAdvancedConfig(testCase.advancedConfig) ?? undefined,
     modelHints:
       testCase.models?.map(
-        (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`
+        (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`,
       ) ?? [],
   };
 }
 
 export function normalizeSuiteConfigTestForExport(
   test: EvalSuiteConfigTest,
-  index: number
+  index: number,
 ): EvalExportCaseInput {
   return {
     id: test.testCaseId ?? `config-test-${index + 1}`,
@@ -139,15 +141,18 @@ export function normalizeSuiteConfigTestForExport(
     promptTurns: resolveExportPromptTurns(test),
     advancedConfig:
       stripPromptTurnsFromAdvancedConfig(test.advancedConfig) ?? undefined,
-    modelHints:
-      test.provider && test.model
-        ? [`${test.provider}/${test.model}`]
-        : undefined,
+    modelHints: snapshotTestModels(test).length
+      ? snapshotTestModels(test).map(({ provider, model }) =>
+          provider && !model.startsWith(`${provider}/`)
+            ? `${provider}/${model}`
+            : model,
+        )
+      : undefined,
   };
 }
 
 export function normalizeDraftEvalCaseForExport(
-  draft: EvalExportDraftInput
+  draft: EvalExportDraftInput,
 ): EvalExportCaseInput {
   return {
     id: draft.testCaseId ?? undefined,
@@ -166,11 +171,11 @@ export function normalizeDraftEvalCaseForExport(
 
 export function pickSuiteExportCases(
   persistedCases: EvalCase[],
-  suiteRuns: EvalSuiteRun[]
+  suiteRuns: EvalSuiteRun[],
 ): EvalExportCaseInput[] {
   if (persistedCases.length > 0) {
     return persistedCases.map((testCase) =>
-      normalizeEvalCaseForExport(testCase)
+      normalizeEvalCaseForExport(testCase),
     );
   }
 
@@ -187,7 +192,7 @@ export function pickSuiteExportCases(
   }
 
   return latestRunWithTests.configSnapshot.tests.map((test, index) =>
-    normalizeSuiteConfigTestForExport(test, index)
+    normalizeSuiteConfigTestForExport(test, index),
   );
 }
 
@@ -198,20 +203,20 @@ export function buildSdkInstallSnippet(): string {
 export function buildSdkEnvSnippet(
   serverIds: string[],
   serverEntries: Record<string, ServerWithName | undefined>,
-  projectId?: string | null
+  projectId?: string | null,
 ): SdkEnvSnippetResult {
   const serverConnections = buildServerConnections(serverIds, serverEntries);
   const httpConnections = serverConnections.filter(
     (
-      connection
+      connection,
     ): connection is Extract<ExportServerConnection, { kind: "http" }> =>
-      connection.kind === "http"
+      connection.kind === "http",
   );
   const stdioConnections = serverConnections.filter(
     (
-      connection
+      connection,
     ): connection is Extract<ExportServerConnection, { kind: "stdio" }> =>
-      connection.kind === "stdio"
+      connection.kind === "stdio",
   );
 
   const lines = [
@@ -220,9 +225,14 @@ export function buildSdkEnvSnippet(
     "export LLM_API_KEY=<your-llm-api-key>",
     "# Optional: an MCPJam API key (sk_…, Settings → API keys) auto-saves results to your Evals dashboard.",
     "export MCPJAM_API_KEY=<your sk_… key>",
+    "# No provider key? Prefix the model with mcpjam/ to run it on your MCPJam",
+    "# credits instead, with MCPJAM_API_KEY as the only secret:",
+    "#   export EVAL_MODEL=mcpjam/anthropic/claude-sonnet-4.5",
     // Pin uploads to the project this export came from; without it they
     // land in the org's Default project.
-    ...(projectId ? [`export MCPJAM_PROJECT_ID=${projectId}`] : []),
+    ...(projectId
+      ? [`export MCPJAM_PROJECT_ID=${shellSingleQuote(projectId)}`]
+      : []),
   ];
 
   if (httpConnections.length > 0) {
@@ -231,7 +241,9 @@ export function buildSdkEnvSnippet(
       lines.push(
         connection.placeholder
           ? `export ${connection.envVarName}=<replace-with-server-url>`
-          : `export ${connection.envVarName}=${connection.url}`
+          : `export ${connection.envVarName}=${shellSingleQuote(
+              connection.url,
+            )}`,
       );
     }
   }
@@ -239,20 +251,21 @@ export function buildSdkEnvSnippet(
   if (stdioConnections.length > 0) {
     lines.push(
       "",
-      "# STDIO MCP servers are configured inline in the generated test file"
+      "# STDIO MCP servers are configured inline in the generated test file",
     );
     for (const connection of stdioConnections) {
       lines.push(
-        `# ${connection.serverId}: ${formatCommandDisplay(
-          connection.command,
-          connection.args
-        )}`
+        `# ${collapseToSingleLine(connection.serverId)}: ${collapseToSingleLine(
+          formatCommandDisplay(connection.command, connection.args),
+        )}`,
       );
       if (connection.envKeys.length > 0) {
         lines.push(
-          `# ${
-            connection.serverId
-          } also expects local env vars: ${connection.envKeys.join(", ")}`
+          `# ${collapseToSingleLine(
+            connection.serverId,
+          )} also expects local env vars: ${collapseToSingleLine(
+            connection.envKeys.join(", "),
+          )}`,
         );
       }
     }
@@ -261,7 +274,7 @@ export function buildSdkEnvSnippet(
   return {
     snippet: lines.join("\n"),
     usedPlaceholderFallback: serverConnections.some(
-      (connection) => connection.placeholder
+      (connection) => connection.placeholder,
     ),
     missingServerIds: serverConnections
       .filter((connection) => connection.placeholder)
@@ -276,7 +289,12 @@ export function buildSdkTestFile({
   usedPlaceholderFallback = false,
 }: SdkTestFileInput): string {
   const needsPartialArgMatching = anyTestCaseUsesPartialArgMatching(cases);
-  const sdkImports = ["  MCPClientManager,", "  TestAgent,", "  EvalTest,"];
+  // Must match the multi-turn branch in `buildCaseTestBlock` EXACTLY: that
+  // branch is the `else` of `promptTurns.length === 1`, so it also renders
+  // `ExportedTurn[]` for a case with NO turns. Guarding on `> 1` emitted the
+  // reference without its declaration (TS2304) for the empty case.
+  const needsTurnType = cases.some((c) => c.promptTurns.length !== 1);
+  const sdkImports = ["  MCPClientManager,", "  HostRunner,", "  EvalTest,"];
   if (needsPartialArgMatching) {
     sdkImports.push("  matchToolCallWithPartialArgs,");
   }
@@ -291,6 +309,19 @@ export function buildSdkTestFile({
     '  | { id: string; kind: "http"; url: string }',
     '  | { id: string; kind: "stdio"; command: string; args: string[] };',
     "",
+    // Annotated rather than `as const`: a const-asserted literal gives
+    // `expectedToolCalls.length` the LITERAL type of each turn's length, so the
+    // `expected.length === 0` guard below fails to compile (TS2367) on any case
+    // whose turns all declare the same non-zero number of calls.
+    ...(needsTurnType
+      ? [
+          "type ExportedTurn = {",
+          "  prompt: string;",
+          "  expectedToolCalls: { toolName: string; arguments: Record<string, unknown> }[];",
+          "};",
+          "",
+        ]
+      : []),
     "const SERVER_CONFIGS: ServerConnection[] = [",
     indentBlock(renderServerConnectionEntries(serverConnections), 2),
     "];",
@@ -298,17 +329,25 @@ export function buildSdkTestFile({
     "const SERVER_IDS = SERVER_CONFIGS.map((server) => server.id);",
     "const LLM_API_KEY = process.env.LLM_API_KEY!;",
     "const MODEL = process.env.EVAL_MODEL!;",
-    `const SUITE_NAME = ${JSON.stringify(suite.name || "MCPJam export")};`,
+    "// An mcpjam/… model runs on your MCPJam credits, so it takes the MCPJam",
+    "// key instead of a provider key.",
+    'const API_KEY = MODEL.startsWith("mcpjam/")',
+    "  ? process.env.MCPJAM_API_KEY!",
+    "  : LLM_API_KEY;",
+    `const SUITE_NAME = ${jsonLiteral(suite.name || "MCPJam export")};`,
   ];
 
   if (suite.description?.trim()) {
-    lines.push("", `// ${suite.description.trim()}`);
+    lines.push(
+      "",
+      ...toCommentLines(suite.description.trim()).map((line) => `// ${line}`),
+    );
   }
 
   if (usedPlaceholderFallback) {
     lines.push(
       "// Some server connection details were unavailable locally.",
-      "// Replace any placeholder values before running this file."
+      "// Replace any placeholder values before running this file.",
     );
   }
 
@@ -316,7 +355,7 @@ export function buildSdkTestFile({
     "",
     `describe(SUITE_NAME, () => {`,
     "  let manager: MCPClientManager;",
-    "  let agent: TestAgent;",
+    "  let agent: HostRunner;",
     "",
     "  beforeAll(async () => {",
     "    manager = new MCPClientManager();",
@@ -332,10 +371,10 @@ export function buildSdkTestFile({
     "    }",
     "",
     "    const tools = await manager.getToolsForAiSdk(SERVER_IDS);",
-    "    agent = new TestAgent({",
+    "    agent = new HostRunner({",
     "      tools,",
     "      model: MODEL,",
-    "      apiKey: LLM_API_KEY,",
+    "      apiKey: API_KEY,",
     "      maxSteps: 8,",
     "      mcpClientManager: manager,",
     "    });",
@@ -343,14 +382,14 @@ export function buildSdkTestFile({
     "",
     "  afterAll(async () => {",
     "    await manager.disconnectAllServers();",
-    "  }, 120_000);"
+    "  }, 120_000);",
   );
 
   if (cases.length === 0) {
     lines.push(
       "",
       "  // No saved cases were available for this suite yet.",
-      "  // Add or run cases in MCPJam, then export again."
+      "  // Add or run cases in MCPJam, then export again.",
     );
   } else {
     for (const [index, testCase] of cases.entries()) {
@@ -364,7 +403,7 @@ export function buildSdkTestFile({
 
 export function buildSuiteExportFileName(
   suiteName: string,
-  scope: "suite" | "test-case"
+  scope: "suite" | "test-case",
 ): string {
   const safeName = sanitizeFilename(suiteName || "mcpjam-export");
   return scope === "suite" ? `${safeName}.eval.test.ts` : `${safeName}.test.ts`;
@@ -377,7 +416,7 @@ export function buildAgentPromptExportFileName(suiteName: string): string {
 
 export function buildServerConnections(
   serverIds: string[],
-  serverEntries: Record<string, ServerWithName | undefined>
+  serverEntries: Record<string, ServerWithName | undefined>,
 ): ExportServerConnection[] {
   return serverIds.map((serverId) => {
     const serverEntry = serverEntries[serverId];
@@ -430,38 +469,69 @@ export function buildServerConnections(
   });
 }
 
+/**
+ * The `id` literal written into the exported file.
+ *
+ * Prefers the dashboard case's own id so the exported code-first test joins the
+ * hosted case's history. Neither branch derives an id from display text: an id
+ * derived from a title forks history on the first rename, which is exactly what
+ * a declared id exists to prevent.
+ *
+ * The fallback MINTS a fresh id rather than numbering by position. A positional
+ * id (`c_exported_3`) is order-dependent identity: export, insert a case above
+ * it, export again, and two different cases have swapped committed ids — which
+ * joins each to the other's history the moment either is uploaded. A minted id
+ * is at worst brand new, never someone else's. Validity is checked with the
+ * contract's own `isOpaqueId`, not a local regex, so this cannot drift from the
+ * rule the SDK enforces at construction.
+ */
+function exportedCaseId(testCase: EvalExportCaseInput): string {
+  const declared = testCase.id?.trim();
+  if (declared && isOpaqueId(declared)) {
+    return declared;
+  }
+  return mintCaseId();
+}
+
 function buildCaseTestBlock(
   testCase: EvalExportCaseInput,
-  index: number
+  index: number,
 ): string {
   const caseTitle = testCase.title || `Exported case ${index + 1}`;
   const promptTurns = testCase.promptTurns;
   const firstTurn = promptTurns[0];
 
   const allExpectedToolCalls = promptTurns.flatMap(
-    (turn) => turn.expectedToolCalls ?? []
+    (turn) => turn.expectedToolCalls ?? [],
   );
 
   const lines: string[] = [
     "  it(",
-    `    ${JSON.stringify(caseTitle)},`,
+    `    ${jsonLiteral(caseTitle)},`,
     "    async () => {",
   ];
 
   pushCaseComments(lines, testCase);
 
-  // Build EvalTest config
+  // Build EvalTest config.
+  //
+  // `id` is the case's declared identity and is required by the SDK. Emit the
+  // dashboard case's own id when we have it — the exported file then joins back
+  // to the same history — and mint a fresh one only for a case that never had
+  // one. Either way it is minted ONCE, into a file the user commits, so a later
+  // rename of `name` cannot fork the case.
   lines.push(
     "      const evalTest = new EvalTest({",
-    `        name: ${JSON.stringify(caseTitle)},`
+    `        id: ${jsonLiteral(exportedCaseId(testCase))},`,
+    `        name: ${jsonLiteral(caseTitle)},`,
   );
 
   if (allExpectedToolCalls.length > 0) {
     lines.push(
       `        expectedToolCalls: ${indentBlock(
-        JSON.stringify(allExpectedToolCalls, null, 2),
-        8
-      ).trimStart()},`
+        jsonLiteral(allExpectedToolCalls, 2),
+        8,
+      ).trimStart()},`,
     );
   }
 
@@ -469,36 +539,45 @@ function buildCaseTestBlock(
   if (promptTurns.length === 1 && firstTurn) {
     lines.push(
       "        test: async (agent) => {",
-      `          const result = await agent.prompt(${JSON.stringify(
-        firstTurn.prompt
-      )});`
+      `          const result = await agent.run(${jsonLiteral(
+        firstTurn.prompt,
+      )});`,
     );
     lines.push(
       `          return ${buildSingleTurnReturnExpression(
         firstTurn,
-        testCase.isNegativeTest
-      )};`
+        testCase.isNegativeTest,
+      )};`,
     );
     lines.push("        },");
   } else {
     lines.push(
       "        test: async (agent) => {",
-      "          const turns =",
-      `${indentBlock(JSON.stringify(promptTurns, null, 2), 12)} as const;`,
-      "          const results: Awaited<ReturnType<typeof agent.prompt>>[] = [];",
+      "          const turns: ExportedTurn[] =",
+      `${indentBlock(
+        jsonLiteral(
+          promptTurns.map((turn) => ({
+            prompt: turn.prompt,
+            expectedToolCalls: turn.expectedToolCalls ?? [],
+          })),
+          2,
+        ),
+        12,
+      )};`,
+      "          const results: Awaited<ReturnType<typeof agent.run>>[] = [];",
       "",
       "          for (const turn of turns) {",
-      "            const result = await agent.prompt(turn.prompt, {",
+      "            const result = await agent.run(turn.prompt, {",
       "              context: results.length > 0 ? results : undefined,",
       "            });",
       "            results.push(result);",
       "          }",
-      ""
+      "",
     );
 
     if (testCase.isNegativeTest) {
       lines.push(
-        "          return results.every((result) => result.toolsCalled().length === 0);"
+        "          return results.every((result) => result.toolsCalled().length === 0);",
       );
     } else {
       lines.push(
@@ -510,7 +589,7 @@ function buildCaseTestBlock(
         "                ? matchToolCallWithPartialArgs(tc.toolName, tc.arguments, result.getToolCalls())",
         "                : result.hasToolCall(tc.toolName),",
         "            );",
-        "          });"
+        "          });",
       );
     }
 
@@ -525,7 +604,7 @@ function buildCaseTestBlock(
     `        // Auto-saves to MCPJam when MCPJAM_API_KEY (sk_…) is set; local-only otherwise.`,
     `        mcpjam: { suiteName: SUITE_NAME },`,
     `      });`,
-    "      expect(evalTest.accuracy()).toBe(1);"
+    "      expect(evalTest.accuracy()).toBe(1);",
   );
 
   lines.push("    },", "    90_000,", "  );");
@@ -539,7 +618,7 @@ function buildSingleTurnReturnExpression(
       arguments: Record<string, any>;
     }>;
   },
-  isNegativeTest: boolean
+  isNegativeTest: boolean,
 ): string {
   if (isNegativeTest) {
     return "result.toolsCalled().length === 0";
@@ -555,12 +634,12 @@ function buildSingleTurnReturnExpression(
     const hasArgs = Object.keys(tc.arguments ?? {}).length > 0;
     if (hasArgs) {
       checks.push(
-        `matchToolCallWithPartialArgs(${JSON.stringify(
-          tc.toolName
-        )}, ${JSON.stringify(tc.arguments)}, result.getToolCalls())`
+        `matchToolCallWithPartialArgs(${jsonLiteral(
+          tc.toolName,
+        )}, ${jsonLiteral(tc.arguments)}, result.getToolCalls())`,
       );
     } else {
-      checks.push(`result.hasToolCall(${JSON.stringify(tc.toolName)})`);
+      checks.push(`result.hasToolCall(${jsonLiteral(tc.toolName)})`);
     }
   }
 
@@ -571,16 +650,89 @@ function buildSingleTurnReturnExpression(
   return `(\n            ${checks.join(" &&\n            ")}\n          )`;
 }
 
+/**
+ * Whether any case's generated body REFERENCES `matchToolCallWithPartialArgs`.
+ *
+ * This has to mirror the emission sites exactly, not approximate them — an
+ * import guard that is narrower than the code it guards emits a call with no
+ * import (TS2304), which is how a multi-turn case whose turns declare no
+ * arguments used to produce a file that could not compile.
+ *
+ * A negative case never references the matcher (it asserts no tool ran), and
+ * the MULTI-TURN branch always does — its loop keeps the partial-args ternary
+ * whether or not this particular case supplies arguments. Only the single-turn
+ * branch actually varies with the arguments present.
+ */
 function anyTestCaseUsesPartialArgMatching(
-  cases: EvalExportCaseInput[]
+  cases: EvalExportCaseInput[],
 ): boolean {
-  return cases.some((c) =>
-    c.promptTurns.some((turn) =>
+  return cases.some((testCase) => {
+    if (testCase.isNegativeTest) {
+      return false;
+    }
+    if (testCase.promptTurns.length !== 1) {
+      return true;
+    }
+    return testCase.promptTurns.some((turn) =>
       (turn.expectedToolCalls ?? []).some(
-        (tc) => Object.keys(tc.arguments ?? {}).length > 0
-      )
-    )
-  );
+        (tc) => Object.keys(tc.arguments ?? {}).length > 0,
+      ),
+    );
+  });
+}
+
+/**
+ * Per-turn state the exported file cannot evaluate.
+ *
+ * A turn carries more than `prompt` + `expectedToolCalls`: `checks` are
+ * deterministic predicates (including every ADVISORY `toolCalledWith`, which
+ * `stepsToPromptTurns` deliberately leaves as a predicate), `widgetChecks` are
+ * DOM-level, and `pinnedToolCall` marks a MODEL-FREE turn. The generated
+ * `test()` reads none of them, so they are named here rather than dropped
+ * silently — an author who sees the case pass locally needs to know what that
+ * pass did and did not cover.
+ */
+function describeUntranslatedTurnState(
+  testCase: EvalExportCaseInput,
+): string[] {
+  const notes: string[] = [];
+
+  testCase.promptTurns.forEach((turn, index) => {
+    const label = `turn ${index + 1}`;
+    for (const check of turn.checks ?? []) {
+      const role =
+        (check as { role?: string }).role === "advisory"
+          ? "advisory"
+          : "gating";
+      notes.push(
+        `  ${label}: ${role} check "${String(
+          (check as { type?: string }).type ?? "unknown",
+        )}" is NOT evaluated by this file.`,
+      );
+    }
+    for (const widgetCheck of turn.widgetChecks ?? []) {
+      notes.push(
+        `  ${label}: widget checks on "${widgetCheck.toolName}" need a hosted run; NOT evaluated here.`,
+      );
+    }
+    if (turn.pinnedToolCall) {
+      // Deliberately not "asserts nothing": a NEGATIVE case's callback is a
+      // single `results.every(... toolsCalled().length === 0)`, which covers
+      // this turn like any other. What is true in both branches is that the
+      // pinned call never runs and the turn prompts with an empty string.
+      notes.push(
+        `  ${label}: pinned (model-free) call "${turn.pinnedToolCall.toolName}" is NOT replayed; the turn sends an empty prompt and only the case's own assertions apply.`,
+      );
+    }
+  });
+
+  if (notes.length === 0) {
+    return [];
+  }
+  return [
+    "Not carried over from MCPJam — run this case in the hosted suite to cover it:",
+    ...notes,
+  ];
 }
 
 function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
@@ -593,30 +745,37 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
   }
   if (testCase.modelHints && testCase.modelHints.length > 0) {
     commentLines.push(
-      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`
+      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`,
     );
   }
+
+  commentLines.push(...describeUntranslatedTurnState(testCase));
 
   const advancedConfig = testCase.advancedConfig ?? undefined;
   if (advancedConfig && Object.keys(advancedConfig).length > 0) {
     commentLines.push(
-      "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):"
+      "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):",
     );
-    commentLines.push(...JSON.stringify(advancedConfig, null, 2).split("\n"));
+    commentLines.push(...jsonLiteral(advancedConfig, 2).split("\n"));
   }
 
   if (commentLines.length === 0) {
     return;
   }
 
-  for (const line of commentLines) {
-    lines.push(`      // ${line}`);
+  // Split here rather than at each call site: this is the ONE place a case's
+  // free-text fields reach the file, so a value that carries a line terminator
+  // cannot escape its comment no matter which field it came from.
+  for (const entry of commentLines) {
+    for (const line of toCommentLines(entry)) {
+      lines.push(`      // ${line}`);
+    }
   }
   lines.push("");
 }
 
 function renderServerConnectionEntries(
-  connections: ExportServerConnection[]
+  connections: ExportServerConnection[],
 ): string {
   const lines: string[] = [];
 
@@ -624,53 +783,115 @@ function renderServerConnectionEntries(
     if (connection.kind === "http") {
       if (connection.placeholder) {
         lines.push(
-          `// Replace the placeholder URL for ${JSON.stringify(
-            connection.serverId
-          )} with the real server URL if needed.`
+          `// Replace the placeholder URL for ${collapseToSingleLine(
+            connection.serverId,
+          )} with the real server URL if needed.`,
         );
       }
       lines.push(
         "{",
-        `  id: ${JSON.stringify(connection.serverId)},`,
+        `  id: ${jsonLiteral(connection.serverId)},`,
         '  kind: "http",',
-        `  url: process.env.${connection.envVarName} ?? ${JSON.stringify(
-          connection.url
+        `  url: process.env.${connection.envVarName} ?? ${jsonLiteral(
+          connection.url,
         )},`,
-        "},"
+        "},",
       );
       continue;
     }
 
     lines.push(
-      `// ${JSON.stringify(
-        connection.serverId
-      )} runs over stdio: ${formatCommandDisplay(
-        connection.command,
-        connection.args
-      )}`
+      `// ${collapseToSingleLine(
+        connection.serverId,
+      )} runs over stdio: ${collapseToSingleLine(
+        formatCommandDisplay(connection.command, connection.args),
+      )}`,
     );
     if (connection.envKeys.length > 0) {
       lines.push(
-        `// Add any required local env vars before running: ${connection.envKeys.join(
-          ", "
-        )}`
+        `// Add any required local env vars before running: ${collapseToSingleLine(
+          connection.envKeys.join(", "),
+        )}`,
       );
     }
     lines.push(
       "{",
-      `  id: ${JSON.stringify(connection.serverId)},`,
+      `  id: ${jsonLiteral(connection.serverId)},`,
       '  kind: "stdio",',
-      `  command: ${JSON.stringify(connection.command)},`,
-      `  args: ${JSON.stringify(connection.args)},`,
-      "},"
+      `  command: ${jsonLiteral(connection.command)},`,
+      `  args: ${jsonLiteral(connection.args)},`,
+      "},",
     );
   }
 
   return lines.join("\n");
 }
 
+/**
+ * `JSON.stringify` for a value that becomes part of the GENERATED SOURCE.
+ *
+ * `JSON.stringify` escapes CR and LF but leaves U+2028 / U+2029 as raw
+ * characters, because the JSON spec permits them in a string. JavaScript does
+ * not: they terminate a line. Inside a `//` comment that ends the comment, and
+ * in a string literal it is only legal from ES2019 on — the exported file is
+ * compiled under the AUTHOR's tsconfig, not ours, so an older target breaks on
+ * it. Escaping them here keeps both cases sound whatever the value contains.
+ */
+function jsonLiteral(value: unknown, indent?: number): string {
+  return JSON.stringify(value, null, indent)
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/**
+ * Every line terminator JavaScript recognizes.
+ *
+ * U+2028 / U+2029 belong here beside CR and LF: both end a line in JS source,
+ * and `JSON.stringify` does NOT escape them, so a value that survived
+ * serialization can still terminate a comment.
+ */
+const LINE_TERMINATORS = /[\r\n\u2028\u2029]/;
+
+/**
+ * Split a value into physical lines so the caller can prefix each one as its
+ * own comment.
+ *
+ * A `//` (or shell `#`) comment ends at the first line terminator, so an
+ * interpolated value carrying one does not merely garble the comment — the
+ * remainder becomes executable code in a file the author is about to run. Case
+ * titles, scenarios, and tool names all originate outside this codebase (an
+ * MCP server names its own tools), so none of them may be pasted into a
+ * comment whole. Splitting rather than escaping keeps genuinely multi-line
+ * prose readable, which is the common case.
+ */
+function toCommentLines(value: unknown): string[] {
+  return String(value).split(LINE_TERMINATORS);
+}
+
+/**
+ * Quote a value for a POSIX shell so the shell treats it as literal text.
+ *
+ * Collapsing line terminators is not enough on its own: this snippet is meant
+ * to be COPIED INTO A TERMINAL, so an unquoted `$(...)`, backtick, `;` or `&`
+ * in a saved server URL runs as a command the moment it is pasted. Single
+ * quotes suppress every expansion, and the `'\''` dance is the standard way
+ * to carry a literal single quote through them.
+ */
+function shellSingleQuote(value: string): string {
+  return `'${collapseToSingleLine(value).replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Flatten a value onto ONE line, for places that cannot span lines — a shell
+ * `export VAR=value`, where a newline would not comment out but would run as
+ * the next command.
+ */
+function collapseToSingleLine(value: string): string {
+  return value.split(LINE_TERMINATORS).join(" ");
+}
+
 function normalizeOptionalString(
-  value: string | undefined
+  value: string | undefined,
 ): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;

@@ -40,6 +40,7 @@ import {
   getEffectiveSuiteServers,
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
+import { EvalsHeader } from "./evals/evals-header";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -61,6 +62,7 @@ import {
   type CreateSuitePayload,
 } from "./evals/create-suite-dialog";
 import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
+import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import { track } from "@/lib/analytics";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -78,6 +80,10 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
+import {
+  CI_OWNED_REASON_COPY,
+  isCiOwnedSuite,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -86,7 +92,7 @@ interface EvalsTabProps {
   projectId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   handleConnect?: (config: ServerFormData) => void;
 }
@@ -158,7 +164,7 @@ function EvalsTabContent({
     organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
@@ -172,7 +178,7 @@ function EvalsTabContent({
   });
   const evalRunsDisabledReason = useMemo(
     () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
-    [evalIterationQuota]
+    [evalIterationQuota],
   );
   const { servers: projectServers = [] } = useProjectServers({
     isAuthenticated,
@@ -181,12 +187,18 @@ function EvalsTabContent({
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
   const createServerAttachmentMutation = useMutation(
-    "serverAttachments:createServerAttachment" as any
+    "serverAttachments:createServerAttachment" as any,
   ) as unknown as (args: {
     projectId: string;
     name: string;
     serverIds: string[];
   }) => Promise<{ _id: string }>;
+  const setSuiteEnvironments = useMutation(
+    "testSuites:setSuiteEnvironments" as any,
+  ) as unknown as (args: {
+    suiteId: string;
+    environmentIds: string[] | null;
+  }) => Promise<unknown>;
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -226,9 +238,12 @@ function EvalsTabContent({
   const latestRunBySuiteId = useMemo(
     () =>
       new Map(
-        visibleSuites.map((entry) => [entry.suite._id, entry.latestRun ?? null])
+        visibleSuites.map((entry) => [
+          entry.suite._id,
+          entry.latestRun ?? null,
+        ]),
       ),
-    [visibleSuites]
+    [visibleSuites],
   );
 
   const handlers = useEvalHandlers({
@@ -237,6 +252,7 @@ function EvalsTabContent({
     selectedSuiteId,
     selectedTestId,
     projectId: projectId ?? null,
+    organizationId,
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
@@ -256,9 +272,24 @@ function EvalsTabContent({
     if (!evalRunsDisabledReason) {
       return true;
     }
+    // The user just clicked Run — highest-intent moment there is. Give them a
+    // decision surface instead of a dismissible error. Falls back to the
+    // toast when we can't resolve the org (nothing to upgrade).
+    if (organizationId && evalIterationQuota) {
+      usePlanLimitDialogStore.getState().open({
+        kind: "evalIterations",
+        organizationId,
+        used: evalIterationQuota.used,
+        allowed: evalIterationQuota.allowed,
+        resetsAt: evalIterationQuota.resetsAt,
+        windowKind: evalIterationQuota.windowKind,
+        origin: "evals",
+      });
+      return false;
+    }
     toast.error(evalRunsDisabledReason);
     return false;
-  }, [evalRunsDisabledReason]);
+  }, [evalIterationQuota, evalRunsDisabledReason, organizationId]);
 
   const handleRerunWithQuota = useCallback(
     (...args: Parameters<typeof handlers.handleRerun>) => {
@@ -267,7 +298,7 @@ function EvalsTabContent({
       }
       return handlers.handleRerun(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const handleRunTestCaseWithQuota = useCallback(
@@ -277,7 +308,7 @@ function EvalsTabContent({
       }
       return handlers.handleRunTestCase(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const queries = useEvalQueries({
@@ -300,12 +331,12 @@ function EvalsTabContent({
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      activeIterations
+      activeIterations,
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
-    []
+    [],
   );
 
   useEffect(() => {
@@ -340,11 +371,14 @@ function EvalsTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
-    const mostRecent = sortSuiteOverviewEntries(visibleSuites, "recently_run")[0];
+    const mostRecent = sortSuiteOverviewEntries(
+      visibleSuites,
+      "recently_run",
+    )[0];
     if (mostRecent) {
       navigatePlaygroundEvalsRoute(
         { type: "suite-overview", suiteId: mostRecent.suite._id },
-        { replace: true }
+        { replace: true },
       );
     }
   }, [route.type, overviewQueries.isOverviewLoading, visibleSuites]);
@@ -390,7 +424,7 @@ function EvalsTabContent({
     const match = visibleSuites.find(
       (entry) =>
         isQuickstartSuite(entry.suite) ||
-        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME
+        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
     );
     return match?.suite._id ?? null;
   }, [visibleSuites]);
@@ -466,6 +500,27 @@ function EvalsTabContent({
           throw new Error("Suite was created without an id");
         }
 
+        // `createTestSuite` cannot take environments, so a suite born in
+        // environment mode needs a second call. The dialog already resolved
+        // these ids and sent the matching clients as legacy rollback data, so a
+        // failure here leaves a runnable legacy suite the header can convert —
+        // worth a toast, not worth discarding the suite.
+        if (payload.environmentIds && payload.environmentIds.length > 0) {
+          try {
+            await setSuiteEnvironments({
+              suiteId: createdSuite._id,
+              environmentIds: payload.environmentIds,
+            });
+          } catch (error) {
+            toast.error(
+              getBillingErrorMessage(
+                error,
+                "Suite created, but attaching its environments failed",
+              ),
+            );
+          }
+        }
+
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -476,7 +531,7 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId]
+    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
@@ -528,7 +583,7 @@ function EvalsTabContent({
         ...(generationOptions ? { generationOptions } : {}),
       });
     },
-    [handlers]
+    [handlers],
   );
 
   const handleGenerateMore = useCallback(async () => {
@@ -549,7 +604,7 @@ function EvalsTabContent({
     }
 
     const missingServers = suiteServers.filter(
-      (serverName) => !connectedServerNames.has(serverName)
+      (serverName) => !connectedServerNames.has(serverName),
     );
     if (missingServers.length > 0) {
       if (ensureServersReady) {
@@ -562,7 +617,7 @@ function EvalsTabContent({
       return {
         canGenerate: false,
         disabledReason: `Connect ${missingServers.join(
-          ", "
+          ", ",
         )} to generate cases for this suite.`,
       };
     }
@@ -578,7 +633,7 @@ function EvalsTabContent({
   // The evals tool group + this screen's command handlers and snapshot.
   // Lives HERE, in the surface component, and NEVER in use-eval-handlers or
   // any hook CiEvalsTab also mounts — a shared-hook bridge would register
-  // the evals group under the wrong surface on /ci-evals (see
+  // the evals group under the wrong surface on Runs mode (see
   // use-surface-agent-bridge's contract). Handlers reuse the EXACT callbacks
   // the buttons use: the quota-gated run wrapper, handleCancelRun,
   // setSuiteToDelete → confirmDelete, and generateTestsForSuite.
@@ -612,7 +667,18 @@ function EvalsTabContent({
   // Exact (case-insensitive) matches only against the loaded overview: the
   // suite id, the stored name, or the switcher's display name (timestamp
   // suffix stripped). Unknown or ambiguous → invalid_request, never a guess.
-  const resolveSuiteEntry = (raw: unknown): EvalSuiteOverviewEntry => {
+  // `intent` IS REQUIRED, deliberately with no default, so a command cannot be
+  // added without deciding. An agent command is a second door into the same
+  // mutations the buttons call, and it passes none of the rendered controls
+  // the CI-owned lock lives in. `"edit_config"` writes the configuration the
+  // suite file (or SDK report) owns — `case.create` (generate) is in the
+  // platform's locked set. `"lifecycle"` covers running, cancelling and
+  // deleting: none edits what the suite is, so all three stay available on a
+  // CI-owned suite (issue #5381).
+  const resolveSuiteEntry = (
+    raw: unknown,
+    intent: "edit_config" | "lifecycle",
+  ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
@@ -630,7 +696,14 @@ function EvalsTabContent({
       );
     });
     if (matches.length === 1) {
-      return matches[0];
+      const entry = matches[0];
+      if (intent === "edit_config" && isCiOwnedSuite(entry.suite)) {
+        throw createInspectorCommandClientError(
+          "invalid_request",
+          `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running and deleting it are still available.`,
+        );
+      }
+      return entry;
     }
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
@@ -672,7 +745,7 @@ function EvalsTabContent({
     // The runs list displays formatRunId's shortened form; accept it when
     // it identifies exactly one visible run.
     const short = [...runsById.values()].filter(
-      (run) => formatRunId(run._id) === wanted
+      (run) => formatRunId(run._id) === wanted,
     );
     if (short.length === 1) {
       return short[0];
@@ -713,7 +786,7 @@ function EvalsTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -766,7 +839,7 @@ function EvalsTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "edit_config");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -802,7 +875,7 @@ function EvalsTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -903,25 +976,20 @@ function EvalsTabContent({
         testCaseIds.map(async (id) => {
           await directDeleteTestCase(id);
           return id;
-        })
+        }),
       );
       const deletedIds = new Set(
         settledDeletes.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : []
-        )
+          result.status === "fulfilled" ? [result.value] : [],
+        ),
       );
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected"
+          result.status === "rejected",
       );
 
       if (failedDeletes.length > 0) {
         console.error("Failed to delete some test cases:", failedDeletes);
-        toast.error(
-          `Failed to delete ${failedDeletes.length} test case${
-            failedDeletes.length === 1 ? "" : "s"
-          }.`
-        );
       }
 
       if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
@@ -931,11 +999,23 @@ function EvalsTabContent({
             suiteId: selectedSuiteId,
             view: "test-cases",
           },
-          { replace: true }
+          { replace: true },
+        );
+      }
+
+      // Resolving has to mean "every id is gone". Callers report the outcome
+      // — a success toast, closing the confirm, leaving the case editor — and
+      // `allSettled` swallowing the rejection told all of them the delete had
+      // worked while the case was still there.
+      if (failedDeletes.length > 0) {
+        throw new Error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
         );
       }
     },
-    [directDeleteTestCase, selectedSuiteId, selectedTestId]
+    [directDeleteTestCase, selectedSuiteId, selectedTestId],
   );
 
   const hasDetailRoute =
@@ -967,7 +1047,8 @@ function EvalsTabContent({
               currentSuiteId={selectedSuite._id}
               onSelectSuite={handleSelectSuite}
               onCreateSuite={handleOpenCreateSuite}
-              onDeleteSuite={canDeleteSuite ? handlers.handleDelete : undefined}
+              onDeleteSuite={handlers.handleDelete}
+              canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
             />
           </BreadcrumbItem>
           <BreadcrumbSeparator />
@@ -1060,16 +1141,8 @@ function EvalsTabContent({
     }
 
     if (hasDetailRoute) {
-      const breadcrumb = renderPlaygroundBreadcrumb();
       return (
         <div className="flex h-full min-h-0 flex-col">
-          {breadcrumb ? (
-            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-                {breadcrumb}
-              </div>
-            </div>
-          ) : null}
           {queries.isSuiteDetailsLoading ? (
             <div className="flex min-h-0 flex-1 items-center justify-center">
               <div className="text-center">
@@ -1104,6 +1177,7 @@ function EvalsTabContent({
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
         <SuiteIterationsView
+          organizationId={organizationId}
           isDirectGuest={isDirectGuest}
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
@@ -1113,6 +1187,18 @@ function EvalsTabContent({
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
           aggregate={suiteAggregate}
+          /*
+           * The suite's configuration lives in a repository (a committed suite
+           * file, or SDK ingest), so this surface offers no edits for it.
+           *
+           * Read from the SUITE ROW, which this page already holds. The
+           * backend's own answer (`getSuiteCapabilities.ownership`) is ORed in
+           * inside `SuiteIterationsView`, which is where capabilities are read
+           * — and is absent on a deployment that predates the lock, which is
+           * exactly why this row-derived answer has to exist too.
+           */
+          configLocked={isCiOwnedSuite(selectedSuite)}
+          onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
             playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {
@@ -1132,7 +1218,7 @@ function EvalsTabContent({
           onDeleteRun={handlers.handleDeleteRun}
           onDirectDeleteRun={handlers.directDeleteRun}
           connectedServerNames={connectedServerNames}
-          canDeleteSuite={canDeleteSuite}
+          canDeleteSuite={canDeleteArtifact(selectedSuite.createdBy)}
           rerunningSuiteId={rerunningSuiteId}
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
@@ -1144,6 +1230,7 @@ function EvalsTabContent({
           navigation={playgroundNavigation}
           onContinueInChat={onContinueInChat}
           canDeleteRuns={canDeleteRuns}
+          canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
           hideRunActions
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
@@ -1155,7 +1242,7 @@ function EvalsTabContent({
                 {
                   location: "test_cases_overview",
                   iterationOverride: opts?.iterationOverride,
-                }
+                },
               );
               const firstIterationId =
                 data?.iteration?._id ??
@@ -1168,7 +1255,7 @@ function EvalsTabContent({
                   {
                     openCompare: true,
                     iteration: firstIterationId,
-                  }
+                  },
                 );
               }
             })();
@@ -1190,6 +1277,9 @@ function EvalsTabContent({
       user={user}
       projectId={projectId}
       isDirectGuest={isDirectGuest}
+      header={
+        <EvalsHeader mode="suites">{renderPlaygroundBreadcrumb()}</EvalsHeader>
+      }
     >
       <>
         <CreateSuiteDialog

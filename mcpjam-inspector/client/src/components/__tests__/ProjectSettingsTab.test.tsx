@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "@/state/app-types";
@@ -26,6 +26,14 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+// The Secrets section is a sibling, not what these tests are about. Stubbed at
+// the component boundary rather than by widening the `convex/react` mock: it
+// reads a live query and drives three actions, and teaching this file about all
+// four would make it a test of the secrets surface by accident.
+vi.mock("@/components/project/ProjectSecretsSection", () => ({
+  ProjectSecretsSection: () => <div />,
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { email: "admin@example.com" } }),
 }));
@@ -38,9 +46,6 @@ vi.mock("@/hooks/useProjects", () => ({
 // test — stub them to keep the render focused and dependency-free.
 vi.mock("../setting/AccountApiKeySection", () => ({
   AccountApiKeySection: () => <div data-testid="api-key-section" />,
-}));
-vi.mock("../setting/ProjectSlackIntegrationSection", () => ({
-  ProjectSlackIntegrationSection: () => <div data-testid="slack-section" />,
 }));
 vi.mock("../project/ProjectMembersFacepile", () => ({
   ProjectMembersFacepile: () => <div data-testid="facepile" />,
@@ -92,6 +97,10 @@ function renderTab(props?: {
       onNavigateAway={vi.fn()}
     />,
   );
+  const toggle = screen.queryByRole("button", {
+    name: "XAA test identity defaults",
+  });
+  if (toggle) fireEvent.click(toggle);
   return { onUpdateProject };
 }
 
@@ -104,17 +113,33 @@ describe("ProjectSettingsTab — XAA test identity defaults", () => {
     ];
   });
 
+  it("keeps membership off General and starts identity defaults collapsed", () => {
+    render(
+      <ProjectSettingsTab
+        activeProjectId="projectaaaaaaaaa"
+        project={makeProject()}
+        convexProjectId="projectaaaaaaaaa"
+        projectServers={{}}
+        onUpdateProject={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onProjectShared={vi.fn()}
+        onNavigateAway={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("facepile")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "XAA test identity defaults" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Subject (sub)")).not.toBeInTheDocument();
+  });
+
   it("saves an atomic identity pair through onUpdateProject", async () => {
     const user = userEvent.setup();
     const { onUpdateProject } = renderTab();
 
-    expect(
-      screen.getByText("XAA test identity defaults"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("XAA test identity defaults")).toBeInTheDocument();
     // Fixed issuer — the MCPJam test IdP, never enterprise SSO.
-    expect(
-      screen.getByText(/Identity provider: MCPJam test IdP/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/MCPJam Test IdP/)).toBeInTheDocument();
     expect(
       screen.getByText(
         /Used when an authenticated project member connects without a server override/,

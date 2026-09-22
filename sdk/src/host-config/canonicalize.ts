@@ -1,12 +1,17 @@
 /**
  * HostConfig v2 canonicalizer — pure, browser-safe, byte-stable.
  *
- * SOURCE OF TRUTH (hand-mirrored by `convex/lib/hostConfigV2.ts`). Stable key
- * ordering matters for hash stability across runtimes: we JSON.stringify the
- * canonical object; Object.keys preserves insertion order, so we build output
- * with a fixed key order rather than spreading user input. Any behavior change
- * here must be mirrored in the backend in lockstep and the parity fixtures
- * regenerated (see `./types.ts` header).
+ * SOURCE OF TRUTH — and the ONLY implementation: `convex/lib/hostConfigV2.ts`
+ * imports this function rather than mirroring it (mcpjam-backend PR #409).
+ *
+ * Stable key ordering matters for hash stability across runtimes: we
+ * JSON.stringify the canonical object; Object.keys preserves insertion order,
+ * so we build output with a fixed key order rather than spreading user input.
+ * Adding a new OPTIONAL field is safe for existing hashes as long as it is
+ * omitted when absent — the golden vectors in
+ * `sdk/tests/host-config-parity.test.ts` prove it and must keep passing
+ * WITHOUT regeneration. See the `./types.ts` header for the backend
+ * persistence caveat.
  */
 
 import {
@@ -19,13 +24,31 @@ import {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
+  OAUTH_AUTH_MODELS,
+  OAUTH_PROFILE_EVIDENCE_STATUSES,
+  OAUTH_SCOPE_REQUEST_MODES,
+  OAUTH_TOKEN_ENDPOINT_AUTH_METHODS,
+  MRTR_SUPPORT_MODES,
+  PAGINATION_TRAVERSAL_MODES,
   SEP_1865_PERMISSION_FEATURES,
+  TOOL_PARAM_HEADER_MIRRORING_MODES,
+  type CanonicalHostConfigBrowserToolPolicy,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
   type HostConfigComputer,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
+  type HostConfigOAuthProfile,
+  type HostConfigOAuthProfileV1,
+  type HostConfigOAuthProfileV2,
+  type OAuthAuthModel,
+  type OAuthDcrIdentity,
+  type OAuthProfileEvidence,
+  type OAuthProtocolVersionPinning,
+  type OAuthScopeRequest,
+  type OAuthSpecVersionClaim,
+  type OAuthTokenEndpointAuthMethod,
   type McpAppsCapabilities,
   type McpToolResultBlobVisibility,
   type McpToolResultImageRenderingPolicy,
@@ -80,9 +103,14 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "sandboxPermissions",
   "cspFrameDomains",
   "cspBaseUriDomains",
+  "cspConnectDomains",
+  "cspResourceDomains",
+  "resourceCacheTtl",
+  "toolResult",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
+  "safeAreaInsets",
   "widgetDisplayModeRequests",
 ] as const satisfies ReadonlyArray<keyof McpAppsCapabilities>;
 
@@ -410,6 +438,140 @@ function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
   return Array.from(seen).sort();
 }
 
+// Allowed keys on browserToolPolicy, PER MODE, and the closed set of modes.
+// Explicit construction below keeps stray keys out of the canonical JSON;
+// these sets make a stray key a loud error rather than a silent drop (the
+// `computer` precedent), and the split by mode is the `skillSelection`
+// precedent one function down.
+//
+// `toolAllowlist` is mode-specific because its only two readers both gate on
+// `mode === "allowlist"`: in any other mode it changes nothing a run does.
+// Hashing an inert field would give two configs that behave identically two
+// different identities — and dropping it silently would let an author believe
+// they had narrowed a policy that in fact permits everything. `originAllowlist`
+// is NOT mode-specific: it gates navigation in every mode.
+const BROWSER_TOOL_POLICY_BASE_KEYS = ["mode", "originAllowlist"] as const;
+const BROWSER_TOOL_POLICY_KEYS_BY_MODE: Record<string, ReadonlySet<string>> = {
+  allow_all: new Set(BROWSER_TOOL_POLICY_BASE_KEYS),
+  read_only: new Set(BROWSER_TOOL_POLICY_BASE_KEYS),
+  allowlist: new Set([...BROWSER_TOOL_POLICY_BASE_KEYS, "toolAllowlist"]),
+};
+const BROWSER_TOOL_POLICY_KEYS = new Set([
+  ...BROWSER_TOOL_POLICY_BASE_KEYS,
+  "toolAllowlist",
+]);
+const BROWSER_TOOL_POLICY_MODES = new Set([
+  "allow_all",
+  "read_only",
+  "allowlist",
+]);
+
+// Canonicalize one of the policy's allowlists as a SET of trimmed entries.
+//
+// Trimming (unlike builtInToolIds, which preserves ids verbatim) is right here
+// because these are matched by VALUE at runtime: `"example.com "` never
+// matches any origin, so a stored-verbatim entry is a rule that silently does
+// nothing. Normalizing it is the difference between an allowlist that works
+// and one that reads as though it does. Absent OR empty collapses to undefined
+// so the key is dropped, keeping "no allowlist" a single canonical shape.
+function canonicalizeBrowserAllowlist(
+  value: unknown,
+  field: string
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`hostConfigV2: browserToolPolicy.${field} must be a string[]`);
+  }
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${field} entries must be strings`
+      );
+    }
+    const trimmed = entry.trim();
+    if (trimmed === "") {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${field} entries must be non-empty strings`
+      );
+    }
+    seen.add(trimmed);
+  }
+  if (seen.size === 0) return undefined;
+  return Array.from(seen).sort();
+}
+
+// Canonicalize the unattended browser tool policy.
+//
+// This field is HASHED, which is the whole point of teaching the canonicalizer
+// about it: a canonicalizer that does not know a field drops it, and a dropped
+// field means editing the policy leaves the content hash unchanged — so the
+// edited config dedupes onto the old row, and a frozen/pinned config keeps the
+// old policy forever, with nothing anywhere saying so.
+//
+// Order does not survive (both allowlists are sets), key order does not
+// survive (the shape is rebuilt explicitly), but the VALUES do: two policies
+// that permit different things must hash differently.
+function canonicalizeBrowserToolPolicy(
+  value: unknown
+): CanonicalHostConfigBrowserToolPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: browserToolPolicy must be a plain object or null"
+    );
+  }
+  for (const key of Object.keys(value)) {
+    if (!BROWSER_TOOL_POLICY_KEYS.has(key)) {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy has unknown key "${key}"`
+      );
+    }
+  }
+  const mode = value.mode;
+  if (typeof mode !== "string" || !BROWSER_TOOL_POLICY_MODES.has(mode)) {
+    throw new Error(
+      `hostConfigV2: browserToolPolicy.mode must be one of ${Array.from(
+        BROWSER_TOOL_POLICY_MODES
+      )
+        .map((m) => `"${m}"`)
+        .join(", ")}`
+    );
+  }
+  const allowedForMode = BROWSER_TOOL_POLICY_KEYS_BY_MODE[mode]!;
+  for (const key of Object.keys(value)) {
+    if (!allowedForMode.has(key)) {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${key} is only meaningful with mode ` +
+          `"allowlist", not "${mode}"`
+      );
+    }
+  }
+  const originAllowlist = canonicalizeBrowserAllowlist(
+    value.originAllowlist,
+    "originAllowlist"
+  );
+  const toolAllowlist = canonicalizeBrowserAllowlist(
+    value.toolAllowlist,
+    "toolAllowlist"
+  );
+  // An `allowlist` mode naming nothing would mean "everything" — the opposite
+  // of what an allowlist says. Refuse it here rather than let a run inherit
+  // the widest possible policy from an empty one. (The inspector's parser
+  // reaches the same verdict at read time; this stops it being written.)
+  if (mode === "allowlist" && !originAllowlist && !toolAllowlist) {
+    throw new Error(
+      "hostConfigV2: browserToolPolicy mode \"allowlist\" needs a non-empty " +
+        "originAllowlist or toolAllowlist"
+    );
+  }
+  return {
+    mode: mode as CanonicalHostConfigBrowserToolPolicy["mode"],
+    ...(originAllowlist ? { originAllowlist } : {}),
+    ...(toolAllowlist ? { toolAllowlist } : {}),
+  };
+}
+
 // Allowed keys per skillSelection mode. Explicit construction below keeps
 // stray keys out of the canonical JSON; these sets make a stray key a loud
 // error instead of a silent drop (the `computer` precedent).
@@ -458,7 +620,7 @@ function canonicalizeSkillSelection(
     const skillIds = record.skillIds;
     if (!Array.isArray(skillIds)) {
       throw new Error(
-        "hostConfigV2: skillSelection.skillIds must be a string[] when mode is \"explicit\""
+        'hostConfigV2: skillSelection.skillIds must be a string[] when mode is "explicit"'
       );
     }
     const seen = new Set<string>();
@@ -497,6 +659,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   // or `null` (Object.create(null)).
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
+}
+
+function canonicalBooleanCapabilityRecord(
+  path: string,
+  value: unknown,
+  allowedKeys: readonly string[]
+): Record<string, boolean> {
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${path} must be a plain object`);
+  }
+  const out: Record<string, boolean> = {};
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.includes(key)) {
+      throw new Error(`hostConfigV2: ${path} has unknown key "${key}"`);
+    }
+    if (typeof value[key] !== "boolean") {
+      throw new Error(`hostConfigV2: ${path}.${key} must be a boolean`);
+    }
+  }
+  for (const key of allowedKeys) {
+    if (value[key] !== undefined) out[key] = value[key] as boolean;
+  }
+  return out;
 }
 
 // Canonicalize a CSP domain list as a SET: trim, drop empty, dedupe, sort.
@@ -672,17 +857,75 @@ function canonicalizeMcpProfile(
 
   const out: HostConfigMcpProfileV1 = { profileVersion: 1 };
 
-  // Host-default pinned MCP protocol version. Absent → SDK chooses at resolve
-  // time; we drop the field when absent so pre-feature rows hash identically.
+  // Host-default protocol selection. `auto` is a storage-only policy; concrete
+  // values are wire pins. Absent stays accepted for legacy rows.
   if (input.mcpProtocolVersion !== undefined) {
-    if (!isKnownProtocolVersion(input.mcpProtocolVersion)) {
+    if (
+      input.mcpProtocolVersion !== "auto" &&
+      !isKnownProtocolVersion(input.mcpProtocolVersion)
+    ) {
       throw new Error(
-        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(
+        `hostConfigV2: mcpProfile.mcpProtocolVersion must be "auto" or one of ${MCP_PROTOCOL_VERSIONS.join(
           ", "
         )} (got "${String(input.mcpProtocolVersion)}")`
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
+  }
+
+  // SEP-2243 `Mcp-Param-*` mirroring policy for the simulated client. Same
+  // omit-when-absent discipline as the pin above: absent → the SDK mirrors
+  // (spec-conforming), and pre-feature rows keep hashing identically.
+  if (input.toolParamHeaderMirroring !== undefined) {
+    if (
+      !TOOL_PARAM_HEADER_MIRRORING_MODES.includes(
+        input.toolParamHeaderMirroring as (typeof TOOL_PARAM_HEADER_MIRRORING_MODES)[number]
+      )
+    ) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.toolParamHeaderMirroring must be one of ${TOOL_PARAM_HEADER_MIRRORING_MODES.join(
+          ", "
+        )} (got "${String(input.toolParamHeaderMirroring)}")`
+      );
+    }
+    out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
+  }
+
+  // Nested boolean record like `toolListChanged` below, one leaf per era: a
+  // host can cancel on 2025 and not on 2026. Absent per leaf is the conforming
+  // answer, so only an explicit `false` is emitted, and a malformed value is
+  // rejected rather than coerced — the backend validates this field the same
+  // way, and a coerced value would hash differently on the two sides.
+  if (input.toolCallCancellation !== undefined) {
+    const cancellation = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolCallCancellation",
+      input.toolCallCancellation,
+      ["legacy", "modern"]
+    );
+    if (Object.keys(cancellation).length > 0) {
+      out.toolCallCancellation = cancellation;
+    }
+  }
+
+  // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
+  // omit-when-absent discipline: absent → spec-conforming, hashes stable.
+  // One validation loop; the top-level re-key below sorts every emitted
+  // field into canonical position.
+  const conformanceKnobs = [
+    ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
+    ["mrtrSupport", MRTR_SUPPORT_MODES],
+  ] as const;
+  for (const [key, modes] of conformanceKnobs) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!(modes as readonly string[]).includes(value as string)) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.${key} must be one of ${modes.join(
+          ", "
+        )} (got "${String(value)}")`
+      );
+    }
+    (out as Record<string, unknown>)[key] = value;
   }
 
   if (input.initialize !== undefined) {
@@ -756,13 +999,27 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // Cross-field rule (Option A): when `mcpProtocolVersion` pins a stateful
-  // (pre-2026) version, the legacy `initialize` handshake runs and must
-  // advertise that exact version. Derive when caller didn't set one; throw if
-  // they set both AND the pin isn't in the list. Stateless versions skip
-  // initialize entirely, so leave `supportedProtocolVersions` alone there.
+  // Sibling to the enum-typed conformance knobs above, but a nested boolean
+  // record (two independently-measured facts) rather than a mode string.
+  // Same omit-when-absent discipline: absent -> spec-conforming, hashes
+  // stable.
+  if (input.toolListChanged !== undefined) {
+    const listChanged = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolListChanged",
+      input.toolListChanged,
+      ["listens", "refetches"]
+    );
+    if (Object.keys(listChanged).length > 0) {
+      out.toolListChanged = listChanged;
+    }
+  }
+
+  // A legacy pin must be one of the versions accepted by initialize. Derive a
+  // missing list because initialize needs one. Modern pins use server/discover
+  // and are deliberately separate from the legacy initialize accept-list.
   if (
     out.mcpProtocolVersion !== undefined &&
+    out.mcpProtocolVersion !== "auto" &&
     !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
@@ -919,6 +1176,21 @@ function canonicalizeMcpProfile(
           )[k];
         }
         sandboxOut.permissions = sortedPerms;
+      }
+
+      if (
+        (sandboxIn as { browserStorage?: unknown }).browserStorage !== undefined
+      ) {
+        const browserStorage = canonicalBooleanCapabilityRecord(
+          "mcpProfile.apps.sandbox.browserStorage",
+          (sandboxIn as { browserStorage?: unknown }).browserStorage,
+          ["localStorage", "sessionStorage", "indexedDB"]
+        );
+        if (Object.keys(browserStorage).length > 0) {
+          (
+            sandboxOut as { browserStorage?: Record<string, boolean> }
+          ).browserStorage = browserStorage;
+        }
       }
 
       if (
@@ -1129,6 +1401,70 @@ function canonicalizeMcpProfile(
             MCP_APPS_DISPLAY_MODE_VALUES.filter((m) =>
               seen.has(m)
             ) as McpAppsCapabilities["availableDisplayModes"];
+        } else if (key === "cspConnectDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspConnectDomains",
+            value,
+            ["fetch", "xhr", "websocket"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspConnectDomains = domains;
+          }
+        } else if (key === "cspResourceDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspResourceDomains",
+            value,
+            ["script", "stylesheet", "image", "font", "media"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
+        } else if (key === "toolResult") {
+          // Two levels: a flat `structuredContent` boolean and a nested
+          // `content` record of ContentBlock kinds. Both collapse to absent
+          // when empty so a probe that measured nothing hashes identically
+          // to a config that never mentioned the field.
+          if (!isPlainObject(value)) {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult must be a plain object"
+            );
+          }
+          for (const k of Object.keys(value)) {
+            if (k !== "structuredContent" && k !== "content") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult has unknown key "${k}"`
+              );
+            }
+          }
+          const toolResultOut: NonNullable<McpAppsCapabilities["toolResult"]> =
+            {};
+          if (value.structuredContent !== undefined) {
+            if (typeof value.structuredContent !== "boolean") {
+              throw new Error(
+                "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent must be a boolean"
+              );
+            }
+            toolResultOut.structuredContent = value.structuredContent;
+          }
+          if (value.content !== undefined) {
+            const content = canonicalBooleanCapabilityRecord(
+              "mcpProfile.apps.mcpAppsOverrides.toolResult.content",
+              value.content,
+              ["text", "image", "audio", "resource", "resourceLink"]
+            );
+            if (Object.keys(content).length > 0) {
+              toolResultOut.content = content;
+            }
+          }
+          if (Object.keys(toolResultOut).length > 0) {
+            const sortedToolResult = {} as typeof toolResultOut;
+            for (const k of Object.keys(toolResultOut).sort()) {
+              (sortedToolResult as Record<string, unknown>)[k] = (
+                toolResultOut as Record<string, unknown>
+              )[k];
+            }
+            mcpAppsOverridesOut.toolResult = sortedToolResult;
+          }
         } else if (key === "widgetDisplayModeRequests") {
           if (
             typeof value !== "string" ||
@@ -1197,6 +1533,776 @@ function canonicalizeMcpProfile(
 // - Validates all keys are in serverIds ∪ optionalServerIds.
 // - Strips entries that carry no information.
 // - Returns undefined when the normalized result is empty.
+// ── OAuth profile (HP-3) ───────────────────────────────────────────────
+
+const OAUTH_PROFILE_KEYS = [
+  "profileVersion",
+  "sendsResourceIndicator",
+  "oauthSpecVersion",
+  "protocolVersionPinning",
+  "dcrIdentity",
+  "authModel",
+  "extensions",
+] as const;
+const OAUTH_PROFILE_KEY_SET: ReadonlySet<string> = new Set(OAUTH_PROFILE_KEYS);
+
+// V2 = V1 + the two emulator fields. V1's key set stays FROZEN — a V1 row
+// carrying a V2-only key is an error, not a silent widen, so the V1
+// canonicalization contract cannot drift.
+const OAUTH_PROFILE_V2_KEYS = [
+  "profileVersion",
+  "sendsResourceIndicator",
+  "oauthSpecVersion",
+  "protocolVersionPinning",
+  "dcrIdentity",
+  "authModel",
+  "scopeRequest",
+  "tokenEndpointAuthMethod",
+  "extensions",
+] as const;
+const OAUTH_PROFILE_V2_KEY_SET: ReadonlySet<string> = new Set(
+  OAUTH_PROFILE_V2_KEYS
+);
+
+const OAUTH_SCOPE_REQUEST_MODE_SET: ReadonlySet<string> = new Set(
+  OAUTH_SCOPE_REQUEST_MODES
+);
+// Per-mode key sets, module-scoped like every other key set in this file
+// (no per-call Set allocation, and each accepted shape is named).
+const OAUTH_SCOPE_REQUEST_FIXED_KEY_SET: ReadonlySet<string> = new Set([
+  "mode",
+  "scopes",
+]);
+const OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET: ReadonlySet<string> = new Set([
+  "mode",
+]);
+const OAUTH_TOKEN_ENDPOINT_AUTH_METHOD_SET: ReadonlySet<string> = new Set(
+  OAUTH_TOKEN_ENDPOINT_AUTH_METHODS
+);
+
+const OAUTH_EVIDENCE_KEYS = [
+  "status",
+  "value",
+  "source",
+  "capturedAt",
+  "reason",
+] as const;
+const OAUTH_EVIDENCE_KEY_SET: ReadonlySet<string> = new Set(
+  OAUTH_EVIDENCE_KEYS
+);
+const OAUTH_EVIDENCE_STATUS_SET: ReadonlySet<string> = new Set(
+  OAUTH_PROFILE_EVIDENCE_STATUSES
+);
+const OAUTH_AUTH_MODEL_SET: ReadonlySet<string> = new Set(OAUTH_AUTH_MODELS);
+
+const OAUTH_DCR_IDENTITY_KEYS = [
+  "clientName",
+  "redirectUris",
+  "userAgent",
+] as const;
+const OAUTH_DCR_IDENTITY_KEY_SET: ReadonlySet<string> = new Set(
+  OAUTH_DCR_IDENTITY_KEYS
+);
+
+/** Non-empty-after-trim string reader. Returns the TRIMMED value so
+ * whitespace-only differences can't fork the hash. */
+function requireTrimmedString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+/**
+ * Same emptiness rule as `requireTrimmedString`, but returns the value
+ * VERBATIM. For fields whose bytes are the point (V2 `dcrIdentity.clientName`,
+ * which the emulator replays into a registration body a server may gate on):
+ * whitespace-only is still a missing capture, but surrounding whitespace in a
+ * real capture is data that must survive canonicalization.
+ */
+function requireVerbatimString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a non-empty string`);
+  }
+  return value;
+}
+
+/**
+ * Strict `YYYY-MM-DD` calendar date. Regex alone would accept `2026-02-31`,
+ * so the parsed date is round-tripped back to string — a capture date that
+ * doesn't exist is a data-entry bug and silently storing it would make
+ * staleness reporting lie.
+ */
+function requireIsoCalendarDate(value: unknown, fieldName: string): string {
+  // Report the SHAPE requirement even when the field is simply missing —
+  // "must be a non-empty string" for an absent date sends callers looking for
+  // the wrong bug.
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be an ISO calendar date (YYYY-MM-DD)`
+    );
+  }
+  const raw = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be an ISO calendar date (YYYY-MM-DD), got "${raw}"`
+    );
+  }
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`hostConfigV2: ${fieldName} is not a real date ("${raw}")`);
+  }
+  if (parsed.toISOString().slice(0, 10) !== raw) {
+    throw new Error(`hostConfigV2: ${fieldName} is not a real date ("${raw}")`);
+  }
+  return raw;
+}
+
+/**
+ * Canonicalize one evidence envelope.
+ *
+ * Enforces the invariant the type encodes for TS callers, for untyped JS
+ * callers too: an `unverifiable` field may NOT carry `value` or `source`.
+ * Rejecting rather than dropping is deliberate — silently stripping a value
+ * would let a caller believe an unverified reading had been persisted, which
+ * is precisely the failure mode this profile exists to prevent (HP-17).
+ */
+function canonicalizeOAuthEvidence<T>(
+  input: unknown,
+  fieldName: string,
+  canonicalizeValue: (raw: unknown, fieldName: string) => T
+): OAuthProfileEvidence<T> | undefined {
+  if (input === undefined) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  assertOnlyKnownKeys(input, OAUTH_EVIDENCE_KEY_SET, fieldName);
+
+  const status = input.status;
+  if (typeof status !== "string" || !OAUTH_EVIDENCE_STATUS_SET.has(status)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.status must be one of ${OAUTH_PROFILE_EVIDENCE_STATUSES.join(
+        ", "
+      )}`
+    );
+  }
+
+  if (status === "unverifiable") {
+    if (input.value !== undefined) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.value must be omitted when status is "unverifiable" — an unverified reading is not a value, use status "verified" with a source or leave it out`
+      );
+    }
+    if (input.source !== undefined) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.source must be omitted when status is "unverifiable"`
+      );
+    }
+    const reason = requireTrimmedString(input.reason, `${fieldName}.reason`);
+    const capturedAt =
+      input.capturedAt === undefined
+        ? undefined
+        : requireIsoCalendarDate(input.capturedAt, `${fieldName}.capturedAt`);
+    // Fixed key order (see module header) — never spread user input.
+    return capturedAt === undefined
+      ? ({ status: "unverifiable", reason } as OAuthProfileEvidence<T>)
+      : ({
+          status: "unverifiable",
+          reason,
+          capturedAt,
+        } as OAuthProfileEvidence<T>);
+  }
+
+  if (input.reason !== undefined) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.reason is only valid when status is "unverifiable"`
+    );
+  }
+  if (input.value === undefined) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.value is required when status is "${status}"`
+    );
+  }
+  const value = canonicalizeValue(input.value, `${fieldName}.value`);
+  const source = requireTrimmedString(input.source, `${fieldName}.source`);
+  const capturedAt = requireIsoCalendarDate(
+    input.capturedAt,
+    `${fieldName}.capturedAt`
+  );
+  return {
+    status: status as "verified" | "refuted",
+    value,
+    source,
+    capturedAt,
+  };
+}
+
+function readOAuthBooleanValue(raw: unknown, fieldName: string): boolean {
+  if (typeof raw !== "boolean") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a boolean`);
+  }
+  return raw;
+}
+
+/**
+ * Spec revisions are validated by FORMAT, not against MCP_PROTOCOL_VERSIONS —
+ * that enum is what this inspector speaks, not what a third-party client
+ * implements. See the `OAuthSpecRevision` doc comment.
+ */
+function readOAuthSpecRevision(raw: unknown, fieldName: string): string {
+  return requireIsoCalendarDate(raw, fieldName);
+}
+
+function readOAuthSpecVersionValue(
+  raw: unknown,
+  fieldName: string
+): OAuthSpecVersionClaim {
+  if (!isPlainObject(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be a plain object with a "basis" of "constant" or "behavioral"`
+    );
+  }
+
+  if (raw.basis === "constant") {
+    assertOnlyKnownKeys(raw, new Set(["basis", "revisions"]), fieldName);
+    if (!Array.isArray(raw.revisions)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.revisions must be a string[]`
+      );
+    }
+    if (raw.revisions.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.revisions must be non-empty when basis is "constant"`
+      );
+    }
+    const revisions = raw.revisions.map((revision, i) =>
+      readOAuthSpecRevision(revision, `${fieldName}.revisions[${i}]`)
+    );
+    // A SET of implemented revisions — unlike `authModel`, order carries no
+    // meaning here, so dedupe + sort for hash stability.
+    return { basis: "constant", revisions: [...new Set(revisions)].sort() };
+  }
+
+  if (raw.basis === "behavioral") {
+    assertOnlyKnownKeys(raw, new Set(["basis", "minimumRevision"]), fieldName);
+    return {
+      basis: "behavioral",
+      minimumRevision: readOAuthSpecRevision(
+        raw.minimumRevision,
+        `${fieldName}.minimumRevision`
+      ),
+    };
+  }
+
+  throw new Error(
+    `hostConfigV2: ${fieldName}.basis must be "constant" or "behavioral"`
+  );
+}
+
+function readOAuthAuthModelValue(
+  raw: unknown,
+  fieldName: string
+): OAuthAuthModel[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be a non-empty array of auth models in preference order`
+    );
+  }
+  if (raw.length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be non-empty when set (omit the field instead)`
+    );
+  }
+  const out: OAuthAuthModel[] = [];
+  for (const [i, entry] of raw.entries()) {
+    if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(
+          ", "
+        )}`
+      );
+    }
+    // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
+    // and silently collapsing it would hide the caller's mistake.
+    if (out.includes(entry as OAuthAuthModel)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName} contains duplicate entry "${entry}" — the preference order must be unambiguous`
+      );
+    }
+    out.push(entry as OAuthAuthModel);
+  }
+  // "none" is the ABSENCE of an auth mechanism, not one more fallback beside
+  // the others (see the `authModel` doc comment): it is how "this client has
+  // no OAuth" is spelled. Paired with a concrete model the list asserts both
+  // at once, and HP-43's emulator has no defined behavior for a host that
+  // both does and does not authenticate. Rejected in any position — order
+  // cannot rescue the contradiction.
+  if (out.length > 1 && out.includes("none")) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} contains "none" alongside other entries — "none" means the client has no auth at all, so it must be the sole entry`
+    );
+  }
+  // Order is semantic (first = preferred) — preserve verbatim, do NOT sort.
+  return out;
+}
+
+function readOAuthProtocolVersionPinningValue(
+  raw: unknown,
+  fieldName: string
+): OAuthProtocolVersionPinning {
+  if (!isPlainObject(raw)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const mode = raw.mode;
+  if (mode === "negotiated") {
+    if (raw.version !== undefined) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.version must be omitted when mode is "negotiated"`
+      );
+    }
+    assertOnlyKnownKeys(raw, new Set(["mode"]), fieldName);
+    return { mode: "negotiated" };
+  }
+  if (mode === "pinned") {
+    assertOnlyKnownKeys(raw, new Set(["mode", "version"]), fieldName);
+    // Format-validated, not enum-checked: a client can pin a revision this
+    // inspector does not speak (rmcp pins 2024-11-05 on OAuth discovery).
+    const version = readOAuthSpecRevision(raw.version, `${fieldName}.version`);
+    return { mode: "pinned", version };
+  }
+  throw new Error(
+    `hostConfigV2: ${fieldName}.mode must be "pinned" or "negotiated"`
+  );
+}
+
+function readOAuthDcrIdentityValue(
+  raw: unknown,
+  fieldName: string
+): OAuthDcrIdentity {
+  if (!isPlainObject(raw)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  assertOnlyKnownKeys(raw, OAUTH_DCR_IDENTITY_KEY_SET, fieldName);
+
+  const out: OAuthDcrIdentity = {};
+  // Fixed key order, matching OAUTH_DCR_IDENTITY_KEYS.
+  if (raw.clientName !== undefined) {
+    // NOT case-normalized: servers in the wild gate authorization policy on
+    // the exact `client_name` string, so emulator replay must be byte-exact.
+    out.clientName = requireTrimmedString(
+      raw.clientName,
+      `${fieldName}.clientName`
+    );
+  }
+  if (raw.redirectUris !== undefined) {
+    if (!Array.isArray(raw.redirectUris)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be a string[]`
+      );
+    }
+    if (raw.redirectUris.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be non-empty when set (omit the field instead)`
+      );
+    }
+    const uris = raw.redirectUris.map((uri, i) =>
+      requireTrimmedString(uri, `${fieldName}.redirectUris[${i}]`)
+    );
+    // Registration order carries no meaning in RFC 7591, so dedupe + sort:
+    // two hosts registering the same URI set must hash identically.
+    out.redirectUris = [...new Set(uris)].sort();
+  }
+  if (raw.userAgent !== undefined) {
+    out.userAgent = requireTrimmedString(
+      raw.userAgent,
+      `${fieldName}.userAgent`
+    );
+  }
+
+  if (Object.keys(out).length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must set at least one of ${OAUTH_DCR_IDENTITY_KEYS.join(
+        ", "
+      )}`
+    );
+  }
+  return out;
+}
+
+/**
+ * V2 DCR identity reader. Same shape as V1 with two deliberate divergences,
+ * both because V2 replays the registration body BYTE-EXACTLY:
+ *
+ *   - `redirectUris` preserves the CAPTURED order and rejects duplicates,
+ *     where V1 deduped + sorted. Canonicalization must not reorder what was
+ *     observed on the wire, and a duplicate means the capture itself is
+ *     ambiguous — silently collapsing it would hide that.
+ *   - `clientName` is stored VERBATIM, where V1 trimmed. Servers gate policy
+ *     on the exact `client_name` string, so trailing/leading whitespace in a
+ *     capture is data, not noise: rewriting it would make the emulator send
+ *     bytes the real client never sent. Empty/whitespace-only is still
+ *     rejected — that is a missing capture, not a name.
+ *
+ * `redirectUris` entries and (elsewhere) scope tokens keep trimming: a URI
+ * cannot legally contain whitespace, and a scope token with whitespace would
+ * corrupt the space-delimited scope string it is joined into.
+ */
+function readOAuthDcrIdentityValueV2(
+  raw: unknown,
+  fieldName: string
+): OAuthDcrIdentity {
+  if (!isPlainObject(raw)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  assertOnlyKnownKeys(raw, OAUTH_DCR_IDENTITY_KEY_SET, fieldName);
+
+  const out: OAuthDcrIdentity = {};
+  // Fixed key order, matching OAUTH_DCR_IDENTITY_KEYS.
+  if (raw.clientName !== undefined) {
+    // Neither case-normalized NOR trimmed: servers in the wild gate
+    // authorization policy on the exact `client_name` string, so V2 replay
+    // must be byte-exact — including whitespace the real client sent.
+    out.clientName = requireVerbatimString(
+      raw.clientName,
+      `${fieldName}.clientName`
+    );
+  }
+  if (raw.redirectUris !== undefined) {
+    if (!Array.isArray(raw.redirectUris)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be a string[]`
+      );
+    }
+    if (raw.redirectUris.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be non-empty when set (omit the field instead)`
+      );
+    }
+    const uris: string[] = [];
+    for (const [i, entry] of raw.redirectUris.entries()) {
+      const uri = requireTrimmedString(
+        entry,
+        `${fieldName}.redirectUris[${i}]`
+      );
+      if (uris.includes(uri)) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.redirectUris contains duplicate entry "${uri}" — the captured registration order must be unambiguous`
+        );
+      }
+      uris.push(uri);
+    }
+    out.redirectUris = uris;
+  }
+  if (raw.userAgent !== undefined) {
+    out.userAgent = requireTrimmedString(
+      raw.userAgent,
+      `${fieldName}.userAgent`
+    );
+  }
+
+  if (Object.keys(out).length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must set at least one of ${OAUTH_DCR_IDENTITY_KEYS.join(
+        ", "
+      )}`
+    );
+  }
+  return out;
+}
+
+function readOAuthScopeRequestValue(
+  raw: unknown,
+  fieldName: string
+): OAuthScopeRequest {
+  if (!isPlainObject(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be a plain object with a "mode" of ${OAUTH_SCOPE_REQUEST_MODES.join(
+        ", "
+      )}`
+    );
+  }
+  const mode = raw.mode;
+  if (typeof mode !== "string" || !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.mode must be one of ${OAUTH_SCOPE_REQUEST_MODES.join(
+        ", "
+      )}`
+    );
+  }
+  switch (mode as OAuthScopeRequest["mode"]) {
+    case "fixed": {
+      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_FIXED_KEY_SET, fieldName);
+      if (!Array.isArray(raw.scopes)) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.scopes must be a string[] when mode is "fixed"`
+        );
+      }
+      if (raw.scopes.length === 0) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.scopes must be non-empty when mode is "fixed" — a client that sends no scope is mode "omit"`
+        );
+      }
+      // Captured wire order — preserved verbatim, duplicates rejected. The
+      // emulator joins this list into the scope string byte-for-byte.
+      const scopes: string[] = [];
+      for (const [i, entry] of raw.scopes.entries()) {
+        const scope = requireTrimmedString(entry, `${fieldName}.scopes[${i}]`);
+        if (scopes.includes(scope)) {
+          throw new Error(
+            `hostConfigV2: ${fieldName}.scopes contains duplicate entry "${scope}" — the captured scope order must be unambiguous`
+          );
+        }
+        scopes.push(scope);
+      }
+      return { mode: "fixed", scopes };
+    }
+    case "omit":
+    case "challenge":
+    case "all-supported": {
+      if (raw.scopes !== undefined) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
+        );
+      }
+      assertOnlyKnownKeys(
+        raw,
+        OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET,
+        fieldName
+      );
+      return { mode: mode as "omit" | "challenge" | "all-supported" };
+    }
+    default: {
+      // Exhaustiveness gate. The membership check above admits every entry of
+      // OAUTH_SCOPE_REQUEST_MODES, so adding a mode there without a case here
+      // would otherwise fall out of the switch and canonicalize to `undefined`
+      // — a silently wrong profile. `never` makes that a compile error, and
+      // the throw makes it loud for untyped JS callers.
+      const exhaustive: never = mode as never;
+      throw new Error(
+        `hostConfigV2: ${fieldName}.mode "${String(
+          exhaustive
+        )}" is a known mode with no canonicalization rule — add a case`
+      );
+    }
+  }
+}
+
+function readOAuthTokenEndpointAuthMethodValue(
+  raw: unknown,
+  fieldName: string
+): OAuthTokenEndpointAuthMethod {
+  if (
+    typeof raw !== "string" ||
+    !OAUTH_TOKEN_ENDPOINT_AUTH_METHOD_SET.has(raw)
+  ) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be one of ${OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.join(
+        ", "
+      )}`
+    );
+  }
+  return raw as OAuthTokenEndpointAuthMethod;
+}
+
+/**
+ * Canonicalize the per-host OAuth profile (HP-3 / HP-43).
+ *
+ * Exported because HP-45 (seed validated findings) and HP-47 (per-client
+ * sweep) build profiles outside a full HostConfig and need to normalize +
+ * validate them standalone before they are attached to a host — the private
+ * catalog resolves its rows through this same entry point.
+ *
+ * Dispatches on `profileVersion`. V1 canonicalization is FROZEN (existing
+ * content-addressed hashes must stay valid) and a V1 row is never rewritten
+ * to V2 — whichever version came in is what comes out.
+ */
+export function canonicalizeOAuthProfile(
+  input: HostConfigOAuthProfile | undefined
+): HostConfigOAuthProfile | undefined {
+  if (input === undefined) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("hostConfigV2: oauthProfile must be a plain object");
+  }
+  const version = (input as { profileVersion?: unknown }).profileVersion;
+  switch (version) {
+    case 1:
+      return canonicalizeOAuthProfileV1(input as HostConfigOAuthProfileV1);
+    case 2:
+      return canonicalizeOAuthProfileV2(input as HostConfigOAuthProfileV2);
+    default:
+      // Forward-compat trip wire, mirroring mcpProfile: a future
+      // profileVersion: 3 shape must NOT silently round-trip through this
+      // reader.
+      throw new Error(
+        "hostConfigV2: oauthProfile.profileVersion must be 1 or 2"
+      );
+  }
+}
+
+/** FROZEN — V1 rows must canonicalize byte-identically forever. Do not edit. */
+function canonicalizeOAuthProfileV1(
+  input: HostConfigOAuthProfileV1
+): HostConfigOAuthProfileV1 {
+  assertOnlyKnownKeys(
+    input as unknown as Record<string, unknown>,
+    OAUTH_PROFILE_KEY_SET,
+    "oauthProfile"
+  );
+
+  // Fixed key order (see module header) — build explicitly, never spread.
+  const out: HostConfigOAuthProfileV1 = { profileVersion: 1 };
+
+  const sendsResourceIndicator = canonicalizeOAuthEvidence(
+    input.sendsResourceIndicator,
+    "oauthProfile.sendsResourceIndicator",
+    readOAuthBooleanValue
+  );
+  if (sendsResourceIndicator !== undefined) {
+    out.sendsResourceIndicator = sendsResourceIndicator;
+  }
+
+  const oauthSpecVersion = canonicalizeOAuthEvidence(
+    input.oauthSpecVersion,
+    "oauthProfile.oauthSpecVersion",
+    readOAuthSpecVersionValue
+  );
+  if (oauthSpecVersion !== undefined) {
+    out.oauthSpecVersion = oauthSpecVersion;
+  }
+
+  const protocolVersionPinning = canonicalizeOAuthEvidence(
+    input.protocolVersionPinning,
+    "oauthProfile.protocolVersionPinning",
+    readOAuthProtocolVersionPinningValue
+  );
+  if (protocolVersionPinning !== undefined) {
+    out.protocolVersionPinning = protocolVersionPinning;
+  }
+
+  const dcrIdentity = canonicalizeOAuthEvidence(
+    input.dcrIdentity,
+    "oauthProfile.dcrIdentity",
+    readOAuthDcrIdentityValue
+  );
+  if (dcrIdentity !== undefined) {
+    out.dcrIdentity = dcrIdentity;
+  }
+
+  const authModel = canonicalizeOAuthEvidence(
+    input.authModel,
+    "oauthProfile.authModel",
+    readOAuthAuthModelValue
+  );
+  if (authModel !== undefined) {
+    out.authModel = authModel;
+  }
+
+  if (input.extensions !== undefined) {
+    if (!isPlainObject(input.extensions)) {
+      throw new Error(
+        "hostConfigV2: oauthProfile.extensions must be a plain object"
+      );
+    }
+    out.extensions = deepSortStringKeys(input.extensions);
+  }
+
+  return out;
+}
+
+/**
+ * V2 canonicalization. Shares the evidence-envelope machinery with V1;
+ * differs only where V2's contract differs: two new fields (`scopeRequest`,
+ * `tokenEndpointAuthMethod`) and order-preserving `dcrIdentity.redirectUris`.
+ * Absent fields are omitted from the canonical JSON — never null/default
+ * filled — same as V1.
+ */
+function canonicalizeOAuthProfileV2(
+  input: HostConfigOAuthProfileV2
+): HostConfigOAuthProfileV2 {
+  assertOnlyKnownKeys(
+    input as unknown as Record<string, unknown>,
+    OAUTH_PROFILE_V2_KEY_SET,
+    "oauthProfile"
+  );
+
+  // Fixed key order (see module header) — build explicitly, never spread.
+  const out: HostConfigOAuthProfileV2 = { profileVersion: 2 };
+
+  const sendsResourceIndicator = canonicalizeOAuthEvidence(
+    input.sendsResourceIndicator,
+    "oauthProfile.sendsResourceIndicator",
+    readOAuthBooleanValue
+  );
+  if (sendsResourceIndicator !== undefined) {
+    out.sendsResourceIndicator = sendsResourceIndicator;
+  }
+
+  const oauthSpecVersion = canonicalizeOAuthEvidence(
+    input.oauthSpecVersion,
+    "oauthProfile.oauthSpecVersion",
+    readOAuthSpecVersionValue
+  );
+  if (oauthSpecVersion !== undefined) {
+    out.oauthSpecVersion = oauthSpecVersion;
+  }
+
+  const protocolVersionPinning = canonicalizeOAuthEvidence(
+    input.protocolVersionPinning,
+    "oauthProfile.protocolVersionPinning",
+    readOAuthProtocolVersionPinningValue
+  );
+  if (protocolVersionPinning !== undefined) {
+    out.protocolVersionPinning = protocolVersionPinning;
+  }
+
+  const dcrIdentity = canonicalizeOAuthEvidence(
+    input.dcrIdentity,
+    "oauthProfile.dcrIdentity",
+    readOAuthDcrIdentityValueV2
+  );
+  if (dcrIdentity !== undefined) {
+    out.dcrIdentity = dcrIdentity;
+  }
+
+  const authModel = canonicalizeOAuthEvidence(
+    input.authModel,
+    "oauthProfile.authModel",
+    readOAuthAuthModelValue
+  );
+  if (authModel !== undefined) {
+    out.authModel = authModel;
+  }
+
+  const scopeRequest = canonicalizeOAuthEvidence(
+    input.scopeRequest,
+    "oauthProfile.scopeRequest",
+    readOAuthScopeRequestValue
+  );
+  if (scopeRequest !== undefined) {
+    out.scopeRequest = scopeRequest;
+  }
+
+  const tokenEndpointAuthMethod = canonicalizeOAuthEvidence(
+    input.tokenEndpointAuthMethod,
+    "oauthProfile.tokenEndpointAuthMethod",
+    readOAuthTokenEndpointAuthMethodValue
+  );
+  if (tokenEndpointAuthMethod !== undefined) {
+    out.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
+  }
+
+  if (input.extensions !== undefined) {
+    if (!isPlainObject(input.extensions)) {
+      throw new Error(
+        "hostConfigV2: oauthProfile.extensions must be a plain object"
+      );
+    }
+    out.extensions = deepSortStringKeys(input.extensions);
+  }
+
+  return out;
+}
+
 function canonicalizeServerConnectionOverrides(
   serverIds: Array<ServerId>,
   optionalServerIds: Array<ServerId>,
@@ -1285,8 +2391,30 @@ const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
  * Canonicalize the optional `computer` field. `null` collapses to undefined
  * ("cleared" hashes identically to "never set"); `workdir` is trimmed, with
  * empty-after-trim collapsing to absent; legacy `toolset` input is dropped
- * (so `{ kind, toolset: "bash" }` and `{ kind }` hash identically). Output
- * keys are built in sorted order (kind, workdir) for hash stability.
+ * for EVERY kind (so `{ kind, toolset: "bash" }` and `{ kind }` hash
+ * identically). Output keys are built in sorted order (kind, workdir) for
+ * hash stability.
+ *
+ * `kind` is a closed union of two values:
+ *   - `"personal"`  — the per-(project, user) cloud workstation. The only
+ *                     kind an author can ever write; every public authoring
+ *                     input (`HostComputerInput`, `HostInit.computer`) is
+ *                     narrowed to it.
+ *   - `"ephemeral"` — a per-run box minted by the platform at a snapshot
+ *                     boundary (eval runs pin one box per iteration and boot
+ *                     it from the run's frozen environment image). RUNTIME-
+ *                     MINTED ONLY: it appears on canonical/persisted rows,
+ *                     never on authored input. The image is NOT carried here
+ *                     — it comes from the run's frozen environment pin.
+ *
+ * `workdir` is handled identically for both kinds, deliberately. A per-run box
+ * takes its working directory from provisioning, so the platform's minting site
+ * emits no `workdir` — but that is a rule about what gets WRITTEN, enforced
+ * there, and this function does not re-check it. Canonicalization is pure
+ * content-addressing: making one field's treatment depend on another's value
+ * would mean the same input hashing differently for a reason no caller can see.
+ * Nothing can author an ephemeral computer (every input type is personal-only),
+ * so there is no shape here for such a rule to catch.
  */
 function canonicalizeComputer(
   computer: HostConfigInputV2["computer"]
@@ -1300,8 +2428,10 @@ function canonicalizeComputer(
       throw new Error(`hostConfigV2: computer has unknown key "${key}"`);
     }
   }
-  if (computer.kind !== "personal") {
-    throw new Error('hostConfigV2: computer.kind must be "personal"');
+  if (computer.kind !== "personal" && computer.kind !== "ephemeral") {
+    throw new Error(
+      'hostConfigV2: computer.kind must be "personal" or "ephemeral"'
+    );
   }
   // Legacy input only: when present it must be the one value that ever
   // existed, then it's dropped from the canonical form.
@@ -1317,7 +2447,7 @@ function canonicalizeComputer(
     workdir = trimmed === "" ? undefined : trimmed;
   }
   return {
-    kind: "personal",
+    kind: computer.kind,
     ...(workdir !== undefined ? { workdir } : {}),
   };
 }
@@ -1359,7 +2489,9 @@ export function canonicalizeHostConfigV2(
   // normalizer.
   if (input.harness !== undefined && !isHarness(input.harness)) {
     throw new Error(
-      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`,
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map(
+        (h) => `"${h}"`
+      ).join(", ")} when set`
     );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);
@@ -1395,6 +2527,10 @@ export function canonicalizeHostConfigV2(
     // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
+    // What an unattended run's browser may do. Absent ⇒ key omitted, so every
+    // row written before the policy existed hashes byte-identically; a
+    // declared policy is part of the identity, so editing it MOVES the hash.
+    browserToolPolicy: canonicalizeBrowserToolPolicy(input.browserToolPolicy),
     // Skill selection. all-visible collapses to absent (single identity per
     // behavior); explicit — including explicit-empty — survives.
     skillSelection: canonicalizeSkillSelection(input.skillSelection),
@@ -1428,6 +2564,9 @@ export function canonicalizeHostConfigV2(
         ? undefined
         : deepSortStringKeys(input.chatUiOverride),
     mcpProfile: canonicalizeMcpProfile(input.mcpProfile),
+    // Absent ⇒ key omitted, so every row written before the OAuth profile
+    // existed hashes byte-identically (guarded by an explicit legacy test).
+    oauthProfile: canonicalizeOAuthProfile(input.oauthProfile),
     serverConnectionOverrides: canonicalizeServerConnectionOverrides(
       serverIds,
       optionalServerIds,

@@ -1,8 +1,9 @@
 /**
  * Turn-end adoption of filesystem-installed skills on a Computer.
  *
- * A dev who installs a skill the ecosystem-standard way (`npx skills` into
- * `~/.claude/skills`) gets a dir that today works ONLY in harness runs, is
+ * A dev who installs a skill the ecosystem-standard way (`npx skills` into the
+ * runtime's skills root — `~/.claude/skills`, or `~/.agents/skills` for Codex)
+ * gets a dir that today works ONLY in harness runs, is
  * invisible to the Skills UI / chat, and is destroyed by computer reset. This
  * pass — run at the END of a successful harness turn, the only point with the
  * user bearer + projectId + a LIVE session — scans the box for such dirs, parses
@@ -31,9 +32,9 @@ import {
 } from "../computers/convex-skills-client.js";
 import { extractExtraFrontmatter } from "../skill-extra-frontmatter.js";
 import { shellQuote } from "./shell-quote.js";
+import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 
-const SKILLS_BASE = "/home/user/.claude/skills";
 const MANIFEST_BASENAME = ".mcpjam-skills.json";
 /** Never scan an unbounded dir — a runaway box shouldn't stall the turn. */
 const MAX_SCAN_DIRS = 50;
@@ -73,12 +74,13 @@ function byteLength(value: string): number {
 /** Whether a skill dir contains any file other than SKILL.md (fail-soft). */
 async function dirHasSupportingFiles(
   session: AdoptSession,
+  skillsBase: string,
   name: string
 ): Promise<boolean> {
   try {
     const res = await session.run({
       command: `find ${shellQuote(
-        `${SKILLS_BASE}/${name}`
+        `${skillsBase}/${name}`
       )} -mindepth 1 -type f ! -name SKILL.md -print -quit`,
     });
     // A non-zero `find` exit means the scan errored (permission denied, dir
@@ -169,7 +171,51 @@ function parseAdoptCandidate(
 }
 
 /**
- * Scan the box's `~/.claude/skills` for unmanaged skill dirs and adopt them into
+ * Whether a finished turn may sync on-box skills up into the project pool.
+ *
+ * Extracted from the call site so the conditions are testable and named,
+ * because one of them is subtle and was WRONG: adoption must never run out of a
+ * PINNED turn. A pinned set is a frozen snapshot of the project pool, and
+ * adoption is a write back INTO that pool. So an eval arm whose agent happened
+ * to author a skill on box would mutate what the next arm resolves against —
+ * silently changing the thing under comparison between two runs that are
+ * supposed to differ only in their pinned skills. That is a real falsification
+ * of the snapshot claim, and `executionScope` does not cover it: eval runs set
+ * no execution scope at all.
+ *
+ * `HARNESS_SKILL_ADOPTION_DISABLED=1` remains the operator-side kill switch.
+ */
+export function shouldAdoptSandboxSkills(args: {
+  runSucceeded: boolean;
+  aborted: boolean;
+  pausedForApproval: boolean;
+  supportsSkills: boolean;
+  /** `null` ⇒ the live skills fetch failed; adopting on top of an unknown set
+   *  could re-adopt something we simply failed to see as already-managed. */
+  runtimeSkillsKnown: boolean;
+  skillsArePinned: boolean;
+  /** Guest / swarm scopes never adopt (v1). */
+  hasExecutionScope: boolean;
+  hasCredentials: boolean;
+  hasFileSession: boolean;
+  adoptionDisabled: boolean;
+}): boolean {
+  return (
+    args.runSucceeded &&
+    !args.aborted &&
+    !args.pausedForApproval &&
+    args.supportsSkills &&
+    args.runtimeSkillsKnown &&
+    !args.skillsArePinned &&
+    !args.hasExecutionScope &&
+    args.hasCredentials &&
+    args.hasFileSession &&
+    !args.adoptionDisabled
+  );
+}
+
+/**
+ * Scan the runtime's skills root for unmanaged skill dirs and adopt them into
  * Convex. `managedNames` are the names already delivered as cloud skills this
  * turn — those dirs are the adapter's own output, so they're skipped. Returns the
  * dirs that TRULY adopted (status 'adopted'), for the caller to mark managed.
@@ -179,15 +225,19 @@ export async function adoptSandboxSkills(args: {
   authHeader: string;
   projectId: string;
   managedNames: Set<string>;
+  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
+   *  to Claude Code's for legacy callers. */
+  skillsBase?: string;
   signal?: AbortSignal;
 }): Promise<{ adopted: AdoptedSkillEntry[] }> {
+  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
   try {
     if (args.signal?.aborted) return { adopted: [] };
     // List entries (small output — bounded dir). `-1` one per line; dotfiles
     // (the manifest) are hidden without `-a`, but guard anyway.
     let ls: { exitCode: number; stdout: string; stderr: string } | null = null;
     try {
-      ls = await args.session.run({ command: `ls -1 ${SKILLS_BASE}` });
+      ls = await args.session.run({ command: `ls -1 ${skillsBase}` });
     } catch {
       ls = null;
     }
@@ -214,7 +264,7 @@ export async function adoptSandboxSkills(args: {
       let raw: string | null = null;
       try {
         raw = await args.session.readTextFile({
-          path: `${SKILLS_BASE}/${name}/SKILL.md`,
+          path: `${skillsBase}/${name}/SKILL.md`,
         });
       } catch {
         raw = null;
@@ -239,7 +289,7 @@ export async function adoptSandboxSkills(args: {
       // record would carry no file metadata to re-materialize after a reset, and
       // marking it managed would let a later cloud delete remove the dir WITH its
       // un-adopted files. Skip such dirs until package adoption is designed.
-      if (await dirHasSupportingFiles(args.session, name)) {
+      if (await dirHasSupportingFiles(args.session, skillsBase, name)) {
         logger.info(
           "[adopt-sandbox-skills] skip: dir has supporting files (SKILL.md-only adoption)",
           { dir: name }

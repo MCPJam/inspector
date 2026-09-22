@@ -12,7 +12,6 @@
  * transient failures do not strand old guests on a new identity.
  */
 
-import { NON_PROD_LOCKDOWN } from "@/lib/config";
 
 declare global {
   interface Window {
@@ -54,15 +53,63 @@ let legacyMigrationConsumed = false;
 // token by overwriting cachedSession.
 let sessionGeneration = 0;
 const sessionListeners = new Set<() => void>();
+// Set when the server refused to CREATE a guest (429: per-IP daily cap).
+// While it stands, mint attempts short-circuit to null without a request —
+// the refusal is deterministic for the rest of the window, so retrying only
+// burns the network — and the app offers sign-in instead.
+const GUEST_SESSION_REFUSED_DEFAULT_MS = 10 * 60 * 1000;
+export interface GuestSessionRefusal {
+  /** Epoch ms after which a new attempt is allowed. */
+  readonly until: number;
+}
+let refusal: GuestSessionRefusal | null = null;
+let refusalExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function notifySessionListeners(): void {
+  for (const listener of sessionListeners) {
+    listener();
+  }
+}
+
+function setRefusal(next: GuestSessionRefusal | null): void {
+  if (refusalExpiryTimer !== null) {
+    clearTimeout(refusalExpiryTimer);
+    refusalExpiryTimer = null;
+  }
+  refusal = next;
+  if (next) {
+    // Subscribers (the banner) only learn about a change through a
+    // notification, so the expiry must announce itself: on an idle page the
+    // lazy check in getGuestSessionRefusal() never runs.
+    refusalExpiryTimer = setTimeout(
+      () => {
+        refusalExpiryTimer = null;
+        if (refusal === next) setRefusal(null);
+      },
+      Math.max(0, next.until - Date.now()),
+    );
+  }
+  notifySessionListeners();
+}
+
+/**
+ * The standing refusal to create a guest session, or `null`. Stable reference
+ * while it stands, so it is safe as a `useSyncExternalStore` snapshot; expiry
+ * makes it `null` again without a notification.
+ */
+export function getGuestSessionRefusal(): GuestSessionRefusal | null {
+  if (refusal && refusal.until <= Date.now()) {
+    refusal = null;
+  }
+  return refusal;
+}
 
 function setCachedSession(session: GuestSession | null): void {
   const previousGuestId = cachedSession?.guestId ?? null;
   cachedSession = session;
   const nextGuestId = cachedSession?.guestId ?? null;
   if (previousGuestId !== nextGuestId) {
-    for (const listener of sessionListeners) {
-      listener();
-    }
+    notifySessionListeners();
   }
 }
 
@@ -185,6 +232,23 @@ class GuestSessionRequestError extends Error {
   }
 }
 
+/** The server refused to create a guest (429). Not transient: do not retry. */
+export class GuestSessionRefusedError extends GuestSessionRequestError {
+  readonly retryAfterMs: number;
+  constructor(retryAfterMs: number) {
+    super("guest-session creation refused (429)");
+    this.name = "GuestSessionRefusedError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function parseRetryAfterMs(raw: string | null | undefined): number {
+  const seconds = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(seconds) && seconds > 0
+    ? seconds * 1000
+    : GUEST_SESSION_REFUSED_DEFAULT_MS;
+}
+
 /**
  * Returns the parsed session on success, `null` on a definitive "no guest"
  * miss (HTTP 204/404), and throws `GuestSessionRequestError` on transient
@@ -195,13 +259,6 @@ async function requestGuestSession(
   mode: GuestSessionMode,
   legacyToken: string | null,
 ): Promise<GuestSession | null> {
-  // Non-prod lockdown disables guest sessions server-side (returns 403). Skip
-  // the network call entirely so the console isn't flooded with errors and
-  // callers settle quickly into the unauthenticated state.
-  if (NON_PROD_LOCKDOWN) {
-    return null;
-  }
-
   const body: Record<string, unknown> = { mode };
   if (legacyToken) body.legacyToken = legacyToken;
 
@@ -226,6 +283,12 @@ async function requestGuestSession(
   if (response.status === 204) {
     if (legacyToken) deleteLegacyToken();
     return null;
+  }
+
+  if (response.status === 429) {
+    throw new GuestSessionRefusedError(
+      parseRetryAfterMs(response.headers?.get?.("retry-after")),
+    );
   }
 
   if (!response.ok) {
@@ -266,6 +329,10 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
     return cachedSession;
   }
 
+  if (getGuestSessionRefusal()) {
+    return null;
+  }
+
   if (inFlightRequest) {
     return inFlightRequest;
   }
@@ -288,6 +355,10 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
       }
       return session;
     } catch (error) {
+      if (error instanceof GuestSessionRefusedError) {
+        setRefusal({ until: Date.now() + error.retryAfterMs });
+        return null;
+      }
       console.error("Failed to create guest session:", error);
       return null;
     } finally {

@@ -145,9 +145,14 @@ describe("v1 tunnel routes", () => {
   describe("POST /projects/:projectId/tunnels", () => {
     it("creates the server, mints the grant, stores the URL, and whitelists the response", async () => {
       const fetchMock = stubBackendFetch();
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       expect(response.status).toBe(201);
       const body = (await response.json()) as Record<string, unknown>;
@@ -171,17 +176,29 @@ describe("v1 tunnel routes", () => {
       expect(convexMutationMock).toHaveBeenNthCalledWith(
         1,
         "servers:createServerIfMissing",
-        { projectId: "p1", name: "everything", enabled: true, transportType: "http" }
+        {
+          projectId: "p1",
+          name: "everything",
+          enabled: true,
+          transportType: "http",
+        }
       );
       expect(convexMutationMock).toHaveBeenNthCalledWith(
         2,
         "servers:updateServer",
-        { serverId: "srv_1", url: GRANT.url, transportType: "http", enabled: true }
+        {
+          serverId: "srv_1",
+          url: GRANT.url,
+          transportType: "http",
+          enabled: true,
+        }
       );
 
       const calls = fetchMock.mock.calls.map((call) => String(call[0]));
       expect(calls[0]).toContain("/v1/project-servers?projectId=p1");
-      expect(calls[1]).toContain("/tunnels/token?serverId=srv_1&transport=relay");
+      expect(calls[1]).toContain(
+        "/tunnels/token?serverId=srv_1&transport=relay"
+      );
       const tokenInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
       expect(
         new Headers(tokenInit.headers as HeadersInit).get("authorization")
@@ -202,9 +219,14 @@ describe("v1 tunnel routes", () => {
         },
       });
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       expect(response.status).toBe(201);
       const body = (await response.json()) as Record<string, unknown>;
@@ -227,9 +249,14 @@ describe("v1 tunnel routes", () => {
         },
       });
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       const body = (await response.json()) as Record<string, unknown>;
       expect(body.existed).toBe(true);
@@ -252,9 +279,14 @@ describe("v1 tunnel routes", () => {
         },
       });
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       const body = (await response.json()) as Record<string, unknown>;
       expect(body.existed).toBe(true);
@@ -347,9 +379,14 @@ describe("v1 tunnel routes", () => {
         return "srv_1";
       });
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       // The v1 envelope derives the status from the public code:
       // INTERNAL_ERROR -> 500.
@@ -372,12 +409,20 @@ describe("v1 tunnel routes", () => {
         tokenStatus: 503,
       });
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       expect(response.status).toBe(502);
-      const body = (await response.json()) as { code?: string; message?: string };
+      const body = (await response.json()) as {
+        code?: string;
+        message?: string;
+      };
       expect(body.code).toBe("SERVER_UNREACHABLE");
       expect(body.message).toContain("relay down");
       // createServerIfMissing ran; updateServer must not have.
@@ -390,21 +435,33 @@ describe("v1 tunnel routes", () => {
         projectServersStatus: 404,
       });
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/nope/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/nope/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       expect(response.status).toBe(404);
-      expect(((await response.json()) as { code?: string }).code).toBe("NOT_FOUND");
+      expect(((await response.json()) as { code?: string }).code).toBe(
+        "NOT_FOUND"
+      );
     });
 
     it("fails fast when CONVEX_URL is missing", async () => {
       stubBackendFetch();
       delete process.env.CONVEX_URL;
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       expect(response.status).toBe(500);
       const body = (await response.json()) as { message?: string };
@@ -415,9 +472,14 @@ describe("v1 tunnel routes", () => {
       stubBackendFetch();
       delete process.env.CONVEX_HTTP_URL;
 
-      const response = await request(makeApp(), "POST", "/api/v1/projects/p1/tunnels", {
-        name: "everything",
-      });
+      const response = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/tunnels",
+        {
+          name: "everything",
+        }
+      );
 
       expect(response.status).toBe(500);
       const body = (await response.json()) as { message?: string };
@@ -438,7 +500,10 @@ describe("v1 tunnel routes", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ serverId: "srv_1", status: "closed" });
+      expect(await response.json()).toEqual({
+        serverId: "srv_1",
+        status: "closed",
+      });
       const closeCall = fetchMock.mock.calls.find((call) =>
         String(call[0]).includes("/tunnels/close")
       );
@@ -485,7 +550,10 @@ describe("v1 tunnel routes", () => {
       );
 
       expect(response.status).toBe(502);
-      const body = (await response.json()) as { code?: string; message?: string };
+      const body = (await response.json()) as {
+        code?: string;
+        message?: string;
+      };
       expect(body.code).toBe("SERVER_UNREACHABLE");
       expect(body.message).toContain("close failed");
     });

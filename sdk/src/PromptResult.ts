@@ -24,6 +24,7 @@ import { finalizePassedForEval } from "./eval-tool-execution.js";
  * Provides convenient methods to inspect tool calls, token usage, and errors.
  */
 export class PromptResult {
+  readonly recordedContext?: PromptResultData["recordedContext"];
   /** The original prompt/query that was sent */
   readonly prompt: string;
 
@@ -62,6 +63,7 @@ export class PromptResult {
    * @param data - The raw prompt result data
    */
   constructor(data: PromptResultData) {
+    this.recordedContext = data.recordedContext;
     this.prompt = data.prompt;
     this._messages = data.messages;
     this.text = data.text;
@@ -366,6 +368,9 @@ export class PromptResult {
       (this.prompt.trim().length > 0 ? this.prompt : "PromptResult");
     const usage = this.getUsage();
     const trace: EvalResultInput["trace"] = {
+      ...(this.recordedContext
+        ? { recordedContext: this.recordedContext }
+        : {}),
       messages: this.getMessages() as any[],
       ...(this._spans.length > 0 ? { spans: this.getSpans() } : {}),
     };
@@ -401,7 +406,9 @@ export class PromptResult {
       errorDetails: options?.errorDetails,
       trace,
       externalIterationId: options?.externalIterationId,
+      caseId: options?.caseId,
       externalCaseId: options?.externalCaseId,
+      intent: options?.intent,
       metadata: options?.metadata,
       isNegativeTest: options?.isNegativeTest,
       advancedConfig: options?.advancedConfig,

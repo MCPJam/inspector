@@ -1,4 +1,5 @@
 import type { ClientCapabilityOptions } from "./types.js";
+import { MCP_SKILLS_EXTENSION_ID } from "./skills-dispatch.js";
 
 export const MCP_UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
 export const MCP_UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
@@ -39,6 +40,22 @@ function mergeExtensionsMaps(
   return merged;
 }
 
+/**
+ * The SDK's default advertised capabilities.
+ *
+ * `io.modelcontextprotocol/skills` is deliberately ABSENT. SEP-2133 makes
+ * extension support opt-in, and the SDK on its own has no SEP-2640 fulfiller:
+ * the thing that actually loads, verifies, and renders a server-served skill
+ * is the inspector app. A default declaration would advertise behavior the
+ * bare SDK cannot complete — the advertise=enforce rule read backwards.
+ * Callers that DO implement it opt in with
+ * {@link withSkillsExtensionCapability}, which is what the inspector's connect
+ * seams do (local) and what the MCPJam host persona's stored
+ * `clientCapabilities` does (hosted).
+ *
+ * The backend's `DEFAULT_CLIENT_CAPABILITIES_V2` is the hand-mirror of this
+ * function and stays in lockstep with it.
+ */
 export function getDefaultClientCapabilities(): ClientCapabilityOptions {
   return {
     extensions: {
@@ -47,6 +64,38 @@ export function getDefaultClientCapabilities(): ClientCapabilityOptions {
       },
     },
   } as ClientCapabilityOptions;
+}
+
+/**
+ * Merges `io.modelcontextprotocol/skills` (SEP-2640) into a client
+ * capabilities object.
+ *
+ * Same shape and contract as `withXaaExtensionCapability` in the app: merge,
+ * never overwrite, and never clobber an existing settings object for the same
+ * extension id (a caller that already pinned settings meant them).
+ *
+ * Applied per connection by a surface that knows a SEP-2640 fulfiller is
+ * actually installed. Because the extension is connection-level, this is the
+ * ONLY seam skills declaration uses — there is no per-request `_meta`
+ * equivalent, which is what makes it simpler than the tasks extension.
+ */
+export function withSkillsExtensionCapability<
+  T extends Record<string, unknown> | undefined,
+>(capabilities: T): Record<string, unknown> {
+  const existingExtensions = isPlainObject(capabilities?.extensions)
+    ? (capabilities.extensions as Record<string, unknown>)
+    : {};
+  return {
+    ...(capabilities ?? {}),
+    extensions: {
+      ...existingExtensions,
+      [MCP_SKILLS_EXTENSION_ID]: isPlainObject(
+        existingExtensions[MCP_SKILLS_EXTENSION_ID]
+      )
+        ? existingExtensions[MCP_SKILLS_EXTENSION_ID]
+        : {},
+    },
+  };
 }
 
 export function normalizeClientCapabilities(

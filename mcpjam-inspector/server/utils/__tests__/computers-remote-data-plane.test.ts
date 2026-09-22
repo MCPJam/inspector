@@ -377,7 +377,13 @@ describe("bash tool delegation", () => {
       jsonResponse(200, { stdout: "ok\n", stderr: "", exitCode: 0 });
 
     const { runner, result } = execTool({ command: "ls", timeoutSeconds: 5 });
-    expect(await result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    // Delegated exec reads "cloud" — the non-hosted run-location stamp.
+    expect(await result).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+      engine: "cloud",
+    });
 
     // The local E2B runner must never be touched on the delegation path.
     expect(runner).not.toHaveBeenCalled();

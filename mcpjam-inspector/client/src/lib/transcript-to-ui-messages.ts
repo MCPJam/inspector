@@ -3,6 +3,7 @@ import {
   mergeMcpToolOriginMetadata,
   readMcpToolOriginServerId,
 } from "@/shared/mcp-tool-origin-metadata";
+import { getMessageTimestampMs, withMessageTimestamp } from "@mcpjam/chat-ui";
 
 /**
  * Convert a persisted transcript blob (array of message objects from the
@@ -89,7 +90,7 @@ function getUiMessageContinuityKey(message: UIMessage): string {
   }
 
   return `${message.role}:parts:${stableHash(
-    (message.parts ?? []).map(normalizeUiPartForContinuity)
+    (message.parts ?? []).map(normalizeUiPartForContinuity),
   )}`;
 }
 
@@ -98,14 +99,14 @@ function getStableMessageId(msg: TranscriptMessage, index: number): string {
     return msg.id;
   }
   return `transcript-${index}-${msg.role ?? "unknown"}-${stableHash(
-    msg.content
+    msg.content,
   )}`;
 }
 
 function getStableToolCallId(
   part: TranscriptPart,
   messageIndex: number,
-  partIndex: number
+  partIndex: number,
 ): string {
   const explicitId = readToolCallId(part);
   if (explicitId) return explicitId;
@@ -127,7 +128,7 @@ function readToolCallId(part: TranscriptPart): string | undefined {
 }
 
 function readToolOriginMetadata(
-  part: TranscriptPart
+  part: TranscriptPart,
 ): Record<string, unknown> | undefined {
   const metadataCandidates = [
     part.providerOptions,
@@ -139,7 +140,7 @@ function readToolOriginMetadata(
     (candidate) =>
       candidate !== null &&
       typeof candidate === "object" &&
-      !Array.isArray(candidate)
+      !Array.isArray(candidate),
   );
   const directServerId =
     typeof part.serverId === "string" && part.serverId.length > 0
@@ -204,11 +205,7 @@ function isModelVisibleImageOutput(value: unknown): boolean {
 function readHydratedToolOutput(part: TranscriptPart): unknown {
   const hasResult = hasOwn(part, "result");
   const hasOutput = hasOwn(part, "output");
-  if (
-    hasResult &&
-    hasOutput &&
-    isModelVisibleImageOutput(part.output)
-  ) {
+  if (hasResult && hasOutput && isModelVisibleImageOutput(part.output)) {
     return part.result;
   }
   if (hasOutput) return part.output;
@@ -321,7 +318,7 @@ function extractTextContent(content: unknown): string {
 
 function convertParts(
   content: unknown,
-  messageIndex: number
+  messageIndex: number,
 ): UIMessage["parts"] {
   if (typeof content === "string") {
     return [{ type: "text", text: content }];
@@ -343,6 +340,12 @@ function convertParts(
       parts.push({ type: "text", text: part.text });
     } else if (partType === "tool-call") {
       const providerMetadata = readToolOriginMetadata(part);
+      // A tool-call with no merged tool-result row is UNRESOLVED — a turn
+      // suspended mid-call (SEP-2350 scope step-up, MRTR). It must hydrate as
+      // "input-available": stamping "output-available" with a synthetic `{}`
+      // output makes the resent history look resolved server-side, so a
+      // resume request finds no unresolved tool-call and silently no-ops.
+      const isResolved = hasOwn(part, "result") || hasOwn(part, "output");
       // Use "dynamic-tool" format so that PartSwitch can access toolCallId
       // at the top level (required for toolRenderOverrides lookup).
       // Use "output-available" state (not "result") — the rendering pipeline
@@ -354,12 +357,14 @@ function convertParts(
         type: "dynamic-tool",
         toolCallId: getStableToolCallId(part, messageIndex, partIndex),
         toolName: part.toolName ?? "unknown",
-        state: "output-available" as const,
         input: part.args ?? part.input ?? {},
-        output: readHydratedToolOutput(part),
-        ...(providerMetadata
-          ? { callProviderMetadata: providerMetadata }
-          : {}),
+        ...(isResolved
+          ? {
+              state: "output-available" as const,
+              output: readHydratedToolOutput(part),
+            }
+          : { state: "input-available" as const }),
+        ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
       } as any);
     } else if (partType === "tool-result") {
       // Tool results are typically already captured via tool-call results
@@ -418,27 +423,33 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
 
 export function preserveHydratedMessageIds(
   currentMessages: UIMessage[],
-  hydratedMessages: UIMessage[]
+  hydratedMessages: UIMessage[],
 ): UIMessage[] {
   if (currentMessages.length === 0 || hydratedMessages.length === 0) {
     return hydratedMessages;
   }
 
-  const currentIdsByContinuityKey = new Map<string, string[]>();
+  const currentMessagesByContinuityKey = new Map<string, UIMessage[]>();
   for (const message of currentMessages) {
     const key = getUiMessageContinuityKey(message);
-    const ids = currentIdsByContinuityKey.get(key);
-    if (ids) {
-      ids.push(message.id);
+    const matchingMessages = currentMessagesByContinuityKey.get(key);
+    if (matchingMessages) {
+      matchingMessages.push(message);
     } else {
-      currentIdsByContinuityKey.set(key, [message.id]);
+      currentMessagesByContinuityKey.set(key, [message]);
     }
   }
 
   return hydratedMessages.map((message) => {
     const key = getUiMessageContinuityKey(message);
-    const existingId = currentIdsByContinuityKey.get(key)?.shift();
-    if (!existingId || existingId === message.id) return message;
-    return { ...message, id: existingId };
+    const existing = currentMessagesByContinuityKey.get(key)?.shift();
+    if (!existing) return message;
+
+    const withStableId =
+      existing.id === message.id ? message : { ...message, id: existing.id };
+    const timestampMs = getMessageTimestampMs(existing);
+    return timestampMs === undefined
+      ? withStableId
+      : withMessageTimestamp(withStableId, timestampMs);
   });
 }

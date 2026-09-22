@@ -1,15 +1,7 @@
 import type { ComponentProps } from "react";
 import { ChatTabV2 } from "./ChatTabV2";
-import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
-import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 type HostStyledChatTabV2Props = Omit<
@@ -41,42 +33,32 @@ export function ClientStyledChatTabV2({
   const hostCapabilitiesOverride =
     activeHost?.hostCapabilitiesOverride ?? prefHostCapabilitiesOverride;
   const activeMcpProfile = activeHost?.mcpProfile;
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   return (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
-        <ChatboxHostThemeProvider value={themeMode}>
-          <ActiveMcpProfileProvider value={activeMcpProfile}>
-            <ActiveHostCapsResolverScope
-              activeHost={activeHost}
-              hostStyle={hostStyle}
-            >
-              <div
-                className={cn(
-                  "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                  themeMode === "dark" && "dark"
-                )}
-                data-host-style={hostStyle}
-                style={shellStyle}
-              >
-                <ChatTabV2
-                  {...props}
-                  // The selector writes only to the preferences store, but
-                  // when `activeHost` is present `hostStyle` is derived from
-                  // it instead — the control would silently no-op. Suppress
-                  // the selector in that case so the user isn't handed a
-                  // dead toggle. Surfaces with no active host (e.g. plain
-                  // direct chat) still get the prefs-backed picker.
-                  showHostStyleSelector={showHostStyleSelector && !activeHost}
-                  hostStyle={hostStyle}
-                  onHostStyleChange={setHostStyle}
-                />
-              </div>
-            </ActiveHostCapsResolverScope>
-          </ActiveMcpProfileProvider>
-        </ChatboxHostThemeProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+    <HostStyledShell
+      hostSnapshot={{
+        hostStyle,
+        hostCapabilitiesOverride,
+        // This caller has never applied activeHost.chatUiOverride.
+        chatUiOverride: undefined,
+        mcpProfile: activeMcpProfile,
+      }}
+      activeHost={activeHost ?? null}
+      themeMode={themeMode}
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      <ChatTabV2
+        {...props}
+        // The selector writes only to the preferences store, but
+        // when `activeHost` is present `hostStyle` is derived from
+        // it instead — the control would silently no-op. Suppress
+        // the selector in that case so the user isn't handed a
+        // dead toggle. Surfaces with no active host (e.g. plain
+        // direct chat) still get the prefs-backed picker.
+        showHostStyleSelector={showHostStyleSelector && !activeHost}
+        hostStyle={hostStyle}
+        onHostStyleChange={setHostStyle}
+      />
+    </HostStyledShell>
   );
 }

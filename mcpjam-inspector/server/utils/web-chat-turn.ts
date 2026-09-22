@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
  * Shared web-chat streaming turn.
  *
@@ -23,17 +24,31 @@
  *   - Throwing/propagating errors; the caller is expected to catch and run
  *     its own OAuth-error enrichment if applicable.
  */
+import type { ResumeExecutionTarget } from "@/shared/execution-target";
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import type { Context } from "hono";
-import { type ToolSet } from "ai";
+import { type ToolSet, type UIMessageChunk } from "ai";
+import { logger } from "./logger.js";
+import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
+import {
+  SANDBOX_NOTICE_DATA_PART_TYPE,
+  type SandboxNoticeReason,
+} from "@/shared/sandbox-notice";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { Harness, MCPClientManager } from "@mcpjam/sdk";
+import type {
+  Harness,
+  MCPClientManager,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
+  type MCPJamHandlerOptions,
   warnIfChatAbortSignalMissing,
 } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
@@ -48,11 +63,13 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import {
   buildWidgetModelContextSystemPrompt,
+  guardPageToolRefresh,
   prepareChatV2,
   type AppToolEntry,
+  type PageToolEntry,
   type UiToolEntry,
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
@@ -64,20 +81,47 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import {
+  fetchRuntimeSecrets,
+  resolveTurnRuntimeSecrets,
+} from "./harness/runtime-secrets.js";
+import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
+import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
-import {
-  classifyUiToolApprovals,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
+import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
-import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
-import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
+import {
+  emitInsufficientScopeChunk,
+  type ElicitationChunkWriter,
+  type HostedElicitationBridge,
+} from "./../routes/web/hosted-elicitation.js";
+import type { HostedMrtrBridge } from "./mrtr-hosted-bridge.js";
+import type { HostedTaskCreatedBridge } from "./hosted-task-created-bridge.js";
+import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
+import {
+  buildHostedScopeStepUpCancellation,
+  buildHostedScopeStepUpResume,
+  createHostedScopeStepUpContinuation,
+} from "./hosted-scope-step-up-continuation.js";
+import type {
+  ScopeStepUpCancelRequest,
+  ScopeStepUpResumeRequest,
+} from "@/shared/scope-step-up";
+import type { ChatRewind } from "@/shared/chat-v2";
+import {
+  bridgeHarnessRpcLogsToCollector,
+  startCrossInstanceRpcLogPoll,
+} from "./../routes/web/hosted-rpc-logs.js";
+import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
-import { getClientIp } from "./client-ip.js";
+import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
@@ -85,6 +129,32 @@ import {
 } from "./harness/harness-proxy-strategy.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
+
+/**
+ * The direct-chat `resumeConfig.selectedServers` list.
+ *
+ * Names when the browser supplied an index-aligned set, ids otherwise — and
+ * `nonResumableServerIds` filtered out BY INDEX, never by value: two servers
+ * can share a display name, and filtering names by value would drop the wrong
+ * entry (the same rule `services/journeys/plugin-servers.ts` follows).
+ */
+export function resumableServers(persist: {
+  selectedServerIds: string[];
+  selectedServerNames?: string[];
+  nonResumableServerIds?: string[];
+}): string[] {
+  const aligned =
+    Array.isArray(persist.selectedServerNames) &&
+    persist.selectedServerNames.length === persist.selectedServerIds.length
+      ? persist.selectedServerNames
+      : persist.selectedServerIds;
+  const excluded = persist.nonResumableServerIds;
+  if (!excluded || excluded.length === 0) return aligned;
+  const nonResumable = new Set(excluded);
+  return aligned.filter(
+    (_, index) => !nonResumable.has(persist.selectedServerIds[index]!),
+  );
+}
 
 /**
  * Persistence context for a web-chat turn — everything `persistChatSessionToConvex`
@@ -95,7 +165,7 @@ export interface WebChatTurnPersistContext {
   chatSessionId: string | undefined;
   projectId: string;
   /** Closed union per `chatIngestion/common.ts`. */
-  sourceType: "chatbox" | "direct";
+  sourceType: "scenario" | "direct";
   /**
    * Closed union per backend `chatOriginValidator`. Required at this boundary
    * so a new caller can't skip choosing one — `sourceType` answers the
@@ -103,11 +173,11 @@ export interface WebChatTurnPersistContext {
    * (training-data discriminator).
    */
   origin: ChatOrigin;
-  /** Only set when sourceType === "chatbox". */
+  /** Only set when sourceType === "scenario". */
   surface?: "preview" | "share_link";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
-  /** Phase 3 execution scope (chatbox/host runtime-config). Threaded into the
+  /** Phase 3 execution scope (scenario/host runtime-config). Threaded into the
    *  harness path so the backend re-resolves live access + per-swarm caps. */
   executionScope?: ExecutionScope;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
@@ -116,6 +186,15 @@ export interface WebChatTurnPersistContext {
   originalMessages: UIMessage[] | unknown[];
   /** Direct-chat only. */
   directVisibility?: "private" | "project";
+  /** Direct-chat lineage when this session was created by message edit. */
+  rewind?: ChatRewind;
+  /**
+   * Optimistic-concurrency baseline for a resumed thread: the session version
+   * the client believes it is continuing from. The client has always sent it;
+   * this path used to discard it, leaving hosted sessions with no protection
+   * against a second tab or device overwriting a turn.
+   */
+  expectedVersion?: number;
   /**
    * Direct-chat only. May be a pre-built payload, `null` to opt out (e.g.
    * agent surfaces), or a builder closure that receives the post-prepare
@@ -133,6 +212,21 @@ export interface WebChatTurnPersistContext {
   selectedServerNames?: string[];
   /** Required for `resumeConfig.selectedServers` fallback on direct chat. */
   selectedServerIds: string[];
+  /**
+   * Server ids that ran this turn but must NOT be written into
+   * `resumeConfig.selectedServers` — today, plugin-contributed servers.
+   *
+   * `resumeConfig` is a DURABLE reconnect instruction the Sessions viewer
+   * replays with no plugin lifecycle check, so a plugin server id stored here
+   * outlives the plugin's disable/uninstall and re-attaches it — the same
+   * bypass that keeps `plugin_component` ids out of `hostConfigs.serverIds`
+   * (and that `services/journeys/plugin-servers.ts` already filters for journeys).
+   * It is also how a Playground's EPHEMERAL plugin narrowing would leak into a
+   * durable record: whatever the user toggled off this turn would be written
+   * down as the session's server set. Which plugin versions ran stays
+   * recorded as trace provenance; it is never a restorable pin.
+   */
+  nonResumableServerIds?: string[];
   /** Resolved per-turn config — forwarded into `resumeConfig`. */
   systemPrompt?: string;
   temperature?: number;
@@ -151,6 +245,97 @@ export interface WebChatTurnPersistContext {
    * behavior.
    */
   captureToolSnapshot?: boolean;
+  /**
+   * Resolved Project-Environment skills for this turn (Phase 1.4), HARNESS
+   * side. Forwarded verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`,
+   * where presence (even empty) skips the live project-wide skills fetch.
+   *
+   * It lives on the persist context rather than the prepare inputs because the
+   * harness path is reached through the persist/stream half of this helper —
+   * the same place `harness` and `executionScope` already travel.
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
+   * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
+   * this is what the Computer delivery path needs on top of it — the resolved
+   * per-skill supporting files (including plugin ones, which the project-wide
+   * file query cannot return) and the pinned plugin versions that make a
+   * resumed sandbox with stale plugin material ineligible.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
+   * project secrets.
+   *
+   * An id rather than the resolved spec, deliberately. `resolveEnvironmentForRuntime`
+   * and `ResolvedEnvironmentRuntime` never carry secrets: `toEnvironmentPreview`
+   * spreads nothing and must never see a value, and a resolved spec that could
+   * carry one would put a credential on the same object every preview, log line
+   * and telemetry field already reads. The harness turn fetches its own secrets
+   * from Convex with the user's own bearer instead, and this is the only thing
+   * it needs to do that.
+   *
+   * Absent ⇒ this turn has no grant, which is a normal state, not a failure.
+   *
+   * ALSO the direct-chat resume pin: written into
+   * `resumeConfig.environmentId` so a reopened Playground conversation can be
+   * restored onto the target it actually ran on rather than the viewer's
+   * current selection. See the persist site below for why sending it on every
+   * turn is safe.
+   */
+  environmentId?: string;
+  executionTarget?: ResumeExecutionTarget;
+  /**
+   * This turn's MATERIALIZED secrets, when the ROUTE already resolved them.
+   *
+   * Presence is semantic (even empty): supplied ⇒ do not fetch again. `chat-v2`
+   * resolves them before it builds the emulated `bash` tool, so by the time
+   * this helper runs the list already exists — and re-fetching would both cost
+   * a second KMS decrypt and risk the scrubber registering a different set than
+   * the box received. A caller that has not resolved them omits this and the
+   * helper fetches from {@link environmentId}.
+   */
+  runtimeSecrets?: { name: string; value: string }[];
+  /**
+   * The secrets fetch FAILED — distinct from "this turn has none".
+   *
+   * Forces the harness runtime fingerprint to change, so the session forks onto
+   * a fresh bridge instead of resuming one that may still hold previously
+   * delivered values this process can no longer enumerate (and therefore could
+   * not scrub out of the transcript). See `runtime-secrets.ts`.
+   */
+  secretsUnavailable?: boolean;
+  /**
+   * Fired when this turn's materialized secrets actually reach an execution
+   * surface — a bash command that carries them, or a started harness session
+   * holding them. Used to stamp delivery honestly; see `sandbox-bash`.
+   */
+  onSecretEnvDelivered?: () => void;
+  /**
+   * What this turn should RECORD about the configuration it ran with —
+   * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
+   * from the POST-narrowing spec so it reflects what actually ran.
+   *
+   * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
+   * purpose: those decide what reaches the model, this only decides what gets
+   * written down. Delivery is byte-identical whether this is present or not.
+   */
+  turnProvenance?: TurnSkillProvenance;
+  /**
+   * The page tools this turn advertised, for the turn trace.
+   *
+   * Like `turnProvenance`: it decides only what gets WRITTEN DOWN, never what
+   * reaches the model. Delivery is byte-identical whether it is present or not.
+   *
+   * A THUNK, read when the turn is persisted rather than when these options are
+   * built. A page tool set is the one thing here that changes DURING the turn —
+   * the model navigates and the refresher mints a new set — and an array
+   * captured at options-build time would always record the tools the turn
+   * opened with, which on any turn that navigated is precisely not the set its
+   * last steps used.
+   */
+  pageToolsAtTurn?: () => MintedPageToolRecord[] | undefined;
 }
 
 /**
@@ -164,7 +349,19 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  /**
+   * MCP tool names this surface declines to advertise, whichever selected
+   * server offers them. See `PrepareChatV2Options.excludeMcpToolNames`.
+   */
+  excludeMcpToolNames?: readonly string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * The host's tool-cancellation setting, resolved for this turn from the
+   * server-side host config. Forwarded per turn because the connection's copy
+   * is captured at connect time; an empty record means "cancels normally" and
+   * must still be sent so it overrides the connection's stale value.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
@@ -172,18 +369,83 @@ export interface WebChatTurnPrepareInputs {
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
+  /**
+   * Resolved task-seam options. The CALLER resolves the mode, because hosted
+   * chat and the MCPJam agent both come through here and are different rows in
+   * the policy matrix. Absent ⇒ tasks off for this turn.
+   */
+  tasks?: ToolTaskSeamOptions;
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
+  /**
+   * The tools of the web page an open WebMCP Inspector session is driving,
+   * client-fulfilled like `appTools` — the client invokes them through the
+   * session it already owns, hosted or local, and posts the result back.
+   *
+   * The CALLER validates and gates them (`webmcpInspectorReachable`), because
+   * a turn must never advertise a page tool on a deployment where no session
+   * can exist: the model would call it and the turn would strand.
+   */
+  pageTools?: PageToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
+  /**
+   * Re-read the page's tools between model steps, when this turn built page
+   * tools on an engine that can grow its set.
+   *
+   * Threaded rather than derived: only the browser capability knows how to ask,
+   * and only the hosted loop can use the answer.
+   */
+  refreshTools?: MCPJamHandlerOptions["refreshTools"];
+  /**
+   * Handed the names a mid-turn page tool may not take, once `prepareChatV2`
+   * has decided them.
+   *
+   * The caller cannot compute this — the decision needs the assembled MCP, app,
+   * UI and skill sets — and needs it only to keep its PERSISTED record honest;
+   * the model's own set is filtered in here, at the refresh.
+   */
+  onPageToolNamesReserved?: (reserved: ReadonlySet<string>) => void;
+  /** Host-configured computer working directory (COMP-16); roots the harness
+   *  Shell under the same dir the bash tool runs in. */
+  computerWorkdir?: string;
   widgetModelContext?: WidgetModelContextEntry[];
   /**
-   * When set, skills are sourced from the caller's Computer (E2B sandbox)
-   * rather than the local FS. Set by the hosted chat route only when the host
-   * actually has a computer. See `chat-v2-orchestration.ts`.
+   * Whether this turn's `effectiveCapabilities` describe a LIVE surface rather
+   * than a captured environment.
+   *
+   * A live turn also composes SEP-2640 skills from its connected servers; an
+   * environment turn does not, because its server skills were captured and
+   * fetching more would falsify the snapshot. Set by the hosted chat route for
+   * its host/adhoc targets, which resolve no environment at all.
    */
-  cloudSkills?: { authHeader: string; projectId: string };
+  liveSkillSurface?: boolean;
+  /**
+   * Resolved Project-Environment skills for this turn (Phase 1.4), EMULATED
+   * side. When set (even empty) they are the only skills the emulated engine
+   * advertises: `prepareChatV2` receives them as `skillsSource: "resolved"`,
+   * which is now the ONLY skill source `prepareChatV2` accepts.
+   *
+   * Ignored when `harness` is set: a harness turn delivers skills natively
+   * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
+   * and advertising emulated skill tools there is a prompt/tool mismatch.
+   *
+   * INS-3: this stays the HARNESS-shaped list (name/description/content, which
+   * is all an adapter writes to disk). The emulated side takes
+   * {@link WebChatTurnPrepareInput.effectiveCapabilities} instead, because its
+   * tools address skills by ref and need the plugin origin this list drops.
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The turn's resolved `EffectiveCapabilitySet` (INS-3). Set alongside
+   * `runtimeSkillsOverride` for an environment turn; drives the EMULATED skill
+   * tools (ref-addressed, plugin-origin-aware, supporting-file capable).
+   *
+   * Presence is what makes it authoritative — a set that resolves zero skills
+   * advertises zero, and never falls back to the project-wide pool.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -201,8 +463,124 @@ export interface WebChatTurnRuntime {
    * client speaks the hosted-elicitation handshake; see `chat-v2.ts`.
    */
   elicitationBridge?: HostedElicitationBridge;
-  /** Hono context (needed for getClientIp fallback / future hooks). */
+  /**
+   * Hosted MRTR (§12.5, PR5) bridge — attached to the stream writer so the
+   * suspending collector can emit `data-mrtr-input-required` parts. Present only
+   * for emulated-engine turns whose host declares elicitation AND whose client
+   * speaks the MRTR handshake. Continuations are durable, so unlike the
+   * elicitation bridge it is NOT disposed at end of turn.
+   */
+  mrtrBridge?: HostedMrtrBridge;
+  /**
+   * Delivers `data-task-created` parts. Present only when the host policy
+   * enables tasks for this surface AND the client sent a compatible
+   * `hostedTasksVersion`. A mismatch leaves this undefined — the turn proceeds
+   * without the part rather than failing, because the task already exists.
+   */
+  taskCreatedBridge?: HostedTaskCreatedBridge;
+  /**
+   * Hosted MRTR resume descriptor — forwarded to the emulated engine only. On a
+   * fresh resume request the engine drives one retry leg before the first model
+   * call and splices the driven result. Emulated MCPJam engine only.
+   */
+  mrtrResume?: MrtrEngineResume;
+  /**
+   * Durable SEP-2350 chat suspension context. The bearer never reaches the
+   * browser; it is used only for the opaque Convex continuation store.
+   */
+  scopeStepUp?: {
+    bearer: string;
+    authPrincipal: string;
+    resumeRequest?: ScopeStepUpResumeRequest;
+    cancelRequest?: ScopeStepUpCancelRequest;
+  };
+  /**
+   * One-time notices about this conversation's ephemeral sandbox, PEEKED from
+   * the control plane by the caller (chat-v2 provisions before the stream
+   * exists, so it cannot emit them itself).
+   *
+   * Flushed once, at `onStreamWriterReady`, on whichever engine this turn takes
+   * — they describe the machine, not the model — and ACKED immediately after
+   * the write, which is what marks them delivered. Until that ack lands they
+   * remain pending server-side, so a turn that dies before streaming re-delivers
+   * them next time instead of losing them.
+   */
+  sandboxNotices?: SandboxNoticeReason[];
+  /**
+   * Acks the notices above once they are on the wire. Supplied by the caller
+   * (it holds the bearer and the sandbox row id); absent when the backend
+   * already consumed them at provision time (legacy fused path).
+   *
+   * Best-effort: a failed ack re-delivers, which is the correct direction to
+   * fail for "your sandbox was reset, earlier files are gone".
+   */
+  ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
+  /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
+}
+
+/**
+ * A stream writer that can optionally report whether the stream is still open.
+ * `isClosed` is implemented by the emulated engine's no-throw `safeWriter`; the
+ * other engines pass a writer that throws on a dead controller, which the
+ * try/catch handles instead.
+ */
+type SandboxNoticeWriter = ElicitationChunkWriter & {
+  isClosed?: () => boolean;
+};
+
+/**
+ * Flush the turn's sandbox notices onto the freshly-ready stream writer, then
+ * ACK the ones that actually made it out.
+ *
+ * The ack is what closes the delivery gap: the control plane keeps a notice
+ * pending until this point, so a turn that dies before the writer exists
+ * re-delivers it rather than losing it. Only notices actually DELIVERED are
+ * acked.
+ *
+ * "Delivered" cannot be inferred from `write()` returning normally. The
+ * emulated engine hands us `safeWriter` (mcpjam-stream-handler.ts), which is
+ * deliberately no-throw — it swallows controller failures and silently no-ops
+ * once the stream is closed, so that a client disconnect cannot bring down the
+ * agentic loop. Trusting a clean return there would let us ack (and therefore
+ * permanently consume) a notice the browser never received. So the writer is
+ * asked directly via {@link SandboxNoticeWriter.isClosed}, and the abort signal
+ * is consulted too.
+ *
+ * Best-effort per notice in both directions: neither a failed write nor a
+ * failed ack may take down a turn whose only problem is that we couldn't
+ * narrate the machine. Bailing out early costs a duplicate notice next turn,
+ * never a lost one.
+ */
+function emitSandboxNotices(
+  writer: SandboxNoticeWriter | null | undefined,
+  notices: SandboxNoticeReason[] | undefined,
+  ack?: (delivered: SandboxNoticeReason[]) => void,
+  abortSignal?: AbortSignal,
+): void {
+  if (!writer || !notices?.length) return;
+  const closed = () => writer.isClosed?.() === true || abortSignal?.aborted;
+  const delivered: SandboxNoticeReason[] = [];
+  for (const reason of notices) {
+    if (closed()) break;
+    try {
+      writer.write({
+        type: SANDBOX_NOTICE_DATA_PART_TYPE,
+        data: { reason },
+        transient: true,
+      } as unknown as UIMessageChunk);
+      // Re-checked AFTER the write: this is the call that may have discovered
+      // the stream was gone, and the chunk that discovered it did not land.
+      if (closed()) break;
+      delivered.push(reason);
+    } catch (error) {
+      logger.warn("[chat] sandbox notice stream write failed", {
+        reason,
+        error,
+      });
+    }
+  }
+  if (delivered.length > 0) ack?.(delivered);
 }
 
 export interface StreamWebChatTurnArgs {
@@ -249,21 +627,6 @@ export function stripUiContextModelParts(
 }
 
 /**
- * Per-tool approval policy for this turn's `ui_*` tools, from the VALIDATED
- * snapshot's MCP annotations — never from the raw name, which a third-party
- * server could spoof. Consumed by the MCPJam loop's approval gate (see
- * `toolCallNeedsApproval` in mcpjam-stream-handler); the BYOK `streamText`
- * path gets the same policy baked into each tool's `needsApproval` by
- * `buildUiTools`.
- */
-function uiToolApprovalsFrom(
-  uiTools: UiToolEntry[] | undefined,
-  requireToolApproval: boolean | undefined
-): UiToolApprovalClassification {
-  return classifyUiToolApprovals(uiTools, requireToolApproval === true);
-}
-
-/**
  * Run a single web-chat streaming turn.
  *
  * Returns the streaming Response. Throws WebRouteError / runtime errors;
@@ -275,6 +638,11 @@ export async function streamWebChatTurn(
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
   const { c } = runtime;
+  // Mid-stream failures happen after this route has already returned a 200
+  // stream, where the HTTP failure events can't see them. The request-scoped
+  // reporter gives every engine below one typed route.operation.failed path
+  // carrying the full request envelope (orgId/route/requestId/release).
+  const failureReporter = createRequestStreamFailureReporter(c, "chat");
 
   // Guard the env once at the top — both branches POST to Convex.
   if (!process.env.CONVEX_HTTP_URL) {
@@ -309,17 +677,48 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      ...(prepare.excludeMcpToolNames
+        ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
+        : {}),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      ...(prepare.toolCallCancellation !== undefined
+        ? { toolCallCancellation: prepare.toolCallCancellation }
+        : {}),
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
+      ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
+      pageTools: prepare.pageTools,
       builtInTools: prepare.builtInTools,
-      ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
+      // The prompt section that explains `webmcp_*` tools has to be there
+      // BEFORE a navigation adds them; the refresher's presence is the fact.
+      pageToolsMayGrow: Boolean(prepare.refreshTools),
+
+      // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
+      // EMULATED engine only. On a harness turn the adapter delivers them
+      // natively, so advertising emulated `loadSkill` (+ file tools) on top would describe
+      // a second, different delivery of the same set to the same model.
+      ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
+        ? {
+            skillsSource: {
+              kind: "resolved" as const,
+              capabilities: prepare.effectiveCapabilities,
+              ...(prepare.liveSkillSurface
+                ? { composeLiveServerSkills: true as const }
+                : {}),
+              // So a supporting-file read stops when the client disconnects
+              // instead of holding a worker for its full fetch timeout.
+              ...(runtime.abortSignal
+                ? { abortSignal: runtime.abortSignal }
+                : {}),
+            },
+          }
+        : {}),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -336,10 +735,127 @@ export async function streamWebChatTurn(
     scrubMessages,
     progressivePlan,
     discoveryState,
+    reservedAgainstPageTools,
   } = prepared;
 
+  // THE SAME COLLISION POLICY, APPLIED TO THE SET THE TURN GROWS INTO.
+  //
+  // `prepareChatV2` decides "a page tool loses every collision" for the tools a
+  // turn starts with; a turn that navigates gets a second set, minted by the
+  // browser capability from a page this function has not seen. Wrapping here is
+  // what makes the two the same rule rather than two rules that happen to
+  // agree — the refresher itself only reserves the browser's own verbs, and
+  // knows nothing of the MCP, app, UI and skill names beside them.
+  prepare.onPageToolNamesReserved?.(reservedAgainstPageTools);
+
   /**
-   * Surface `-32042 URLElicitationRequiredError` from ANY engine.
+   * The tool set an engine that RE-ADVERTISES gets: without the generic
+   * `browser_webmcp_invoke`.
+   *
+   * Decided here rather than in the route, because only here is the engine
+   * known. Which engine runs depends on `resolveOrgRuntime`, a Convex-backed
+   * lookup that happens below — so a caller assembling browser tools cannot
+   * say whether this turn's loop will consume `refreshTools`, and a flag it
+   * guessed retired the verb for local BYOK too, which does not refresh. The
+   * model then had no way to reach a page it navigated to.
+   *
+   * Applied ONLY on the two paths that pass `refreshTools` below. Everywhere
+   * else the verb stays, which is the safe direction: an extra tool costs a
+   * line in the list, and a missing one costs the page.
+   */
+  const refreshingEngineTools = (): ToolSet =>
+    refreshTools
+      ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+      : (allTools as ToolSet);
+  const refreshTools: MCPJamHandlerOptions["refreshTools"] | undefined =
+    prepare.refreshTools
+      ? async (ctx) => {
+          const refresh = await prepare.refreshTools!(ctx);
+          return refresh
+            ? guardPageToolRefresh(refresh, reservedAgainstPageTools)
+            : refresh;
+        }
+      : undefined;
+
+  // The raw per-turn stream writer, captured at `onStreamWriterReady` below.
+  // Present for EVERY turn that produces a stream, independent of the
+  // elicitation gate — so the display-only `insufficient_scope` notice can fire
+  // even for a host that never advertised elicitation (hence has no bridge).
+  let scopeChallengeWriter: ElicitationChunkWriter | null = null;
+
+  // SEP-2350 id→display-name map for the writer-only step-up fallback (no
+  // elicitation bridge). Built from the SAME `selectedServerIds`/
+  // `selectedServerNames` pair the bridge uses (`chat-v2.ts`), so a hosted
+  // dashboard turn — whose `serverId` is a Convex document id — resolves to the
+  // display name the client keys `appState.servers` by. Without this the
+  // fallback would emit an id-only event that never matches the name-keyed
+  // client store and step-up would silently no-op.
+  const scopeStepUpServerNamesById =
+    buildServerNamesById(
+      persist.selectedServerIds,
+      persist.selectedServerNames,
+    ) ?? {};
+  let suspendedScopeStepUpToolCallId: string | undefined;
+  const scopeStepUpResume =
+    runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
+      ? buildHostedScopeStepUpResume({
+          request: runtime.scopeStepUp.resumeRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          authPrincipal: runtime.scopeStepUp.authPrincipal,
+          projectId: persist.projectId,
+          chatSessionId: persist.chatSessionId,
+          manager,
+          messages: modelMessages,
+          tools: preparedTools,
+          modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+          abortSignal: runtime.abortSignal,
+        })
+      : runtime.scopeStepUp?.cancelRequest
+      ? buildHostedScopeStepUpCancellation({
+          request: runtime.scopeStepUp.cancelRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          messages: modelMessages,
+          tools: preparedTools,
+        })
+      : undefined;
+  const createScopeStepUpContinuation =
+    runtime.scopeStepUp && persist.chatSessionId
+      ? async ({
+          info,
+          toolName,
+          toolInput,
+        }: {
+          info: Parameters<
+            typeof createHostedScopeStepUpContinuation
+          >[0]["info"];
+          toolName: string;
+          toolInput: unknown;
+        }) => {
+          const event = await createHostedScopeStepUpContinuation({
+            bearer: runtime.scopeStepUp!.bearer,
+            authPrincipal: runtime.scopeStepUp!.authPrincipal,
+            projectId: persist.projectId,
+            chatSessionId: persist.chatSessionId!,
+            manager,
+            connectionId: toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              info.toolCallId,
+            )?.connectionId,
+            serverName: scopeStepUpServerNamesById[info.serverId],
+            info,
+            toolName,
+            toolInput,
+            abortSignal: runtime.abortSignal,
+          });
+          suspendedScopeStepUpToolCallId = event.toolCallId;
+          return event;
+        }
+      : undefined;
+
+  /**
+   * Observe in-process tool-call failures from every ToolSet-driven engine to
+   * surface out-of-band notices.
    *
    * Wrapped here, on the tool set, rather than in the engines: `prepareChatV2`
    * builds this set once and all three consumers share it (MCPJam-free,
@@ -349,40 +865,62 @@ export async function streamWebChatTurn(
    * fine and silently never fired for BYOK users, who advertise and handle
    * elicitation like everyone else.
    *
-   * Rethrows always: this only observes. The engines' own error handling still
-   * produces the tool result the model sees.
+   * Wrapped UNCONDITIONALLY (not gated on the elicitation bridge): each emit
+   * guards on its own channel. `url_required` still rides the bridge only, so it
+   * stays a no-op without one — identical to before. `insufficient_scope` is a
+   * display-only step-up notice that must fire whether or not elicitation was
+   * advertised, so it falls back to the raw stream writer when there is no
+   * bridge (SEP-2350).
+   *
+   * Harness MCP-server tools execute out of process through `.mcp.json` and
+   * therefore use the correlated harness-proxy side channel instead. Host-
+   * executed harness tools still pass through this set.
+   *
+   * The shared wrapper rethrows always: this only observes. The engines' own
+   * error handling still produces the tool result the model sees.
    */
-  const allTools = runtime.elicitationBridge
-    ? (Object.fromEntries(
-        Object.entries(preparedTools as Record<string, any>).map(
-          ([name, tool]) => {
-            if (typeof tool?.execute !== "function") return [name, tool];
-            const execute = tool.execute.bind(tool);
-            return [
-              name,
-              {
-                ...tool,
-                execute: async (input: unknown, options: any) => {
-                  try {
-                    return await execute(input, options);
-                  } catch (error) {
-                    const elicitations = readUrlElicitations(error);
-                    if (elicitations) {
-                      runtime.elicitationBridge?.emitUrlRequired({
-                        serverId: (tool as any)._serverId ?? "unknown",
-                        toolCallId: options?.toolCallId,
-                        elicitations,
-                      });
-                    }
-                    throw error;
-                  }
-                },
-              },
-            ];
+  const allTools = wrapToolsWithScopeStepUp(
+    preparedTools,
+    () => scopeChallengeWriter,
+    {
+      onToolError: ({ error, serverId, toolCallId }) => {
+        const elicitations = readUrlElicitations(error);
+        if (elicitations) {
+          runtime.elicitationBridge?.emitUrlRequired({
+            serverId,
+            toolCallId,
+            elicitations,
+          });
+        }
+      },
+      emitInsufficientScope: (challenge) => {
+        if (runtime.elicitationBridge) {
+          // Bridge enriches with the server name from its id→name map.
+          runtime.elicitationBridge.emitInsufficientScope(challenge);
+        } else {
+          // No bridge (elicitation unadvertised): still surface the step-up
+          // display-only on the raw writer. Resolve the display name from the
+          // same id→name map the bridge uses so a hosted Convex `serverId`
+          // matches the name-keyed client store.
+          emitInsufficientScopeChunk(
+            scopeChallengeWriter,
+            scopeStepUpServerNamesById[challenge.serverId],
+            challenge,
+          );
+        }
+      },
+      ...(createScopeStepUpContinuation
+        ? {
+            createContinuation: ({ info, toolName, toolInput }) =>
+              createScopeStepUpContinuation({
+                info: { ...info, toolCallId: info.toolCallId! },
+                toolName,
+                toolInput,
+              }),
           }
-        )
-      ) as typeof preparedTools)
-    : preparedTools;
+        : {}),
+    },
+  );
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
     prepare.widgetModelContext ?? [],
@@ -395,6 +933,64 @@ export async function streamWebChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
+
+  // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
+  // very different things need the same list and must not disagree about it:
+  //
+  //   1. the SANDBOX, which receives the values as environment variables (the
+  //      harness turn takes them via `runtimeSecrets` below);
+  //   2. the SCRUBBER, which replaces those same values with `[secret:NAME]`
+  //      in everything this turn persists.
+  //
+  // Two fetches would mean two KMS decrypts per turn AND a window where the
+  // registry is missing something the box already has — which is the one way
+  // this feature leaks by accident. Values that reach the box but not the
+  // registry are values that get written to the transcript verbatim.
+  //
+  // ONE RESOLUTION PER TURN, and a caller's FAILURE is a resolution.
+  //
+  // The tri-state has three answers, and all three have to survive the trip:
+  // secrets, none, or "could not find out". An earlier version keyed only on
+  // `runtimeSecrets !== undefined`, which conflated the third with "the caller
+  // did not resolve" — so a caller that fetched and FAILED fell through to the
+  // fetch below and got a second attempt.
+  //
+  // That second attempt is what made it dangerous rather than merely wasteful.
+  // If it SUCCEEDED, this turn delivered real secrets into the box while the
+  // caller's established failure still forced `secretsUnavailable`, so the
+  // session persisted the `"unavailable"` fingerprint. A later turn whose
+  // fetches both fail computes that same fingerprint, RESUMES that
+  // secret-bearing bridge, and has no list to build a scrubber from — the exact
+  // unscrubbed resume the fork was introduced to prevent, reached by way of a
+  // recovery.
+  //
+  // So an established failure short-circuits: no retry, no delivery, and the
+  // fingerprint that says "unavailable" is only ever persisted by a turn that
+  // genuinely delivered nothing.
+  const secretsFetch = await resolveTurnRuntimeSecrets({
+    ...(persist.runtimeSecrets !== undefined
+      ? { callerSecrets: persist.runtimeSecrets }
+      : {}),
+    ...(persist.secretsUnavailable === true ? { callerUnavailable: true } : {}),
+    fetch: () =>
+      fetchRuntimeSecrets(runtime.authHeader, {
+        ...(persist.projectId ? { projectId: persist.projectId } : {}),
+        ...(persist.environmentId
+          ? { environmentId: persist.environmentId }
+          : {}),
+        ...(hostedChatSessionId ? { chatSessionId: hostedChatSessionId } : {}),
+      }),
+  });
+  const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+  // A failed fetch here forks the session for the same reason it does in
+  // `chat-v2`: we cannot enumerate what the box may already hold. Now exactly
+  // equivalent to `!secretsFetch.ok` — the caller's failure is already folded
+  // in above — and kept as one expression so the invariant is stated once.
+  const secretsUnavailable = !secretsFetch.ok;
+  const secretScrubber = runtimeSecrets
+    ? createSecretScrubber(runtimeSecrets)
+    : null;
+
   const cleanupStream = async () => {
     // Withdraw pending elicitation rows BEFORE dropping the connections: once
     // the stream is gone nobody can answer, and an abandoned row would stay
@@ -404,33 +1000,50 @@ export async function streamWebChatTurn(
     await manager.disconnectAllServers();
   };
 
-  const isChatboxSession = persist.sourceType === "chatbox";
-  // Provider is REQUIRED here: bare hosted ids (`gpt-5-nano` + `openai`) only
-  // canonicalize to their prefixed form (`openai/gpt-5-nano`) when the provider
-  // is supplied. Without it, a bare id fails this check and the turn silently
-  // branches into org-BYOK — skipping runHarnessTurn even when the route's
-  // harness preflight (which does pass the provider) approved the turn.
+  const isScenarioSession = persist.sourceType === "scenario";
+  // The WHOLE definition, not `(id, provider)`: bare hosted ids (`gpt-5-nano`
+  // + `openai`) only canonicalize to their prefixed form (`openai/gpt-5-nano`)
+  // when the provider is supplied — without it a bare id failed this check and
+  // the turn silently branched into org-BYOK, skipping runHarnessTurn even when
+  // the route's harness preflight (which does pass the provider) approved the
+  // turn. And the same pair, sent from the picker's "Your providers" row, means
+  // the OPPOSITE: the user chose their own key. Only the picker's explicit
+  // `hosted: false` tells the two apart; see `isHostedModelDefinition`.
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isHostedCatalogModel(
-      String(prepare.modelDefinition.id),
-      prepare.modelDefinition.provider,
-    );
+    isHostedModelDefinition(prepare.modelDefinition);
+  // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
+  //
+  // Without this the branch below sends a Cursor turn down the org-BYOK path,
+  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
+  // approve the turn and the turn would then run on a completely different
+  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
+  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
+  // product just told the user was ready.
+  //
+  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
+  // model", and an external-account turn is exactly the case where it does not.
+  // The two reasons to take the non-BYOK branch are different facts, so they
+  // stay separate values.
+  const isExternalAccountHarnessTurn =
+    !!persist.harness && harnessUsesExternalAccount(persist.harness);
+  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
-      : (persist.hostConfig ?? null);
+      ? persist.hostConfig({ resolvedTemperature }) ?? null
+      : persist.hostConfig ?? null;
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok",
+    modelSource: "mcpjam" | "byok" | "local_byok" | "external-account",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
@@ -438,7 +1051,12 @@ export async function streamWebChatTurn(
       turnTrace: PersistedTurnTrace,
       harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
-      const isDirectChat = !isChatboxSession;
+      if (prepared.connectionsAtTurn)
+        turnTrace = {
+          ...turnTrace,
+          connectionsAtTurn: prepared.connectionsAtTurn,
+        };
+      const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
       // Surfaces with synthetic server ids (mcpjam-agent) opt out via
       // `persist.captureToolSnapshot === false`.
@@ -462,19 +1080,43 @@ export async function streamWebChatTurn(
         }
       }
 
-      await persistChatSessionToConvex({
+      // Returned, not discarded: the engine turns this into the turn's
+      // `data-persist-receipt` so the client is TOLD what happened to its save
+      // rather than inferring it from a version poll.
+      return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
+        // Applied to the SERIALIZED ingest body, so it covers every payload
+        // this call can carry — session messages, the tool snapshot, assistant
+        // text, a nested JSON string a tool returned — without a per-field list
+        // somebody has to remember to extend.
+        ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
         modelSource,
         projectId: persist.projectId,
         sourceType: persist.sourceType,
         origin: persist.origin,
-        ...(isChatboxSession && persist.surface
+        ...(isScenarioSession && persist.surface
           ? { surface: persist.surface }
           : {}),
-        chatboxId: persist.chatboxId,
-        accessVersion: persist.accessVersion,
+        scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
+        // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
+        // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
+        // replays.
+        //
+        // Those are different questions and the hosted path only ever answered
+        // the second, so Raw showed the bare host prompt while the model had
+        // been given more: the skills catalog, widget model context, the
+        // environment block. A debugger that cannot show what the model was
+        // told cannot answer "did it even know that skill existed?" — which is
+        // the first question anyone asks when an agent ignores a skill.
+        //
+        // Resume must NOT read this one. Turn-injected content is true of the
+        // turn that happened, not of the next one: replaying "your sandbox was
+        // reset" long after the fact is the confabulation `resumeConfig`'s raw
+        // prompt exists to prevent. Hence two fields, both already on the
+        // ingest contract — the local route has always filled this one.
+        systemPrompt: effectiveEnhancedSystemPrompt,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
@@ -486,7 +1128,11 @@ export async function streamWebChatTurn(
         ...(isDirectChat
           ? {
               directVisibility: persist.directVisibility,
+              ...(persist.rewind ? { rewind: persist.rewind } : {}),
               resumeConfig: {
+                ...(persist.executionTarget
+                  ? { executionTarget: persist.executionTarget }
+                  : {}),
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
@@ -494,17 +1140,64 @@ export async function streamWebChatTurn(
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
-                selectedServers:
-                  Array.isArray(persist.selectedServerNames) &&
-                  persist.selectedServerNames.length ===
-                    persist.selectedServerIds.length
-                    ? persist.selectedServerNames
-                    : persist.selectedServerIds,
+                selectedServers: resumableServers(persist),
+                // WHAT THIS CONVERSATION RAN ON — the missing half of resume.
+                //
+                // Every other field here restores how the turn was configured;
+                // none of them said WHERE it executed. So a browser Playground
+                // conversation reopened later had no recorded execution target
+                // at all, and the client fell back to whatever the VIEWER had
+                // selected in localStorage — a conversation that ran on a
+                // Cursor harness in a Project Environment reopened showing an
+                // unrelated host and model, and a follow-up typed there ran on
+                // that unrelated target without ever saying so.
+                //
+                // Only `origin: "api"` sessions wrote this before (see
+                // `routes/v1/chat-session-turn.ts`), which is why the browser
+                // half was blind.
+                //
+                // Sent on EVERY turn, not just the first, and that is correct:
+                // `preserveAgentResumePins` makes the four
+                // `AGENT_RESUME_PIN_KEYS` — this among them — first-write-wins
+                // at the ingest boundary, so a continuation cannot repin a
+                // conversation onto a different environment, while a session
+                // that started before this field existed still gets filled in
+                // on its next turn instead of staying unpinned forever.
+                //
+                // Absent ⇒ this turn had no environment (a plain host-mode or
+                // untargeted turn). Nothing is written rather than a
+                // placeholder: an empty pin would read as "recorded, and it
+                // was nothing", which is exactly the false certainty the
+                // client's "as-run configuration unavailable" disclosure
+                // exists to avoid.
+                ...(persist.environmentId
+                  ? { environmentId: persist.environmentId }
+                  : {}),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
           : {}),
-        turnTrace,
+        // Merged OUTSIDE the `isDirectChat` gate above: a scenario turn runs
+        // through an environment too, and skipping it there would leave User
+        // Testing's most environment-driven surface with no record of what it
+        // ran. Distinct from `resumeConfig`, which is gated because it is the
+        // restorable-resume surface; this is provenance and restores nothing.
+        turnTrace: (() => {
+          // Read HERE, at persist time, so a turn that navigated records the
+          // set its last steps had rather than the one it opened with.
+          const pageToolsAtTurn = persist.pageToolsAtTurn?.();
+          return {
+          ...turnTrace,
+          ...(persist.turnProvenance ?? {}),
+          // An EMPTY array is meaningful and is written: "this turn advertised
+          // no page tools" is a different fact from "we do not know", and the
+          // pane says something different about each.
+          ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
+          };
+        })(),
+        ...(persist.expectedVersion !== undefined
+          ? { expectedVersion: persist.expectedVersion }
+          : {}),
         // §3: chat-backed harness resume-state commit, applied atomically with
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
@@ -513,7 +1206,7 @@ export async function streamWebChatTurn(
     };
   };
 
-  if (!isMCPJam) {
+  if (!usesMcpjamFreePath) {
     const providerKeyResult = deriveOrgProviderKeyResult(
       prepare.modelDefinition,
     );
@@ -538,7 +1231,7 @@ export async function streamWebChatTurn(
           modelId,
           {
             authHeader: runtime.authHeader,
-            chatboxId: persist.chatboxId,
+            scenarioId: persist.scenarioId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
           },
@@ -555,6 +1248,7 @@ export async function streamWebChatTurn(
     if (orgRuntime.runtimeLocation === "local") {
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
+        failureReporter,
         projectId: persist.projectId,
         modelId,
         chatSessionId: hostedChatSessionId,
@@ -566,7 +1260,7 @@ export async function streamWebChatTurn(
         progressivePlan,
         discoveryState,
         authHeader: runtime.authHeader,
-        chatboxId: persist.chatboxId,
+        scenarioId: persist.scenarioId,
         accessVersion: persist.accessVersion,
         selectedServers: persist.selectedServerIds,
         serverIds: persist.selectedServerIds,
@@ -574,15 +1268,28 @@ export async function streamWebChatTurn(
         onConversationComplete,
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) => {
+          scopeChallengeWriter = writer;
+          emitSandboxNotices(
+            writer,
+            runtime.sandboxNotices,
+            runtime.ackSandboxNotices,
+            runtime.abortSignal,
+          );
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
+          runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
+        ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+        shouldPauseAfterStep: () =>
+          suspendedScopeStepUpToolCallId !== undefined,
+        suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
         abortSignal: runtime.abortSignal,
       });
     }
 
     return handleHostedOrgChatModel({
       projectId: persist.projectId,
+      failureReporter,
       providerKey: orgRuntime.providerKey,
       modelId,
       chatSessionId: hostedChatSessionId,
@@ -590,37 +1297,55 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
-      tools: allTools as ToolSet,
+      tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
-      clientIp: runtime.clientIp ?? getClientIp(c),
-      chatboxId: persist.chatboxId,
+      clientIp: runtime.clientIp ?? getSpendClientIp(c),
+      scenarioId: persist.scenarioId,
       accessVersion: persist.accessVersion,
       mcpClientManager: manager,
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
-      uiToolApprovals: uiToolApprovalsFrom(
-        prepare.uiTools,
-        persist.requireToolApproval
-      ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // The hosted loop is the ONE engine that can grow its tool set between
+      // steps, so it is the one that gets this.
+      ...(refreshTools ? { refreshTools } : {}),
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
+        scopeChallengeWriter = writer;
+        emitSandboxNotices(
+          writer,
+          runtime.sandboxNotices,
+          runtime.ackSandboxNotices,
+          runtime.abortSignal,
+        );
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
+        runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
+      ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
       abortSignal: runtime.abortSignal,
     });
   }
 
   // MCPJam-free path.
   const mcpjamModelId = String(prepare.modelDefinition.id);
+  // …except when the HARNESS pays for its own model. An external-account
+  // runtime (Cursor) reaches its provider on the customer's account with the
+  // runtime vendor, so MCPJam is not charged for the turn and must not record
+  // it as though it were — `'mcpjam'` is what makes a turn consume the org's
+  // MCPJam spend limit.
+  //
+  // `'external-account'` rather than `'byok'`, though both mean "not charged to
+  // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
+  // which this turn does not have. See `chatModelSourceValidator` in the
+  // backend for the two surfaces that read it that way.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam",
+    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -641,21 +1366,25 @@ export async function streamWebChatTurn(
   // Subscribed at stream start (not before — a pre-stream failure must not
   // leave a live subscription) and torn down with the stream.
   let stopHarnessRpcLogBridge: (() => void) | undefined;
+  // COMP-21: cross-instance half of the harness log bridge (polls the shared
+  // Convex sink for frames other instances produced). Paired with the bus bridge.
+  let stopCrossInstanceRpcLogPoll: (() => void) | undefined;
 
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
+    failureReporter,
     modelId: mcpjamModelId,
     provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
-    tools: allTools as ToolSet,
+    tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,
-    clientIp: runtime.clientIp ?? getClientIp(c),
-    chatboxId: persist.chatboxId,
+    clientIp: runtime.clientIp ?? getSpendClientIp(c),
+    scenarioId: persist.scenarioId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,
     // Phase 3: thread the runtime-config execution scope into the harness path
@@ -666,36 +1395,101 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
-    uiToolApprovals: uiToolApprovalsFrom(
-        prepare.uiTools,
-        persist.requireToolApproval
-      ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    ...(refreshTools ? { refreshTools } : {}),
+    // Harness engine only: it builds its own MCP tool set (host-executed
+    // delivery) rather than consuming `allTools`, so the host's
+    // tool-construction policies have to reach it separately. Inert on the
+    // emulated path, which is handed tools already built by prepareChatV2.
+    ...(prepare.respectToolVisibility !== undefined
+      ? { respectToolVisibility: prepare.respectToolVisibility }
+      : {}),
+    ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // Presence is semantic (even an empty array): the harness turn then skips
+    // the live project-wide skills fetch entirely.
+    ...(persist.runtimeSkillsOverride !== undefined
+      ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
+      : {}),
+    ...(persist.effectiveCapabilities
+      ? { effectiveCapabilities: persist.effectiveCapabilities }
+      : {}),
+    ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
+    // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
+    // (even empty) means "this turn's secrets are already resolved".
+    //
+    // ABSENT MEANS NO SECRETS ARE DELIVERED — it does not mean somebody else
+    // fetches them. `run-harness-turn` takes the list from its caller and never
+    // reads Convex itself (`runtimeSecretsOverride ?? null`), deliberately, so
+    // that delivery and transcript-scrubbing come from ONE read. A driver that
+    // has not wired secrets therefore runs with an empty env bag, silently.
+    // That is fail-closed, and it is exactly why the eval and swarm drivers
+    // need wiring rather than inheriting this for free.
+    ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
+    ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
+    ...(persist.onSecretEnvDelivered
+      ? { onSecretEnvDelivered: persist.onSecretEnvDelivered }
+      : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
+    // request the engine drives one retry leg (reconstructing tool
+    // output-schema validation) before the first model call, splices the
+    // driven result, and resumes the loop to a final assistant message.
+    ...(runtime.mrtrResume ? { mrtrResume: runtime.mrtrResume } : {}),
+    ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+    ...(persist.harness && createScopeStepUpContinuation
+      ? {
+          createHarnessScopeStepUpContinuation: createScopeStepUpContinuation,
+        }
+      : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
     // (web_search) to HarnessAgent without the MCP-server tools, which the
     // harness gets via .mcp.json.
     ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
+    // COMP-16: root the harness Shell at the host-configured working directory
+    // (same source as the bash tool's cwd).
+    ...(prepare.computerWorkdir
+      ? { computerWorkdir: prepare.computerWorkdir }
+      : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
     onStreamComplete: async () => {
       stopHarnessRpcLogBridge?.();
       stopHarnessRpcLogBridge = undefined;
+      stopCrossInstanceRpcLogPoll?.();
+      stopCrossInstanceRpcLogPoll = undefined;
       await cleanupStream();
     },
     onStreamWriterReady: (writer) => {
+      scopeChallengeWriter = writer;
+      emitSandboxNotices(
+        writer,
+        runtime.sandboxNotices,
+        runtime.ackSandboxNotices,
+        runtime.abortSignal,
+      );
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp
       // requests, not this turn's manager, so the callback is never invoked.
       // Attaching is harmless and keeps the three sites uniform.
       runtime.elicitationBridge?.attachStreamWriter(writer);
+      // MRTR suspend emits `data-mrtr-input-required` on this same stream.
+      runtime.mrtrBridge?.attachStreamWriter(writer);
+      // A task can be created on ANY engine path, so unlike the MRTR bridge
+      // this one attaches at all three sites, following the elicitation bridge.
+      runtime.taskCreatedBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
-          runtime.rpcCollector
+          runtime.rpcCollector,
+        );
+        // COMP-21: cross-instance frames (harness-mcp landed on another
+        // instance) arrive via the shared Convex sink. No-op single-instance.
+        stopCrossInstanceRpcLogPoll = startCrossInstanceRpcLogPoll(
+          persist.selectedServerIds,
+          runtime.rpcCollector,
         );
       }
     },

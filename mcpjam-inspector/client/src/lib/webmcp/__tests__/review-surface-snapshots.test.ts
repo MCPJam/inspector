@@ -30,6 +30,39 @@ function expectNoSecrets(value: unknown) {
 }
 
 describe("review-surface snapshots redact and bound", () => {
+  it("tracing: counts HTTP exchanges without letting their headers through", () => {
+    // An HTTP-exchange row's payload is the captured header sets. Credential
+    // headers are already redacted at capture, but the snapshot must not carry
+    // ANY header — the row is summarized by its request line alone.
+    const snapshot = buildTracingSnapshot({
+      serverItems: [
+        {
+          source: "http",
+          method: "POST /mcp",
+          direction: "HTTP",
+          serverId: "srv-1",
+          serverName: "Server 1",
+          timestamp: "2026-07-28T00:00:00Z",
+          payload: {
+            request: { headers: { authorization: SECRET } },
+          },
+        } as never,
+      ],
+      appItems: [],
+    });
+
+    expectNoSecrets(snapshot);
+    expect(snapshot.counts.http).toBe(1);
+    expect(snapshot.counts.other).toBe(0);
+    expect(snapshot.recent[0]).toEqual({
+      source: "http",
+      method: "POST /mcp",
+      direction: "HTTP",
+      server: "Server 1",
+      timestamp: "2026-07-28T00:00:00Z",
+    });
+  });
+
   it("tracing: summarizes traffic by shape, never the payloads", () => {
     // Each entry carries a secret `payload` the builder must ignore.
     const serverItems = Array.from({ length: 50 }, (_, i) => ({

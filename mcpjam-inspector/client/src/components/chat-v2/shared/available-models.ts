@@ -1,5 +1,6 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamGuestAllowedModel,
   type ModelDefinition,
 } from "@/shared/types";
@@ -17,7 +18,7 @@ import {
 // while this composition stays real.
 
 export const GUEST_LOCKED_MODEL_REASON =
-  "Sign in to use MCPJam provided models";
+  "Sign in to use this frontier model";
 
 /**
  * Unauthenticated users keep BYOK/custom models but premium MCPJam-provided
@@ -47,7 +48,7 @@ export function applyGuestModelLocks(
 }
 
 export const OUT_OF_CREDITS_MODEL_REASON =
-  "You're out of credits. Top up or use your own key.";
+  "Out of MCPJam credits. View your organization's credit options or wait for your allowance to renew.";
 
 /**
  * Once the org/guest is out of MCPJam credits, MCPJam-provided ("free")
@@ -85,11 +86,30 @@ export function appendDetectedLocalOllamaModels(
 ): ModelDefinition[] {
   if (!isOllamaRunning || ollamaModels.length === 0) return models;
   return models.concat(
-    ollamaModels.filter(
-      (ollamaModel) =>
-        !models.some((model) => String(model.id) === String(ollamaModel.id))
-    )
+    ollamaModels
+      .filter(
+        (ollamaModel) =>
+          !models.some((model) => String(model.id) === String(ollamaModel.id))
+      )
+      .map((model) => ({ ...model, hosted: false }))
   );
+}
+
+/**
+ * Every picker surface treats the model list as non-empty: `getDefaultModel`
+ * ends in `availableModels[0]`, so an empty list hands the chat an `undefined`
+ * `selectedModel`, which the surfaces then read unguarded — `isOrgManagedModel`
+ * in useChatSession, `currentModel.disabled` in ModelSelector. That is
+ * INSPECTOR-CLIENT-222: a blank Playground behind a route error screen.
+ *
+ * `useHostedModelCatalog` already promises a non-empty hosted source; this is
+ * the floor for every other way the composition can still come out empty
+ * (a caller passing an empty `hostedCatalog`, a future filter). Applied BEFORE
+ * the guest/credit locks so floor models carry the same locks as any other
+ * hosted row.
+ */
+function withHostedFloor(models: ModelDefinition[]): ModelDefinition[] {
+  return models.length > 0 ? models : hostedModelDefinitionsFromSnapshot();
 }
 
 /**
@@ -139,7 +159,10 @@ export function composeAvailableModels(params: {
       ollamaModels
     );
     return applyOutOfCreditsLocks(
-      applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated),
+      applyGuestModelLocks(
+        withHostedFloor(orgModelsWithLocalOllama),
+        isAuthenticated
+      ),
       outOfCredits
     );
   }
@@ -153,9 +176,12 @@ export function composeAvailableModels(params: {
     customProviders,
     hostedCatalog,
   });
-  const guestLockedModels = applyGuestModelLocks(localModels, isAuthenticated);
   const visibleModels = HOSTED_MODE
-    ? guestLockedModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
-    : guestLockedModels;
-  return applyOutOfCreditsLocks(visibleModels, outOfCredits);
+    ? localModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
+    : localModels;
+  const guestLockedModels = applyGuestModelLocks(
+    withHostedFloor(visibleModels),
+    isAuthenticated
+  );
+  return applyOutOfCreditsLocks(guestLockedModels, outOfCredits);
 }

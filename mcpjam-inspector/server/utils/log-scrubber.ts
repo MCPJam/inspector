@@ -1,3 +1,12 @@
+import {
+  authHeaderLike,
+  jwtLike,
+  secretParamLike,
+  skKeyLike,
+  tokenLike,
+  urlBasicAuthLike,
+} from "../../shared/secret-shape-redaction";
+
 const FORBIDDEN_KEY_SUBSTRINGS = [
   "authorization",
   "cookie",
@@ -20,11 +29,13 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
 
 const ALLOWLISTED_KEYS = new Set(["emaildomain"]);
 
-const TOKEN_LIKE = /\bBearer\s+[A-Za-z0-9._\-+/=]+\b/gi;
+// Credential patterns live in `shared/secret-shape-redaction.ts`, shared with
+// the model path. They are factories: each regex has `g`, and a shared
+// instance's `lastIndex` would skip matches between calls.
+//
+// `EMAIL_LIKE` stays here: logs redact addresses, but a model reading a page
+// needs them.
 const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const SK_KEY_LIKE = /\bsk-[A-Za-z0-9]{16,}\b/g;
-const JWT_LIKE =
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 
 function isForbiddenKey(key: string): boolean {
   const lower = key.toLowerCase();
@@ -34,11 +45,15 @@ function isForbiddenKey(key: string): boolean {
 }
 
 function scrubString(s: string): string {
+  // Same patterns as the model path, with log-specific replacement strings.
   return s
-    .replace(TOKEN_LIKE, "Bearer [redacted-token]")
-    .replace(JWT_LIKE, "[redacted-jwt]")
+    .replace(authHeaderLike(), "$1[redacted]")
+    .replace(tokenLike(), "Bearer [redacted-token]")
+    .replace(jwtLike(), "[redacted-jwt]")
+    .replace(urlBasicAuthLike(), "$1[redacted]@")
     .replace(EMAIL_LIKE, "[redacted-email]")
-    .replace(SK_KEY_LIKE, "[redacted-secret]");
+    .replace(skKeyLike(), "[redacted-secret]")
+    .replace(secretParamLike(), "$1[redacted]");
 }
 
 export function scrubLogPayload<T>(value: T): T {

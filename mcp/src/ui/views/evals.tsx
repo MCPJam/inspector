@@ -459,10 +459,29 @@ function ToolCallList({ label, names }: { label: string; names: string[] }) {
 }
 
 /**
- * Latest-run summaries carry counts but no verdict; derive one for completed
- * runs the way the platform does — any failure fails the run.
+ * The latest run's verdict for the suite card badge.
+ *
+ * The run's OWN `result` WINS whenever it has one. Never re-derive a verdict
+ * from the counts over a run that already carries one: under verdict policy 2
+ * a run can be `inconclusive` — the platform could not measure it well enough
+ * to decide — and a count-based derivation can only ever emit "passed" or
+ * "failed", so it converts a refusal to decide into a decision. The hosted UI
+ * forbids itself the same move; see `computeEffectiveRunResult` in
+ * `mcpjam-inspector/client/src/components/evals/suite-runs-list.tsx`.
+ *
+ * The count fallback below therefore exists for exactly one case: a summary
+ * from an API deployment that predates `result`. Those rows are all legacy
+ * percent-graded runs, where `inconclusive` cannot occur.
+ *
+ * Exported only so a test can pin the rule above; nothing outside this module
+ * calls it. The other private helpers here shape text, and getting one of them
+ * wrong shows up as a bad string. Getting this one wrong shows up as a verdict
+ * about a customer's server that no run produced, so it is worth the export.
  */
-function summaryResult(run: PlatformEvalRunSummary): string | null {
+export function summaryResult(run: PlatformEvalRunSummary): string | null {
+  if (run.result) {
+    return run.result;
+  }
   if (run.status !== "completed") {
     return null;
   }

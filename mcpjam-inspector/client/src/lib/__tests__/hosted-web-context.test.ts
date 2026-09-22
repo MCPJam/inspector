@@ -27,12 +27,12 @@ describe("hosted web context", () => {
     localStorage.removeItem("mcp-tokens-myServer");
   });
 
-  it("includes chatbox id, accessVersion, and chat_v2 scope for chatbox requests", () => {
+  it("includes scenario id, accessVersion, and chat_v2 scope for scenario requests", () => {
     setApiContext({
       projectId: "ws_shared",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 7,
     });
 
@@ -42,7 +42,7 @@ describe("hosted web context", () => {
       serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 7,
     });
 
@@ -52,7 +52,7 @@ describe("hosted web context", () => {
       serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 7,
     });
 
@@ -62,17 +62,17 @@ describe("hosted web context", () => {
       serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 7,
     });
   });
 
-  it("omits accessVersion when chatboxId is absent", () => {
+  it("omits accessVersion when scenarioId is absent", () => {
     setApiContext({
       projectId: "ws_regular",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
-      // Stray accessVersion without chatboxId — never emitted on the wire.
+      // Stray accessVersion without scenarioId — never emitted on the wire.
       accessVersion: 5,
     });
     expect(buildServerRequest("bench")).toEqual({
@@ -83,12 +83,12 @@ describe("hosted web context", () => {
     });
   });
 
-  it("rejects non-finite accessVersion even with chatboxId set", () => {
+  it("rejects non-finite accessVersion even with scenarioId set", () => {
     setApiContext({
       projectId: "ws_shared",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: Number.NaN,
     });
     expect(buildServerRequest("bench")).toEqual({
@@ -97,11 +97,11 @@ describe("hosted web context", () => {
       serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
     });
   });
 
-  it("omits chatbox scope fields when no chatbox id is present", () => {
+  it("omits scenario scope fields when no scenario id is present", () => {
     setApiContext({
       projectId: "ws_regular",
       serverIdsByName: { bench: "srv_bench" },

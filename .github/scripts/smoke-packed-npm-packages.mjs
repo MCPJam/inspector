@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
-const expectedMcpV2PackageVersion = "2.0.0-alpha.2";
+const expectedMcpV2PackageVersion = "2.0.0";
 const expectedMcpV2Packages = [
   "@modelcontextprotocol/client",
   "@modelcontextprotocol/node",
@@ -13,8 +13,21 @@ const expectedMcpV2Packages = [
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const packageSpecs = {
-  sdk: { workspace: "@mcpjam/sdk", dir: "sdk", publish: boolEnv("PUBLISH_SDK") },
-  cli: { workspace: "@mcpjam/cli", dir: "cli", publish: boolEnv("PUBLISH_CLI") },
+  evaluators: {
+    workspace: "@mcpjam/evaluators",
+    dir: "evaluators",
+    publish: boolEnv("PUBLISH_EVALUATORS"),
+  },
+  sdk: {
+    workspace: "@mcpjam/sdk",
+    dir: "sdk",
+    publish: boolEnv("PUBLISH_SDK"),
+  },
+  cli: {
+    workspace: "@mcpjam/cli",
+    dir: "cli",
+    publish: boolEnv("PUBLISH_CLI"),
+  },
   inspector: {
     workspace: "@mcpjam/inspector",
     dir: "mcpjam-inspector",
@@ -22,9 +35,14 @@ const packageSpecs = {
   },
 };
 
-if (!packageSpecs.sdk.publish && (packageSpecs.cli.publish || packageSpecs.inspector.publish)) {
+if (
+  !packageSpecs.sdk.publish &&
+  (packageSpecs.cli.publish || packageSpecs.inspector.publish)
+) {
   packageSpecs.sdk.publish = true;
 }
+
+if (packageSpecs.sdk.publish) packageSpecs.evaluators.publish = true;
 
 const packagesToPack = Object.values(packageSpecs).filter((pkg) => pkg.publish);
 
@@ -45,9 +63,21 @@ try {
 
   mkdirSync(installDir, { recursive: true });
   run("npm", ["init", "-y"], { cwd: installDir });
-  run("npm", ["install", "--legacy-peer-deps", ...tarballs], { cwd: installDir });
+  run("npm", ["install", "--legacy-peer-deps", ...tarballs], {
+    cwd: installDir,
+  });
 
   assertInstalledPackageVersions(installDir, expectedRuntimeMcpV2Versions);
+  if (packageSpecs.evaluators.publish)
+    run(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        "import {assertion} from '@mcpjam/evaluators'; if(assertion({type:'responseContains',needle:'ok'}).kind!=='assertion') throw new Error('evaluator import failed');",
+      ],
+      { cwd: installDir },
+    );
 
   if (packageSpecs.cli.publish) {
     run("npx", ["--no-install", "mcpjam", "--help"], {
@@ -87,7 +117,10 @@ function readExpectedMcpV2Versions(packages) {
           continue;
         }
 
-        if (!exactVersionPattern.test(spec) || spec !== expectedMcpV2PackageVersion) {
+        if (
+          !exactVersionPattern.test(spec) ||
+          spec !== expectedMcpV2PackageVersion
+        ) {
           throw new Error(
             `${pkg.workspace} must pin ${packageName} to ${expectedMcpV2PackageVersion}, got ${JSON.stringify(
               spec,
@@ -116,7 +149,9 @@ function packWorkspace(pkg, packDir) {
   ]);
   const [packed] = JSON.parse(output);
   const filename = packed.filename;
-  const tarball = path.isAbsolute(filename) ? filename : path.join(packDir, filename);
+  const tarball = path.isAbsolute(filename)
+    ? filename
+    : path.join(packDir, filename);
 
   console.log(`Packed ${pkg.workspace}: ${tarball}`);
   return tarball;
@@ -128,15 +163,15 @@ function assertInstalledPackageVersions(installDir, expectedVersions) {
   }
 }
 
-function assertInstalledPackageVersion(installDir, packageName, expectedVersion) {
-  const result = spawnSync(
-    "npm",
-    ["ls", packageName, "--all", "--json"],
-    {
-      cwd: installDir,
-      encoding: "utf8",
-    },
-  );
+function assertInstalledPackageVersion(
+  installDir,
+  packageName,
+  expectedVersion,
+) {
+  const result = spawnSync("npm", ["ls", packageName, "--all", "--json"], {
+    cwd: installDir,
+    encoding: "utf8",
+  });
 
   if (result.error) {
     throw new Error(
@@ -164,7 +199,9 @@ function assertInstalledPackageVersion(installDir, packageName, expectedVersion)
   const versions = collectDependencyVersions(tree, packageName);
 
   if (versions.length === 0) {
-    throw new Error(`${packageName} was not installed in packed smoke project.`);
+    throw new Error(
+      `${packageName} was not installed in packed smoke project.`,
+    );
   }
 
   const unexpectedVersions = [...new Set(versions)].filter(
@@ -231,7 +268,9 @@ async function smokeInspectorStartup(installDir) {
 
   const earlyExit = await waitForEarlyExit(child, 8000);
   if (earlyExit) {
-    throw new Error(`Inspector smoke exited early with code ${earlyExit.code}:\n${output}`);
+    throw new Error(
+      `Inspector smoke exited early with code ${earlyExit.code}:\n${output}`,
+    );
   }
 
   await terminateChildProcess(child, 5000);
@@ -282,7 +321,7 @@ function waitForExit(child, ms) {
 async function terminateChildProcess(child, gracefulMs) {
   sendSignal(child, "SIGTERM");
 
-  if (!await waitForExit(child, gracefulMs)) {
+  if (!(await waitForExit(child, gracefulMs))) {
     sendSignal(child, "SIGKILL");
     await waitForExit(child, 2000);
   }
@@ -319,7 +358,9 @@ function run(command, args, options = {}) {
   });
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}.`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status}.`,
+    );
   }
 }
 
@@ -333,7 +374,9 @@ function capture(command, args, options = {}) {
   });
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}.`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status}.`,
+    );
   }
 
   return result.stdout;

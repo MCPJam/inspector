@@ -4,9 +4,26 @@
 
 export const MCPJAM_HOSTED_APP_ORIGIN = "https://app.mcpjam.com";
 const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+/**
+ * Hosts that receive their OWN OAuth callback rather than the app's.
+ *
+ * A host not listed here sends the browser back to `app.mcpjam.com`, which is
+ * correct for a vanity domain that only renders a page — but fatal for one that
+ * has to finish an authorization. The pending marker, the resume record and the
+ * guest cookie are all per-origin, so a callback that lands on a different host
+ * cannot see any of them: the flow dead-ends and the visitor loses their work.
+ * `score.mcpjam.com` runs authorizations, so it keeps its own callback.
+ *
+ * Adding a host here mints a new `redirect_uri`. Dynamic registration sends it
+ * per-flow and needs nothing else, but Client ID Metadata Document flows only
+ * accept URIs listed in the document at `MCPJAM_CLIENT_ID` — a new host must be
+ * added there too, or CIMD servers will reject the authorization.
+ */
 const HOSTED_REDIRECT_HOSTNAMES = new Set([
   "app.mcpjam.com",
   "staging.mcpjam.com",
+  "score.mcpjam.com",
+  "www.score.mcpjam.com",
 ]);
 
 /**

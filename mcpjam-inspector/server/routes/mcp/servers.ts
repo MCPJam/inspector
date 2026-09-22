@@ -1,12 +1,21 @@
+import {
+  listBaseServers,
+  removeServerConnections,
+} from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
+import {
+  rpcLogBus,
+  type DeliveredRpcLogEvent,
+} from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import {
   executeLocalServerConnect,
   parseLocalConnectRequestBody,
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
+import { releasePluginLease } from "../../services/plugins/local-stdio.js";
 
 function hasBearerAuthorizationHeader(headers: unknown): boolean {
   if (!headers || typeof headers !== "object") {
@@ -82,7 +91,12 @@ servers.get("/", async (c) => {
       servers: serverList,
     });
   } catch (error) {
-    logger.error("Error listing servers", error);
+    reportRouteFailure("Error listing servers", error, {
+      // Pure local manager state — no hop into anyone's MCP server. If
+      // enumerating our own summaries throws, that is our bug.
+      source: "mcp.servers.list",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         success: false,
@@ -111,7 +125,13 @@ servers.get("/status/:serverId", async (c) => {
       ping,
     });
   } catch (error) {
-    logger.error("Error getting server status", error, { serverId });
+    reportRouteFailure("Error getting server status", error, {
+      // Pings the user's server when connected; a failure here is usually
+      // their server, not ours.
+      source: "mcp.servers.status",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -146,7 +166,12 @@ servers.get("/init-info/:serverId", async (c) => {
       initInfo,
     });
   } catch (error) {
-    logger.error("Error getting initialization info", error, { serverId });
+    reportRouteFailure("Error getting initialization info", error, {
+      // Reads cached init data off our own manager.
+      source: "mcp.servers.init-info",
+      hop: "mcpjam_internal",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -181,14 +206,30 @@ servers.delete("/:serverId", async (c) => {
       });
     }
 
-    mcpClientManager.removeServer(serverId);
+    await removeServerConnections(mcpClientManager, serverId);
+    await mcpClientManager.removeServer(serverId);
+    // The replay buffer is keyed by server id and nothing ever removed a key,
+    // so every disconnect used to leave its retained frames behind for the life
+    // of the process. Dropped HERE rather than inside `removeServer` on
+    // purpose: a failed connect removes the entry too, and those frames are the
+    // ones the Logs panel is open to show.
+    rpcLogBus.forgetServer(serverId);
+    // The plugin bundle this entry may have been running from is now
+    // unreferenced, so cache GC may reclaim it. No-op for ordinary servers.
+    releasePluginLease(serverId);
 
     return c.json({
       success: true,
       message: `Disconnected from server: ${serverId}`,
     });
   } catch (error) {
-    logger.error("Error disconnecting server", error, { serverId });
+    reportRouteFailure("Error disconnecting server", error, {
+      // Closing a transport most often fails because the peer is already
+      // gone.
+      source: "mcp.servers.disconnect",
+      hop: "user_server_hop",
+      context: { serverId },
+    });
     return c.json(
       {
         success: false,
@@ -205,7 +246,7 @@ servers.delete("/:serverId", async (c) => {
 servers.post("/reconnect", async (c) => {
   let body: unknown;
   try {
-    body = await c.req.json();
+    body = await readRequestJson(c);
   } catch (error) {
     return c.json(
       {
@@ -232,7 +273,7 @@ servers.post("/reconnect", async (c) => {
 
 // Stream JSON-RPC messages over SSE for all servers.
 servers.get("/rpc/stream", async (c) => {
-  const serverIds = c.mcpClientManager.listServers();
+  const serverIds = listBaseServers(c.mcpClientManager);
   const url = new URL(c.req.url);
   const replay = parseInt(url.searchParams.get("replay") || "0", 10);
 
@@ -247,21 +288,35 @@ servers.get("/rpc/stream", async (c) => {
         } catch {}
       };
 
-      // Replay recent messages for all known servers
+      // Replay recent messages for all known servers.
+      //
+      // Every event carries the bus-assigned `eventId`, and the browser store
+      // keys rows on it — so a client that already holds a replayed event
+      // updates that row instead of appending a second copy of it.
+      //
+      // The spread below is what puts `eventId` on the wire. Keep it a spread:
+      // picking fields explicitly here would drop the identity and silently
+      // reintroduce duplicate rows in the Logs panel. Guarded by
+      // `__tests__/rpc-stream-event-id.test.ts`, which parses these frames.
       try {
         const recent = rpcLogBus.getBuffer(
           serverIds,
           isNaN(replay) ? 0 : replay
         );
         for (const evt of recent) {
-          send({ type: "rpc", ...evt });
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
         }
       } catch {}
 
-      // Subscribe to live events for all known servers
-      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: "rpc", ...evt });
-      });
+      // Subscribe to live events for all known servers. Same spread, same
+      // reason as the replay loop above — this is the second of the two places
+      // `eventId` reaches the wire.
+      const unsubscribe = rpcLogBus.subscribe(
+        serverIds,
+        (evt: DeliveredRpcLogEvent) => {
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
+        }
+      );
 
       // Keepalive comments
       const keepalive = setInterval(() => {

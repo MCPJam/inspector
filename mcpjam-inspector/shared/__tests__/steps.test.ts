@@ -42,10 +42,15 @@ describe("TestStep schema", () => {
       {
         id: "e",
         kind: "assert",
-        assertion: { kind: "textVisible", toolName: "create_view", text: "Hello" },
+        assertion: {
+          kind: "textVisible",
+          toolName: "create_view",
+          text: "Hello",
+        },
       },
     ];
-    for (const s of steps) expect(testStepSchema.safeParse(s).success).toBe(true);
+    for (const s of steps)
+      expect(testStepSchema.safeParse(s).success).toBe(true);
     expect(stepsSchema.safeParse(steps).success).toBe(true);
   });
 
@@ -57,6 +62,270 @@ describe("TestStep schema", () => {
       action: { kind: "assert", assertion: { type: "textVisible", text: "y" } },
     };
     expect(testStepSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("rejects an unknown field on a step, and on a step's sub-objects", () => {
+    // The step union is CLOSED. A mis-mapped import field must fail here
+    // rather than be stripped: the Convex mirror is built from `v.object` and
+    // has always rejected unknown keys, so a permissive schema meant the two
+    // validators disagreed about the same case — discovered at ingest, far
+    // from the converter that wrote it.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "prompt",
+        prompt: "hi",
+        retries: 3,
+      }).success,
+    ).toBe(false);
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "interact",
+        toolName: "t",
+        action: {
+          kind: "click",
+          target: { testId: "confirm", xpath: "//button[1]" },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          toolName: "t",
+          text: "y",
+          negate: true,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("closes every strict action and assertion variant", () => {
+    // Table-driven so a variant cannot be closed in the schema and left
+    // untested here — an untested closure is one a later edit silently
+    // reopens. `base` is a valid step; `stray` is the one undeclared key.
+    const cases: Array<{ label: string; step: unknown }> = [
+      {
+        label: "interact/key",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "key", key: "Enter", modifiers: ["shift"] },
+        },
+      },
+      {
+        label: "interact/scroll",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "scroll", direction: "down", smooth: true },
+        },
+      },
+      {
+        label: "interact/wait",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "wait", ms: 100, reason: "settle" },
+        },
+      },
+      {
+        label: "interact/type",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: {
+            kind: "type",
+            target: { testId: "q" },
+            text: "hi",
+            delayMs: 10,
+          },
+        },
+      },
+      {
+        label: "toolCall",
+        step: {
+          id: "x",
+          kind: "toolCall",
+          serverName: "s",
+          toolName: "t",
+          arguments: {},
+          timeoutMs: 1000,
+        },
+      },
+      {
+        label: "assert/elementVisible",
+        step: {
+          id: "x",
+          kind: "assert",
+          assertion: {
+            kind: "elementVisible",
+            toolName: "t",
+            target: { testId: "q" },
+            within: 500,
+          },
+        },
+      },
+      {
+        label: "assert/inputValue",
+        step: {
+          id: "x",
+          kind: "assert",
+          assertion: {
+            kind: "inputValue",
+            toolName: "t",
+            target: { testId: "q" },
+            equals: "x",
+            trim: true,
+          },
+        },
+      },
+      {
+        label: "assert/widgetToolCalled",
+        step: {
+          id: "x",
+          kind: "assert",
+          assertion: {
+            kind: "widgetToolCalled",
+            toolName: "t",
+            calledToolName: "u",
+            times: 2,
+          },
+        },
+      },
+      {
+        label: "locator/role",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: {
+            kind: "click",
+            target: { role: { role: "button", label: "Confirm" } },
+          },
+        },
+      },
+    ];
+    for (const { label, step } of cases) {
+      expect(testStepSchema.safeParse(step).success, label).toBe(false);
+    }
+  });
+
+  it("rejects null and empty values where a value is required", () => {
+    const bad: Array<{ label: string; step: unknown }> = [
+      { label: "null step", step: null },
+      { label: "empty object", step: {} },
+      {
+        label: "null arguments",
+        step: {
+          id: "x",
+          kind: "toolCall",
+          serverName: "s",
+          toolName: "t",
+          arguments: null,
+        },
+      },
+      {
+        label: "empty serverName",
+        step: {
+          id: "x",
+          kind: "toolCall",
+          serverName: "",
+          toolName: "t",
+          arguments: {},
+        },
+      },
+      {
+        label: "locator with no reference point",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "click", target: {} },
+        },
+      },
+      {
+        label: "null assertion",
+        step: { id: "x", kind: "assert", assertion: null },
+      },
+    ];
+    for (const { label, step } of bad) {
+      expect(testStepSchema.safeParse(step).success, label).toBe(false);
+    }
+    // Two emptys the STRUCTURAL schema accepts on purpose, recorded so the
+    // boundary is stated rather than assumed. An empty prompt string is a
+    // legitimate (if useless) authored value, and an empty `id` is caught one
+    // layer up — `assertValidSteps` in the Convex mirror requires a non-empty
+    // id, as does the suite-file validator. Tightening `id` here is a change
+    // to the union's field TYPES, not to its unknown-key policy, so it is not
+    // made as a side effect of closing the objects.
+    expect(
+      testStepSchema.safeParse({ id: "x", kind: "prompt", prompt: "" }).success,
+    ).toBe(true);
+    expect(
+      testStepSchema.safeParse({ id: "", kind: "prompt", prompt: "hi" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("leaves the reused predicate union open", () => {
+    // The stated exception. Predicates are a separate contract module with
+    // their own mirror and their own fixtures; closing them is a change made
+    // there, so a stray key inside one must still parse here — otherwise this
+    // union quietly acquired a second contract's policy.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "assert",
+        assertion: {
+          type: "widgetRendered",
+          toolName: "t",
+          somethingThePredicateContractDoesNotDeclare: true,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps a tool call's own arguments object open", () => {
+    // `arguments` is the SERVER's input shape, not ours. Closing it would mean
+    // this contract had to know every tool's parameters.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "toolCall",
+        serverName: "s",
+        toolName: "t",
+        arguments: { anythingTheServerDeclares: true, nested: { ok: 1 } },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("refuses an assertion declaring BOTH discriminators", () => {
+    // Ambiguous by construction, and resolving it is worse than refusing it:
+    // the widget branch is closed and rejects the stray `type`, while the
+    // predicate branch is open and would accept the same object, strip every
+    // widget field, and silently turn "the word 'Refunded' is on screen" into
+    // "no tool errors occurred" — which passes almost always. A green eval
+    // checking something nobody asked for is the worst outcome available.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          type: "noToolErrors",
+          toolName: "t",
+          text: "Refunded",
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("discriminates WidgetAssertion (kind) from Predicate (type)", () => {
@@ -97,6 +366,133 @@ describe("selectors", () => {
 });
 
 describe("normalize", () => {
+  it("strips unknown keys instead of dropping the whole step", () => {
+    // `normalizeSteps` is NOT a contract boundary. It runs on the editor load
+    // path, the execution paths, and the LLM case-GENERATION path, where the
+    // input is model output nobody validated. Letting the union's strictness
+    // reach here would turn "the generator invented a field" into "the whole
+    // step disappeared" — a generated case silently losing a prompt is a worse
+    // outcome than the stray key ever was. The strict boundaries (route Zod,
+    // Convex `v.object`) still reject loudly; this one cleans and keeps.
+    const generated = [
+      { id: "1", kind: "prompt", prompt: "a", confidence: 0.9 },
+      {
+        id: "2",
+        kind: "interact",
+        toolName: "t",
+        action: {
+          kind: "click",
+          target: { testId: "confirm", xpath: "//button" },
+        },
+      },
+      {
+        id: "3",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          toolName: "t",
+          text: "ok",
+          negate: false,
+        },
+      },
+    ];
+    const normalized = normalizeSteps(generated);
+    expect(normalized).toHaveLength(3);
+    expect(normalized[0]).toEqual({ id: "1", kind: "prompt", prompt: "a" });
+    expect(normalized[1]).toEqual({
+      id: "2",
+      kind: "interact",
+      toolName: "t",
+      action: { kind: "click", target: { testId: "confirm" } },
+    });
+    expect(normalized[2]).toEqual({
+      id: "3",
+      kind: "assert",
+      assertion: { kind: "textVisible", toolName: "t", text: "ok" },
+    });
+  });
+
+  it("drops — never throws — when an unknown value cannot be cloned", () => {
+    // The values under unrecognized keys are precisely the ones nothing has
+    // validated, so a function or a symbol can reach here (a client draft
+    // holding an event handler, say). `structuredClone` throws on those, and
+    // letting it escape would take down the whole array over one bad step —
+    // strictly worse than the drop it replaced.
+    const steps = [
+      { id: "1", kind: "prompt", prompt: "kept" },
+      { id: "2", kind: "prompt", prompt: "b", onChange: () => undefined },
+      { id: "3", kind: "prompt", prompt: "also kept" },
+    ];
+    expect(() => normalizeSteps(steps)).not.toThrow();
+    expect(normalizeSteps(steps).map((s) => s.id)).toEqual(["1", "3"]);
+  });
+
+  it("still drops a step that is broken for any OTHER reason", () => {
+    // The re-validation is what makes stripping safe: nothing survives that
+    // does not parse cleanly afterwards.
+    expect(
+      normalizeSteps([
+        { id: "1", kind: "navigate", url: "https://example.com" },
+        {
+          id: "2",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "click", target: {} },
+        },
+        { id: "3", kind: "prompt" },
+        { id: "4", kind: "prompt", prompt: "kept", stray: 1 },
+      ]).map((s) => s.id),
+    ).toEqual(["4"]);
+  });
+
+  it("recovers the INTENDED assertion when both discriminators appear", () => {
+    // The contract boundaries refuse this payload outright. Here — the
+    // shape-normalizer on the generation and load paths — the recovery is to
+    // strip the stray discriminator and keep the widget assertion the author
+    // wrote, which is exactly what the schema did before it closed. What must
+    // never happen is the other resolution: quietly keeping `type` and
+    // discarding the DOM check.
+    const [step] = normalizeSteps([
+      {
+        id: "1",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          type: "noToolErrors",
+          toolName: "t",
+          text: "Refunded",
+        },
+      },
+    ]);
+    expect(step).toEqual({
+      id: "1",
+      kind: "assert",
+      assertion: { kind: "textVisible", toolName: "t", text: "Refunded" },
+    });
+  });
+
+  it("ACCEPTS a predicate carrying an undeclared field, and KEEPS it", () => {
+    // Predicates are the stated exception: the step PARSES rather than
+    // failing, so it survives whole. The stray key survives with it — the
+    // non-widget branch carries `.catchall(z.unknown())` so the generated
+    // authoring JSON Schema says `additionalProperties: {}` there, which is
+    // what lets a drafting model emit a predicate's own fields. Stripping the
+    // key here would have made this normalizer disagree with the schema the
+    // backend validates against.
+    const [step] = normalizeSteps([
+      {
+        id: "1",
+        kind: "assert",
+        assertion: { type: "widgetRendered", toolName: "t", extra: true },
+      },
+    ]);
+    expect(step).toEqual({
+      id: "1",
+      kind: "assert",
+      assertion: { type: "widgetRendered", toolName: "t", extra: true },
+    });
+  });
+
   it("drops junk entries; signature stable for equal input", () => {
     const raw = [
       { id: "1", kind: "prompt", prompt: "a" },
@@ -116,13 +512,18 @@ describe("promptTurnsToSteps migration", () => {
       {
         id: "turn-1",
         prompt: "Draw a cat",
-        expectedToolCalls: [{ toolName: "create_view", arguments: { q: "cat" } }],
+        expectedToolCalls: [
+          { toolName: "create_view", arguments: { q: "cat" } },
+        ],
         widgetChecks: [
           {
             toolName: "create_view",
             steps: [
               { kind: "click", target: { testId: "canvas" } },
-              { kind: "assert", assertion: { type: "textVisible", text: "Hello" } },
+              {
+                kind: "assert",
+                assertion: { type: "textVisible", text: "Hello" },
+              },
             ],
           },
         ],
@@ -194,7 +595,10 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
             toolName: "create_view",
             steps: [
               { kind: "click", target: { testId: "canvas" } },
-              { kind: "assert", assertion: { type: "textVisible", text: "Hi" } },
+              {
+                kind: "assert",
+                assertion: { type: "textVisible", text: "Hi" },
+              },
             ],
           },
         ],
@@ -228,27 +632,38 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       checks: [{ type: "noToolErrors" }],
     });
     expect(back[1]).toMatchObject({
-      pinnedToolCall: { serverName: "amazon", toolName: "search", arguments: { q: "fryer" } },
+      pinnedToolCall: {
+        serverName: "amazon",
+        toolName: "search",
+        arguments: { q: "fryer" },
+      },
     });
   });
 
   it("represents a tool-call assert as an expected tool call (matcher path, both run paths)", () => {
-    // A `toolCalledWith` always maps to `expectedToolCalls` — regardless of
+    // A gating `toolCalledWith` maps to `expectedToolCalls` — regardless of
     // whether it's authored before or after an interact — so the matcher
-    // (which runs on both local + hosted paths) evaluates it. Per-turn `checks`
-    // are NOT evaluated on the hosted/free path, so we must not route it there.
+    // (which runs on both local + hosted paths) evaluates it. An advisory
+    // `toolCalledWith` stays a predicate row.
     const steps: TestStep[] = [
       { id: "p", kind: "prompt", prompt: "show cart" },
       {
         id: "i",
         kind: "interact",
         toolName: "view-cart",
-        action: { kind: "click", target: { role: { role: "button", name: "Add to cart" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add to cart" } },
+        },
       },
       {
         id: "a",
         kind: "assert",
-        assertion: { type: "toolCalledWith", toolName: "clear-cart", args: { args: {} } },
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "clear-cart",
+          args: { args: {} },
+        },
       },
     ];
     const [turn] = stepsToPromptTurns(steps);
@@ -258,6 +673,24 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       { toolName: "clear-cart", arguments: {} },
     ]);
     expect(turn!.checks ?? []).toEqual([]);
+  });
+
+  it("does not promote an advisory toolCalledWith into expectedToolCalls", () => {
+    const assertion = {
+      type: "toolCalledWith" as const,
+      toolName: "clear-cart",
+      args: { args: {} },
+      role: "advisory" as const,
+      severity: "warn" as const,
+    };
+    const steps: TestStep[] = [
+      { id: "p", kind: "prompt", prompt: "show cart" },
+      { id: "a", kind: "assert", assertion },
+    ];
+    expect(deriveExpectedToolCalls(steps)).toEqual([]);
+    const [turn] = stepsToPromptTurns(steps);
+    expect(turn!.expectedToolCalls).toEqual([]);
+    expect(turn!.checks).toEqual([assertion]);
   });
 
   it("preserves a check authored BEFORE interacts across the editor round-trip", () => {
@@ -271,7 +704,10 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
         id: "i1",
         kind: "interact",
         toolName: "search-products",
-        action: { kind: "click", target: { role: { role: "button", name: "Add to cart" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add to cart" } },
+        },
       },
       {
         id: "i2",
@@ -288,9 +724,9 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       "interact",
     ]);
     // Idempotent: a second pass keeps the same order (no snap-back).
-    expect(promptTurnsToSteps(stepsToPromptTurns(back)).map((s) => s.kind)).toEqual(
-      back.map((s) => s.kind),
-    );
+    expect(
+      promptTurnsToSteps(stepsToPromptTurns(back)).map((s) => s.kind),
+    ).toEqual(back.map((s) => s.kind));
   });
 
   it("preserves a check INTERLEAVED between two interacts", () => {
@@ -328,13 +764,20 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       {
         id: "a",
         kind: "assert",
-        assertion: { type: "toolCalledWith", toolName: "view-cart", args: { args: {} } },
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "view-cart",
+          args: { args: {} },
+        },
       },
       {
         id: "i",
         kind: "interact",
         toolName: "view-cart",
-        action: { kind: "click", target: { role: { role: "button", name: "Add" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add" } },
+        },
       },
     ];
     const [turn] = stepsToPromptTurns(steps);
@@ -343,11 +786,9 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
     expect(turn!.expectedToolCalls).toEqual([
       { toolName: "view-cart", arguments: {} },
     ]);
-    expect(promptTurnsToSteps(stepsToPromptTurns(steps)).map((s) => s.kind)).toEqual([
-      "prompt",
-      "assert",
-      "interact",
-    ]);
+    expect(
+      promptTurnsToSteps(stepsToPromptTurns(steps)).map((s) => s.kind),
+    ).toEqual(["prompt", "assert", "interact"]);
   });
 });
 

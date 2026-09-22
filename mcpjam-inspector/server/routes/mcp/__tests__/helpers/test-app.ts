@@ -12,13 +12,15 @@ import chatV2 from "../../chat-v2.js";
 import listTools from "../../list-tools.js";
 import widgetRender from "../../widget-render.js";
 import widgetSession from "../../widget-session.js";
+import logLevel from "../../log-level.js";
+import tasks from "../../tasks.js";
 import { adapterHttp, managerHttp } from "../../http-adapters.js";
 
 // Import security middleware
 import { sessionAuthMiddleware } from "../../../../middleware/session-auth.js";
 import { originValidationMiddleware } from "../../../../middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "../../../../middleware/security-headers.js";
-import { CORS_ORIGINS } from "../../../../config.js";
+import { CORS_OPTIONS } from "../../../../config.js";
 
 /**
  * Route configuration for test app creation
@@ -33,6 +35,8 @@ export type RouteConfig =
   | "list-tools"
   | "widget-render"
   | "widget-session"
+  | "log-level"
+  | "tasks"
   | "adapter-http"
   | "manager-http";
 
@@ -46,6 +50,8 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   "list-tools": { path: "/api/mcp/list-tools", handler: listTools },
   "widget-render": { path: "/api/mcp/widget-render", handler: widgetRender },
   "widget-session": { path: "/api/mcp/widget-session", handler: widgetSession },
+  "log-level": { path: "/api/mcp/log-level", handler: logLevel },
+  tasks: { path: "/api/mcp/tasks", handler: tasks },
   "adapter-http": { path: "/api/mcp/adapter-http", handler: adapterHttp },
   "manager-http": { path: "/api/mcp/manager-http", handler: managerHttp },
 };
@@ -96,13 +102,7 @@ export function createTestApp(
     app.use("*", securityHeadersMiddleware);
     app.use("*", originValidationMiddleware);
     app.use("*", sessionAuthMiddleware);
-    app.use(
-      "*",
-      cors({
-        origin: CORS_ORIGINS,
-        credentials: true,
-      }),
-    );
+    app.use("*", cors(CORS_OPTIONS));
   }
 
   // Mount requested routes

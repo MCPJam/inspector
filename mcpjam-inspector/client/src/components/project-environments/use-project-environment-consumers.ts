@@ -1,0 +1,74 @@
+import { useMemo } from "react";
+import { useQuery, useConvexAuth } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
+
+/**
+ * ADVISORY counts of consumers referencing an environment, for the
+ * archive-confirm dialog. No reverse index exists backend-side, so this is a
+ * client scan of the suites AND journeys the viewer can already see. Each count
+ * is independent: `null` means that source is still loading (or unscannable),
+ * a number is a settled count. The dialog copy must say the counts "may be
+ * incomplete" — archiving while referenced is allowed by design (consumers fail
+ * fast at their next launch).
+ */
+export function useProjectEnvironmentConsumers(
+  projectId: string | null,
+  environmentId: string | null
+): {
+  suiteCount: number | null;
+  journeyCount: number | null;
+  /**
+   * Published scenarios backed by this environment (0 or 1 — backend-enforced
+   * one-per-environment). Unlike the advisory suite/journey scans this one is
+   * exact when settled: the scenario list carries `environmentId` per row.
+   */
+  scenarioCount: number | null;
+} {
+  const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  const enableQuery =
+    isAuthenticated &&
+    isUserReady &&
+    shouldQueryProjectId(projectId) &&
+    !!environmentId;
+
+  const overview = useQuery(
+    "testSuites:getTestSuitesOverview" as any,
+    enableQuery ? ({ projectId } as any) : "skip"
+  ) as Array<{ suite?: { environmentIds?: string[] } }> | undefined;
+
+  const journeys = useQuery(
+    "journeys:listJourneysByProject" as any,
+    enableQuery ? ({ projectId } as any) : "skip"
+  ) as Array<{ environmentIds?: string[] | null }> | undefined;
+
+  const scenarios = useQuery(
+    "scenarios:listScenarios" as any,
+    enableQuery ? ({ projectId } as any) : "skip"
+  ) as Array<{ environmentId?: string | null }> | undefined;
+
+  return useMemo(() => {
+    if (!environmentId) {
+      return { suiteCount: null, journeyCount: null, scenarioCount: null };
+    }
+    const suiteCount =
+      overview === undefined
+        ? null
+        : overview.filter((entry) =>
+            (entry.suite?.environmentIds ?? []).includes(environmentId)
+          ).length;
+    const journeyCount =
+      journeys === undefined
+        ? null
+        : journeys.filter((journey) =>
+            (journey.environmentIds ?? []).includes(environmentId)
+          ).length;
+    const scenarioCount =
+      scenarios === undefined
+        ? null
+        : scenarios.filter((scenario) => scenario.environmentId === environmentId)
+            .length;
+    return { suiteCount, journeyCount, scenarioCount };
+  }, [overview, journeys, scenarios, environmentId]);
+}

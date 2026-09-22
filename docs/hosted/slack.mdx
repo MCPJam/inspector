@@ -1,0 +1,89 @@
+---
+title: "Slack"
+description: "Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits"
+icon: "slack"
+---
+
+<Note>
+The Slack app is rolling out, and its **settings** — connected workspaces, the
+org-wide default project, and channel bindings — are enabled per organization.
+If yours does not have them yet, the Slack card under **Settings →
+Integrations** opens a page with nothing on it. Everything else on this page
+describes the bot itself, which behaves the same once your workspace is
+connected. Ask us to enable it for your organization.
+</Note>
+
+The MCPJam Slack app puts the agent where your team already is. Mention it in a
+channel or thread and it answers about your projects, servers, and eval runs.
+Anything that would **spend credits or change state** comes back as a button
+for a human to approve first.
+
+## Install
+
+The app is installed **per workspace**, by someone who can approve apps for it,
+from the install link we give you. Installing does not give the bot access to
+anyone's MCPJam data — individual accounts are linked separately, below.
+
+Once a workspace is connected — and once the settings above are enabled for
+your organization — **Settings → Integrations → Slack** lists it, along with
+the org-wide default project and any channel bindings. The bot works in Slack
+either way; without those settings there is just nothing to configure here.
+
+## Connect your account
+
+Open the app's **Home** tab in Slack and click **Connect MCPJam**. This links
+your Slack user to your MCPJam account, and it is what the bot acts as.
+
+Two things follow from that, and they are the whole security model:
+
+- The bot's own credential names the **bot**, not you. Every request also
+  carries your Slack identity, and the server resolves *your* MCPJam account
+  and re-checks your org membership.
+- If you are not linked, the bot cannot act for you at all — it replies with a
+  connect prompt instead. The same is true if you are removed from the
+  organization later.
+
+Set a **default project** in the Home tab too. Without one the bot knows who
+you are but not where to act, and will say so.
+
+## Ask it something
+
+Mention the bot in any channel it can see:
+
+```
+@MCPJam how did the checkout suite do this week?
+```
+
+It replies in a thread. Follow-ups in that thread do not need the mention — the
+thread is bound to the conversation, so context carries.
+
+Useful things to ask for:
+
+- the status of a recent eval run, or why it failed
+- which servers a project has, and whether they are healthy
+- a summary of a suite's recent pass rates
+
+## Approvals
+
+When the answer requires doing something — starting an eval run, generating
+cases, changing a schedule — the bot does not just do it. It posts what it
+proposes with **Approve** and **Dismiss** buttons.
+
+Three things are true of that button, each on purpose:
+
+- **The person who clicks is the person it runs as.** Not whoever asked. The
+  server re-resolves the clicker and re-checks their access, so a button left
+  in a channel cannot be used by someone without it.
+- **The button carries only an id.** What the action does comes from the
+  proposal MCPJam stored, never from the button itself.
+- **Double-clicking is safe.** The proposal transitions once, server-side. The
+  second click is told it lost, not billed.
+
+Approved runs post a status message that updates in place as the run
+progresses. If a run fails, the bot attaches screenshots of what broke.
+
+## Removing it
+
+Uninstall the app from Slack's **Apps** settings to end the workspace install.
+To unlink just your own account, use **Disconnect** in the app's Home tab —
+that leaves the workspace install alone and only stops the bot acting as you.

@@ -151,5 +151,26 @@ describe("guestRateLimitMiddleware", () => {
       expect(data).toHaveProperty("message");
       expect(typeof data.message).toBe("string");
     });
+
+    it("429 carries Retry-After, which the spec promises on every one", async () => {
+      // This is a FIXED window, so the wait is exactly its remainder — the one
+      // 429 in the product that can state its reset precisely. It shipped
+      // without the header while the published spec `$ref`d `RateLimited`
+      // (which documents `Retry-After`) from 87 of its 88 operations.
+      for (let i = 0; i < 60; i++) {
+        await app.request("/proxy", {
+          headers: { "x-test-guest-id": "guest-g" },
+        });
+      }
+
+      const res = await app.request("/proxy", {
+        headers: { "x-test-guest-id": "guest-g" },
+      });
+
+      expect(res.status).toBe(429);
+      const retryAfter = Number(res.headers.get("retry-after"));
+      expect(retryAfter).toBeGreaterThanOrEqual(1);
+      expect(retryAfter).toBeLessThanOrEqual(60);
+    });
   });
 });

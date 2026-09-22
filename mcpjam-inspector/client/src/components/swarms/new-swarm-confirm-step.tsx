@@ -1,0 +1,1500 @@
+/**
+ * Confirm step of the New swarm create flow.
+ *
+ * Persona list stays compact; click a row to expand it in the shared confirm
+ * column with use-cases and goals. Nothing is persisted until "Create & launch".
+ */
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
+import { useQuery } from "convex/react";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
+import { SectionLabel } from "@/components/shared/section-label";
+import {
+  PersonaPixelAvatar,
+  mintPersonaAvatarLook,
+} from "@/components/swarms/persona-pixel-avatar";
+import {
+  DEFAULT_SWARM_ITERATIONS,
+  reusedIterationsSeed,
+  estimateLaunchSessions,
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
+} from "@/components/swarms/swarm-intensity";
+import { SWARM_QUERIES } from "@/lib/swarm-api";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
+import { type JourneyCriterion } from "@/shared/journey-rubric";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+
+/** A generated persona + journeys, still only in memory. */
+export type ProposedPersona = {
+  /** Stable local key — these rows have no `_id` until launch. */
+  key: string;
+  name: string;
+  role: string;
+  notes?: string;
+  avatarShape: number;
+  avatarPalette: number;
+  journeys: {
+    key: string;
+    name?: string;
+    goal: string;
+  }[];
+};
+
+/** An existing persona the user folded into this swarm. */
+export type ReusedPersona = {
+  _id: string;
+  name: string;
+  role: string;
+  notes: string;
+  avatarShape?: number;
+  avatarPalette?: number;
+};
+
+/** One journey to launch, with the persona it belongs to (for the Running matrix). */
+export type LaunchTarget = {
+  journeyId: string;
+  label: string;
+  /** Goal/journey name alone — Running-step cells lead with this. */
+  goalLabel?: string;
+  personaId: string;
+  personaName: string;
+  personaRole: string;
+  avatarShape?: number;
+  avatarPalette?: number;
+  /** Stored env fan-out of a REUSED journey (`null` = legacy client-based).
+   * Launch compares this to the Describe selection to decide whether the
+   * journey must be re-stamped before launching. Absent on created targets —
+   * they are born with the selection. */
+  environmentIds?: string[] | null;
+  /** Stored sessions-per-target of a REUSED journey (`null` = the row carries
+   * no config). Launch does not rewrite a shared journey's config, so this —
+   * not the intensity preset — is what the run will execute. Absent on created
+   * targets, which are born with the preset's config. */
+  sessionsPerTarget?: number | null;
+};
+
+export type ConfirmLaunchPayload = {
+  rubric: JourneyCriterion[];
+  judgeConfig?: GoalJudgeConfig;
+  /** Existing journeys to launch. When the Describe step carries an explicit
+   * environment selection, launch stamps it onto any of these whose stored
+   * environments differ — the picker's promise wins over the journey's past. */
+  reusedTargets: LaunchTarget[];
+  /** Per reused journey: its current rubric. Confirm does not author
+   * swarm-level grading, so this is empty from this screen. */
+  reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
+};
+
+type SelectedPersona =
+  | { kind: "proposed"; key: string }
+  | { kind: "reused"; id: string };
+
+/**
+ * One existing journey's goal, as the editor edits it: the stored text, never
+ * `journeyLabel`. The panel binds a field to this AND diffs against it to
+ * decide what to write, so a display label here (a name, or a goal truncated
+ * for a card) is what the user's edit would be saved as (UTSC-36).
+ */
+type ReusedGoal = {
+  journeyId: string;
+  goal: string;
+};
+
+type ReusedResolved = {
+  targets: LaunchTarget[] | null;
+  goals: ReusedGoal[];
+  graded: boolean;
+};
+
+/** Uncommitted edits to one EXISTING persona, held while its panel is open. */
+export type ReusedPersonaDraft = {
+  name: string;
+  role: string;
+  notes: string;
+  goals: Record<string, string>;
+};
+
+/**
+ * What a draft would actually write.
+ *
+ * One definition of "what moved", because two callers ask the same question for
+ * opposite reasons: Save sends exactly this, and closing the panel uses it to
+ * know whether anything is about to be thrown away. Deriving them separately is
+ * how a discard warning starts disagreeing with what a save would have done.
+ */
+export function diffReusedDraft(
+  draft: ReusedPersonaDraft | undefined,
+  persona: ReusedPersona,
+  goals: readonly ReusedGoal[]
+): {
+  patch: { name?: string; role?: string; notes?: string };
+  goalEdits: { journeyId: string; goal: string }[];
+  dirty: boolean;
+} {
+  const patch: { name?: string; role?: string; notes?: string } = {};
+  const goalEdits: { journeyId: string; goal: string }[] = [];
+  if (!draft) return { patch, goalEdits, dirty: false };
+
+  if (draft.name !== persona.name) patch.name = draft.name;
+  if (draft.role !== persona.role) patch.role = draft.role;
+  if (draft.notes !== (persona.notes ?? "")) patch.notes = draft.notes;
+
+  for (const goal of goals) {
+    const next = draft.goals[goal.journeyId];
+    // A journey needs a goal — the backend throws on an empty one, so an
+    // emptied field is dropped rather than sent and surfaced as an error the
+    // user cannot act on from here. It is not a pending edit either: there is
+    // nothing this panel could save, so closing loses nothing.
+    if (next === undefined || next.trim().length === 0) continue;
+    if (next === goal.goal) continue;
+    goalEdits.push({ journeyId: goal.journeyId, goal: next });
+  }
+
+  return {
+    patch,
+    goalEdits,
+    dirty: Object.keys(patch).length > 0 || goalEdits.length > 0,
+  };
+}
+
+function journeyLabel(journey: { name?: string; goal: string }): string {
+  const name = journey.name?.trim();
+  if (name) return name;
+  const goal = journey.goal.trim();
+  return goal.length > 48 ? `${goal.slice(0, 47)}…` : goal;
+}
+
+function personaContext(notes?: string, role?: string): string {
+  return notes?.trim() || role?.trim() || "No use cases or context yet.";
+}
+
+/**
+ * Collapsed persona card.
+ *
+ * `Edit` and `Remove` are always-visible buttons rather than a hover-only
+ * overflow menu (BB-122): the whole point of this step is that the slate is
+ * editable, and an affordance you have to hover to discover does not say so.
+ * The card body stays clickable as a second route into the same expand.
+ */
+function CompactPersonaCard({
+  seed,
+  name,
+  role,
+  description,
+  meta,
+  muted,
+  onSelect,
+  onRemove,
+  removeLabel,
+  editLabel,
+  avatarShape,
+  avatarPalette,
+  footer,
+}: {
+  seed: string;
+  name: string;
+  role: string;
+  description: string;
+  meta: string;
+  /** Another card is expanded — this one recedes rather than competing. */
+  muted?: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  removeLabel: string;
+  editLabel: string;
+  avatarShape?: number;
+  avatarPalette?: number;
+  /** Strip under the row: this persona's iterations and what they cost. */
+  footer?: ReactNode;
+}) {
+  return (
+    <li>
+      {/* A plain div, not `role="button"`: it holds the real Edit and Remove
+          buttons, and a widget that contains other widgets is exactly the
+          nesting assistive tech cannot describe — the row announced itself as
+          one button whose content was two more. The click handler stays, so
+          clicking anywhere on the card still expands it for pointer users;
+          keyboard users reach the same thing through Edit, which is a real
+          focusable control and names its persona. */}
+      <div
+        className={cn(
+          "overflow-hidden rounded-xl border border-border/50 bg-muted/15",
+          muted && "opacity-70",
+        )}
+      >
+        <div
+          data-testid="new-swarm-persona-compact"
+          onClick={onSelect}
+          className="flex w-full cursor-pointer items-start gap-4 p-4 text-left transition-colors hover:bg-muted/25"
+        >
+        <PersonaPixelAvatar
+          seed={seed}
+          shapeIndex={avatarShape}
+          paletteIndex={avatarPalette}
+          size="lg"
+        />
+        <div className="min-w-0 flex-1">
+          <p
+            className={cn(
+              "mb-1 line-clamp-1 text-sm font-semibold leading-5",
+              muted ? "text-muted-foreground" : "text-foreground"
+            )}
+          >
+            {role ? `${name} | ${role}` : name}
+          </p>
+          <p className="mb-1 line-clamp-2 text-sm leading-snug text-muted-foreground">
+            {description}
+          </p>
+          <p className="text-xs leading-snug text-muted-foreground">{meta}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7.5 px-2.5 text-xs"
+            aria-label={editLabel}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+          >
+            Edit
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7.5 bg-background px-2.5 text-xs"
+            aria-label={removeLabel}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove();
+            }}
+          >
+            Remove
+          </Button>
+        </div>
+        </div>
+        {footer ? (
+          <div className="border-t border-border/50 px-4 py-2.5">{footer}</div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The character just typed, found by comparing the field against what it
+ * showed. `selectionStart` would say it directly, but reading it on a number
+ * input throws, so the caret is inferred from where the two texts diverge.
+ * Null when the text did not grow by exactly one character.
+ */
+function insertedCharacter(shown: string, typed: string): string | null {
+  if (typed.length !== shown.length + 1) return null;
+  let index = 0;
+  while (index < shown.length && shown[index] === typed[index]) index++;
+  return typed[index];
+}
+
+/**
+ * Iterations for one persona, and what they cost.
+ *
+ * Sits on the collapsed card next to the persona it sizes, the way Remove
+ * does. One swarm-wide number could not describe this slate: the generator
+ * hands every persona the same goals, but the user edits it before launching,
+ * so one persona ends up carrying three goals and its neighbour five.
+ *
+ * The subtotal is PER ENVIRONMENT. Environments multiply the swarm once, in
+ * the total below the list, rather than on every card.
+ */
+function PersonaIterationsRow({
+  goalCount,
+  iterations,
+  personaName,
+  onChange,
+  disabled,
+}: {
+  goalCount: number;
+  iterations: number;
+  personaName: string;
+  onChange: (value: number) => void;
+  disabled: boolean;
+}) {
+  const id = useId();
+  // What the user is part-way through typing, before it is a count. Committing
+  // every keystroke through the clamp turned the "1" already in the field plus
+  // a typed "2" into 12, which landed straight on the maximum.
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (value: number) => {
+    setDraft(null);
+    onChange(value);
+  };
+  const conversations = goalCount * iterations;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex items-center gap-2">
+        <label htmlFor={id} className="text-sm text-muted-foreground">
+          Iterations
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label={`Fewer iterations for ${personaName}`}
+          disabled={disabled || iterations <= MIN_SWARM_ITERATIONS}
+          onClick={() => commit(iterations - 1)}
+        >
+          <Minus className="size-3.5" />
+        </Button>
+        <Input
+          id={id}
+          type="number"
+          min={MIN_SWARM_ITERATIONS}
+          max={MAX_SWARM_ITERATIONS}
+          step={1}
+          value={draft ?? iterations}
+          disabled={disabled}
+          data-testid="new-swarm-persona-iterations"
+          onFocus={(event) => event.target.select()}
+          onChange={(event) => {
+            const typed = event.target.value;
+            const shown = String(draft ?? iterations);
+            const grew = typed.length > shown.length;
+            // A digit pressed beside the one already there reads as 12, not 2.
+            // The range ends below ten, so a digit added to a field that
+            // already holds one is the count meant and the rest is stale.
+            const entered = grew ? insertedCharacter(shown, typed) : typed;
+            const count = entered === null ? Number.NaN : Number(entered);
+            if (
+              entered !== null &&
+              entered !== "" &&
+              Number.isInteger(count) &&
+              count >= MIN_SWARM_ITERATIONS &&
+              count <= MAX_SWARM_ITERATIONS
+            ) {
+              commit(count);
+              return;
+            }
+            // Only a shrinking field holds text that is not a count: an empty
+            // box on the way to one. Anything else is a keystroke the control
+            // cannot take, and showing it would display a forbidden value.
+            setDraft(typed.length < shown.length ? typed : shown);
+          }}
+          onBlur={() => {
+            if (draft === null) return;
+            // Number("") is 0, which the parent clamp lifts to the minimum.
+            commit(Number(draft));
+          }}
+          className="h-7 w-14 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label={`More iterations for ${personaName}`}
+          disabled={disabled || iterations >= MAX_SWARM_ITERATIONS}
+          onClick={() => commit(iterations + 1)}
+        >
+          <Plus className="size-3.5" />
+        </Button>
+      </div>
+      <p
+        className="text-sm text-muted-foreground"
+        data-testid="new-swarm-persona-subtotal"
+      >
+        <strong className="font-semibold tabular-nums text-foreground">
+          {goalCount}
+        </strong>{" "}
+        {goalCount === 1 ? "goal" : "goals"} ×{" "}
+        <strong className="font-semibold tabular-nums text-foreground">
+          {iterations}
+        </strong>{" "}
+        {iterations === 1 ? "iteration" : "iterations"} ={" "}
+        <strong className="font-semibold tabular-nums text-foreground">
+          {conversations}
+        </strong>{" "}
+        {conversations === 1 ? "conversation" : "conversations"}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Expanded persona card — every field editable in place.
+ *
+ * The header carries Save changes and nothing else: Remove belongs to the
+ * collapsed card, which is the list row, while this is the editor.
+ *
+ * That one button always shows and is always live — it means "done here" and
+ * always collapses the panel. A header with no button reads as broken, and a
+ * disabled one leaves the panel with no visible way out; Escape still works
+ * but nobody guesses it.
+ *
+ * Focus moves into the panel on mount, which is what makes Escape reachable at
+ * all: the Edit button that opened it unmounts on the same commit, so focus
+ * would otherwise fall to `<body>` and the keydown handler would never see it.
+ * The container takes focus rather than the first field — landing in a text
+ * input announces the field instead of the editor.
+ *
+ * What it does before collapsing differs, because the two kinds of persona are
+ * not the same thing.
+ * A proposed persona only exists in memory: its edits already landed as they
+ * were typed, so Save just closes. A reused persona is a database row shared
+ * with every other swarm that pulled it in, so its edits are held in a local
+ * draft and this is what commits them — mirroring keystrokes into a shared row
+ * would rewrite other people's swarms as you type. A failed save keeps the
+ * panel open with the draft intact.
+ *
+ * The two exits therefore mean two different things for a reused persona, and
+ * both are honest about it: Save commits and collapses, Escape discards and
+ * collapses. Neither leaves an edit that the collapsed card doesn't show and
+ * the launch wouldn't use.
+ */
+function PersonaDetailPanel({
+  seed,
+  name,
+  role,
+  context,
+  goals,
+  graded,
+  loadingGoals,
+  draftEditable,
+  onClose,
+  onRemoveGoal,
+  onChangeName,
+  onChangeRole,
+  onChangeContext,
+  onChangeGoal,
+  onAddGoal,
+  onSave,
+  saving,
+  avatarShape,
+  avatarPalette,
+}: {
+  seed: string;
+  name: string;
+  role: string;
+  context: string;
+  goals: {
+    key: string;
+    label: string;
+  }[];
+  graded?: boolean;
+  loadingGoals?: boolean;
+  /** In-memory row: edits apply immediately, no Save. */
+  draftEditable?: boolean;
+  /**
+   * Leave the editor WITHOUT saving. Reached by Escape — the design shows no
+   * close button. For a persisted persona the caller discards the draft, so
+   * what the collapsed card shows is always what launches.
+   */
+  onClose: () => void;
+  onRemoveGoal?: (goalKey: string) => void;
+  onChangeName?: (name: string) => void;
+  onChangeRole?: (role: string) => void;
+  onChangeContext?: (notes: string) => void;
+  onChangeGoal?: (goalKey: string, goal: string) => void;
+  onAddGoal?: () => void;
+  /**
+   * "Done here". Always offered: it commits a persisted row's draft (a no-op
+   * for an unchanged one) and collapses the panel either way.
+   */
+  onSave: () => void;
+  saving?: boolean;
+  avatarShape?: number;
+  avatarPalette?: number;
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // An `useEffect`, not an inline ref callback: an inline callback is a new
+  // function every render, so React would re-run it on each keystroke and yank
+  // focus out of the field being typed in.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  return (
+    <div
+      ref={panelRef}
+      tabIndex={-1}
+      className="rounded-xl border border-primary/50 bg-muted/30 outline-none ring-1 ring-primary/25"
+      data-testid="new-swarm-persona-detail"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <div className="flex items-start justify-between gap-3 px-4 pt-4">
+        <PersonaPixelAvatar
+          seed={seed}
+          shapeIndex={avatarShape}
+          paletteIndex={avatarPalette}
+          size="lg"
+        />
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 bg-background px-3 text-[13px]"
+            disabled={saving}
+            data-testid="new-swarm-persona-save"
+            onClick={onSave}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save changes"
+            )}
+          </Button>
+        </div>
+      </div>
+
+      <div className="space-y-4 px-4 pb-4 pt-3">
+        <div className="space-y-1.5">
+          <SectionLabel>Name</SectionLabel>
+          <Input
+            value={name}
+            onChange={(event) => onChangeName?.(event.target.value)}
+            placeholder="Name"
+            aria-label="Persona name"
+            className="h-9 bg-background"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <SectionLabel>Role</SectionLabel>
+          <Input
+            value={role}
+            onChange={(event) => onChangeRole?.(event.target.value)}
+            placeholder="Role"
+            aria-label="Persona role"
+            className="h-9 bg-background"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <SectionLabel>Use cases &amp; context</SectionLabel>
+          <textarea
+            value={context}
+            onChange={(event) => onChangeContext?.(event.target.value)}
+            placeholder="Who they are and how they show up…"
+            aria-label="Use cases and context"
+            rows={4}
+            className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <SectionLabel>Goals</SectionLabel>
+            {onAddGoal ? (
+              <button
+                type="button"
+                onClick={onAddGoal}
+                data-testid="new-swarm-add-goal"
+                className="text-xs font-medium text-primary hover:text-primary/80"
+              >
+                + Add goal
+              </button>
+            ) : null}
+          </div>
+          {loadingGoals ? (
+            <p className="text-sm text-muted-foreground">Loading goals…</p>
+          ) : goals.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border/60 px-3 py-2.5 text-sm text-muted-foreground">
+              No goals yet — this persona has nothing to run.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {goals.map((goal) => (
+                <li key={goal.key}>
+                  <div className="flex items-center gap-2.5 rounded-lg border border-input bg-background px-3 py-2">
+                    <span
+                      className="size-2 shrink-0 rounded-full bg-primary"
+                      aria-hidden
+                    />
+                    {onChangeGoal ? (
+                      <Input
+                        value={goal.label}
+                        onChange={(event) =>
+                          onChangeGoal(goal.key, event.target.value)
+                        }
+                        placeholder="What should they try to do?"
+                        aria-label="Goal"
+                        className="h-7 min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                      />
+                    ) : (
+                      <span className="min-w-0 flex-1 text-sm leading-snug text-foreground">
+                        {goal.label}
+                      </span>
+                    )}
+                    {onRemoveGoal ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove goal ${goal.label}`}
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => onRemoveGoal(goal.key)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {graded ? (
+            <p className="text-xs text-muted-foreground">
+              Has its own grading.
+            </p>
+          ) : null}
+          {draftEditable ? null : (
+            <p className="text-xs text-muted-foreground">
+              This persona is saved in your project. Edits here update it
+              everywhere it is reused.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Keeps journeys for one reused persona subscribed and reports them upward.
+ * Mounted for every reused row so expand/collapse never drops the query.
+ */
+function ReusedPersonaJourneyLoader({
+  persona,
+  onResolved,
+}: {
+  persona: ReusedPersona;
+  onResolved: (personaId: string, data: ReusedResolved) => void;
+}) {
+  const journeys = useQuery(
+    SWARM_QUERIES.listJourneysByPersona as any,
+    { personaRefId: persona._id } as any
+  ) as
+    | {
+        _id: string;
+        name?: string;
+        goal: string;
+        rubric?: JourneyCriterion[] | null;
+        judgeConfig?: GoalJudgeConfig;
+        environmentIds?: string[] | null;
+        config?: { sessionsPerTarget?: number; maxTurns?: number } | null;
+      }[]
+    | undefined;
+
+  const resolved = useMemo((): ReusedResolved => {
+    if (journeys === undefined) {
+      return { targets: null, goals: [], graded: false };
+    }
+    return {
+      targets: journeys.map((journey) => ({
+        journeyId: journey._id,
+        label: `${persona.name} · ${journeyLabel(journey)}`,
+        goalLabel: journeyLabel(journey),
+        personaId: persona._id,
+        personaName: persona.name,
+        personaRole: persona.role,
+        environmentIds: journey.environmentIds ?? null,
+        sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
+        ...(persona.avatarShape !== undefined
+          ? { avatarShape: persona.avatarShape }
+          : {}),
+        ...(persona.avatarPalette !== undefined
+          ? { avatarPalette: persona.avatarPalette }
+          : {}),
+      })),
+      goals: journeys.map((journey) => ({
+        journeyId: journey._id,
+        goal: journey.goal,
+      })),
+      graded: journeys.some(
+        (journey) =>
+          (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig
+      ),
+    };
+  }, [
+    journeys,
+    persona._id,
+    persona.name,
+    persona.role,
+    persona.avatarShape,
+    persona.avatarPalette,
+  ]);
+
+  useEffect(() => {
+    onResolved(persona._id, resolved);
+  }, [onResolved, persona._id, resolved]);
+
+  return null;
+}
+
+/**
+ * Compact selectable row for an existing persona folded into this swarm.
+ */
+function ReusedPersonaCard({
+  persona,
+  muted,
+  onSelect,
+  onRemove,
+  resolved,
+  iterations,
+  disabled,
+  onIterationsChange,
+}: {
+  persona: ReusedPersona;
+  muted?: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  resolved: ReusedResolved | undefined;
+  iterations: number;
+  disabled: boolean;
+  onIterationsChange: (value: number) => void;
+}) {
+  const goalCount = resolved?.goals.length;
+  // Set for THIS run, not written back: the journey belongs to whoever
+  // authored the persona, and resizing one launch must not resize every
+  // future run of a shared definition. Launch sends it as an override.
+  const targets = resolved?.targets ?? null;
+  const meta =
+    resolved == null || resolved.targets === null
+      ? "Loading goals…"
+      : [
+          `${goalCount} ${goalCount === 1 ? "goal" : "goals"}`,
+          "existing",
+          resolved.graded ? "own grading" : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+  return (
+    <CompactPersonaCard
+      seed={persona._id}
+      name={persona.name}
+      role={persona.role}
+      description={personaContext(persona.notes, persona.role)}
+      meta={meta}
+      muted={muted}
+      onSelect={onSelect}
+      onRemove={onRemove}
+      editLabel={`Edit ${persona.name}`}
+      removeLabel={`Remove ${persona.name} from this swarm`}
+      avatarShape={persona.avatarShape}
+      avatarPalette={persona.avatarPalette}
+      footer={
+        targets != null ? (
+          <PersonaIterationsRow
+            goalCount={targets.length}
+            iterations={iterations}
+            personaName={persona.name}
+            disabled={disabled}
+            onChange={onIterationsChange}
+          />
+        ) : null
+      }
+    />
+  );
+}
+
+export function NewSwarmConfirmStep({
+  proposed,
+  onProposedChange,
+  reusedPersonas,
+  onRemoveReused,
+  iterationsByPersona,
+  onIterationsChange,
+  environmentCount,
+  environmentLabels,
+  launching,
+  errorMessage,
+  onBack,
+  onLaunch,
+  header,
+  availablePersonas,
+  onAddReused,
+  onSaveReusedPersona,
+  onSaveReusedGoal,
+}: {
+  proposed: ProposedPersona[];
+  onProposedChange: (next: ProposedPersona[]) => void;
+  reusedPersonas: ReusedPersona[];
+  onRemoveReused: (personaId: string) => void;
+  /** Iterations per goal, keyed by proposed persona key. */
+  iterationsByPersona: Record<string, number>;
+  onIterationsChange: (personaKey: string, value: number) => void;
+  environmentCount: number;
+  /** Display names of the environments this launch will fan out across. */
+  environmentLabels: string[];
+  launching: boolean;
+  errorMessage: string | null;
+  onBack: () => void;
+  onLaunch: (payload: ConfirmLaunchPayload) => void;
+  /** Leave the create flow and open Personas for an existing persona. */
+  /** Back link + stepper, built by the flow so both steps show the same one. */
+  header?: ReactNode;
+  /** Every persona in the project, for "Add existing personas". */
+  availablePersonas: readonly ReusedPersona[];
+  onAddReused: (personaRefId: string) => void;
+  /**
+   * Persist an edit to an existing persona. Called from the explicit Save —
+   * the row is shared, so keystrokes must not reach it.
+   */
+  onSaveReusedPersona: (
+    personaRefId: string,
+    patch: { name?: string; role?: string; notes?: string }
+  ) => Promise<void>;
+  /** Persist an edit to an existing journey's goal text. */
+  onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState<SelectedPersona | null>(null);
+  const [reusedResolved, setReusedResolved] = useState<
+    Record<string, ReusedResolved>
+  >({});
+
+  const handleReusedResolved = useCallback(
+    (personaId: string, data: ReusedResolved) => {
+      setReusedResolved((current) => {
+        const previous = current[personaId];
+        const prevTargets = previous?.targets;
+        const nextTargets = data.targets;
+        const targetsMatch =
+          prevTargets === nextTargets ||
+          (prevTargets != null &&
+            nextTargets != null &&
+            prevTargets.length === nextTargets.length &&
+            prevTargets.every(
+              (entry, index) =>
+                entry.journeyId === nextTargets[index]?.journeyId &&
+                // The stored sessions ride the target and drive the estimate,
+                // so an id-only comparison would keep quoting a stale number
+                // after someone edits that goal's sessions mid-flow.
+                entry.sessionsPerTarget ===
+                  nextTargets[index]?.sessionsPerTarget
+            ));
+        const goalsMatch =
+          previous != null &&
+          previous.goals.length === data.goals.length &&
+          previous.goals.every(
+            (goal, index) =>
+              goal.journeyId === data.goals[index]?.journeyId &&
+              goal.goal === data.goals[index]?.goal
+          );
+        if (
+          previous &&
+          previous.graded === data.graded &&
+          targetsMatch &&
+          goalsMatch
+        ) {
+          return current;
+        }
+        return { ...current, [personaId]: data };
+      });
+    },
+    []
+  );
+
+  const newLocalKey = (prefix: string) =>
+    `${prefix}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+  const patchProposed = (
+    key: string,
+    patch: (persona: ProposedPersona) => ProposedPersona
+  ) => {
+    onProposedChange(
+      proposed.map((persona) => (persona.key === key ? patch(persona) : persona))
+    );
+  };
+
+  const removePersona = (key: string) => {
+    onProposedChange(proposed.filter((persona) => persona.key !== key));
+    setSelected((current) =>
+      current?.kind === "proposed" && current.key === key ? null : current
+    );
+  };
+  const removeJourney = (personaKey: string, journeyKey: string) => {
+    // Keep an empty draft persona on the board — the user may still be
+    // authoring goals. Launch simply skips personas with no journeys.
+    patchProposed(personaKey, (persona) => ({
+      ...persona,
+      journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
+    }));
+  };
+  const addPersona = () => {
+    const key = newLocalKey("persona");
+    const next: ProposedPersona = {
+      key,
+      name: "New persona",
+      role: "Role",
+      ...mintPersonaAvatarLook(),
+      journeys: [
+        {
+          key: newLocalKey("journey"),
+          goal: "",
+        },
+      ],
+    };
+    onProposedChange([...proposed, next]);
+    setSelected({ kind: "proposed", key });
+  };
+  const addGoal = (personaKey: string) => {
+    patchProposed(personaKey, (persona) => ({
+      ...persona,
+      journeys: [
+        ...persona.journeys,
+        { key: newLocalKey("journey"), goal: "" },
+      ],
+    }));
+  };
+  const removeReused = (personaId: string) => {
+    onRemoveReused(personaId);
+    setSelected((current) =>
+      current?.kind === "reused" && current.id === personaId ? null : current
+    );
+  };
+
+  const reusedPending = reusedPersonas.some(
+    (persona) => (reusedResolved[persona._id]?.targets ?? null) === null
+  );
+  // A reused persona starts at what its goals already carry rather than at
+  // the default, so leaving the control alone launches the same size it
+  // always did.
+  const reusedIterationsFor = (personaId: string) =>
+    iterationsByPersona[personaId] ??
+    reusedIterationsSeed(
+      (reusedResolved[personaId]?.targets ?? []).map(
+        (target) => target.sessionsPerTarget ?? null,
+      ),
+    );
+  const activeReusedTargets = reusedPersonas.flatMap((persona) =>
+    (reusedResolved[persona._id]?.targets ?? []).map((target) => ({
+      ...target,
+      sessionsPerTarget: reusedIterationsFor(persona._id),
+    }))
+  );
+  const iterationsFor = (personaKey: string) =>
+    iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
+  // Empty draft goals stay visible for authoring but never launch, so they
+  // count toward neither launch readiness nor a subtotal — Create & launch
+  // only persists trimmed goals.
+  const authoredPersonas = proposed.map((persona) => ({
+    goalCount: persona.journeys.filter((journey) => journey.goal.trim()).length,
+    iterations: iterationsFor(persona.key),
+  }));
+  const newJourneyCount = authoredPersonas.reduce(
+    (sum, persona) => sum + persona.goalCount,
+    0
+  );
+  const journeyCount = newJourneyCount + activeReusedTargets.length;
+  // Every journey this launch fans out, not just the newly authored ones —
+  // a reuse-heavy swarm was under-reporting its own session count. Reused
+  // journeys are counted at the iterations chosen for THIS run, which is
+  // what launch sends as an override, so the quote and the run agree.
+  const launchSessionEstimate = estimateLaunchSessions({
+    personas: authoredPersonas,
+    reusedSessionsPerTarget: activeReusedTargets.map(
+      (target) => target.sessionsPerTarget ?? null,
+    ),
+    environmentCount,
+  });
+  const reusedCount = activeReusedTargets.length;
+  const personaTotal = proposed.length + reusedPersonas.length;
+  const fanoutEnvironmentCount = Math.max(1, environmentCount);
+  const canLaunch = journeyCount > 0 && !launching && !reusedPending;
+
+  const selectedProposed =
+    selected?.kind === "proposed"
+      ? proposed.find((persona) => persona.key === selected.key) ?? null
+      : null;
+  const selectedReused =
+    selected?.kind === "reused"
+      ? reusedPersonas.find((persona) => persona._id === selected.id) ?? null
+      : null;
+
+  /**
+   * Uncommitted edits to EXISTING personas, keyed by persona id.
+   *
+   * Held locally instead of written through because the row is shared: typing
+   * in this panel must not rewrite another swarm's persona until the user says
+   * so. Cleared on a successful save, so the panel falls back to the live query
+   * and cannot show a stale "saved" value.
+   */
+  const [reusedDrafts, setReusedDrafts] = useState<
+    Record<string, ReusedPersonaDraft>
+  >({});
+  const [savingReusedId, setSavingReusedId] = useState<string | null>(null);
+  const [addExistingOpen, setAddExistingOpen] = useState(false);
+
+  const patchReusedDraft = useCallback(
+    (
+      persona: ReusedPersona,
+      goals: ReusedGoal[],
+      patch: Partial<{ name: string; role: string; notes: string }> & {
+        goal?: { journeyId: string; text: string };
+      }
+    ) => {
+      setReusedDrafts((drafts) => {
+        const current =
+          drafts[persona._id] ??
+          {
+            name: persona.name,
+            role: persona.role,
+            notes: persona.notes ?? "",
+            goals: Object.fromEntries(
+              goals.map((goal) => [goal.journeyId, goal.goal])
+            ),
+          };
+        const next = {
+          ...current,
+          ...(patch.name === undefined ? {} : { name: patch.name }),
+          ...(patch.role === undefined ? {} : { role: patch.role }),
+          ...(patch.notes === undefined ? {} : { notes: patch.notes }),
+          goals: patch.goal
+            ? { ...current.goals, [patch.goal.journeyId]: patch.goal.text }
+            : current.goals,
+        };
+        return { ...drafts, [persona._id]: next };
+      });
+    },
+    []
+  );
+
+  const saveReused = useCallback(
+    async (persona: ReusedPersona, goals: ReusedGoal[]) => {
+      const draft = reusedDrafts[persona._id];
+      // Nothing typed: Save still means "done", so just collapse.
+      if (!draft) {
+        setSelected(null);
+        return;
+      }
+      setSavingReusedId(persona._id);
+      try {
+        // Only what actually moved. A no-op patch would still bump the row's
+        // `updatedAt` for every other swarm reusing it.
+        const { patch, goalEdits } = diffReusedDraft(draft, persona, goals);
+        if (Object.keys(patch).length > 0) {
+          await onSaveReusedPersona(persona._id, patch);
+        }
+        for (const edit of goalEdits) {
+          await onSaveReusedGoal(edit.journeyId, edit.goal);
+        }
+        setReusedDrafts((drafts) => {
+          const { [persona._id]: _saved, ...rest } = drafts;
+          return rest;
+        });
+        // Only on the way out of a clean save — a throw leaves the panel open
+        // with the draft still in it, so the edit is not silently lost.
+        setSelected(null);
+      } catch (error) {
+        // The call site invokes this with `void`, so without this the rejection
+        // was an unhandled promise and the user saw nothing at all. The draft
+        // and the open panel are deliberately left alone: the edit is still on
+        // screen to retry, which is the whole reason it is held locally.
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Couldn't save this persona. Your changes are still here."
+        );
+      } finally {
+        setSavingReusedId(null);
+      }
+    },
+    [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts]
+  );
+
+  /**
+   * Close WITHOUT saving — the Escape route out of a reused persona's editor.
+   *
+   * It discards, rather than keeping the draft around: this row is never
+   * launched from the draft, so a kept-but-uncommitted edit is one the collapsed
+   * card doesn't show and the launch doesn't use, and the user only finds out
+   * their typing did nothing after the swarm has run. Whatever the collapsed
+   * card shows is what launches, on both exits.
+   *
+   * A toast, and only when something was actually lost: silently dropping text
+   * somebody typed is the other half of the same problem.
+   */
+  const discardReused = useCallback(
+    (persona: ReusedPersona, goals: ReusedGoal[]) => {
+      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals);
+      if (dirty) {
+        setReusedDrafts((drafts) => {
+          const { [persona._id]: _discarded, ...rest } = drafts;
+          return rest;
+        });
+        toast.info(`Discarded unsaved changes to ${persona.name}.`);
+      }
+      setSelected(null);
+    },
+    [reusedDrafts]
+  );
+
+  const personasAvailableToAdd = useMemo(
+    () =>
+      availablePersonas.filter(
+        (persona) =>
+          !reusedPersonas.some((chosen) => chosen._id === persona._id)
+      ),
+    [availablePersonas, reusedPersonas]
+  );
+
+  // Drop stale selection if the persona was removed elsewhere.
+  useEffect(() => {
+    if (selected?.kind === "proposed" && !selectedProposed) {
+      setSelected(null);
+    }
+    if (selected?.kind === "reused" && !selectedReused) {
+      setSelected(null);
+    }
+  }, [selected, selectedProposed, selectedReused]);
+
+  return (
+    <div
+      className="flex h-full min-h-0 flex-col overflow-y-auto"
+      data-testid="new-swarm-confirm-step"
+    >
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
+        {header}
+        <div className="space-y-2">
+          <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
+            Review your users and what they&rsquo;ll accomplish
+          </h2>
+          <p className="text-sm leading-relaxed text-foreground">
+            Select a user persona for details, or remove anything that
+            doesn&rsquo;t fit.
+          </p>
+          <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
+            This launch will run {launchSessionEstimate}{" "}
+            {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
+            total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
+          </p>
+          {environmentLabels.length > 0 && proposed.length > 0 ? (
+            <p
+              className="text-sm leading-relaxed text-muted-foreground"
+              data-testid="new-swarm-confirm-clients"
+            >
+              New goals run on{" "}
+              <span className="font-medium text-foreground">
+                {environmentLabels.join(" · ")}
+              </span>
+              {environmentLabels.length === 1
+                ? " — pick more environments on Describe to compare clients."
+                : "."}
+            </p>
+          ) : null}
+        </div>
+
+        {proposed.length > 0 ? (
+          <ul className="space-y-2" data-testid="new-swarm-proposed-personas">
+            {proposed.map((persona) => {
+              const isSelected =
+                selected?.kind === "proposed" && selected.key === persona.key;
+              if (isSelected) {
+                return (
+                  <li key={persona.key}>
+                    <PersonaDetailPanel
+                      seed={persona.key}
+                      name={persona.name}
+                      role={persona.role}
+                      context={persona.notes ?? ""}
+                      goals={persona.journeys.map((journey) => ({
+                        key: journey.key,
+                        label: journey.goal,
+                      }))}
+                      draftEditable
+                      avatarShape={persona.avatarShape}
+                      avatarPalette={persona.avatarPalette}
+                      onClose={() => setSelected(null)}
+                      onRemoveGoal={(goalKey) =>
+                        removeJourney(persona.key, goalKey)
+                      }
+                      onChangeName={(nextName) =>
+                        patchProposed(persona.key, (current) => ({
+                          ...current,
+                          name: nextName,
+                        }))
+                      }
+                      onChangeRole={(nextRole) =>
+                        patchProposed(persona.key, (current) => ({
+                          ...current,
+                          role: nextRole,
+                        }))
+                      }
+                      onChangeContext={(notes) =>
+                        patchProposed(persona.key, (current) => ({
+                          ...current,
+                          notes,
+                        }))
+                      }
+                      onChangeGoal={(goalKey, goal) =>
+                        patchProposed(persona.key, (current) => ({
+                          ...current,
+                          journeys: current.journeys.map((journey) =>
+                            journey.key === goalKey
+                              ? { ...journey, goal }
+                              : journey
+                          ),
+                        }))
+                      }
+                      onAddGoal={() => addGoal(persona.key)}
+                      // In-memory edits already landed as they were typed, so
+                      // this only collapses the editor.
+                      onSave={() => setSelected(null)}
+                    />
+                  </li>
+                );
+              }
+              const goalCount = persona.journeys.length;
+              const launchableGoals = persona.journeys.filter((journey) =>
+                journey.goal.trim(),
+              ).length;
+              return (
+                <CompactPersonaCard
+                  key={persona.key}
+                  seed={persona.key}
+                  name={persona.name}
+                  role={persona.role}
+                  description={personaContext(persona.notes, persona.role)}
+                  meta={`${goalCount} ${
+                    goalCount === 1 ? "goal" : "goals"
+                  } · new`}
+                  muted={selected !== null}
+                  onSelect={() =>
+                    setSelected({ kind: "proposed", key: persona.key })
+                  }
+                  onRemove={() => removePersona(persona.key)}
+                  editLabel={`Edit persona ${persona.name}`}
+                  removeLabel={`Remove persona ${persona.name}`}
+                  avatarShape={persona.avatarShape}
+                  avatarPalette={persona.avatarPalette}
+                  footer={
+                    <PersonaIterationsRow
+                      goalCount={launchableGoals}
+                      iterations={iterationsFor(persona.key)}
+                      personaName={persona.name}
+                      disabled={launching}
+                      onChange={(value) =>
+                        onIterationsChange(persona.key, value)
+                      }
+                    />
+                  }
+                />
+              );
+            })}
+          </ul>
+        ) : null}
+
+        {reusedPersonas.length > 0 ? (
+          <>
+            {reusedPersonas.map((persona) => (
+              <ReusedPersonaJourneyLoader
+                key={`load-${persona._id}`}
+                persona={persona}
+                onResolved={handleReusedResolved}
+              />
+            ))}
+            <ul className="space-y-2" data-testid="new-swarm-reused-personas">
+              {reusedPersonas.map((persona) => {
+                const isSelected =
+                  selected?.kind === "reused" && selected.id === persona._id;
+                if (isSelected) {
+                  return (
+                    <li key={persona._id}>
+                      {(() => {
+                        const goals =
+                          reusedResolved[persona._id]?.goals ?? [];
+                        const draft = reusedDrafts[persona._id];
+                        const goalText = (goal: ReusedGoal) =>
+                          draft?.goals[goal.journeyId] ?? goal.goal;
+                        return (
+                          <PersonaDetailPanel
+                            seed={persona._id}
+                            name={draft?.name ?? persona.name}
+                            role={draft?.role ?? persona.role}
+                            context={draft?.notes ?? persona.notes ?? ""}
+                            goals={goals.map((goal) => ({
+                              key: goal.journeyId,
+                              label: goalText(goal),
+                            }))}
+                            graded={reusedResolved[persona._id]?.graded}
+                            loadingGoals={
+                              (reusedResolved[persona._id]?.targets ??
+                                null) === null
+                            }
+                            avatarShape={persona.avatarShape}
+                            avatarPalette={persona.avatarPalette}
+                            onClose={() => discardReused(persona, goals)}
+                            onChangeName={(name) =>
+                              patchReusedDraft(persona, goals, { name })
+                            }
+                            onChangeRole={(role) =>
+                              patchReusedDraft(persona, goals, { role })
+                            }
+                            onChangeContext={(notes) =>
+                              patchReusedDraft(persona, goals, { notes })
+                            }
+                            onChangeGoal={(journeyId, text) =>
+                              patchReusedDraft(persona, goals, {
+                                goal: { journeyId, text },
+                              })
+                            }
+                            onSave={() => void saveReused(persona, goals)}
+                            saving={savingReusedId === persona._id}
+                          />
+                        );
+                      })()}
+                    </li>
+                  );
+                }
+                return (
+                  <ReusedPersonaCard
+                    key={persona._id}
+                    persona={persona}
+                    muted={selected !== null}
+                    onSelect={() =>
+                      setSelected({ kind: "reused", id: persona._id })
+                    }
+                    onRemove={() => removeReused(persona._id)}
+                    resolved={reusedResolved[persona._id]}
+                    iterations={reusedIterationsFor(persona._id)}
+                    disabled={launching}
+                    onIterationsChange={(value) =>
+                      onIterationsChange(persona._id, value)
+                    }
+                  />
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={addPersona}
+            data-testid="new-swarm-add-persona"
+          >
+            Add new persona
+          </Button>
+          {personasAvailableToAdd.length > 0 ? (
+            // Add-only: what is already attached is dropped from the list, and
+            // detaching is the card's own Remove.
+            <PersonaPickerPopover
+              personas={personasAvailableToAdd}
+              open={addExistingOpen}
+              onOpenChange={setAddExistingOpen}
+              groupLabel="Add existing persona"
+              triggerLabel="Add existing persona"
+              triggerSize="sm"
+              triggerTestId="new-swarm-confirm-add-existing"
+              showTriggerIcon={false}
+              mode={{ kind: "add", onAdd: onAddReused }}
+            />
+          ) : null}
+        </div>
+
+        <div
+          className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3"
+          data-testid="new-swarm-conversation-total"
+        >
+          <div>
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="new-swarm-conversation-equation"
+            >
+              Across{" "}
+              <strong className="font-semibold tabular-nums text-foreground">
+                {personaTotal}
+              </strong>{" "}
+              {personaTotal === 1 ? "persona" : "personas"}
+              {fanoutEnvironmentCount > 1 ? (
+                <>
+                  {" "}
+                  and{" "}
+                  <strong className="font-semibold tabular-nums text-foreground">
+                    {fanoutEnvironmentCount}
+                  </strong>{" "}
+                  environments
+                </>
+              ) : null}
+            </p>
+            {reusedCount > 0 ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Reused goals are counted at the iterations already saved on
+                them.
+              </p>
+            ) : null}
+          </div>
+          <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
+            {launchSessionEstimate.toLocaleString()}
+            <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
+              conversations
+            </span>
+          </p>
+        </div>
+
+        {errorMessage ? (
+          <p role="alert" className="text-sm leading-relaxed text-destructive">
+            {errorMessage}
+          </p>
+        ) : null}
+
+        <div className="flex items-center justify-end gap-5 pt-2">
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={launching}
+            onClick={onBack}
+          >
+            Back
+          </Button>
+          <Button
+            type="button"
+            disabled={!canLaunch}
+            data-testid="new-swarm-launch"
+            onClick={() =>
+              onLaunch({
+                rubric: [],
+                reusedTargets: activeReusedTargets,
+                reusedGrading: [],
+              })
+            }
+          >
+            {launching ? (
+              <>
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                Launching…
+              </>
+            ) : (
+              "Continue"
+            )}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

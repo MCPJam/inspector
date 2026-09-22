@@ -116,14 +116,82 @@ export function addHostOption(command: Command): Command {
   );
 }
 
-export function getGlobalOptions(command: Command): GlobalOptions {
+/**
+ * Add the client-conformance knobs — call a server as a client that differs
+ * from a fully-conforming one, without having to author a host first. The
+ * same behaviors `--host` carries via `mcpProfile.paginationTraversal` /
+ * `mcpProfile.mrtrSupport`; these flags are the ad-hoc way to reproduce them.
+ *
+ * Unlike `--no-param-headers`, NEITHER is HTTP-only: pagination truncation is
+ * enforced on JSON-RPC frames and the MRTR knob works through capability
+ * advertisement, so both mean the same thing over stdio.
+ */
+export function addConformanceOptions(command: Command): Command {
+  return command
+    .option(
+      "--first-page-only",
+      "Read only the first page of paginated lists, like the real hosts that never follow nextCursor. On 2026-07-28 this also stops SEP-2243 Mcp-Param-* mirroring for tools past page one, because the mirroring source is the page-one-only list the client cached.",
+    )
+    .option(
+      "--no-mrtr",
+      "Do NOT drive MRTR (resultType: input_required) rounds — call as a client that never implemented the 2026 pattern. Stops advertising elicitation on a modern connection, so a server that would have elicited answers -32021 instead.",
+    );
+}
+
+/**
+ * Reduce the conformance flags to the wire fields `MCPServerConfig` takes.
+ * Only the NON-default value is emitted, matching how the host-config
+ * reduction behaves — an absent flag must not pin the conforming default onto
+ * a config that never carried it.
+ */
+export function conformanceConfigFromOptions(options: {
+  firstPageOnly?: boolean;
+  mrtr?: boolean;
+}): { firstPageOnly?: true; supportsMrtr?: false } {
+  return {
+    ...(options.firstPageOnly === true ? { firstPageOnly: true as const } : {}),
+    // Commander defaults a `--no-x` flag to `true`, so only an explicit
+    // `false` means the user asked to disable MRTR.
+    ...(options.mrtr === false ? { supportsMrtr: false as const } : {}),
+  };
+}
+
+/**
+ * Did the CALLER choose `--timeout`, as opposed to commander defaulting it?
+ *
+ * `getOptionValueSourceWithGlobals` walks parent commands, which matters
+ * because `--timeout` is declared once on the program and read from a leaf.
+ */
+function timeoutWasSupplied(command: Command): boolean {
+  const source = command.getOptionValueSourceWithGlobals?.("timeout");
+  return source !== undefined && source !== "default";
+}
+
+export function getGlobalOptions(
+  command: Command,
+  defaultTimeoutMs = 30_000,
+): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {
     format: resolveOutputFormat(
       options.format as string | undefined,
       process.stdout.isTTY,
     ),
-    timeout: options.timeout ?? 30_000,
+    // `defaultTimeoutMs` applies ONLY when the caller did not supply
+    // `--timeout`, so an explicit flag always wins. Commands that drive a model
+    // turn override it: 30s is right for an MCP probe and far too short for an
+    // agent that installs packages, and the turn keeps running server-side
+    // after the client gives up.
+    //
+    // Keyed off the option's SOURCE, not its value. The program registers
+    // `--timeout` with a commander default of 30_000, so the value is never
+    // `undefined` and an `options.timeout ?? …` fallback is dead code that
+    // silently pins every command to 30s. `"default"` means commander filled
+    // it in; anything else (`"cli"`, `"env"`, `"config"`) means the caller
+    // chose it and must win.
+    timeout: timeoutWasSupplied(command)
+      ? (options.timeout ?? defaultTimeoutMs)
+      : defaultTimeoutMs,
     rpc: options.rpc ?? false,
     quiet: options.quiet ?? false,
     telemetry: options.telemetry ?? true,

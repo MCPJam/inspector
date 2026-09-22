@@ -80,11 +80,11 @@ export interface ComputerUsageView {
  * `projectId` is absent.
  */
 export function useComputerStatus(
-  projectId: string | null
+  projectId: string | null,
 ): ComputerView | null | undefined {
   return useQuery(
     "projectComputers:getComputerStatus" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    projectId ? ({ projectId } as never) : "skip",
   ) as ComputerView | null | undefined;
 }
 
@@ -95,11 +95,11 @@ export function useComputerStatus(
  * predates `getComputerUsage` — mount it behind an error boundary.
  */
 export function useComputerUsage(
-  projectId: string | null
+  projectId: string | null,
 ): ComputerUsageView | null | undefined {
   return useQuery(
     "projectComputers:getComputerUsage" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    projectId ? ({ projectId } as never) : "skip",
   ) as ComputerUsageView | null | undefined;
 }
 
@@ -139,32 +139,199 @@ export function useMintTerminalToken(): (args: {
 }
 
 /**
+ * Mint a short-lived (~60s) BROWSER token authorizing the Browser Panel's
+ * data-plane calls. Separate from the terminal token on purpose: it resolves
+ * the desktop computer, and its `purpose` claim means a terminal token cannot
+ * be replayed to open a live view of someone's screen.
+ */
+export function useMintBrowserToken(): (args: {
+  projectId: string;
+}) => Promise<TerminalTokenResult> {
+  return useAction("projectComputers:mintBrowserToken" as never) as never;
+}
+
+/** Mint a browser token bound to one durable logical browser session. */
+export interface SessionBrowserTokenResult extends TerminalTokenResult {
+  sessionId: string;
+  target: "computer" | "sandbox";
+  sandboxRowId?: string;
+}
+
+export function useMintSessionBrowserToken(): (args: {
+  projectId: string;
+  sessionId: string;
+}) => Promise<SessionBrowserTokenResult> {
+  return useAction(
+    "projectComputers:mintSessionBrowserToken" as never,
+  ) as never;
+}
+
+/** Mint a browser token for the current conversation's logical session. */
+export function useMintConversationBrowserToken(): (args: {
+  projectId: string;
+  conversationId: string;
+}) => Promise<SessionBrowserTokenResult> {
+  return useAction(
+    "projectComputers:mintSessionBrowserToken" as never,
+  ) as never;
+}
+
+/**
  * Which data plane serves this inspector (GET /api/web/computers/config):
  * itself (`localConfigured` — it holds the vendor key + secrets) or a
  * deployed one (`remoteDataPlaneUrl`). Neither ⇒ computers are unavailable
  * here and the UI should say so instead of offering a terminal that can't
  * connect.
  */
+export interface ComputerEnginesConfig {
+  local: {
+    available: boolean;
+    /** Bash may work while the terminal doesn't (node-pty failed to load). */
+    terminalAvailable: boolean;
+    browserAvailable?: boolean;
+    /** Tilde display root ("~/.mcpjam/computer") — render `${root}/<projectId>`. */
+    workspaceDisplayRoot: string | null;
+    reason?: string;
+  };
+  cloud: { available: boolean };
+}
+
 export interface ComputersDataPlaneConfig {
   localConfigured: boolean;
   remoteDataPlaneUrl: string | null;
+  /**
+   * Can this inspector EXECUTE in ephemeral (eval/swarm/scenario) sandboxes?
+   * Distinct from personal-computer availability: `remoteDataPlaneUrl`
+   * delegates only personal bash/terminal, so a remote-only inspector can
+   * drive a personal Computer yet cannot run a single disposable-sandbox
+   * command. Read from the server's `capabilities.ephemeralCloudAvailable`
+   * when present; older servers omit it and the derivation falls back to
+   * `localConfigured` (creds present ⇔ ephemeral exec works).
+   */
+  ephemeralCloudAvailable?: boolean;
+  /**
+   * Per-engine availability. Always present POST-PARSE: servers that predate
+   * the field get a derived block — local unavailable (an old server has no
+   * local engine to offer), cloud from the legacy pair — so consumers never
+   * branch on absence.
+   */
+  engines: ComputerEnginesConfig;
+  /** Server's suggested engine; `null` when NO engine can serve here. */
+  defaultEngine: "local" | "cloud" | null;
+}
+
+/** The legacy-pair derivation, shared by old-server parse and fallbacks. */
+function deriveEnginesFromLegacyPair(args: {
+  localConfigured: boolean;
+  remoteDataPlaneUrl: string | null;
+}): Pick<ComputersDataPlaneConfig, "engines" | "defaultEngine"> {
+  const cloudAvailable =
+    args.localConfigured || args.remoteDataPlaneUrl !== null;
+  return {
+    engines: {
+      local: {
+        available: false,
+        terminalAvailable: false,
+        workspaceDisplayRoot: null,
+      },
+      cloud: { available: cloudAvailable },
+    },
+    defaultEngine: cloudAvailable ? "cloud" : null,
+  };
 }
 
 // One fetch per page load — the answer is env-derived and can't change
 // without a server restart.
 let cachedDataPlaneConfig: ComputersDataPlaneConfig | null = null;
+// Concurrent first mounts (e.g. suite view + suite header) share one request
+// instead of racing duplicate fetches to the same env-derived answer.
+let inFlightDataPlaneConfigFetch: Promise<ComputersDataPlaneConfig | null> | null =
+  null;
+
+function parseEngines(value: unknown): ComputerEnginesConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const local =
+    record.local && typeof record.local === "object"
+      ? (record.local as Record<string, unknown>)
+      : null;
+  const cloud =
+    record.cloud && typeof record.cloud === "object"
+      ? (record.cloud as Record<string, unknown>)
+      : null;
+  if (
+    !local ||
+    !cloud ||
+    typeof local.available !== "boolean" ||
+    typeof cloud.available !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    local: {
+      available: local.available,
+      terminalAvailable: local.terminalAvailable === true,
+      browserAvailable: local.browserAvailable === true,
+      workspaceDisplayRoot:
+        typeof local.workspaceDisplayRoot === "string"
+          ? local.workspaceDisplayRoot
+          : null,
+      ...(typeof local.reason === "string" ? { reason: local.reason } : {}),
+    },
+    cloud: { available: cloud.available },
+  };
+}
 
 function parseDataPlaneConfig(value: unknown): ComputersDataPlaneConfig | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.localConfigured !== "boolean") return null;
+  const localConfigured = record.localConfigured;
+  const remoteDataPlaneUrl =
+    typeof record.remoteDataPlaneUrl === "string"
+      ? record.remoteDataPlaneUrl
+      : null;
+  const capabilities =
+    record.capabilities && typeof record.capabilities === "object"
+      ? (record.capabilities as Record<string, unknown>)
+      : undefined;
+  // A malformed `engines` block is read like an OLD server (derive), never
+  // half-trusted — a partial parse could invent a local engine.
+  const engines = parseEngines(record.engines);
+  const derived = deriveEnginesFromLegacyPair({
+    localConfigured,
+    remoteDataPlaneUrl,
+  });
   return {
-    localConfigured: record.localConfigured,
-    remoteDataPlaneUrl:
-      typeof record.remoteDataPlaneUrl === "string"
-        ? record.remoteDataPlaneUrl
-        : null,
+    localConfigured,
+    remoteDataPlaneUrl,
+    ...(typeof capabilities?.ephemeralCloudAvailable === "boolean"
+      ? { ephemeralCloudAvailable: capabilities.ephemeralCloudAvailable }
+      : {}),
+    engines: engines ?? derived.engines,
+    defaultEngine: engines
+      ? record.defaultEngine === "local" || record.defaultEngine === "cloud"
+        ? record.defaultEngine
+        : null
+      : derived.defaultEngine,
   };
+}
+
+/**
+ * Preflight bit for the cloud-only surfaces (swarms / evals / user testing):
+ * `false` means a run that needs a disposable sandbox WILL fail to execute
+ * commands on this inspector, and the UI should say so before launch instead
+ * of after. `undefined` while the config is loading.
+ *
+ * Fail-open on transient /config failures (the per-mount fallback assumes a
+ * local data plane) — a flaky fetch must not paint scary banners on a
+ * perfectly configured deployment; a genuine `false` only comes from a real
+ * server answer.
+ */
+export function useEphemeralCloudAvailable(): boolean | undefined {
+  const config = useComputersDataPlaneConfig();
+  if (config === undefined) return undefined;
+  return config.ephemeralCloudAvailable ?? config.localConfigured;
 }
 
 /** `undefined` while loading. On fetch failure assumes a local data plane —
@@ -173,31 +340,43 @@ export function useComputersDataPlaneConfig():
   | ComputersDataPlaneConfig
   | undefined {
   const [config, setConfig] = useState<ComputersDataPlaneConfig | undefined>(
-    cachedDataPlaneConfig ?? undefined
+    cachedDataPlaneConfig ?? undefined,
   );
 
   useEffect(() => {
     if (cachedDataPlaneConfig) return;
     let cancelled = false;
-    void fetch("/api/web/computers/config")
+    // Only cache real answers. The assume-local fallback below is per-mount,
+    // so a transient /config failure can't pin the wrong data plane for the
+    // rest of the SPA session. The in-flight promise IS shared (deduped), but
+    // it resolves `null` on failure so each mount applies its own fallback.
+    inFlightDataPlaneConfigFetch ??= fetch("/api/web/computers/config")
       .then((response) => (response.ok ? response.json() : null))
       .then((json: unknown) => {
-        // Only cache real answers. The assume-local fallback below is
-        // per-mount, so a transient /config failure can't pin the wrong
-        // data plane for the rest of the SPA session.
         const parsed = parseDataPlaneConfig(json);
         if (parsed) cachedDataPlaneConfig = parsed;
-        if (!cancelled) {
-          setConfig(
-            parsed ?? { localConfigured: true, remoteDataPlaneUrl: null }
-          );
-        }
+        return parsed;
       })
-      .catch(() => {
-        if (!cancelled) {
-          setConfig({ localConfigured: true, remoteDataPlaneUrl: null });
-        }
+      .catch(() => null)
+      .finally(() => {
+        inFlightDataPlaneConfigFetch = null;
       });
+    void inFlightDataPlaneConfigFetch.then((parsed) => {
+      if (!cancelled) {
+        // Legacy fail-open fallback: assume a local data plane (cloud engine
+        // served by this server), NEVER a phantom local machine engine.
+        setConfig(
+          parsed ?? {
+            localConfigured: true,
+            remoteDataPlaneUrl: null,
+            ...deriveEnginesFromLegacyPair({
+              localConfigured: true,
+              remoteDataPlaneUrl: null,
+            }),
+          },
+        );
+      }
+    });
     return () => {
       cancelled = true;
     };

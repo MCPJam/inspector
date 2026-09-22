@@ -1,0 +1,18 @@
+{
+  "name": "mcp-check-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal streamable-HTTP MCP server used as the fixture for MCPJam's GitHub PR checks.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

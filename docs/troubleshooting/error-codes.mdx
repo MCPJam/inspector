@@ -18,22 +18,24 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 | `-32600` | [Invalid request](#invalid-request) |
 | `-32601` | [Method not found](#method-not-found) |
 | `-32602` | [Invalid params](#invalid-params) |
-| `-32603` | [Internal error](#internal-error) |
+| `-32603` | [Internal error](#internal-error) / [Invalid response format](#invalid-response-format) |
 | `-32000` | [Connection closed](#connection-closed) |
 | `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
 | `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
+| `-32021` | [Missing required client capability](#missing-required-client-capability) |
 | `-32042` | [URL elicitation required](#url-elicitation-required) |
 
 ### Parse error
 
 `-32700 — jsonrpc/parse_error`
 
-The server returned a payload the client could not parse as JSON-RPC.
+The MCP wire contained JSON the inspector could not parse as JSON-RPC.
 
 **Likely causes**
-- Server emitted invalid JSON on the response channel.
+- The server emitted invalid JSON on the response channel.
 - A proxy or middleware mangled the response body.
-- The STDIO server emitted log output on stdout instead of stderr.
+- Server emitted log output on stdout instead of stderr (STDIO transport).
+- The inspector sent malformed JSON and the server returned a parse error.
 
 **Next steps**
 - Check the server's stdout/stderr for unintended log output.
@@ -97,6 +99,21 @@ The server hit an unexpected error while handling the request.
 - Check the server's logs around the time of the error.
 - Retry the request once the server is healthy.
 
+### Invalid response format
+
+`-32603 — jsonrpc/invalid_response_format`
+
+The server replied, but the result was not a valid MCP tool, resource, or prompt payload.
+
+**Why this happened**
+- The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).
+
+**Next steps**
+- Inspect the result in the Traffic Log and compare it to the MCP result shape.
+- Return `{ content: [{ type: "text", text: "..." }] }` from the handler, or the matching resource/prompt result.
+
+> The `-32603` code is overloaded between a generic internal error and `invalid_response_format`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+
 ### Connection closed
 
 `-32000 — jsonrpc/connection_closed`
@@ -133,13 +150,16 @@ The server did not respond within the configured request timeout.
 
 `-32001 — jsonrpc/header_mismatch`
 
-The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.
+The server rejected the request because an HTTP header disagreed with the JSON-RPC body — for example, `Mcp-Protocol-Version` does not match the version negotiated at `initialize`, or `Mcp-Name` does not match the tool name in the request body.
 
 **Likely causes**
 - Server is enforcing a different protocol version than the one negotiated at `initialize`.
-- A proxy stripped or rewrote the `MCP-Protocol-Version` header.
+- A proxy stripped or rewrote an `Mcp-*` header.
+- A routing header (`Mcp-Name`, `Mcp-Method`) was set to a value that disagrees with the request body.
 
 **Next steps**
+- Expand the failing JSON-RPC frame in the traffic log. The collapsed **HTTP headers** row beneath the JSON body names the disagreeing header (for example, `mcp-name disagrees with the body`) without requiring you to open a separate view.
+- If the inline headers section is absent, open the **HTTP** source filter in the traffic log to find the matching exchange and inspect its headers directly.
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
 
@@ -158,6 +178,20 @@ The server does not support any protocol version this inspector offered.
 **Next steps**
 - Update the inspector to a newer build.
 - Check the supported versions list in the server's `initialize` response.
+
+### Missing required client capability
+
+`-32021 — jsonrpc/missing_required_client_capability`
+
+The server refused the request because the client did not advertise a capability the operation requires.
+
+**Likely causes**
+- A server-initiated input request (elicitation, sampling) needs a client capability MCPJam did not declare.
+- The connection advertised a capability set the server considers insufficient for this operation.
+
+**Next steps**
+- Enable the required client capability in the connection's Client settings.
+- Check the server's documentation for which client capabilities it requires.
 
 ### URL elicitation required
 
@@ -347,6 +381,18 @@ An expired OAuth access token could not be refreshed.
 **Next steps**
 - Click **Reconnect** on the server card to run a fresh OAuth flow.
 
+### Consent required
+
+`auth/consent_required`
+
+This server needs your permission before it can connect.
+
+**Likely causes**
+- Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.
+
+**Next steps**
+- Click **Reconnect** and approve the request in the window that opens.
+
 ### Missing bearer
 
 `auth/missing_bearer`
@@ -419,6 +465,75 @@ The OAuth `.well-known` discovery endpoint could not be fetched.
 
 ---
 
+### Insufficient scope
+
+`auth/insufficient_scope`
+
+The server reported `insufficient_scope`: the grant does not cover this operation.
+
+**Likely causes**
+- The authorization did not request the scopes the server now requires.
+- The server added a scope requirement after the grant was issued.
+
+**Next steps**
+- Re-authorize and grant the scopes the server names in its challenge.
+
+### Authorization server unreachable
+
+`auth/authorization_server_unreachable`
+
+The stored token could not be refreshed because the authorization server was unreachable or did not return a usable response.
+
+**Likely causes**
+- The authorization server is down or slow.
+- The refresh request could not leave the network it was made from.
+
+**Next steps**
+- Retry in a minute; if it persists, check the authorization server's status.
+- Reconnect the server to obtain a fresh token once the authorization server is reachable.
+
+### Proxy rejected
+
+`auth/proxy_rejected`
+
+The response was HTTP 403 with an HTML content type and no authentication challenge. A proxy or firewall may be involved, but the response format alone does not establish its source.
+
+**Likely causes**
+- An IP allowlist or WAF blocks the address the request came from.
+- A corporate proxy or SSO portal intercepted the request.
+
+**Next steps**
+- Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.
+- Open the server URL in a browser from the same network to see what answers.
+
+### No Bearer challenge
+
+`oauth/no_bearer_challenge`
+
+The response was HTTP 401 without a Bearer challenge. It did not explain how to authorize; this does not establish whether well-known metadata discovery is available.
+
+**Likely causes**
+- The server or an intermediary omitted a Bearer challenge.
+- The server expects a static API key and does not implement OAuth.
+
+**Next steps**
+- Check OAuth discovery, including the well-known metadata fallback supported by newer MCP versions.
+- If the server expects an API key, configure it as a header on the server instead of OAuth.
+
+### Non-compliant challenge
+
+`oauth/non_compliant_challenge`
+
+The response reported `invalid_token` with HTTP 403; MCP requires HTTP 401 for an invalid or expired token. A bare Bearer challenge on a 403 is not enough to diagnose this mismatch.
+
+**Likely causes**
+- The server maps every authorization failure to 403.
+- A gateway rewrites the server's 401 to 403.
+
+**Next steps**
+- Re-authorize the server to replace the rejected token.
+- Report the status mismatch to the server author; invalid-token recovery expects HTTP 401.
+
 ## Inspector-specific
 
 These come from the inspector's own SDK runtime.
@@ -447,7 +562,21 @@ Stateless mode can only be used with an HTTP-transport server, not STDIO.
 **Next steps**
 - Disable the stateless toggle for stdio servers.
 
-### Paginated tool / header discovery unsupported
+### Protocol version pin unsupported
+
+`sdk/protocol_version_pin_unsupported`
+
+This connection is pinned to a specific MCP protocol version that the server does not offer.
+
+**Likely causes**
+- The client profile you're using pins a protocol version this server hasn't adopted — for example, a client set to **Latest (2026-07-28)** against a server that still speaks a 2025 revision.
+- A per-server protocol override is pinned to a version the server dropped or never shipped.
+
+**Next steps**
+- Click **Change protocol version** in the error banner or toast to open the client's **MCP Protocol** tab, then set the version to **Automatic** to negotiate whatever the server supports.
+- Or pick the version the server advertises — `server/discover` (modern) or the `initialize` response (legacy) lists the supported versions.
+
+### Paginated tool and header discovery unsupported
 
 `sdk/paginated_tool_header_discovery_unsupported`
 
@@ -498,19 +627,164 @@ Your LLM provider rejected the API key for this request.
 
 `provider/quota`
 
-Your LLM provider rejected the request because you hit a rate limit or quota.
+Your LLM provider rejected the request because you hit a rate limit or quota. This is a limit on your own provider key — no MCPJam purchase lifts it.
 
 **Likely causes**
-- Daily/monthly quota exhausted.
 - Per-minute rate limit exceeded.
+- Daily or monthly quota exhausted.
 - Free tier limits hit.
 
 **Next steps**
-- Wait for the limit window to reset.
-- Upgrade your provider plan.
-- Switch to a different provider in Settings.
+- Wait for the limit window to reset, then retry.
+- Switch the host to a different model or provider.
+- Upgrade your plan on the provider's own dashboard.
+
+> **MCPJam account limit vs. provider throttle** — If the session pane shows a billing or credit message instead of this card, the limit is on your MCPJam account, not your provider key. Adding credits or switching to BYOK resolves that case; the steps above do not apply.
+
+### Frontier model sign-in required
+
+`provider/guest_model_not_allowed`
+
+A frontier model was selected but the request requires a signed-in account.
+
+**Likely causes**
+- You are browsing as a guest and selected a frontier model that requires authentication.
+
+**Next steps**
+- A sign-in prompt appears automatically. Click **Sign in** to authenticate and get access to frontier models.
+- Click **Not now** to dismiss and continue with a standard model. Your credit balance is not affected.
+
+### Out of MCPJam credits
+
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit`
+
+MCPJam refused the call before it reached a provider, because the account's own
+allowance is spent. Which allowance depends on the plan: free accounts share a
+daily bucket per organization, paid plans spend a monthly allowance that renews
+with the billing period.
+
+**Next steps**
+- **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+- **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
+- **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
+- **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+- Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+
+**Swarm and Eval runs**
+
+When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run. Completed results are preserved. Buying credits does not automatically restart the run — start a new run once credits are available.
+
+<Warning>
+  Bring-your-own-key covers chat. Swarm persona generation and persona-driver
+  turns are always billed to MCPJam and have no BYOK path, so adding a key does
+  not lift this limit for a swarm.
+</Warning>
+
+### MCPJam platform budget
+
+`provider/mcpjam_platform_budget`
+
+The shared free allowance is exhausted or temporarily paused. This limit applies across free usage, not just your account, so it can appear even when your own allowance is untouched.
+
+**Next steps**
+- Wait until the reset time shown in the error, if one is present.
+- Use purchased credits, or add your own API key under **Settings → LLM Providers** for chat.
+
+### Account suspended
+
+`account/suspended`
+
+MCPJam has suspended this account, so billed requests are refused.
+
+**Next steps**
+- Contact [founders@mcpjam.com](mailto:founders@mcpjam.com) for support.
+
+### Server rate limited
+
+`server/rate_limited`
+
+The MCP server rejected the request with HTTP 429 (too many requests). This is the server's own limit, not your LLM provider's — see [Provider quota](#provider-quota) for that case.
+
+**Likely causes**
+- The server enforces its own per-client rate limit.
+- An upstream API the server calls is throttling it.
+- A burst of tool calls exceeded what the server allows.
+
+**Next steps**
+- Wait for the server's limit window to reset, then retry.
+- Reduce concurrency or the number of tool calls in the run.
+- Check the server's own rate-limit documentation or logs.
 
 ---
+
+## Environment errors
+
+These codes come from the environment resolution service. They appear in the Playground, the Environment Tools pane, and on scenario shared links when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists — for example, **Open Servers** for `ENV_NO_SERVERS` — rather than a generic retry that would fail identically.
+
+When a visitor opens a scenario shared link and the scenario's environment is archived, they see **"This link has been archived"** instead of a generic failure message. For other unresolvable environment states they see **"This link isn't available right now"**. Signing in cannot change either state — the environment itself must be restored or reconfigured by the scenario owner.
+
+### No servers
+
+`ENV_NO_SERVERS`
+
+This environment has no servers.
+
+**Likely causes**
+- The client this environment points at has no servers connected.
+- The attached server group is empty.
+- Every server contributed by a pinned plugin has been removed.
+
+**Next steps**
+- Connect a server to the client, or attach a server group.
+- Check the environment's pinned plugins if it relied on one for servers.
+
+### Archived
+
+`ENV_ARCHIVED`
+
+This environment is archived.
+
+**Likely causes**
+- Someone archived it after this was configured.
+
+**Next steps**
+- Restore it from the Environments list, or pick a different environment.
+
+### Client missing
+
+`ENV_HOST_MISSING`
+
+This environment's client no longer exists.
+
+**Likely causes**
+- The client was deleted after the environment was created.
+
+**Next steps**
+- Point the environment at a different client, or recreate it.
+
+### Server group missing
+
+`ENV_ATTACHMENT_MISSING`
+
+This environment's server group is gone.
+
+**Likely causes**
+- The attached server group was deleted.
+
+**Next steps**
+- Attach a different server group, or clear the attachment.
+
+---
+
+## Model empty response
+
+`provider/empty_response`
+
+The model request ended without usable content, so the turn could not complete.
+The recorded error names the provider's finish reason where one was reported.
+
+Rerun the affected cases. If the error recurs on an MCPJam model, report it with
+those run details. For BYOK, check the recorded provider error and account configuration.
 
 ## Unknown error
 

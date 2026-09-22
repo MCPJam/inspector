@@ -173,8 +173,229 @@ export function parseXaaPolicyValue(
 }
 
 /**
+ * Server-authoritative SEP-2243 mirroring policy, read from a
+ * BACKEND-PROJECTED host config's `mcpProfile`.
+ *
+ * Sibling of {@link xaaPolicyFromMcpProfile}, and for the same reason: on a
+ * scenario turn the published host wins and a share-link client cannot override
+ * it, so the value must come from the stored config rather than the request
+ * body. Without this a scenario configured with `toolParamHeaderMirroring:
+ * "omit"` would still mirror — the body carries no pins for those turns.
+ *
+ * Returns `false` only for an explicit `"omit"`; every other value (including
+ * an unrecognized future literal) means mirror, which is the SDK's no-field
+ * default. Unlike the XAA policy this cannot fail closed into an error: an
+ * unreadable value here means "behave conformantly", which is always safe.
+ */
+export function mirrorToolParamHeadersFromMcpProfile(
+  mcpProfile: unknown
+): boolean | undefined {
+  const profile =
+    mcpProfile !== null && typeof mcpProfile === "object"
+      ? (mcpProfile as { toolParamHeaderMirroring?: unknown })
+      : undefined;
+  return profile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+}
+
+/**
+ * Overlay a host's SEP-2243 mirroring decision onto the initialize pins a
+ * request body carried, making the host authoritative in BOTH directions.
+ *
+ * `mirrorToolParamHeadersFromMcpProfile` deliberately collapses "mirror" and
+ * "field absent" to `undefined`, because the wire pin
+ * (`BaseServerConfig.mirrorToolParamHeaders`) is a suppression switch with no
+ * `true` state. That makes an overlay necessary rather than a merge: a caller
+ * pin of `false` has to be REMOVED when the host says mirror, not merely left
+ * unmatched. Otherwise the published host is only half-authoritative — it can
+ * turn mirroring off but cannot keep it on, and a share-link body could
+ * downgrade a conforming host into one that omits headers the server
+ * cross-checks.
+ *
+ * Only the mirroring pin is touched; every other pin is passed through, and an
+ * absent-pins body stays absent unless the host actually asks for `omit`.
+ */
+export function applyHostParamMirroring<
+  T extends { mirrorToolParamHeaders?: boolean }
+>(pins: T | undefined, hostMirror: boolean | undefined): T | undefined {
+  if (hostMirror === false) {
+    return { ...((pins ?? {}) as T), mirrorToolParamHeaders: false };
+  }
+  if (pins?.mirrorToolParamHeaders === undefined) return pins;
+  const { mirrorToolParamHeaders: _hostOverrides, ...rest } = pins;
+  return rest as T;
+}
+
+/**
+ * The client-conformance knobs a host config asks for, read from its
+ * `mcpProfile`. Each collapses to `undefined` when the host wants the full
+ * (spec-conforming) behavior, exactly as
+ * {@link mirrorToolParamHeadersFromMcpProfile} does — the wire fields are
+ * suppression switches with no positive state.
+ *
+ * Like the mirroring reader, this cannot fail closed into an error: an
+ * unreadable value means "behave conformantly", which is always safe.
+ */
+/**
+ * The degraded (`false`) cancellation leaves only, or `undefined` when the host
+ * cancels normally on both eras. Absent leaves are the conforming answer, so a
+ * fully cancelling host must contribute no field at all.
+ */
+/**
+ * The host's tool-cancellation setting as a TURN carries it: only the degraded
+ * (`false`) leaves, or `undefined` when the profile is missing or conforming.
+ *
+ * Callers that resolved a host config should treat `undefined` as an EMPTY
+ * record (`?? {}`) so the turn's value stays authoritative over the
+ * connection's connect-time copy — that copy is exactly the stale value a
+ * mid-session save has to override.
+ */
+export function toolCallCancellationFromMcpProfile(
+  mcpProfile: unknown
+): { legacy?: boolean; modern?: boolean } | undefined {
+  if (!mcpProfile || typeof mcpProfile !== "object") return undefined;
+  const raw = (mcpProfile as { toolCallCancellation?: unknown })
+    .toolCallCancellation;
+  return raw && typeof raw === "object"
+    ? degradedCancellationLeaves(raw as { legacy?: unknown; modern?: unknown })
+    : undefined;
+}
+
+function degradedCancellationLeaves(
+  raw: { legacy?: unknown; modern?: unknown } | undefined
+): { legacy?: boolean; modern?: boolean } | undefined {
+  if (!raw) return undefined;
+  const leaves: { legacy?: boolean; modern?: boolean } = {};
+  if (raw.legacy === false) leaves.legacy = false;
+  if (raw.modern === false) leaves.modern = false;
+  return Object.keys(leaves).length > 0 ? leaves : undefined;
+}
+
+export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
+  firstPageOnly: true | undefined;
+  supportsMrtr: false | undefined;
+  suppressListenChannel: true | undefined;
+  dropToolListChanged: true | undefined;
+  toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined;
+} {
+  const profile =
+    mcpProfile !== null && typeof mcpProfile === "object"
+      ? (mcpProfile as {
+          paginationTraversal?: unknown;
+          mrtrSupport?: unknown;
+          toolListChanged?: unknown;
+          toolCallCancellation?: unknown;
+          mcpProtocolVersion?: unknown;
+        })
+      : undefined;
+  // Nested record, so it is narrowed separately; an unreadable value falls
+  // through to `undefined` — conforming — like every knob here.
+  const toolListChanged =
+    profile?.toolListChanged !== null &&
+    typeof profile?.toolListChanged === "object"
+      ? (profile.toolListChanged as {
+          listens?: unknown;
+          refetches?: unknown;
+        })
+      : undefined;
+  // Same narrowing for the sibling per-era record; a non-object reads as
+  // conforming rather than throwing.
+  const toolCallCancellation =
+    profile?.toolCallCancellation !== null &&
+    typeof profile?.toolCallCancellation === "object"
+      ? (profile.toolCallCancellation as {
+          legacy?: unknown;
+          modern?: unknown;
+        })
+      : undefined;
+  return {
+    firstPageOnly:
+      profile?.paginationTraversal === "firstPageOnly" ? true : undefined,
+    supportsMrtr: profile?.mrtrSupport === "none" ? false : undefined,
+    suppressListenChannel:
+      toolListChanged?.listens === false ? true : undefined,
+    dropToolListChanged:
+      toolListChanged?.refetches === false ? true : undefined,
+    // Forwarded, not resolved: the era is only known once the connection
+    // negotiates, so the SDK picks the leaf. Only degraded leaves travel.
+    toolCallCancellation: degradedCancellationLeaves(toolCallCancellation),
+  };
+}
+
+/**
+ * Overlay a host's client-conformance decisions onto the initialize pins a
+ * request body carried — the sibling of {@link applyHostParamMirroring}, and
+ * an overlay for the identical reason.
+ *
+ * These pins are suppression switches with no positive state, so a body pin
+ * has to be REMOVED when the host wants the full behavior, not merely left
+ * unmatched. Merging instead would make a published host only half
+ * authoritative: it could turn a knob on but never keep it off, and a
+ * share-link body could post `firstPageOnly: true` or `supportsMrtr: false`
+ * to make a conforming host silently execute as a degraded client — hiding
+ * tools from the model, dropping MRTR rounds mid-conversation, or (with the
+ * `toolListChanged` pair) silencing every server notification.
+ *
+ * Every other pin is passed through, and an absent-pins body stays absent
+ * unless the host actually asks for a non-default knob.
+ */
+export function applyHostConformanceKnobs<
+  T extends {
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  }
+>(
+  pins: T | undefined,
+  host: {
+    firstPageOnly: true | undefined;
+    supportsMrtr: false | undefined;
+    suppressListenChannel: true | undefined;
+    dropToolListChanged: true | undefined;
+    toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined;
+  }
+): T | undefined {
+  let next = pins;
+  if (host.firstPageOnly === true) {
+    next = { ...((next ?? {}) as T), firstPageOnly: true };
+  } else if (next?.firstPageOnly !== undefined) {
+    const { firstPageOnly: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.supportsMrtr === false) {
+    next = { ...((next ?? {}) as T), supportsMrtr: false };
+  } else if (next?.supportsMrtr !== undefined) {
+    const { supportsMrtr: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.suppressListenChannel === true) {
+    next = { ...((next ?? {}) as T), suppressListenChannel: true };
+  } else if (next?.suppressListenChannel !== undefined) {
+    const { suppressListenChannel: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.dropToolListChanged === true) {
+    next = { ...((next ?? {}) as T), dropToolListChanged: true };
+  } else if (next?.dropToolListChanged !== undefined) {
+    const { dropToolListChanged: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.toolCallCancellation !== undefined) {
+    next = {
+      ...((next ?? {}) as T),
+      toolCallCancellation: host.toolCallCancellation,
+    };
+  } else if (next?.toolCallCancellation !== undefined) {
+    const { toolCallCancellation: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  return next;
+}
+
+/**
  * Server-authoritative policy read from a BACKEND-PROJECTED host config's
- * `mcpProfile` (chatbox turns, host-bound turns, swarm snapshots, eval host
+ * `mcpProfile` (scenario turns, host-bound turns, swarm snapshots, eval host
  * configs). Three-state: off → undefined, on → the policy, invalid →
  * explicit 409 configuration error (never treated as off).
  */

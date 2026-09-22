@@ -4,14 +4,42 @@ description: "A personal cloud Linux workstation for your project — open a ter
 icon: "monitor"
 ---
 
+<Note>
+The Computer is available on accounts where the feature has been enabled. The **Computer** tab only appears when it is active for your account.
+</Note>
+
 Each project gives every member an opt-in **Computer**: a personal cloud Linux
 workstation with a web terminal and a `bash` tool your agents can call. It boots
-from a base image (Debian + Node + Python) or a custom [environment](#environments)
+from a base image (Debian + Node + Python) or a custom [sandbox image](#sandbox-images)
 you define, sleeps automatically after about 30 minutes idle or shortly after
 you close the terminal, and wakes on next use.
 
 Open it from the **Computer** tab. The first time you open the terminal, MCPJam
 provisions the machine; after that it resumes in about a second.
+
+## Chat attachments
+
+When the previewed host has a computer attached and you are signed in, files you
+attach in the chat composer are uploaded into the computer's filesystem at
+**`/home/user/attachments/`** in addition to being sent inline to the model.
+A short note is appended to your message so the model — and any MCP server
+running on the computer — can reference the files by path:
+
+```
+[Attachments uploaded to the computer — use the bash tool to read them]
+- report.csv: /home/user/attachments/ab12cd34-report.csv
+```
+
+If the upload fails (for example, because the daily start cap is reached or the
+storage quota is exceeded), the send is **aborted** and the composer is left
+intact — your message and attachments are never sent without the files landing
+on the computer first.
+
+<Note>
+  This only applies when the host config attaches a personal computer and you
+  are signed in. Guest sessions and hosts without a computer attached keep the
+  existing inline-only behavior.
+</Note>
 
 ## Agent tools
 
@@ -48,17 +76,123 @@ asked to confirm, then the terminal closes and the machine hibernates. It wakes
 automatically the next time you open the terminal or an agent calls the `bash`
 tool.
 
-## Environments
+## Sandbox images
 
-An environment is a custom Docker image your computer boots from, defined by a
-small Dockerfile (allowlisted base images, `FROM` + `RUN` only). Build it, then
-**Use on computer** to boot from it. Environments can be kept private to you or
-shared with the whole project. Manage them from **Change** on the image strip.
+A sandbox image is a custom image your computer boots from, defined by a
+**blueprint** — a small YAML file:
+
+```yaml
+# base must be an allowlisted official image (debian, ubuntu, node, python)
+# pinned by an immutable @sha256 digest.
+base: debian:bookworm-slim@sha256:<64-hex-digest>
+
+# Baked into the image at build time.
+initialize:
+  - name: Install tooling
+    run: apt-get update && apt-get install -y git jq
+
+# Handed to the agent as reference — NEVER run automatically. If deps look
+# stale, the agent can run these itself via bash.
+maintenance:
+  - name: Refresh deps
+    run: cd ~/app && npm install
+
+# Model-facing notes, injected into the agent's context whenever a chat
+# turn runs with the bash tool on a computer booted from this image.
+knowledge:
+  - name: Test notes
+    contents: Run `make test` before pushing.
+```
+
+The editor lints as you type (the backend is the single validator; the CLI has
+`mcpjam cloud images validate` for the same check). Build the image, then **Use on
+computer** to boot from it. `base` / `initialize` edits need a re-build;
+`maintenance` / `knowledge` edits take effect at the next chat turn without
+one. Images can be kept private to you or shared with the whole project.
+Manage them from **Change** on the image strip.
 
 <Note>
-  Environment definitions (their Dockerfiles) live in the project database, not
-  on any one computer's disk — see [Data & persistence](#data-and-persistence).
+  Image definitions (their blueprints) live in the project database, not on
+  any one computer's disk — see [Data & persistence](#data-and-persistence).
 </Note>
+
+## Scenario sandbox
+
+When a scenario is backed by an environment that has a pinned computer image,
+the `bash` tool runs on a **per-conversation ephemeral sandbox** booted from
+that image — not on your personal computer.
+
+### How it works
+
+- **Per conversation.** Each new conversation gets its own isolated machine.
+  Files you write and packages you install in one conversation are not visible
+  to any other conversation.
+- **Persistent across turns.** Within a single conversation, the same sandbox
+  is reused on every turn — you can write a file on turn 1 and read it on
+  turn 5.
+- **Reaped after idle.** If a conversation goes idle for a long time, the
+  sandbox is deleted (not paused). When that happens, you'll see a notification
+  in the chat: *"This conversation's sandbox was reset after being idle — files
+  and shell state from earlier turns are gone."*
+- **Image from the environment.** All members on the same scenario boot from the
+  same environment image, so the machine is consistent regardless of who is
+  chatting.
+- **No bash if the image is unavailable.** If the environment's image can't
+  boot right now, the scenario loads normally without a `bash` tool — no error,
+  and no fallback to your personal computer.
+
+### What is unchanged
+
+- **Your personal computer** is unaffected. Nothing a scenario conversation
+  writes lands on your personal computer, and nothing on your personal computer
+  is visible inside a scenario sandbox.
+- **Host-backed scenarios** (those not tied to an environment) continue to use
+  your personal computer as before.
+- **Environments with no pinned image** also continue to use your personal
+  computer as before.
+
+## Browser panel in the Playground
+
+When a host configuration includes a browser tool, the Playground shows a browser panel alongside the chat. Each conversation owns its own browser — switching between chats reattaches the existing browser for that conversation rather than opening a new one or navigating away.
+
+### Switching conversations
+
+When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach.
+
+If the conversation's browser is not yet running when you open it, the panel shows an **Open a browser for this conversation** button. The panel also polls in the background so it can attach automatically if the agent starts a browser after the pane is already open.
+
+### Closing the browser pane
+
+Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold keeps the agent waiting, but does not by itself keep a hosted cloud browser running — a hosted browser box is reclaimed shortly after nobody is actively watching it.
+
+### Hosted browser sleep and wake
+
+A hosted cloud browser box is reclaimed automatically when nobody has the panel open and visible. If you hide the panel or switch away from the tab, the box may be paused within a couple of minutes. When you re-open or re-show the panel, it wakes the box automatically — you will see a brief reconnecting state while it resumes, then the live view returns. No action is needed on your part.
+
+### Typing credentials without exposing them
+
+When a browser agent needs to sign into a site, it can use a **secret placeholder** instead of a literal credential. The model writes `{{secret:NAME}}` — where `NAME` is the environment-variable name of a [materialized project secret](/inspector/projects#secret-storage-for-env-vars-and-headers) — and the value is substituted at the last moment inside the browser, never appearing in the transcript, tool-call arguments, or trace.
+
+**How to use it**
+
+1. Add the credential as a **materialized** secret in your project environment (brokered secrets cannot be used here — their values never enter the server).
+2. The agent will see only the secret's name, not its value. It writes `{{secret:GITHUB_PASSWORD}}` (or whichever name you chose) in a `type` or `fill_form` browser action.
+3. The value is substituted immediately before the keystroke runs. Everything the page returns afterwards — the accessibility tree, page text, console output — shows `{{secret:NAME}}` again, not the real value.
+
+**Screenshot suppression**
+
+While the page that received the credential is still open, screenshots are suppressed and replaced with a `screenshotSuppressed` flag. The agent still receives the accessibility tree and page text. Screenshots resume automatically once the page navigates to a new document (for example, after a login form submits and loads the dashboard).
+
+**Constraints**
+
+- The secret must be at least 8 characters. Shorter values are refused before anything is typed.
+- Only **materialized** delivery works. Brokered secrets are refused with `secret_not_typeable`.
+- Placeholders only work on verbs that type text (`type`, `fill_form`). Using one on `click` or `scroll` is refused with `secret_verb_refused`.
+- If the named secret does not exist for the current environment, the action is refused with `secret_unknown` — nothing is typed.
+
+### Browser panel layout
+
+The open and expanded state of the browser panel is tracked per conversation. Opening or closing the panel in one chat does not affect any other chat's panel state.
 
 ## Data & persistence
 
@@ -82,7 +216,9 @@ keep the only copy of anything.
 Each of these rebuilds the machine from its image and **deletes every file on
 the disk**:
 
-- **Reset** — restores the computer to a clean copy of its current image.
+- **Reset** — restores the computer to a clean copy of its current image. Reset
+  sits on the image strip (next to **Change**) and is available once the computer
+  is ready or asleep.
 - **Changing the image** — switching to a different environment (or back to the
   base image) rebuilds from that image.
 - **Delete** — tears the computer down entirely.
@@ -96,9 +232,9 @@ These live in the project database (Convex), not on the computer's disk, so they
 are unaffected by reset, image changes, or deletion:
 
 - **Cloud skills** attached to the project.
-- **Environment Dockerfiles** — the definitions of your custom images. Deleting
-  a computer never deletes your environments; you can boot a fresh computer from
-  the same image again.
+- **Image blueprints** — the definitions of your custom images. Deleting a
+  computer never deletes your sandbox images; you can boot a fresh computer
+  from the same image again.
 
 ### The no-backup caveat
 

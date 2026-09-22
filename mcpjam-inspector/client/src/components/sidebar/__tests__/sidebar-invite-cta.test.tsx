@@ -2,11 +2,25 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPSidebar } from "@/components/mcp-sidebar";
+import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
+
+const { launchEngagement } = vi.hoisted(() => ({ launchEngagement: vi.fn() }));
+vi.mock("@/lib/launch-analytics", () => ({ trackLaunchEngagement: launchEngagement }));
 
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
 const mockShareProjectDialog = vi.fn();
+const mockInviteSignUpDialog = vi.fn();
+let sidebarHidden = false;
 const mockFeatureFlags: Record<string, boolean | undefined> = {};
+
+// The guest invite CTA only exists on hosted deployments — a local/self-hosted
+// install has no WorkOS to sign up through — so these tests run hosted.
+vi.mock("@/lib/config", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/config")>("@/lib/config");
+  return { ...actual, HOSTED_MODE: true };
+});
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
@@ -33,10 +47,24 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ themeMode: "light" }),
 }));
 
+// Mutable so the update-pill tests below can drive the status without a
+// second copy of this file's mock stack.
+const mockUpdateState: {
+  status: { kind: string; [key: string]: unknown };
+  restartAndInstall: ReturnType<typeof vi.fn>;
+  downloadManually: ReturnType<typeof vi.fn>;
+} = {
+  status: { kind: "idle" },
+  restartAndInstall: vi.fn(),
+  downloadManually: vi.fn(),
+};
+
 vi.mock("@/hooks/useUpdateNotification", () => ({
   useUpdateNotification: () => ({
-    status: { kind: "idle" },
-    restartAndInstall: vi.fn(),
+    status: mockUpdateState.status,
+    restartRequested: false,
+    restartAndInstall: mockUpdateState.restartAndInstall,
+    downloadManually: mockUpdateState.downloadManually,
     simulateUpdate: vi.fn(),
   }),
 }));
@@ -58,6 +86,12 @@ vi.mock("@/components/sidebar/nav-main", () => ({
   NavMain: () => <div data-testid="nav-main" />,
 }));
 
+vi.mock("@/components/sidebar/sidebar-credits", () => ({
+  SidebarCredits: () => (
+    <button data-testid="sidebar-see-credits">See credits</button>
+  ),
+}));
+
 vi.mock("@/components/sidebar/sidebar-user", () => ({
   SidebarUser: () => <div data-testid="sidebar-user" />,
 }));
@@ -66,12 +100,16 @@ vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
   SidebarContextSwitcher: () => <div data-testid="context-switcher" />,
 }));
 
-vi.mock("@/components/project/ShareProjectDialog", () => ({
-  ShareProjectDialog: (props: unknown) => mockShareProjectDialog(props),
+vi.mock("@/components/organization/InviteTeamMembersDialog", () => ({
+  InviteTeamMembersDialog: (props: unknown) => mockShareProjectDialog(props),
+}));
+
+vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
+  InviteTeamSignUpDialog: (props: unknown) => mockInviteSignUpDialog(props),
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
-  Sidebar: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Sidebar: ({ children }: { children: ReactNode }) => sidebarHidden ? null : <div>{children}</div>,
   SidebarContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -148,7 +186,7 @@ function makeProject(id: string, name: string) {
 }
 
 function renderSidebar(
-  overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {}
+  overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {},
 ) {
   return render(
     <MCPSidebar
@@ -157,12 +195,13 @@ function renderSidebar(
         "project-b": makeProject("project-b", "Beta"),
       }}
       activeProjectId="project-a"
+      activeOrganizationId="org-1"
       onSwitchProject={vi.fn()}
       onCreateProject={vi.fn(async () => "project-created")}
       onDeleteProject={vi.fn()}
       onProjectShared={vi.fn()}
       {...overrides}
-    />
+    />,
   );
 }
 
@@ -178,22 +217,84 @@ describe("sidebar invite CTA", () => {
     });
     mockUseAuth.mockReturnValue({
       user: {
+        id: "owner",
         email: "owner@example.com",
         firstName: "Owner",
         lastName: "Example",
       },
     });
     mockShareProjectDialog.mockImplementation(
-      ({ isOpen, projectName }: { isOpen: boolean; projectName: string }) =>
-        isOpen ? (
-          <div data-testid="share-project-dialog">
-            Share dialog for {projectName}
-          </div>
-        ) : null
+      ({ organizationId }: { organizationId: string }) => (
+        <div data-testid="share-project-dialog">
+          Invite dialog for {organizationId}
+        </div>
+      ),
     );
+    mockInviteSignUpDialog.mockImplementation(
+      ({ isOpen }: { isOpen: boolean }) =>
+        isOpen ? <div data-testid="invite-signup-nudge" /> : null,
+    );
+    // The pending-invite marker is module state in sessionStorage — a leftover
+    // would auto-open the share dialog in an unrelated test.
+    sessionStorage.clear();
+    localStorage.clear();
   });
 
-  it("hides the CTA for guest users", () => {
+  it("shows the launch announcement to signed-in users and guests", () => {
+    const { unmount } = renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+    unmount();
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
+    mockUseAuth.mockReturnValue({ user: null });
+    renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+  });
+
+  it("classifies authenticated anonymous Convex sessions as guests", () => {
+    launchEngagement.mockClear();
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
+    expect(launchEngagement).toHaveBeenCalledWith(expect.objectContaining({ action: "opened", audience: "guest" }));
+  });
+
+  it("waits for auth resolution before showing the announcement", () => {
+    mockUseAuth.mockReturnValue({ user: null, isLoading: true });
+    const view = renderSidebar();
+    expect(screen.queryByRole("region", { name: "Platform launch" })).toBeNull();
+    view.unmount();
+    mockUseAuth.mockReturnValue({ user: { id: "owner" }, isLoading: false });
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeVisible();
+  });
+
+  it("shows the announcement when the mobile sidebar subtree is unmounted", () => {
+    sidebarHidden = true;
+    try {
+      renderSidebar();
+      expect(screen.getByRole("region", { name: "Platform launch" })).toBeVisible();
+    } finally { sidebarHidden = false; }
+  });
+
+  it("keeps guest launch history after signing in", () => {
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
+    mockUseAuth.mockReturnValue({ user: null });
+    const guest = renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Learn more about the new MCPJam" }));
+    guest.unmount();
+
+    mockUseConvexAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
+    mockUseAuth.mockReturnValue({ user: { id: "owner", email: "owner@example.com" } });
+    renderSidebar();
+    expect(screen.getByRole("region", { name: "Platform launch" })).toBeInTheDocument();
+    expect(localStorage.getItem("mcpjam:platform-launch-2026-09:status")).toBe("seen");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Learn more about the new MCPJam" })).toBeInTheDocument();
+  });
+
+  it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: false,
       isLoading: false,
@@ -204,53 +305,126 @@ describe("sidebar invite CTA", () => {
 
     renderSidebar();
 
+    fireEvent.click(
+      screen.getByRole("button", { name: "Invite team members" }),
+    );
+
+    expect(screen.getByTestId("invite-signup-nudge")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Invite team members" })
+      screen.queryByTestId("share-project-dialog"),
     ).not.toBeInTheDocument();
+  });
+
+  it("hides the guest CTA while auth is still resolving, so it never flashes for signed-in users", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: true,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+      isLoading: true,
+    });
+
+    renderSidebar();
+
+    expect(
+      screen.queryByRole("button", { name: "Invite team members" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("auto-opens the share dialog for a user returning from the sign-up nudge", () => {
+    // What the nudge's Create account / Sign in buttons write right before
+    // WorkOS navigates away.
+    markPendingInviteDialog();
+
+    renderSidebar();
+
+    expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
+      "Invite dialog for org-1",
+    );
+  });
+
+  it("ignores the pending-invite marker for guests — the dialog needs an authed user and a project", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+    });
+    markPendingInviteDialog();
+
+    renderSidebar();
+
+    expect(
+      screen.queryByTestId("share-project-dialog"),
+    ).not.toBeInTheDocument();
+    // …and the marker is still there for when sign-in completes, not consumed
+    // by a render that could not act on it.
+    expect(sessionStorage.length).toBeGreaterThan(0);
   });
 
   it("shows the CTA for signed-in users and keeps the collapsed text class", () => {
     renderSidebar();
 
     expect(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Invite team members")).toHaveClass(
-      "group-data-[collapsible=icon]:hidden"
+      "group-data-[collapsible=icon]:hidden",
     );
   });
 
-  it("keeps signed-in footer focused on invite CTA and the profile menu", () => {
+  it("orders the signed-in footer See credits, invite CTA, then the profile menu", () => {
     renderSidebar();
 
     const inviteButton = screen.getByRole("button", {
       name: "Invite team members",
     });
+    const seeCredits = screen.getByTestId("sidebar-see-credits");
     const sidebarUser = screen.getByTestId("sidebar-user");
 
     expect(
-      screen.queryByTestId("sidebar-credit-usage")
-    ).not.toBeInTheDocument();
+      seeCredits.compareDocumentPosition(inviteButton) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       inviteButton.compareDocumentPosition(sidebarUser) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("hides See credits from guests, who have no organization to bill", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+    });
+
+    // The organization stays set so this isolates the auth half of the gate:
+    // with it also cleared, the assertion would pass even if the
+    // `isAuthenticated && user` check were dropped entirely.
+    renderSidebar();
+
+    expect(screen.queryByTestId("sidebar-see-credits")).not.toBeInTheDocument();
   });
 
   it("signed-in footer has no utility strip (everything lives in the account menu)", () => {
     renderSidebar();
 
     expect(
-      screen.queryByRole("button", { name: "Support" })
+      screen.queryByRole("button", { name: "Support" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Settings" })
+      screen.queryByRole("button", { name: "Settings" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "API Keys" })
+      screen.queryByRole("button", { name: "API Keys" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Notifications/ })
+      screen.queryByRole("button", { name: /Notifications/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -267,22 +441,22 @@ describe("sidebar invite CTA", () => {
 
     expect(screen.getByRole("button", { name: "Support" })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Settings" })
+      screen.getByRole("button", { name: "Settings" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "API Keys" })
+      screen.queryByRole("button", { name: "API Keys" }),
     ).not.toBeInTheDocument();
   });
 
-  it("opens the share dialog for the active project", () => {
+  it("opens the team invite dialog for the active organization", () => {
     renderSidebar();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     );
 
     expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Share dialog for Acme"
+      "Invite dialog for org-1",
     );
   });
 
@@ -296,15 +470,98 @@ describe("sidebar invite CTA", () => {
           "project-b": makeProject("project-b", "Beta"),
         }}
         activeProjectId="project-b"
+        activeOrganizationId="org-1"
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "project-created")}
         onDeleteProject={vi.fn()}
         onProjectShared={vi.fn()}
-      />
+      />,
     );
 
     expect(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * The rail's left margin. Reported twice as looking off, so it is pinned:
+ * jsdom has no layout, so the classes are the only observable, and the measured
+ * intent lives in the comments beside them.
+ */
+describe("MCPSidebar — one left margin down the rail", () => {
+  // Its own setup: the nav renders a skeleton with no group labels while auth
+  // is still resolving, and this block sits outside the suite above's beforeEach.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.keys(mockFeatureFlags).forEach((flag) => {
+      delete mockFeatureFlags[flag];
+    });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: {
+        email: "owner@example.com",
+        firstName: "Owner",
+        lastName: "Example",
+      },
+    });
+  });
+
+  it("left-aligns the logo instead of centring it", () => {
+    renderSidebar();
+
+    const logo = screen.getByAltText("MCP Jam");
+    const button = logo.closest("button");
+    // Centred, the mark landed at 63px while every nav row started at 16px.
+    expect(button?.className).toContain("justify-start");
+    expect(button?.className).not.toContain("justify-center");
+    // The collapse control's slot is still reserved, so a wider logo can never
+    // slide under its hit target.
+    expect(button?.className).toContain("pr-10");
+  });
+});
+
+describe("sidebar update pill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateState.status = { kind: "idle" };
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { id: "user-1", email: "sophie@mcpjam.com" },
+      isLoading: false,
+    });
+  });
+
+  it("offers an in-app install while a download is genuinely running", () => {
+    mockUpdateState.status = { kind: "pending", installRequested: false };
+
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    expect(mockUpdateState.restartAndInstall).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.downloadManually).not.toHaveBeenCalled();
+  });
+
+  it("sends the user to the releases page once auto-update has failed", () => {
+    // The fix for the reported bug: after the main process gives up on the
+    // download the pill stops pretending an install is one click away. It
+    // used to keep saying "Update" and do nothing — 17 clicks in 124
+    // seconds, no error, no progress.
+    mockUpdateState.status = { kind: "manual", version: "3.5.2" };
+
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /Download update/ }));
+
+    expect(mockUpdateState.downloadManually).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
   });
 });

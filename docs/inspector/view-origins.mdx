@@ -1,0 +1,74 @@
+---
+title: "View origins"
+description: "Which origin your MCP App's view runs at, and how to allowlist it with a third-party API"
+---
+
+Your app's view runs in a sandboxed iframe at a **real URL**, on an origin separate from the Inspector itself. That matters whenever something outside MCPJam checks where a request came from — a referrer-restricted Google Maps key, an OAuth redirect URI, a CORS allowlist.
+
+## Which origin to allowlist
+
+<Tabs>
+  <Tab title="Local">
+    The view runs on the Inspector's scheme and port with the hostname swapped between `localhost` and `127.0.0.1`. The swap is what keeps the sandbox on a different origin from the app.
+
+    Because the swap depends on which one you open the Inspector with, **allowlist both**:
+
+    ```
+    http://localhost:*
+    http://127.0.0.1:*
+    ```
+
+  </Tab>
+  <Tab title="Hosted">
+    ```
+    https://sandbox.mcpjam.com
+    ```
+  </Tab>
+</Tabs>
+
+To read the exact value rather than infer it, open a tool result, expand the CSP Workbench, and look at **Sandbox Stack → View origin**. It has a copy button.
+
+<Note>
+  Cross-origin requests carry the **origin**, not the full path — MCPJam sends
+  `Referrer-Policy: strict-origin-when-cross-origin`. So a third party sees
+  `http://127.0.0.1:6274/`, and an allowlist pattern keyed on the origin
+  matches. A pattern keyed on a path will not.
+</Note>
+
+## CSP is a separate gate
+
+Allowlisting your origin tells the third party to _accept_ your requests. It does not let your widget _make_ them — MCPJam's default policy denies everything not declared. Both have to pass.
+
+Declare what the API needs in the UI resource's `_meta.ui.csp`:
+
+```json
+{
+  "_meta": {
+    "ui": {
+      "csp": {
+        "resourceDomains": [
+          "https://maps.googleapis.com",
+          "https://*.gstatic.com"
+        ],
+        "connectDomains": ["https://maps.googleapis.com"]
+      }
+    }
+  }
+}
+```
+
+`resourceDomains` covers scripts, images, styles and fonts; `connectDomains` covers `fetch`/XHR/WebSocket. A JavaScript SDK usually needs both. `frameDomains` is only for APIs you embed as a nested iframe — an embed widget, not a JS SDK.
+
+Anything still blocked shows up in the Workbench's **Findings** tab with the directive that refused it.
+
+## `_meta.ui.domain`
+
+SEP-1865 lets a server request a dedicated origin with `_meta.ui.domain`. The format is host-specific and each host derives its own — Claude uses `sha256(<connector URL>)[:32] + ".claudemcpcontent.com"`, ChatGPT a per-plugin label — so one declared string cannot match every host.
+
+MCPJam **derives** the origin it serves your view from rather than routing on what you declare; a server-chosen string would otherwise let one server claim another's origin, and with it that origin's cookies and storage. If you declare a domain, the Workbench's Findings tab reports whether it matches what MCPJam serves. A mismatch is informational — it is the normal state for a server already targeting Claude or ChatGPT — and simply means an allowlist keyed on that value will not match requests coming from MCPJam.
+
+## Rendering mode
+
+MCPJam mounts a view by writing its HTML into a blank document, the same way Claude does. A document written that way **without a doctype is parsed in quirks mode**, where the box model and percentage heights differ from what you probably tested against.
+
+Start your resource HTML with `<!DOCTYPE html>`. The readiness report flags this as `claude.apps.design.doctype`.

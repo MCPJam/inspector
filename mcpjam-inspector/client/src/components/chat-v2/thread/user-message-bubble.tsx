@@ -6,11 +6,11 @@
  */
 
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
+import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 
 interface UserMessageBubbleProps {
@@ -22,24 +22,24 @@ export function UserMessageBubble({
   children,
   className = "",
 }: UserMessageBubbleProps) {
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
-  const resolvedThemeMode = chatboxHostTheme ?? globalThemeMode;
-  const isDarkChatboxTheme = resolvedThemeMode === "dark";
-  const chatboxHostFamily = getChatboxHostFamily(chatboxHostStyle);
+  const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
+  const isDarkScenarioTheme = resolvedThemeMode === "dark";
+  const scenarioHostFamily = getScenarioHostFamily(scenarioHostStyle);
   const bubbleClasses =
-    chatboxHostFamily === "chatgpt"
+    scenarioHostFamily === "chatgpt"
       ? cn(
-          "chatbox-host-user-bubble rounded-[1.5rem] border-transparent shadow-none",
-          isDarkChatboxTheme
+          "scenario-host-user-bubble rounded-[1.5rem] border-transparent shadow-none",
+          isDarkScenarioTheme
             ? "bg-[#303030] text-[#DFDFDF]"
             : "bg-[#f4f4f4] text-[#1f1f1f]",
         )
-      : chatboxHostFamily === "claude"
+      : scenarioHostFamily === "claude"
         ? cn(
-            "chatbox-host-user-bubble rounded-xl shadow-none",
-            isDarkChatboxTheme
+            "scenario-host-user-bubble rounded-xl shadow-none",
+            isDarkScenarioTheme
               ? "border-[#4c473f] bg-[#141413] text-[#F1F0ED]"
               : "border-[#d9d1c5] bg-[#f5f0e8] text-[#2d2926]",
           )

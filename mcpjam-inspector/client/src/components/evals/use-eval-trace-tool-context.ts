@@ -40,12 +40,45 @@ function buildEmptyState(
   };
 }
 
+/**
+ * The route's verdict that the USER'S MCP server refused the credentials
+ * MCPJam presented (`routes/web/errors.ts` `UPSTREAM_AUTH_FAILED`).
+ *
+ * Checked BEFORE the transient heuristics below, and load-bearing: that
+ * verdict arrives as a 403 — and its message ("Authentication failed for MCP
+ * server …") reads as an auth failure — so both halves of the heuristic would
+ * otherwise call it transient and park the panel on a spinner forever. It is
+ * the opposite of transient: nothing this hook can retry will make the
+ * upstream server accept the token, so the user has to see the error and go
+ * reconnect the server.
+ */
+function isUpstreamAuthRefusal(error: {
+  code?: unknown;
+  details?: unknown;
+}): boolean {
+  if (error.code === "UPSTREAM_AUTH_FAILED") return true;
+  const details = error.details;
+  return (
+    !!details &&
+    typeof details === "object" &&
+    (details as { upstreamAuthRequired?: unknown }).upstreamAuthRequired === true
+  );
+}
+
 function isTransientHostedToolContextError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
 
-  const withMessage = error as { message?: unknown; status?: unknown };
+  const withMessage = error as {
+    message?: unknown;
+    status?: unknown;
+    code?: unknown;
+    details?: unknown;
+  };
+  if (isUpstreamAuthRefusal(withMessage)) {
+    return false;
+  }
   if (withMessage.status === 401 || withMessage.status === 403) {
     return true;
   }

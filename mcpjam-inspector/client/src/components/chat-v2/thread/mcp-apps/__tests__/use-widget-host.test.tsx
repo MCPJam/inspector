@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { renderHook } from "@testing-library/react";
 import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
-import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
+import { ScenarioSurfaceProvider } from "@/contexts/scenario-surface-context";
 import {
   WidgetSurfaceProvider,
   type WidgetSurface,
@@ -12,7 +12,15 @@ import { useWidgetHost } from "../use-widget-host";
 
 // Pin HOSTED_MODE off so the listResourceTemplates guard is exercised purely via
 // the web-managed-servers context (the security-sensitive boundary concern).
-vi.mock("@/lib/config", () => ({ HOSTED_MODE: false, SANDBOX_ORIGIN: "" }));
+// Every config export the hook reads has to appear here: vitest throws on a
+// missing one rather than returning undefined, so a new read is a hard break
+// in this suite. (VIEW_MOUNT_MODE was added without it and landed red.)
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+  SANDBOX_ORIGIN: "",
+  VIEW_MOUNT_MODE: "write",
+  VIEW_SUBDOMAINS_ENABLED: false,
+}));
 
 // Isolate the hook from the api/network layer.
 const listResourceTemplatesMock = vi.fn();
@@ -29,7 +37,7 @@ vi.mock("../fetch-widget-content", () => ({ fetchMcpAppsWidgetContent: vi.fn() }
 
 function makeWrapper(opts: {
   webManaged?: boolean;
-  chatbox?: boolean;
+  scenario?: boolean;
   surface?: WidgetSurface;
 }) {
   return ({ children }: { children: React.ReactNode }) => {
@@ -41,11 +49,11 @@ function makeWrapper(opts: {
         </WidgetSurfaceProvider>
       );
     }
-    if (opts.chatbox !== undefined) {
+    if (opts.scenario !== undefined) {
       node = (
-        <ChatboxSurfaceProvider value={opts.chatbox}>
+        <ScenarioSurfaceProvider value={opts.scenario}>
           {node}
-        </ChatboxSurfaceProvider>
+        </ScenarioSurfaceProvider>
       );
     }
     if (opts.webManaged !== undefined) {
@@ -116,18 +124,18 @@ describe("useWidgetHost", () => {
       expect(result.current.surface.kind).toBe("playground");
     });
 
-    it("is chatbox on a chatbox surface", () => {
+    it("is scenario on a scenario surface", () => {
       const { result } = renderHook(() => useWidgetHost(), {
-        wrapper: makeWrapper({ chatbox: true }),
+        wrapper: makeWrapper({ scenario: true }),
       });
-      expect(result.current.surface.kind).toBe("chatbox");
+      expect(result.current.surface.kind).toBe("scenario");
     });
 
-    it("lets chatbox win over playground (preserves CSP precedence)", () => {
+    it("lets scenario win over playground (preserves CSP precedence)", () => {
       const { result } = renderHook(() => useWidgetHost(), {
-        wrapper: makeWrapper({ chatbox: true, surface: "playground" }),
+        wrapper: makeWrapper({ scenario: true, surface: "playground" }),
       });
-      expect(result.current.surface.kind).toBe("chatbox");
+      expect(result.current.surface.kind).toBe("scenario");
     });
   });
 });

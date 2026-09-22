@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./redaction.js";
 import { operationalError, usageError } from "./output.js";
 
 const CREDENTIALS_FILE_VERSION = 1;
@@ -193,7 +193,7 @@ export function redactCredentialsFromResult(
   result: CredentialsFileSource,
   credentialsFilePath?: string,
 ): object {
-  const redacted = redactSensitiveValue(result) as Record<string, unknown>;
+  const redacted = redactForTelemetry(result) as Record<string, unknown>;
   const credentials = result.credentials ?? {};
   const hasCredentials = Object.keys(credentials).length > 0;
   const secretMarker = credentialsFilePath ? "[SAVED_TO_FILE]" : "[REDACTED]";

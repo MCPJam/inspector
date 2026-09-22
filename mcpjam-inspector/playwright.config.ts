@@ -7,6 +7,20 @@ import { fileURLToPath } from "node:url";
 const deployedBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
 const baseURL = deployedBaseUrl ?? "http://localhost:6274";
 
+// staging.mcpjam.com sits behind Cloudflare Access. Without a service token
+// every navigation lands on the Access login page instead of the app, and the
+// failures read as product bugs. Only sent when both halves are present, so a
+// local run against localhost is unaffected.
+const cfAccessClientId = process.env.CF_ACCESS_CLIENT_ID;
+const cfAccessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+const cfAccessHeaders =
+  cfAccessClientId && cfAccessClientSecret
+    ? {
+        "CF-Access-Client-Id": cfAccessClientId,
+        "CF-Access-Client-Secret": cfAccessClientSecret,
+      }
+    : undefined;
+
 // Resolve to the inspector package root (this config's directory) so the booted
 // webServer runs the workspace's `npm run start` regardless of the invoking cwd.
 const packageRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -21,6 +35,7 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL,
+    ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

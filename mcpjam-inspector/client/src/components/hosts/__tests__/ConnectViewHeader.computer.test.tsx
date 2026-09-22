@@ -6,6 +6,14 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => flagEnabled,
 }));
 
+// The header also reads the skills flag and tracks tab switches; neither is
+// under test here (see ConnectViewHeader.skills.test.tsx), so keep PostHog out
+// of it.
+vi.mock("@/hooks/useSkillsEnabled", () => ({
+  useSkillsEnabled: () => false,
+}));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
 import { ConnectViewHeader } from "../ConnectViewHeader";
 
 afterEach(() => {

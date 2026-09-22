@@ -37,7 +37,7 @@ export function ConfirmChatResetDialog({
   open,
   onConfirm,
   onCancel,
-  message = "Resetting the chat will clear your current conversation thread. This action cannot be undone.",
+  message = "Clearing the chat will remove your current conversation thread. This action cannot be undone.",
 }: ConfirmChatResetDialogProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [shouldSkip, setShouldSkip] = useState(false);
@@ -83,7 +83,7 @@ export function ConfirmChatResetDialog({
     <AlertDialog open={open} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Reset chat?</AlertDialogTitle>
+          <AlertDialogTitle>Clear chat?</AlertDialogTitle>
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="flex-row items-center sm:justify-between">
@@ -103,7 +103,7 @@ export function ConfirmChatResetDialog({
           <div className="flex gap-2">
             <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirm}>
-              Reset chat
+              Clear chat
             </AlertDialogAction>
           </div>
         </AlertDialogFooter>

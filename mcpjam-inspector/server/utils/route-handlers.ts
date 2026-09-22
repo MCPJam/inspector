@@ -7,7 +7,7 @@
  * Used by both web/ and mcp/ route sets.
  */
 
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { CacheMode, MCPClientManager } from "@mcpjam/sdk";
 import {
   listResources,
   readResource,
@@ -37,11 +37,17 @@ export {
  */
 export async function listTools(
   manager: Manager,
-  params: { serverId: string; modelId?: string; cursor?: string },
+  params: {
+    serverId: string;
+    modelId?: string;
+    cursor?: string;
+    cacheMode?: CacheMode;
+  },
 ) {
   const result = await listToolsBase(manager, {
     serverId: params.serverId,
     cursor: params.cursor,
+    cacheMode: params.cacheMode,
   });
 
   const toolsMetadata = manager.getAllToolsMetadata(params.serverId);

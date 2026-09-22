@@ -4,6 +4,10 @@ import {
   evalOverviewEntryLastRunStatusClass,
   evalOverviewEntryLastRunStatusLabel,
 } from "../helpers";
+import {
+  getSuitePassFailCounts,
+  getSuitePassRatePercent,
+} from "../suite-overview-presentation";
 
 const baseEntry = (
   latestRun: EvalSuiteOverviewEntry["latestRun"],
@@ -116,5 +120,24 @@ describe("evalOverviewEntryLastRunStatusClass", () => {
         }),
       ),
     ).toContain("text-success");
+  });
+});
+
+describe("policy-2 inconclusive overview metrics", () => {
+  it("does not turn an inconclusive run's summary into a pass rate", () => {
+    const entry = baseEntry({
+      _id: "r1",
+      suiteId: "s1",
+      createdBy: "u1",
+      runNumber: 1,
+      configRevision: "1",
+      configSnapshot: { tests: [], environment: { servers: [] } },
+      status: "completed",
+      result: "inconclusive",
+      summary: { total: 10, passed: 10, failed: 0, passRate: 1 },
+      createdAt: 1,
+    });
+    expect(getSuitePassRatePercent(entry)).toBeNull();
+    expect(getSuitePassFailCounts(entry)).toBeNull();
   });
 });

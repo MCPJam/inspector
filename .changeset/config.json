@@ -1,6 +1,11 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
-  "changelog": false,
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "MCPJam/inspector"
+    }
+  ],
   "commit": false,
   "fixed": [],
   "linked": [],
@@ -10,6 +15,9 @@
   "ignore": [
     "@mcpjam/soundcheck",
     "@mcpjam/mcp",
-    "@mcpjam/design-system"
+    "@mcpjam/design-system",
+    "@mcpjam/slack-app",
+    "@mcpjam/surface-core",
+    "@mcpjam/discord-app"
   ]
 }

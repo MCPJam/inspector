@@ -1,6 +1,5 @@
-import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, MessageSquare } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   compareThreadsForUsageList,
@@ -8,20 +7,24 @@ import {
   threadMatchesUsageFilter,
   type UsageFilterState,
   type UsageSessionFilter,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
-import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
+import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
+import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
+import { formatCompactRelativeTime } from "@/components/connection/share-usage/session-list-format";
+import { cn } from "@/lib/utils";
 
 interface ShareUsageThreadListProps {
-  /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
-  sourceType?: "chatbox";
+  /** Optional: when `threads` is provided (scenario Usage panel) these are unused. */
+  sourceType?: "scenario";
   sourceId?: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
-  /** Legacy preset-only filter, for non-chatbox callers (ShareUsageDialog). */
+  /** Legacy preset-only filter, for non-scenario callers (ShareUsageDialog). */
   usageFilter?: UsageSessionFilter;
   /**
    * Preferred: pre-filtered, pre-sorted threads from the panel. When provided,
@@ -29,7 +32,7 @@ interface ShareUsageThreadListProps {
    */
   threads?: SharedChatThread[] | undefined;
   /**
-   * Richer filter state used by the chatbox Usage panel for empty-state copy
+   * Richer filter state used by the scenario Usage panel for empty-state copy
    * and, on the legacy internal-fetch path, to apply chip filters as well.
    */
   filterState?: UsageFilterState;
@@ -47,7 +50,7 @@ export function ShareUsageThreadList({
   const legacyThreads = useSharedChatThreadList(
     providedThreads === undefined && sourceType && sourceId
       ? { sourceType, sourceId }
-      : { sourceType: sourceType ?? "chatbox", sourceId: null }
+      : { sourceType: sourceType ?? "scenario", sourceId: null }
   );
 
   const threads = useMemo(() => {
@@ -64,12 +67,18 @@ export function ShareUsageThreadList({
 
   if (threads === undefined) {
     return (
-      <div className="space-y-3 p-3">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="space-y-2 rounded-lg border p-3">
-            <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
-            <div className="h-3 w-full animate-pulse rounded bg-muted" />
-            <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
+      <div className="flex flex-col">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex h-14 items-center gap-2 border-l-2 border-transparent px-3"
+          >
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />
+              <div className="h-3 w-full animate-pulse rounded bg-muted" />
+            </div>
+            <div className="h-3 w-8 animate-pulse rounded bg-muted" />
+            <div className="h-3 w-6 animate-pulse rounded bg-muted" />
           </div>
         ))}
       </div>
@@ -104,7 +113,7 @@ export function ShareUsageThreadList({
 
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-1 p-2">
+      <div>
         {threads.map((thread) => (
           <ThreadCard
             key={thread._id}
@@ -118,7 +127,31 @@ export function ShareUsageThreadList({
   );
 }
 
-function ThreadCard({
+/** List-pane chrome: count + filter pills, matching the Sessions redesign. */
+export function SessionListChrome({
+  countLabel,
+  children,
+}: {
+  countLabel: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="shrink-0">
+      <div className="px-3 pt-2 pb-1.5">
+        <div className="text-sm font-semibold leading-5 text-card-foreground">
+          {countLabel}
+        </div>
+      </div>
+      {children ? (
+        <div className="flex min-h-9 items-center gap-1.5 border-b border-border px-3">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function ThreadCard({
   thread,
   isSelected,
   onSelect,
@@ -127,93 +160,66 @@ function ThreadCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  const rating = thread.feedbackRating;
+  // The session's rating is its WORST turn (see `scenario-usage-filters.ts`),
+  // so the amber treatment fires on "one turn went badly", not "the average
+  // was low" — which is the cohort a PM opens this list to find.
+  const summary = thread.feedback ?? null;
+  const rating = summary?.min ?? thread.feedbackRating ?? null;
+  const hasComment =
+    summary?.hasComment ?? (thread.feedbackComment?.trim().length ?? 0) > 0;
   const needsReview =
-    rating === 1 ||
-    rating === 2 ||
-    (rating === 3 && (thread.feedbackComment?.trim().length ?? 0) > 0);
+    (rating != null && rating <= 2) || (rating === 3 && hasComment);
+  const preview = thread.firstMessagePreview?.trim() || thread.themeClusterLabel;
+  const title = thread.visitorDisplayName ?? "Anonymous";
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`w-full rounded-lg border p-3 text-left transition-colors ${
+      data-selected={isSelected ? "true" : "false"}
+      className={cn(
+        "flex min-h-14 w-full items-center gap-2 self-stretch border-l-2 px-3 text-left transition-colors",
         isSelected
-          ? "border-primary/50 bg-primary/5"
-          : "border-transparent hover:bg-muted/50"
-      }`}
+          ? "border-l-primary bg-muted"
+          : "border-l-transparent hover:bg-muted/50",
+      )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
-          <span className="truncate">
-            {thread.visitorDisplayName ?? "Anonymous"}
-          </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold leading-5 text-card-foreground">
+          <span className="truncate">{title}</span>
           {thread.synthetic === true ? (
             <span
               className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
               aria-label="Synthetic session"
+              role="img"
             />
           ) : null}
-        </p>
-        <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
-          <MessageSquare className="h-3 w-3" />
-          {thread.toolCallCount ?? thread.messageCount}
-        </span>
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        {rating != null ? (
-          <span
-            className={`text-xs font-medium ${
-              rating <= 2
-                ? "text-amber-700 dark:text-amber-400"
-                : "text-muted-foreground"
-            }`}
-          >
-            {rating}/5
-          </span>
-        ) : (
-          <span className="text-xs text-muted-foreground">No feedback</span>
-        )}
-        {needsReview ? (
-          <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-            <AlertTriangle className="size-3" />
-            Needs review
-          </span>
-        ) : null}
-        {thread.themeClusterLabel ? (
-          <span className="max-w-[120px] truncate text-[10px] text-muted-foreground">
-            {thread.themeClusterLabel}
-          </span>
-        ) : null}
-        {thread.synthetic === true && thread.personaLabel ? (
-          <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">
-            {thread.personaLabel}
-          </span>
-        ) : null}
-        {thread.synthetic === true ? (
-          <SessionReadinessBadge readiness={thread.readiness} />
-        ) : null}
-      </div>
-      {thread.firstMessagePreview ? (
-        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-          {thread.firstMessagePreview}
-        </p>
-      ) : null}
-      <div className="mt-1.5 flex items-center gap-2">
-        <span className="text-[10px] text-muted-foreground/70">
-          {formatDistanceToNow(new Date(thread.lastActivityAt), {
-            addSuffix: true,
-          })}
-        </span>
-        {thread.modelId ? (
-          <>
-            <span className="text-[10px] text-muted-foreground/40">·</span>
-            <span className="truncate font-mono text-[10px] text-muted-foreground/70">
-              {thread.modelId}
+          {thread.readiness ? (
+            <SessionReadinessBadge readiness={thread.readiness} />
+          ) : null}
+          {thread.surface === "preview" ? (
+            <span className="rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+              Preview
             </span>
-          </>
+          ) : null}
+        </p>
+        {preview ? (
+          <p className="truncate text-xs text-muted-foreground">{preview}</p>
         ) : null}
       </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <SessionFeedbackMark thread={thread} />
+        {needsReview ? (
+          <AlertTriangle
+            className="size-3 text-amber-600 dark:text-amber-400"
+            aria-label="Needs review"
+          />
+        ) : null}
+        <SessionGoalScoreBadge goalScore={thread.goalScore} />
+      </div>
+      <span className="w-7 shrink-0 text-right text-[10px] leading-none text-muted-foreground">
+        {formatCompactRelativeTime(thread.lastActivityAt)}
+      </span>
     </button>
   );
 }

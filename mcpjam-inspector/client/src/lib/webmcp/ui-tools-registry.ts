@@ -1,18 +1,32 @@
 /**
- * WebMCP-shaped MCPJam UI tools registry.
+ * MCPJam `ui_*` tools registry — the browser-side tool set for MCPJam's own
+ * inspector actions.
  *
- * Holds the tools that let chat agents drive the MCPJam inspector UI
- * (navigate, select servers, run tools in the playground, …). The registry —
- * not the browser's native `modelContext` — is the enumerable source of truth
- * for MCPJam's own chat pipeline; each registration is additionally mirrored
- * into the native WebMCP API (best-effort, see `native-mirror.ts`) so
- * browser-native agents can call the same tools.
+ * Holds the tools that are resolved IN THE PAGE rather than on the server.
+ * Two kinds, and the name covers both:
+ *   - driving the inspector UI — navigate, select servers, run a tool in the
+ *     playground — where the user watches the action happen, and
+ *   - collecting input from it — `ui_ask_user` paints a question card and
+ *     parks the turn until the user answers.
  *
- * The registry serves two callers, mirroring `app-tools-registry.ts`:
- *   - `snapshotForChatBody()` — drained at chat POST time so the server can
- *     register no-execute AI SDK tools that the model can pick.
- *   - `resolve(name)` — looked up by `useChat.onToolCall` (via
- *     `ui-tool-executor.ts`) to execute the tool in-page.
+ * TWO ACCESS PATHS, ONE CATALOG. The registry is the single source of truth
+ * for both agents that can reach these tools:
+ *   - the in-app "Ask MCPJam" agent, over MCPJam's own transport
+ *     (`snapshotForChatBody()` at chat POST time, `resolve()` from the chat
+ *     executor), and
+ *   - a browser-native WebMCP agent, over `document.modelContext`
+ *     (`native-tool-publisher.ts` subscribes here and mirrors the eligible
+ *     tools out; both paths execute through `ui-tool-execution.ts`).
+ *
+ * Eligibility is per definition and explicit: `nativePublication`. Tools that
+ * need an MCPJam conversation to mean anything (`ui_ask_user`, the scoped
+ * eval-authoring tools) stay internal; ordinary inspector actions publish.
+ * Absent metadata is read as INTERNAL — a new tool is never published by
+ * accident.
+ *
+ * NOT the same thing as the `page_*` namespace: those are tools a real
+ * third-party page registered, which MCPJam INSPECTS over CDP (see
+ * `shared/client-fulfilled-tools.ts`). `ui_*` is what MCPJam itself offers.
  *
  * Dispatch is gated on registry membership (`resolve`) — never on the `ui_`
  * prefix alone — so a genuine MCP server tool that happens to be named
@@ -25,13 +39,95 @@
 import { create } from "zustand";
 import { isUiToolName } from "@/shared/client-fulfilled-tools.js";
 import type { UiToolAnnotations } from "@/shared/client-fulfilled-tools.js";
-import type { UiToolSnapshotEntry } from "@/shared/chat-v2.js";
-import { mirrorUiToolToNative } from "./native-mirror";
+import type { UiToolSnapshotEntry } from "@/shared/mcpjam-ui-tools.js";
 
 export interface UiToolResult {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }
+
+/**
+ * Which agent asked for this call.
+ *
+ * Load bearing rather than decorative: `ask_mcpjam` calls carry a
+ * conversation (a transcript to render into, a session to scope a parked
+ * question to, MCPJam's own approval pill), and `native_webmcp` calls carry
+ * none of that — the browser owns that agent's approval flow, and there is no
+ * conversation to create. A tool that needs one reads this instead of
+ * guessing from the absence of a `scope`.
+ */
+export type UiToolCaller = "ask_mcpjam" | "native_webmcp";
+
+/**
+ * Per-call context handed to `execute`, for the tools that need to know WHICH
+ * call they are — and on whose behalf — rather than just their arguments.
+ *
+ * Optional on the signature so the catalog's ordinary tools — and the tests
+ * that invoke them directly — keep working with a single argument. Only
+ * `executeUiToolCall` (`ui-tool-execution.ts`) supplies it, for both
+ * transports.
+ */
+export interface UiToolExecuteContext {
+  /**
+   * This invocation's identity: the streamed tool-call id for an Ask MCPJam
+   * call, a minted id for a native one. Required by tools that park on user
+   * input (`ui_ask_user`): it's the key the rendered card resolves against.
+   */
+  toolCallId: string;
+  /**
+   * The caller's chatSessionId — Ask MCPJam only. Lets a parked tool be
+   * cancelled per conversation instead of globally, and carries the eval
+   * scope. A native call has no conversation, so it has no scope.
+   */
+  scope?: string;
+  /** Which agent asked. */
+  caller: UiToolCaller;
+  /**
+   * Cancellation for this call, when the transport has any. Today only the
+   * native publisher supplies one (it aborts when the tool's registration is
+   * torn down). Handlers that reach something cancellable should forward it;
+   * aborting NEVER un-does an action that already happened.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Whether a tool definition may be published to browser-native WebMCP agents
+ * (`document.modelContext`), and — when it is — whether its RESULT can carry
+ * content MCPJam did not author.
+ *
+ * Explicit per definition, and shaped like the surface manifest's
+ * `agentTools` opt-out, for the same reason: staying out of a channel is a
+ * decision with a reason, not an omission. Absent metadata is read as
+ * internal by `shouldPublishNatively`, so a new tool is never published by
+ * accident.
+ */
+export type UiToolNativePublication =
+  | {
+      readonly kind: "publish";
+      /**
+       * True when the result can contain bytes from somewhere else — a
+       * third-party MCP server's tool output, a registry listing, a page.
+       * Published as WebMCP's `untrustedContentHint` so an external agent
+       * knows to treat the payload as data rather than instructions.
+       */
+      readonly untrustedContent: boolean;
+      /**
+       * Force `consequentialHint: true` for the browser, when WebMCP's
+       * question and MCP's are not the same question.
+       *
+       * `consequentialHint` normally follows the MCP annotations (see
+       * `nativeAnnotationsFor`), and for nearly every tool that is right.
+       * They do diverge: MCP's `destructiveHint` asks "is this irreversible,
+       * does it destroy something?", while Chrome's `consequentialHint` asks
+       * "should a browser agent confirm this with its user first?" — a tool
+       * that only CREATES can still answer yes, if what it creates commits
+       * the organization to something. Set this there, with the reason at the
+       * call site; never as a way to avoid getting the MCP annotations right.
+       */
+      readonly consequential?: true;
+    }
+  | { readonly kind: "internal"; readonly reason: string };
 
 export interface UiToolDefinition {
   /** Model-facing tool name. Must match `UI_TOOL_NAME_REGEX` (`ui_*`). */
@@ -47,23 +143,12 @@ export interface UiToolDefinition {
   readOnly: boolean;
   /**
    * MCP `ToolAnnotations` for this tool. Drives approval policy
-   * (`uiToolCallNeedsApproval`) and is projected onto the native WebMCP
-   * descriptor. Every entry in the first-party catalog sets these
-   * explicitly — an absent `destructiveHint` is read as DESTRUCTIVE (the
-   * protocol's pessimistic default), so a tool added without annotations
-   * gates rather than executing silently.
+   * (`uiToolCallNeedsApproval`). Every entry in the first-party catalog sets
+   * these explicitly — an absent `destructiveHint` is read as DESTRUCTIVE
+   * (the protocol's pessimistic default), so a tool added without
+   * annotations gates rather than executing silently.
    */
   annotations?: UiToolAnnotations;
-  /**
-   * WebMCP's `untrustedContentHint` for the NATIVE mirror only. WebMCP has
-   * its own signal for "this tool's output is externally sourced and should
-   * be treated as untrusted"; MCP's `openWorldHint` is a different thing, so
-   * a native agent won't infer it. Set true for a tool whose result comes
-   * from a third party (e.g. `ui_execute_tool` runs an arbitrary MCP server).
-   * Client-only: it is NOT a valid MCP annotation, so the server validator
-   * would reject it — `snapshotForChatBody` never ships it.
-   */
-  nativeUntrustedContentHint?: boolean;
   /**
    * Executing this tool can change the SPA route (directly, or via the
    * auto-open-playground fallback). Route-bound chat surfaces use this to
@@ -72,7 +157,18 @@ export interface UiToolDefinition {
    * it to the server.
    */
   mayNavigate?: boolean;
-  execute: (args: Record<string, unknown>) => Promise<UiToolResult>;
+  /**
+   * Whether browser-native WebMCP agents get this tool, and why not when they
+   * don't. Client-only metadata — `snapshotForChatBody` never ships it to the
+   * server. Absent reads as internal (see `shouldPublishNatively`); the
+   * agent-tool coverage test requires every first-party definition to state
+   * it outright.
+   */
+  nativePublication?: UiToolNativePublication;
+  execute: (
+    args: Record<string, unknown>,
+    ctx?: UiToolExecuteContext,
+  ) => Promise<UiToolResult>;
 }
 
 // Server-mirrored limits for the chat POST snapshot (same as app tools).
@@ -82,8 +178,6 @@ const MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 
 interface UiToolsRegistryState {
   tools: Map<string, UiToolDefinition>;
-  /** Disposers for native `modelContext` mirrors, keyed by tool name. */
-  nativeDisposers: Map<string, () => void>;
   /**
    * Names registered with `scope: "global"` (the app-wide catalog). Kept as
    * a parallel set — not on the map values — so `resolve()` and the executor
@@ -134,7 +228,6 @@ interface UiToolsRegistryState {
 
 export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   tools: new Map(),
-  nativeDisposers: new Map(),
   globalNames: new Set(),
   ownerTokens: new Map(),
   shippedNames: new Set(),
@@ -177,9 +270,7 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
         );
       }
       console.warn(`[webmcp] UI tool "${def.name}" re-registered; replacing.`);
-      get().nativeDisposers.get(def.name)?.();
     }
-    const dispose = mirrorUiToolToNative(def);
     // Per-registration ownership token. NOT `def` identity: two registrars can
     // share the same module-level `UiToolDefinition` object, so a def-identity
     // guard would let a replaced registration's stale unregister still match
@@ -189,21 +280,18 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
     set((s) => {
       const tools = new Map(s.tools);
       tools.set(def.name, def);
-      const nativeDisposers = new Map(s.nativeDisposers);
-      if (dispose) nativeDisposers.set(def.name, dispose);
-      else nativeDisposers.delete(def.name);
       const globalNames = new Set(s.globalNames);
       if (opts?.scope === "global") globalNames.add(def.name);
       else globalNames.delete(def.name);
       const ownerTokens = new Map(s.ownerTokens);
       ownerTokens.set(def.name, ownerToken);
-      return { tools, nativeDisposers, globalNames, ownerTokens };
+      return { tools, globalNames, ownerTokens };
     });
     const unregister = () => {
       // Ownership guard: tear down only while OUR registration is still the
       // live one (checked by token, so a shared def object can't confuse it).
       // After a warn+replace, the replaced registration's unregister/abort
-      // must not delete the replacement or dispose its native mirror.
+      // must not delete the replacement.
       if (get().ownerTokens.get(def.name) !== ownerToken) return;
       get().unregisterUiTool(def.name);
     };
@@ -212,25 +300,16 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   },
 
   unregisterUiTool: (name) => {
-    const { tools, nativeDisposers } = get();
-    if (!tools.has(name)) return;
-    try {
-      nativeDisposers.get(name)?.();
-    } catch {
-      // Native mirror teardown is best-effort.
-    }
+    if (!get().tools.has(name)) return;
     set((s) => {
       const nextTools = new Map(s.tools);
       nextTools.delete(name);
-      const nextDisposers = new Map(s.nativeDisposers);
-      nextDisposers.delete(name);
       const nextGlobals = new Set(s.globalNames);
       nextGlobals.delete(name);
       const nextOwnerTokens = new Map(s.ownerTokens);
       nextOwnerTokens.delete(name);
       return {
         tools: nextTools,
-        nativeDisposers: nextDisposers,
         globalNames: nextGlobals,
         ownerTokens: nextOwnerTokens,
       };
@@ -292,3 +371,16 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
 
   wasShipped: (name) => get().shippedNames.has(name),
 }));
+
+/**
+ * Whether a definition is eligible for browser-native publication.
+ *
+ * Default-deny: a definition that says nothing stays internal. The cost of
+ * that default is a tool an external agent cannot see until someone declares
+ * it; the cost of the other default is a conversation-only tool published to
+ * an agent that has no conversation, which fails at the far end of a call the
+ * user cannot see. The first is a missing feature, the second is a bug.
+ */
+export function shouldPublishNatively(def: UiToolDefinition): boolean {
+  return def.nativePublication?.kind === "publish";
+}

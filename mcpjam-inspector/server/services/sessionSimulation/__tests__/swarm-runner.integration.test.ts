@@ -6,7 +6,7 @@
  *
  * Proves the two swarm invariants end-to-end: (1) transcripts persist with
  * swarm attribution (`sourceType/origin: "swarm"`, `journeyRunId`, `hostId`,
- * persona tags, no chatboxId/synthesisRunId), and (2) the terminal attempt is
+ * persona tags, no scenarioId/synthesisRunId), and (2) the terminal attempt is
  * reported AFTER the transcript is persisted (persist-before-terminal), with
  * the same deterministic chatSessionId used to claim it.
  */
@@ -20,14 +20,31 @@ const createBrowserSessionContextMock = vi.fn();
 const reportAttemptMock = vi.fn();
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
+const provisionJourneySandboxMock = vi.fn();
+const releaseSandboxMock = vi.fn();
 
 const callOrder: string[] = [];
 
+// Phase 6: a harness runs on the attempt's OWN disposable box, so the harness
+// case below goes through the control plane. Mocked here for the same reason
+// the engine is — this suite exercises the real core, not real HTTP.
+vi.mock("../../../utils/computers/control-plane-client.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/control-plane-client.js")
+  >("../../../utils/computers/control-plane-client.js");
+  return {
+    ...actual,
+    isComputersDataPlaneConfigured: () => true,
+    provisionJourneySandbox: (...args: unknown[]) =>
+      provisionJourneySandboxMock(...args),
+    releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
+  };
+});
+
 vi.mock("../../../utils/assistant-turn.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../utils/assistant-turn.js")>(
-      "../../../utils/assistant-turn.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/assistant-turn.js")
+  >("../../../utils/assistant-turn.js");
   return {
     ...actual,
     runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
@@ -35,10 +52,9 @@ vi.mock("../../../utils/assistant-turn.js", async () => {
 });
 
 vi.mock("../../../utils/org-model-config.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../utils/org-model-config.js")>(
-      "../../../utils/org-model-config.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/org-model-config.js")
+  >("../../../utils/org-model-config.js");
   return {
     ...actual,
     resolveSyntheticModelSource: (...args: unknown[]) =>
@@ -47,10 +63,9 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 vi.mock("../../../utils/chat-ingestion.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../utils/chat-ingestion.js")>(
-      "../../../utils/chat-ingestion.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-ingestion.js")
+  >("../../../utils/chat-ingestion.js");
   return {
     ...actual,
     persistChatSessionToConvex: (...args: unknown[]) => {
@@ -61,10 +76,9 @@ vi.mock("../../../utils/chat-ingestion.js", async () => {
 });
 
 vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
-  const actual =
-    await vi.importActual<
-      typeof import("../../../utils/chat-v2-orchestration.js")
-    >("../../../utils/chat-v2-orchestration.js");
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-v2-orchestration.js")
+  >("../../../utils/chat-v2-orchestration.js");
   return {
     ...actual,
     prepareChatV2: (...args: unknown[]) => prepareChatV2Mock(...args),
@@ -72,10 +86,9 @@ vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
 });
 
 vi.mock("../../browser-session-context.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../browser-session-context.js")>(
-      "../../browser-session-context.js"
-    );
+  const actual = await vi.importActual<
+    typeof import("../../browser-session-context.js")
+  >("../../browser-session-context.js");
   return {
     ...actual,
     createBrowserSessionContext: (...args: unknown[]) =>
@@ -84,25 +97,34 @@ vi.mock("../../browser-session-context.js", async () => {
 });
 
 vi.mock("../../swarm-agent.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../swarm-agent.js")>(
-      "../../swarm-agent.js"
-    );
+  const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
+    "../../swarm-agent.js"
+  );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => {
       callOrder.push(`attempt:${(args[2] as any).status}`);
       return reportAttemptMock(...args);
     },
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
-    heartbeatJourneyRun: (...args: unknown[]) => heartbeatJourneyRunMock(...args),
+    heartbeatJourneyRun: (...args: unknown[]) =>
+      heartbeatJourneyRunMock(...args),
   };
 });
 
 import { startJourneyRun } from "../swarm-runner.js";
 
 const TURN_TRACE = {
+  requestPayloads: [
+    {
+      turnId: "trace-turn",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: { system: "swarm system", tools: {}, messages: [] },
+    },
+  ],
   turnId: "turn-1",
   promptIndex: 0,
   startedAt: 0,
@@ -123,6 +145,8 @@ function fakeBrowserContext() {
     handleEngineToolResult: vi.fn(),
     handleDirectToolResultChunk: vi.fn(),
     drainNewArtifacts: vi.fn(() => ({ observations: [], steps: [] })),
+    // Terminal-artifact hook the shared core calls before teardown.
+    collectVideo: vi.fn(async () => null),
     dismissCarriedWidget: vi.fn(async () => {}),
     dispose: vi.fn(async () => {}),
   };
@@ -149,11 +173,10 @@ function baseOpts() {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 1,
+    sessionsPerTarget: 1,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
-    bearer: "token",
-    authHeader: "Bearer token",
+    getBearer: async () => "token",
     managerFactory: async () => ({
       manager: {
         hasServer: () => false,
@@ -171,7 +194,22 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  let sandboxSeq = 0;
+  provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
+    sandboxSeq += 1;
+    return {
+      ok: true,
+      value: {
+        sandboxId: `sbx_${sandboxSeq}`,
+        sandboxRowId: `row_${sandboxSeq}`,
+        workdir: "/home/user",
+      },
+    };
+  });
+  releaseSandboxMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   resolveSyntheticModelSourceMock.mockReset().mockResolvedValue({
     source: "mcpjam",
   });
@@ -200,6 +238,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
@@ -221,8 +260,8 @@ describe("swarm runner — real core integration", () => {
       personaLabel: "Persona One",
       synthetic: true,
     });
-    // Swarm carries no chatbox surface identifiers.
-    expect(persistArgs.chatboxId).toBeUndefined();
+    // Swarm carries no scenario surface identifiers.
+    expect(persistArgs.scenarioId).toBeUndefined();
     expect(persistArgs.synthesisRunId).toBeUndefined();
 
     // The hosted turn body forwarded journeyRunId (backend spend attribution).
@@ -269,10 +308,29 @@ describe("swarm runner — real core integration", () => {
       harnessSessionCommit: swarmCommit,
     }));
 
+    // UN-SKIPPED by phase 6. The flag removal briefly made harness targets
+    // unconditionally refused (no ephemeral binding existed for them yet), so
+    // this case was parked rather than rewritten — its assertions are the only
+    // coverage of the harness proxy plane, the swarm continuity identity, and
+    // the resume-state commit riding /ingest-chat. A harness now runs on the
+    // attempt's own disposable box, so the turn happens again and they hold.
     const opts = baseOpts();
     await startJourneyRun({
       ...opts,
-      hosts: [{ ...opts.hosts[0]!, harness: "claude-code" as const }],
+      hosts: [
+        {
+          ...opts.hosts[0]!,
+          harness: "claude-code" as const,
+          // Phase 6 preconditions for a harness to get a box at all: a computer
+          // attached, and an image the run froze at launch. Without both the
+          // target is refused before the turn — which is the point of the rule.
+          computer: { kind: "personal" as const },
+          computerEnvironment: {
+            environmentId: "env-img-1",
+            environmentBuildId: "bld-1",
+          },
+        },
+      ],
     } as any);
 
     // (a) The harness turn was SUPPLIED a MCP-proxy plane strategy (without it
@@ -294,4 +352,27 @@ describe("swarm runner — real core integration", () => {
       harnessSessionId: "hs-1",
     });
   });
+});
+
+it("waits for a transient persona refusal and completes the same session", async () => {
+  vi.useFakeTimers();
+  swarmPersonaNextTurnMock
+    .mockReset()
+    .mockRejectedValueOnce(
+      new Error(
+        'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","retryAfter":15000,"error":"MCPJam model limit reached for the moment."}',
+      ),
+    )
+    .mockResolvedValueOnce({ message: "hello", endSession: false })
+    .mockResolvedValue({ message: "", endSession: true });
+  const run = startJourneyRun(baseOpts());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(15000);
+  await run;
+  expect(
+    reportAttemptMock.mock.calls.some((c) => c[2].status === "succeeded"),
+  ).toBe(true);
+  expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(3);
+  expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
 });

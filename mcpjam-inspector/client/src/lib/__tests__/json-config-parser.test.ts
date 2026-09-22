@@ -135,11 +135,12 @@ describe("parseJsonConfig", () => {
       );
     });
 
-    it("throws error when mcpServers is missing", () => {
+    it("treats an unknown wrapper key as a direct map and skips its invalid entry", () => {
+      // `{servers: {}}` used to throw ('missing "mcpServers"'); with direct-map
+      // support it is a map with one server named "servers" whose config has
+      // neither command nor url — skipped, yielding zero servers.
       const json = JSON.stringify({ servers: {} });
-      expect(() => parseJsonConfig(json)).toThrow(
-        'missing or invalid "mcpServers"',
-      );
+      expect(parseJsonConfig(json)).toEqual([]);
     });
 
     it("throws error when mcpServers is not an object", () => {
@@ -147,6 +148,21 @@ describe("parseJsonConfig", () => {
       expect(() => parseJsonConfig(json)).toThrow(
         'missing or invalid "mcpServers"',
       );
+    });
+
+    it("throws when both mcp_servers and mcpServers are declared", () => {
+      const json = JSON.stringify({
+        mcpServers: { a: { command: "node" } },
+        mcp_servers: { b: { command: "node" } },
+      });
+      expect(() => parseJsonConfig(json)).toThrow(
+        'both "mcp_servers" and "mcpServers"',
+      );
+    });
+
+    it("throws for a bare single server config", () => {
+      const json = JSON.stringify({ command: "node", args: ["server.js"] });
+      expect(() => parseJsonConfig(json)).toThrow("single server config");
     });
 
     it("skips servers with invalid config objects", () => {
@@ -171,6 +187,161 @@ describe("parseJsonConfig", () => {
 
       const result = parseJsonConfig(json);
       expect(result).toHaveLength(0);
+    });
+  });
+
+  describe("compatible wrapper shapes (SDK plugin-bundle parity)", () => {
+    const servers = {
+      "stdio-server": {
+        command: "node",
+        args: ["server.js"],
+        env: { API_KEY: "secret123" },
+      },
+      "http-server": { url: "https://example.com/mcp" },
+    };
+
+    it("imports mcpServers, mcp_servers, and direct maps identically", () => {
+      const fromCamel = parseJsonConfig(
+        JSON.stringify({ mcpServers: servers }),
+      );
+      const fromSnake = parseJsonConfig(
+        JSON.stringify({ mcp_servers: servers }),
+      );
+      const fromDirect = parseJsonConfig(JSON.stringify(servers));
+
+      expect(fromCamel).toHaveLength(2);
+      expect(fromSnake).toEqual(fromCamel);
+      expect(fromDirect).toEqual(fromCamel);
+    });
+
+    it("keeps env values byte-for-byte across shapes", () => {
+      const fromDirect = parseJsonConfig(JSON.stringify(servers));
+      const stdio = fromDirect.find((s) => s.name === "stdio-server");
+      expect(stdio?.env).toEqual({ API_KEY: "secret123" });
+    });
+
+    it("treats a direct map containing a server NAMED url as a map", () => {
+      // Only STRING command/url values indicate a bare single server; a
+      // server object under the key "url" is a legitimate direct-map entry.
+      const json = JSON.stringify({ url: { command: "node" } });
+      const result = parseJsonConfig(json);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ name: "url", command: "node" });
+    });
+  });
+
+  describe("transport classification (SDK detectPluginMcpTransport)", () => {
+    it.each([
+      ["streamable-http", "streamable-http"],
+      ["streamable_http", "streamable_http"],
+      ["streamableHttp", "streamableHttp"],
+      ["uppercase", "STREAMABLE_HTTP"],
+      ["http", "http"],
+      ["sse", "sse"],
+    ])("classifies %s as an HTTP server", (_label, type) => {
+      const json = JSON.stringify({
+        mcpServers: { remote: { type, url: "https://x.example.com/mcp" } },
+      });
+      expect(parseJsonConfig(json)[0].type).toBe("http");
+    });
+
+    it("honours an explicit stdio discriminator over a stray url guess", () => {
+      const json = JSON.stringify({
+        mcpServers: { local: { transport: "stdio", command: "node" } },
+      });
+      expect(parseJsonConfig(json)[0].type).toBe("stdio");
+    });
+
+    it("skips a server declaring an unknown transport", () => {
+      const json = JSON.stringify({
+        mcpServers: {
+          good: { command: "node" },
+          bad: { type: "carrier-pigeon", url: "https://x.example.com" },
+        },
+      });
+      const result = parseJsonConfig(json);
+      expect(result.map((s) => s.name)).toEqual(["good"]);
+    });
+  });
+
+  describe("value preservation", () => {
+    it("preserves HTTP headers", () => {
+      // stdio `env` values have always survived the import; dropping headers
+      // turned an otherwise valid import into a 401 at connect time.
+      const json = JSON.stringify({
+        mcp_servers: {
+          remote: {
+            url: "https://mcp.example.com/mcp",
+            headers: { Authorization: "Bearer abc", "X-Trace": "1" },
+          },
+        },
+      });
+
+      expect(parseJsonConfig(json)[0].headers).toEqual({
+        Authorization: "Bearer abc",
+        "X-Trace": "1",
+      });
+    });
+
+    it("patches imported headers so they reach the persisted server", () => {
+      // `headers` alone only feeds the in-memory connection: the cloud sync
+      // path writes header values ONLY from an explicit secretPatch, so
+      // without this the server 401s after a reload.
+      const json = JSON.stringify({
+        mcpServers: {
+          remote: {
+            url: "https://mcp.example.com/mcp",
+            headers: { Authorization: "Bearer abc" },
+          },
+        },
+      });
+
+      expect(parseJsonConfig(json)[0].secretPatch).toEqual({
+        headers: { Authorization: "Bearer abc" },
+      });
+    });
+
+    it("patches imported env so it reaches the persisted server", () => {
+      const json = JSON.stringify({
+        mcpServers: { local: { command: "node", env: { API_KEY: "k" } } },
+      });
+
+      expect(parseJsonConfig(json)[0].secretPatch).toEqual({
+        env: { API_KEY: "k" },
+      });
+    });
+
+    it.each([
+      ["an http server with no headers", { url: "https://x.example.com/mcp" }],
+      ["a stdio server with no env", { command: "node" }],
+    ])("omits the secret patch for %s", (_label, config) => {
+      // An explicit empty patch CLEARS stored values; re-importing a config
+      // must never wipe credentials already attached to that server.
+      const json = JSON.stringify({ mcpServers: { s: config } });
+      expect(parseJsonConfig(json)[0].secretPatch).toBeUndefined();
+    });
+
+    it("drops non-string env and header values", () => {
+      const json = JSON.stringify({
+        mcpServers: {
+          local: { command: "node", env: { OK: "1", BAD: 7, ALSO_BAD: null } },
+        },
+      });
+
+      expect(parseJsonConfig(json)[0].env).toEqual({ OK: "1" });
+    });
+
+    it("keeps plain-HTTP URLs and free-form server names", () => {
+      // The inspector is a debugger: the SDK's strict plugin rules (HTTPS
+      // only, kebab-ish server keys) must not leak into this import path.
+      const json = JSON.stringify({
+        mcpServers: { "My Local Server": { url: "http://192.168.1.10/mcp" } },
+      });
+
+      const result = parseJsonConfig(json);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("My Local Server");
+      expect(result[0].url).toBe("http://192.168.1.10/mcp");
     });
   });
 });
@@ -210,6 +381,24 @@ describe("validateJsonConfig", () => {
       const result = validateJsonConfig(json);
       expect(result.success).toBe(true);
     });
+
+    it("returns success for an mcp_servers wrapper (OpenAI shape)", () => {
+      const json = JSON.stringify({
+        mcp_servers: {
+          server: { command: "node" },
+        },
+      });
+
+      expect(validateJsonConfig(json)).toEqual({ success: true });
+    });
+
+    it("returns success for a direct server map", () => {
+      const json = JSON.stringify({
+        server: { command: "node" },
+      });
+
+      expect(validateJsonConfig(json)).toEqual({ success: true });
+    });
   });
 
   describe("invalid configs", () => {
@@ -219,10 +408,31 @@ describe("validateJsonConfig", () => {
       expect(result.error).toContain("Invalid JSON format");
     });
 
-    it("returns error when mcpServers is missing", () => {
+    it("returns error for an empty document (empty direct map)", () => {
+      // `{}` used to fail with 'Missing "mcpServers"'; with direct-map support
+      // it is an empty server map.
       const result = validateJsonConfig(JSON.stringify({}));
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Missing or invalid "mcpServers"');
+      expect(result.error).toContain("No servers found");
+    });
+
+    it("returns error when both wrappers are declared", () => {
+      const result = validateJsonConfig(
+        JSON.stringify({
+          mcpServers: { a: { command: "node" } },
+          mcp_servers: { a: { command: "node" } },
+        }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('both "mcp_servers" and "mcpServers"');
+    });
+
+    it("returns error for a bare single server config", () => {
+      const result = validateJsonConfig(
+        JSON.stringify({ command: "node", args: [] }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("single server config");
     });
 
     it("returns error for empty mcpServers object", () => {

@@ -12,6 +12,7 @@ import {
   type StreamId,
 } from "@modelcontextprotocol/node";
 import { z } from "zod";
+import { requestId } from "../support/json-rpc-fixture.js";
 
 const TEST_IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
@@ -870,7 +871,13 @@ export async function startConformanceMockServer(
               code: -32000,
               message: "Invalid or missing session ID",
             },
-            id: null,
+            // ECHO the request's id. JSON-RPC 2.0 permits `null` only when the
+            // id could not be DETECTED (a parse error, an invalid request);
+            // here the body parsed and named one, so dropping it violates the
+            // base protocol — and `RequestId` in every MCP schema is
+            // `["string","integer"]`, with no null branch. The wire-schema
+            // check caught this fixture doing it.
+            id: requestId(body),
           }),
         );
         return;
@@ -936,6 +943,12 @@ export async function startConformanceMockServer(
 
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
+        // `close()` alone waits out every socket the transport still holds —
+        // a standalone GET SSE stream is never "idle", so teardown blocked for
+        // undici's full keep-alive window and pushed the suite past its
+        // timeout. The transports above are already closed; anything still
+        // attached is a socket nobody will end, so drop it.
+        httpServer.closeAllConnections();
       });
     },
   };

@@ -14,12 +14,24 @@
  * the API caller.
  */
 import type { Context } from "hono";
+import { ConvexHttpClient } from "convex/browser";
+import {
+  AuthKitVerificationError,
+  verifyAuthKitToken,
+} from "../services/authkit-jwt.js";
 import {
   ErrorCode,
   WebRouteError,
   assertBearerToken,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import {
+  agentAttributionCacheKey,
+  agentAttributionHeaders,
+  stableAgentAttribution,
+  volatileAgentAttribution,
+  type AgentAttribution,
+} from "./agent-attribution.js";
 
 const MINT_TIMEOUT_MS = 10_000;
 // Re-mint when the cached token is within this window of expiry. Generous
@@ -34,9 +46,13 @@ const FALLBACK_TTL_MS = 60 * 60 * 1000;
 
 type CachedToken = { token: string; expiresAt: number };
 
-// Keyed by `${workosUserId}:${organizationId}` — the only inputs to the mint.
-// Tokens live ~2h server-side, so steady-state v1 traffic pays the extra
-// Convex round-trip roughly once per user+org per token lifetime.
+// Keyed by `${workosUserId}:${organizationId}:${surface}:${apiKeyId}` — the
+// inputs BAKED INTO the minted token. Attribution is part of the key because a
+// token carries it: sharing one across surfaces would label a CLI write as
+// Slack, and a wrong attribution is worse than none because it gets believed.
+// Only the stable half of an attribution is ever cached (see
+// `agentAttributionCacheKey`), so this still costs roughly one mint per
+// user+org+surface per ~2h token lifetime.
 const mintedTokenCache = new Map<string, CachedToken>();
 const inflightMints = new Map<string, Promise<CachedToken>>();
 
@@ -58,7 +74,8 @@ function delegationContext(c: Context): {
 
 async function mintDelegatedToken(
   workosUserId: string,
-  organizationId: string
+  organizationId: string,
+  attribution?: AgentAttribution
 ): Promise<CachedToken> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -88,6 +105,12 @@ async function mintDelegatedToken(
         Authorization: `Bearer ${serviceToken}`,
         "x-mcpjam-acting-as": workosUserId,
         "x-mcpjam-acting-in-org": organizationId,
+        // Which agent channel drove this. Sent on the MINT, alongside the
+        // existing delegation headers and under the same trust rule: only a
+        // holder of the service token can reach this endpoint, so the backend
+        // can stamp these claims on the token knowing an API caller could not
+        // have forged them. See ./agent-attribution.ts.
+        ...agentAttributionHeaders(attribution),
       },
       signal: controller.signal,
     });
@@ -101,7 +124,9 @@ async function mintDelegatedToken(
       ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `Delegated token exchange timed out after ${MINT_TIMEOUT_MS}ms`
-        : `Failed to reach delegated token exchange: ${parseErrorMessage(error)}`
+        : `Failed to reach delegated token exchange: ${parseErrorMessage(
+            error
+          )}`
     );
   } finally {
     clearTimeout(timeoutId);
@@ -117,9 +142,7 @@ async function mintDelegatedToken(
   if (!response.ok || !body?.ok || typeof body.token !== "string") {
     throw new WebRouteError(
       response.status === 403 ? 403 : 502,
-      response.status === 403
-        ? ErrorCode.FORBIDDEN
-        : ErrorCode.INTERNAL_ERROR,
+      response.status === 403 ? ErrorCode.FORBIDDEN : ErrorCode.INTERNAL_ERROR,
       `Delegated token exchange failed (${response.status})`
     );
   }
@@ -133,20 +156,225 @@ async function mintDelegatedToken(
 }
 
 /**
+ * The auth methods whose caller has NO Convex-verifiable bearer of their own,
+ * so the gateway mints a delegated org-scoped JWT for them.
+ *
+ * One set, two consumers. `getConvexBearerForRequest` and
+ * `getConvexBearerThunkForRequest` used to spell this out separately, once
+ * positively and once negatively — and the drift is silent in the direction
+ * that matters: add a fourth service credential to only one, and that caller
+ * still gets a bearer, it just stops REFRESHING partway through a multi-hour
+ * run. Tested on the LABEL rather than on the presence of the identity vars,
+ * because a JWT caller can carry those vars too and minting for them would
+ * swap a user's own bearer for a delegated one.
+ */
+const DELEGATED_AUTH_METHODS = new Set([
+  "workos_api_key",
+  "slack_service",
+  "discord_service",
+]);
+
+function usesDelegatedToken(c: Context): boolean {
+  const authMethod = c.get("authMethod");
+  return (
+    typeof authMethod === "string" && DELEGATED_AUTH_METHODS.has(authMethod)
+  );
+}
+
+/**
+ * The organization this request is CONFINED TO, or `undefined` for a caller
+ * who is confined to nothing.
+ *
+ * The backend applies this itself for anything that resolves MEMBERSHIP: the
+ * token's org claim is enforced by `delegatedScopeAllowsOrganization` inside
+ * `getOrgMembership` (mcpjam-backend `convex/lib/authorization.ts`), which
+ * every `resolveProjectAccess`/`requireOrgRole`/`requireProjectRole` path
+ * runs through. What the backend cannot clamp is a query that ENUMERATES
+ * memberships without naming an org: `organizations:getMyOrganizations` and
+ * `projects:getMyProjects` walk the user's membership rows directly and
+ * answer for the acting HUMAN across every org they belong to — strictly more
+ * than an org-bound `sk_` key may see. A route serving such a query must
+ * intersect the result with this.
+ *
+ * Read the AUTH METHOD, not the presence of `mcpjamOrganizationId`: a session
+ * JWT caller can carry the var too (it is the org their UI is looking at), and
+ * clamping them to it would hide the other orgs they legitimately belong to —
+ * the exact list this endpoint exists to return.
+ *
+ * FAILS CLOSED. A delegated caller whose org cannot be resolved throws rather
+ * than returning `undefined`, because `undefined` here means "confined to
+ * nothing" — the caller would skip the clamp entirely and receive everything.
+ * The two states are opposites and must not share a return value. Routes are
+ * free to call this before OR after the token mint (`POST /projects` clamps
+ * before minting), so this throw cannot lean on `delegationContext` having
+ * already rejected the same broken state.
+ */
+export function getDelegatedOrganizationId(c: Context): string | undefined {
+  if (!usesDelegatedToken(c)) return undefined;
+  const organizationId = c.get("mcpjamOrganizationId");
+  if (typeof organizationId !== "string" || organizationId.length === 0) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Missing WorkOS delegation context for organization scoping"
+    );
+  }
+  return organizationId;
+}
+
+/**
  * Resolve the bearer to use against Convex for this request:
  *   - JWT callers (WorkOS session, guest): the original bearer, verbatim.
  *   - WorkOS API-key callers: a cached short-lived delegated JWT.
+ *   - Slack service callers: the same, for the LINKED user the request names.
+ *     The `slk_` token itself is never exchanged — it identifies the bot, not
+ *     a person, and the delegated token is minted for the human behind the
+ *     Slack identity. The backend re-verifies that user's org membership on
+ *     every mint, so an unlinked or removed user cannot be delegated for.
  *
  * Background tasks that outlive the request (async eval runs) should call
  * this once during the request and capture the returned string — the token's
  * TTL (hours) comfortably covers a capped eval run.
  */
 export async function getConvexBearerForRequest(c: Context): Promise<string> {
-  if (c.get("authMethod") !== "workos_api_key") {
+  // Both non-JWT auth methods need a minted token. Dispatching on
+  // `authMethod` rather than on the presence of the delegation context vars
+  // is deliberate: a JWT caller can carry those vars too, and minting for
+  // them would swap a user's own bearer for a delegated one.
+  if (!usesDelegatedToken(c)) {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);
-  return getConvexBearerForDelegation(workosUserId, organizationId);
+  return getConvexBearerForDelegation(
+    workosUserId,
+    organizationId,
+    stableAgentAttribution(c)
+  );
+}
+
+/**
+ * A RE-RESOLVING bearer for work that outlives the request.
+ *
+ * `getConvexBearerForRequest` hands back a string, which is right for anything
+ * that finishes inside the request. A swarm run does not: it detaches after a
+ * 202 and can fan out for hours, while a delegated JWT lives ~2h. A captured
+ * string simply stops working partway through, and every later call — attempt
+ * claims, terminal reports, transcript persists — fails on a run that looks
+ * half-finished.
+ *
+ * Call this WHILE THE CONTEXT IS LIVE: it reads the delegation identity now
+ * and closes over the ids, so the returned thunk never touches `c`. Each call
+ * re-mints (or returns the cached token, which `getConvexBearerForDelegation`
+ * already refreshes near expiry).
+ *
+ * For a session/guest JWT caller the thunk captures one access token. It does
+ * NOT receive the browser's refreshed tokens, and the access token can expire
+ * while the browser remains signed in. A longer background run can therefore
+ * lose authorization for heartbeats and persistence. Fixing that requires a
+ * renewable, scoped execution credential; the stale-run sweep only reports
+ * the resulting loss of contact, not its cause.
+ */
+export function getConvexBearerThunkForRequest(
+  c: Context
+): () => Promise<string> {
+  if (usesDelegatedToken(c)) {
+    const { workosUserId, organizationId } = delegationContext(c);
+    // Read the attribution now, while the context is live — the thunk runs
+    // long after this request is gone and must never touch `c`.
+    const attribution = stableAgentAttribution(c);
+    return () =>
+      getConvexBearerForDelegation(workosUserId, organizationId, attribution);
+  }
+  const bearer = assertBearerToken(c);
+  return async () => bearer;
+}
+
+/** Authorize detached work while the browser token is still valid. */
+export async function getBackgroundRunBearerForRequest(
+  c: Context,
+  projectId: string,
+): Promise<() => Promise<string>> {
+  if (usesDelegatedToken(c) || c.get("guestId")) {
+    return getConvexBearerThunkForRequest(c);
+  }
+  const bearer = assertBearerToken(c);
+  // Never elevate an unverified claim to service-token delegation.
+  const session = await verifyAuthKitToken(bearer).catch((error: unknown) => {
+    if (error instanceof AuthKitVerificationError) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Invalid or expired session token",
+      );
+    }
+    throw error;
+  });
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_URL configuration",
+    );
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearer);
+  // Resolve the organization from the project authorized by the ORIGINAL
+  // credential, not from a client header or the browser's active organization.
+  const projects = (await client.query(
+    "projects:getMyProjects" as never,
+    {} as never,
+  )) as Array<{ _id: string; organizationId?: string }>;
+  const project = projects.find((row) => row._id === projectId);
+  if (!project?.organizationId) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Cannot authorize background execution for this project",
+    );
+  }
+  const organizationId = project.organizationId;
+  const attribution = stableAgentAttribution(c);
+  const getBearer = () =>
+    getConvexBearerForDelegation(session.sub, organizationId, attribution);
+  // Fail before creating a durable run if delegation is unavailable. The
+  // backend rechecks membership on each mint; the token stays server-side.
+  await getBearer();
+  return getBearer;
+}
+
+/**
+ * The bearer for EXECUTING AN APPROVED PROPOSAL, minted fresh rather than
+ * cached.
+ *
+ * This is the one path that carries the volatile half of an attribution — the
+ * proposal's action id, and the request id of the execution — because it is
+ * the one path where they are the point: they are the join between "a human
+ * pressed Run it in Slack" and the row that changed. A cached token cannot
+ * carry them (it would stamp one request's ids on every later request sharing
+ * the cache key), so this deliberately pays a mint.
+ *
+ * The cost is proportionate. Execution already re-verifies membership,
+ * self-dispatches a whole operation and spends; one extra token exchange is
+ * noise against that, and unlike the read path it does not repeat per poll.
+ *
+ * A JWT caller has nothing to mint, so they get their own bearer verbatim and
+ * no attribution — which is correct: they are not a delegated agent.
+ */
+export async function getConvexBearerForApprovedAction(
+  c: Context,
+  agentActionId: string
+): Promise<string> {
+  if (!usesDelegatedToken(c)) {
+    return assertBearerToken(c);
+  }
+  const { workosUserId, organizationId } = delegationContext(c);
+  const minted = await mintDelegatedToken(
+    workosUserId,
+    organizationId,
+    volatileAgentAttribution(c, agentActionId)
+  );
+  return minted.token;
 }
 
 /**
@@ -158,9 +386,12 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
  */
 export async function getConvexBearerForDelegation(
   workosUserId: string,
-  organizationId: string
+  organizationId: string,
+  attribution?: AgentAttribution
 ): Promise<string> {
-  const cacheKey = `${workosUserId}:${organizationId}`;
+  const cacheKey = `${workosUserId}:${organizationId}:${agentAttributionCacheKey(
+    attribution
+  )}`;
 
   const cached = mintedTokenCache.get(cacheKey);
   if (cached && cached.expiresAt - Date.now() > EXPIRY_SLACK_MS) {
@@ -172,7 +403,11 @@ export async function getConvexBearerForDelegation(
     return (await inflight).token;
   }
 
-  const mintPromise = mintDelegatedToken(workosUserId, organizationId)
+  const mintPromise = mintDelegatedToken(
+    workosUserId,
+    organizationId,
+    attribution
+  )
     .then((minted) => {
       mintedTokenCache.set(cacheKey, minted);
       return minted;

@@ -11,6 +11,7 @@ import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
 export type HostFocusTabId =
   | "behavior"
   | "tools"
+  | "browser"
   | "computer"
   | "protocol"
   | "apps"
@@ -343,7 +344,7 @@ export interface ServerCardNodeData extends Record<string, unknown> {
   hasOverride: boolean;
   /**
    * Runtime connection state surfaced from `appState.servers[name]`. Drives
-   * the indicator dot so the host canvas matches the Connect/Servers tab
+   * the indicator dot so the host canvas matches the Servers tab
    * instead of unconditionally painting every server emerald. `unknown` is
    * used when the host builder has no runtime data (e.g. tests).
    */
@@ -386,6 +387,12 @@ export interface BuiltinToolsNodeData extends Record<string, unknown> {
  *   - `null` — attached in config, but no machine reserved yet
  *   - `ComputerStatus` — live provider lifecycle (ready / waking / …)
  */
+export interface BrowserNodeData extends Record<string, unknown> {
+  kind: "browser";
+  enabled: boolean;
+  profileLabel: string;
+}
+
 export interface ComputerNodeData extends Record<string, unknown> {
   kind: "computer";
   attached: boolean;
@@ -401,6 +408,7 @@ export type HostRedesignNodeData =
   | ServerCardNodeData
   | AddServerPillNodeData
   | BuiltinToolsNodeData
+  | BrowserNodeData
   | ComputerNodeData;
 
 export type HostRedesignNodeType =
@@ -409,6 +417,7 @@ export type HostRedesignNodeType =
   | "redesignServerCard"
   | "redesignAddServer"
   | "redesignBuiltinTools"
+  | "redesignBrowser"
   | "redesignComputer";
 
 export type HostRedesignFlowNode =
@@ -417,6 +426,7 @@ export type HostRedesignFlowNode =
   | Node<ServerCardNodeData, "redesignServerCard">
   | Node<AddServerPillNodeData, "redesignAddServer">
   | Node<BuiltinToolsNodeData, "redesignBuiltinTools">
+  | Node<BrowserNodeData, "redesignBrowser">
   | Node<ComputerNodeData, "redesignComputer">;
 
 export interface HostRedesignViewModel {
@@ -458,11 +468,13 @@ export interface HostRedesignContext {
   /**
    * Project Computers visualization inputs. All optional so the builder
    * stays pure and callers that don't surface the islands (e.g. the
-   * chatbox read-only canvas) can omit them. When `computersEnabled` is
+   * scenario read-only canvas) can omit them. When `computersEnabled` is
    * not exactly `true`, the builder emits NO island nodes/edges, so the
    * GA canvas is byte-for-byte unchanged.
    */
   computersEnabled?: boolean;
+  browsersEnabled?: boolean;
+  browserProfileName?: string;
   /** Caller's live computer for the project (`null` none, `undefined` loading). */
   computerStatus?: ComputerView | null;
   /** Enabled built-in tool catalog (id → label / requiresComputer). */
@@ -486,6 +498,7 @@ export const SERVERS_HUB_NODE_ID = "servers-hub";
 export const ADD_SERVER_NODE_ID = "add-server";
 /** Project Computers islands (gated behind `computers-enabled`). */
 export const BUILTIN_TOOLS_NODE_ID = "builtin-tools";
+export const BROWSER_NODE_ID = "browser";
 export const COMPUTER_NODE_ID = "computer";
 
 /** Leaf id constructors — stable across hosts so RF can morph in place. */
@@ -529,6 +542,7 @@ export function focusTabForNodeId(nodeId: string): {
     // state; the tab owns editing it.
     return { tab: "tools", selectedServerId: null };
   }
+  if (nodeId === BROWSER_NODE_ID) return { tab: "browser", selectedServerId: null };
   if (nodeId === COMPUTER_NODE_ID) {
     // The Computer island opens the dedicated Computer tab (the
     // personal-computer attach/detach toggle). Flag-gated, same as the
@@ -566,8 +580,8 @@ export function focusTabForNodeId(nodeId: string): {
   if (nodeId === SERVERS_HUB_NODE_ID || nodeId.startsWith("server-card:")) {
     // Server-related canvas clicks intentionally do NOT open the focus
     // panel anymore. The per-host Servers tab was removed when project-
-    // scoped server config shipped; the project Servers tab header now
-    // owns server selection (single Auto-connect toggle). Returning
+    // scoped server config shipped; auto-connect now opens the whole
+    // project catalog (personal switch in the Servers tab header). Returning
     // null leaves the click as a visual selection only — `handleSelectNode`
     // skips `openFocus` when the resolver is null.
     return null;

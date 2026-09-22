@@ -12,6 +12,7 @@ const {
   createAuthorizedManagerMock,
   convexQueryMock,
   convexActionMock,
+  convexMutationMock,
   validateApiKeyMock,
   resolveUserByExternalIdMock,
   lookupWorkosKeyBindingMock,
@@ -27,6 +28,7 @@ const {
     createAuthorizedManagerMock: vi.fn(),
     convexQueryMock: vi.fn(),
     convexActionMock: vi.fn(),
+    convexMutationMock: vi.fn(),
     validateApiKeyMock: vi.fn(),
     resolveUserByExternalIdMock: vi.fn(),
     lookupWorkosKeyBindingMock: vi.fn(),
@@ -77,11 +79,12 @@ vi.mock("convex/browser", () => ({
     setAuth: vi.fn(),
     query: convexQueryMock,
     action: convexActionMock,
+    mutation: convexMutationMock,
   })),
 }));
 
 import v1Routes from "../index.js";
-import { parseMaxConcurrentRuns } from "../evals.js";
+import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -94,7 +97,8 @@ function request(
   method: string,
   path: string,
   body?: Record<string, unknown>,
-  token = "tok"
+  token = "tok",
+  extraHeaders: Record<string, string> = {}
 ): Promise<Response> {
   return Promise.resolve(
     app.request(path, {
@@ -102,16 +106,44 @@ function request(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        ...extraHeaders,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
   );
 }
 
+// The suite the eval-run route reads to decide environment selection. No
+// `environmentIds` = a legacy suite, which is what most of these tests are.
+const SUITE_DOC = {
+  _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+  projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  name: "Smoke",
+};
+
+/**
+ * Stub Convex queries by FUNCTION NAME rather than by call order. The eval-run
+ * route issues several reads per request (the suite, then the saved server
+ * selection or the environment resolution), so `mockResolvedValueOnce` chains
+ * would encode call order that has nothing to do with what a test is asserting.
+ * Unlisted functions fall back to the legacy suite / `null`.
+ */
+function mockConvexQueries(
+  handlers: Record<string, (args: any) => unknown> = {}
+): void {
+  convexQueryMock.mockImplementation(async (fn: string, args: any) => {
+    if (Object.prototype.hasOwnProperty.call(handlers, fn)) {
+      return handlers[fn]!(args);
+    }
+    if (fn === "testSuites:getTestSuite") return SUITE_DOC;
+    return null;
+  });
+}
+
 const RUN_DOC = {
-  _id: "run_1",
-  suiteId: "suite_1",
-  projectId: "p1",
+  _id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+  projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
   runNumber: 3,
   status: "completed",
   result: "passed",
@@ -126,6 +158,7 @@ describe("v1 write routes", () => {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
     INSPECTOR_SERVICE_TOKEN: process.env.INSPECTOR_SERVICE_TOKEN,
+    MCPJAM_HARNESS_BROKER_DELIVERY: process.env.MCPJAM_HARNESS_BROKER_DELIVERY,
   };
   const originalFetch = global.fetch;
 
@@ -134,6 +167,7 @@ describe("v1 write routes", () => {
     process.env.CONVEX_URL = "https://convex.example.com";
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    mockConvexQueries();
   });
 
   afterEach(() => {
@@ -149,7 +183,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/tools/call",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/tools/call",
         { parameters: {} }
       );
       expect(res.status).toBe(400);
@@ -162,7 +196,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/prompts/get",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/prompts/get",
         {}
       );
       expect(res.status).toBe(400);
@@ -173,11 +207,25 @@ describe("v1 write routes", () => {
   });
 
   describe("POST /eval-runs", () => {
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", hostIds: ["h1"] }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a body with neither suiteId nor tests (400)", async () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { serverIds: ["s1"] }
       );
       expect(res.status).toBe(400);
@@ -190,7 +238,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         {
           suiteName: "fresh suite",
           tests: [
@@ -222,8 +270,8 @@ describe("v1 write routes", () => {
           authenticatedUserId: null,
         });
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn().mockResolvedValue(undefined),
@@ -231,39 +279,78 @@ describe("v1 write routes", () => {
         return { disconnectAllServers };
       }
 
-      it("derives the suite's saved server selection and connects it", async () => {
-        const { disconnectAllServers } = mockHappyCreate();
-        convexQueryMock.mockImplementation(async (fn: string) =>
-          fn === "testSuites:getSuiteRunServerSelection"
-            ? {
-                serverIds: ["s_alpha", "s_beta"],
-                serverNames: ["alpha", "beta"],
-                source: "host_config",
-              }
-            : null
+      it("answers an import refusal with 400 and its reason, not a 500", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+          }),
+        });
+        prepareEvalRunMock.mockRejectedValue(
+          Object.assign(new Error("Uncaught ConvexError: not approved"), {
+            data: {
+              code: "IMPORT_INELIGIBLE",
+              message:
+                'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
+              reason: "approval_required",
+            },
+          })
         );
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        // Rethrown raw this reached the application-level handler as a 500,
+        // telling the one person who could fix it that the server broke.
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toMatch(/approximated/);
+        expect(body.details?.reason).toBe("approval_required");
+      });
+
+      it("derives the suite's saved server selection and connects it", async () => {
+        const { disconnectAllServers } = mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha", "s_beta"],
+            serverNames: ["alpha", "beta"],
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+          }),
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(202);
         expect(await res.json()).toEqual({
-          runId: "run_1",
-          suiteId: "suite_1",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           status: "running",
           caseUpsert: { committed: [], failed: [] },
           servers: [
             { id: "s_alpha", name: "alpha" },
             { id: "s_beta", name: "beta" },
           ],
+          environment: null,
         });
         expect(convexQueryMock).toHaveBeenCalledWith(
           "testSuites:getSuiteRunServerSelection",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
         // The manager connects the derived set, names included.
         expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
@@ -288,17 +375,19 @@ describe("v1 write routes", () => {
 
       it("fails actionably when the suite has no saved selection", async () => {
         mockHappyCreate();
-        convexQueryMock.mockResolvedValueOnce({
-          serverIds: [],
-          serverNames: [],
-          source: "none",
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: [],
+            serverNames: [],
+            source: "none",
+          }),
         });
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(400);
@@ -315,15 +404,17 @@ describe("v1 write routes", () => {
 
       it("maps a suite the caller cannot see to 404", async () => {
         mockHappyCreate();
-        convexQueryMock.mockRejectedValueOnce(
-          new Error("Suite not found or unauthorized")
-        );
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => {
+            throw new Error("Suite not found or unauthorized");
+          },
+        });
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_other" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suiteotherxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(404);
@@ -334,13 +425,13 @@ describe("v1 write routes", () => {
 
       it("maps a null selection read to 404, not a validation error", async () => {
         mockHappyCreate();
-        convexQueryMock.mockResolvedValueOnce(null);
+        mockConvexQueries({ "testSuites:getTestSuite": () => null });
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(404);
@@ -351,23 +442,630 @@ describe("v1 write routes", () => {
 
       it("degrades to an explicit-serverIds instruction on older backends", async () => {
         mockHappyCreate();
-        convexQueryMock.mockRejectedValueOnce(
-          new Error(
-            "Could not find public function for 'testSuites:getSuiteRunServerSelection'"
-          )
-        );
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => {
+            throw new Error(
+              "Could not find public function for 'testSuites:getSuiteRunServerSelection'"
+            );
+          },
+        });
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(400);
         const body = (await res.json()) as { code?: string; message?: string };
         expect(body.code).toBe("VALIDATION_ERROR");
         expect(body.message).toContain("Pass serverIds explicitly");
+      });
+    });
+
+    /**
+     * Per-run approval of approximated imports, asserted at the TRANSPORT
+     * boundary.
+     *
+     * The exact object handed to `prepareEvalRun` is what matters: every Zod
+     * boundary in this path strips unknown keys silently, so a schema that
+     * forgot to declare `importApprovals` would answer 202 and launch a run
+     * the backend then refuses — reported to the caller as a policy refusal
+     * for a run they did approve.
+     */
+    describe("importApprovals", () => {
+      function mockHappyLaunch() {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+          }),
+        });
+        return { disconnectAllServers };
+      }
+
+      it("survives the strict run schema and reaches prepareEvalRun intact", async () => {
+        const { disconnectAllServers } = mockHappyLaunch();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            importApprovals: [
+              { testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", reason: "Reviewed against the rubric." },
+            ],
+          }
+        );
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          importApprovals: [
+            { testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", reason: "Reviewed against the rubric." },
+          ],
+        });
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it("is absent, not empty, on a launch that approved nothing", async () => {
+        const { disconnectAllServers } = mockHappyLaunch();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+        expect(res.status).toBe(202);
+        // An empty array is a claim ("I approved nothing"); absence is the
+        // ordinary case, and the backend reads the two differently.
+        expect(
+          "importApprovals" in prepareEvalRunMock.mock.calls[0][1]
+        ).toBe(false);
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it.each([
+        ["an approver", { approvedBy: "user_9" }],
+        ["an approval time", { approvedAt: 1756100000000 }],
+      ] as const)(
+        "refuses %s supplied by the caller (400, no launch)",
+        async (_label, extra) => {
+          mockHappyLaunch();
+          const res = await request(
+            makeApp(),
+            "POST",
+            "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+            {
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+              importApprovals: [
+                { testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", reason: "ok", ...extra },
+              ],
+            }
+          );
+          // Both are DERIVED by the server. A caller-supplied approver would
+          // file one person's approval under another's name, and a
+          // caller-supplied timestamp could be backdated past the edit that
+          // invalidated the claim.
+          expect(res.status).toBe(400);
+          expect(prepareEvalRunMock).not.toHaveBeenCalled();
+        }
+      );
+
+      it.each([
+        ["a blank reason", ""],
+        ["a 501-character reason", "r".repeat(501)],
+      ] as const)("refuses %s (400, no launch)", async (_label, reason) => {
+        mockHappyLaunch();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            importApprovals: [{ testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", reason }],
+          }
+        );
+        expect(res.status).toBe(400);
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("idempotent replay", () => {
+      function mockReplay(status: string) {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        const execute = vi.fn().mockResolvedValue(undefined);
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute,
+          // What the platform reports when a key (or the keyless fingerprint
+          // window) matched an existing run.
+          deduped: true,
+          status,
+        });
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+          }),
+        });
+        return { execute, disconnectAllServers };
+      }
+
+      it("does NOT re-execute a replay of a FINISHED run", async () => {
+        // The whole point of sending a key. Executing here would run every
+        // case a second time and bill for it, over results already final.
+        const { execute, disconnectAllServers } = mockReplay("completed");
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
+        );
+
+        expect(res.status).toBe(202);
+        const body = (await res.json()) as any;
+        expect(body.runId).toBe("run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+        // Reports what the run IS, not what a launch would have made it.
+        expect(body.status).toBe("completed");
+        expect(body.deduped).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+        // The manager and the concurrency slot are still settled — the
+        // `.finally` that normally does it belongs to an execution that never
+        // happened.
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it("releases the concurrency slot when it skips execution", async () => {
+        // A skipped run that kept its slot would brick the org's quota just as
+        // surely as a leaked one.
+        mockReplay("completed");
+        for (let i = 0; i < 5; i += 1) {
+          const res = await request(
+            makeApp(),
+            "POST",
+            "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+            { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: `key_${i}` }
+          );
+          expect(res.status).toBe(202);
+        }
+      });
+
+      it("DOES execute a replay of a run still in flight", async () => {
+        // Deliberately unchanged: an in-flight run and one abandoned mid-flight
+        // are indistinguishable from here, and refusing to execute would strand
+        // the second. Deciding that needs a liveness signal, not a guess.
+        const { execute } = mockReplay("running");
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
+        );
+
+        expect(res.status).toBe(202);
+        expect((await res.json()).status).toBe("running");
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+
+      it("executes normally against a backend with no replay signal", async () => {
+        // Deploy skew: absent `deduped` is UNKNOWN, not "fresh". Unknown must
+        // keep the old behaviour rather than start refusing to run.
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        const execute = vi.fn().mockResolvedValue(undefined);
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute,
+        });
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+          }),
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
+        );
+
+        expect(res.status).toBe(202);
+        const body = (await res.json()) as any;
+        expect(body.status).toBe("running");
+        expect(body.deduped).toBeUndefined();
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+    });
+
+
+    describe("environment-backed runs", () => {
+      // Attach-ordered environments on the suite; the route's selection rule
+      // reads this, not the caller's word.
+      const ENV_SUITE_DOC = { ...SUITE_DOC, environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"] };
+      const PROJECT_ENVIRONMENTS = [
+        { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging" },
+        { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Prod" },
+      ];
+
+      /**
+       * Make the suite environment-based and let `resolveEnvironmentForLaunch`
+       * succeed. `projectEnvironments:listEnvironments` is stubbed too — it is
+       * what the 400s read to name the attached candidates.
+       */
+      function mockEnvSuite(environmentIds: string[] = ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"]): void {
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({
+            ...SUITE_DOC,
+            environmentIds,
+          }),
+          "projectEnvironments:listEnvironments": () => PROJECT_ENVIRONMENTS,
+          "projectEnvironments:resolveEnvironmentForLaunch": () =>
+            RESOLVED_ENVIRONMENT,
+          // The environment's host. The launch now connects AS it (protocol
+          // pins, capabilities, timeouts), so an unreadable one fails the run
+          // rather than silently running as the default host — the same rule
+          // the run-group route already applies for its harness gate.
+          "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+        });
+      }
+
+      const RESOLVED_ENVIRONMENT = {
+        environmentRef: {
+          environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          name: "Staging",
+          revision: 7,
+        },
+        hostId: "host1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        hostConfigId: "hc_1",
+        selectedServerIds: ["s_env"],
+        // Live-healed projection, plus a server contributed by a pinned
+        // plugin version — the manager must connect BOTH.
+        servers: [
+          { serverId: "s_env_live", name: "env server" },
+          { serverId: "s_plugin", name: "plugin server" },
+        ],
+      };
+
+      function mockHappyCreate() {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+        return { disconnectAllServers };
+      }
+
+      const inlineTest = {
+        title: "echo works",
+        steps: [{ id: "s1", kind: "prompt", prompt: "Use the echo tool" }],
+        runs: 1,
+        model: "anthropic/claude-haiku-4.5",
+        provider: "anthropic",
+      };
+
+      it("connects the environment's closed set and pins the run to its revision", async () => {
+        mockHappyCreate();
+        mockEnvSuite();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        expect(res.status).toBe(202);
+        // The 202 names the environment the run is pinned to.
+        expect(
+          ((await res.json()) as { environment?: unknown }).environment
+        ).toEqual({ id: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 7 });
+        expect(convexQueryMock).toHaveBeenCalledWith(
+          "projectEnvironments:resolveEnvironmentForLaunch",
+          { serverSource: "environment_only", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+        // The suite's saved selection is never consulted for an env run.
+        expect(convexQueryMock).not.toHaveBeenCalledWith(
+          "testSuites:getSuiteRunServerSelection",
+          expect.anything()
+        );
+        expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
+          "s_env_live",
+          "s_plugin",
+        ]);
+        expect(createAuthorizedManagerMock.mock.calls[0][7]).toMatchObject({
+          serverNames: ["env server", "plugin server"],
+        });
+        // The resolution is handed down instead of re-resolved, so the run is
+        // pinned to the revision whose servers were just connected.
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          serverIds: ["s_env_live", "s_plugin"],
+          resolvedEnvironment: RESOLVED_ENVIRONMENT,
+        });
+      });
+
+      it("rejects serverIds alongside an environment instead of ignoring them", async () => {
+        mockHappyCreate();
+        mockEnvSuite();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s_bogus"] }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { code?: string; message?: string };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toContain("mutually exclusive");
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("requires a suiteId with an environment, before any authoring", async () => {
+        mockHappyCreate();
+        mockEnvSuite();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          {
+            suiteName: "fresh suite",
+            environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            tests: [inlineTest],
+          }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { code?: string; message?: string };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toContain("suiteId is required");
+        // Nothing was authored for a request that could never have been served.
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      });
+
+      it("rejects an environment the suite has not attached, naming the ones it has", async () => {
+        mockHappyCreate();
+        mockEnvSuite();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.details?.reason).toBe("ENVIRONMENT_NOT_ATTACHED");
+        expect(body.message).toContain("Staging");
+        // The rejection lands before authoring and before any connection.
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      });
+
+      it("launches an unattached project env when ephemeralEnvironment is true", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({
+            ...SUITE_DOC,
+            environmentIds: [],
+          }),
+          "projectEnvironments:getEnvironment": () => ({
+            environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx",
+            projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            name: "Adhoc",
+          }),
+          "projectEnvironments:resolveEnvironmentForLaunch": () =>
+            RESOLVED_ENVIRONMENT,
+          // See the sibling fixture above: the launch connects as the
+          // environment's host.
+          "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx",
+            ephemeralEnvironment: true,
+          }
+        );
+
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx",
+          ephemeralEnvironment: true,
+        });
+      });
+
+      it("auto-selects the sole attached environment when none is named", async () => {
+        mockHappyCreate();
+        mockEnvSuite();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        expect(res.status).toBe(202);
+        expect(
+          ((await res.json()) as { environment?: unknown }).environment
+        ).toEqual({ id: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 7 });
+        // Never falls back to the legacy saved selection — that is exactly the
+        // drift this rule closes (connect one set, snapshot another).
+        expect(convexQueryMock).not.toHaveBeenCalledWith(
+          "testSuites:getSuiteRunServerSelection",
+          expect.anything()
+        );
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          serverIds: ["s_env_live", "s_plugin"],
+        });
+      });
+
+      it("requires a choice when several environments are attached", async () => {
+        mockHappyCreate();
+        mockEnvSuite(["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"]);
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.details?.reason).toBe("ENVIRONMENT_REQUIRED");
+        // Both candidates are named, so the caller can pick without a round trip.
+        expect(body.message).toContain("Staging");
+        expect(body.message).toContain("Prod");
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("rejects a server override on an environment-based suite", async () => {
+        mockHappyCreate();
+        mockEnvSuite();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s_bogus"] }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.details?.reason).toBe(
+          "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE"
+        );
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("maps a launch-resolution failure to 409 with the ENV_ reason", async () => {
+        mockHappyCreate();
+        const conflict = Object.assign(new Error("ConvexError"), {
+          data: {
+            code: "ENV_PLUGIN_DISABLED",
+            message: "Pinned plugin is disabled.",
+          },
+        });
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ENV_SUITE_DOC,
+          "projectEnvironments:resolveEnvironmentForLaunch": () => {
+            throw conflict;
+          },
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { code?: string };
+        };
+        expect(body.code).toBe("CONFLICT");
+        expect(body.message).toBe("Pinned plugin is disabled.");
+        expect(body.details?.code).toBe("ENV_PLUGIN_DISABLED");
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("maps an unreadable environment to 404, not a conflict", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ENV_SUITE_DOC,
+          "projectEnvironments:resolveEnvironmentForLaunch": () => {
+            throw Object.assign(new Error("ConvexError"), {
+              data: { code: "ENV_NOT_FOUND", message: "nope" },
+            });
+          },
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { code?: string }).code).toBe(
+          "NOT_FOUND"
+        );
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
     });
 
@@ -391,8 +1089,8 @@ describe("v1 write routes", () => {
           authenticatedUserId: null,
         });
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn().mockResolvedValue(undefined),
@@ -403,14 +1101,20 @@ describe("v1 write routes", () => {
         // The exact failure mode that motivated this: a raw Anthropic API id
         // is not hosted and has no BYOK key, so the run would 202 and then
         // die with zero tokens and an opaque stream error.
+        //
+        // Use a RETIRED id here. The gate admits anything in MODEL_LOOKUP
+        // (BYOK statics ∪ hosted snapshot), so any id we might later add to
+        // SUPPORTED_MODELS stops exercising this path — which is how the
+        // previous fixture, claude-sonnet-4-6, quietly stopped testing the
+        // rejection once that model shipped in the picker (MMA-2).
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
-            tests: [inlineTest("claude-sonnet-4-6")],
+            tests: [inlineTest("claude-3-7-sonnet-latest")],
           }
         );
         expect(res.status).toBe(400);
@@ -430,7 +1134,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
@@ -445,11 +1149,11 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
-            tests: [inlineTest("claude-sonnet-4-6")],
+            tests: [inlineTest("claude-3-7-sonnet-latest")],
             modelApiKeys: { anthropic: "sk-ant-test" },
           }
         );
@@ -461,7 +1165,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
@@ -484,8 +1188,8 @@ describe("v1 write routes", () => {
         resolveExecute = resolve;
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [{ name: "case" }], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn(() => executeGate),
@@ -494,24 +1198,25 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
 
       expect(res.status).toBe(202);
       expect(await res.json()).toEqual({
-        runId: "run_1",
-        suiteId: "suite_1",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         status: "running",
         caseUpsert: { committed: [{ name: "case" }], failed: [] },
         servers: [{ id: "s1" }],
+        environment: null,
       });
       // The request resolved while execute was still pending — async run.
       expect(disconnectAllServers).not.toHaveBeenCalled();
       // prepareEvalRun received the public->internal request mapping.
       const prepareArgs = prepareEvalRunMock.mock.calls[0][1];
       expect(prepareArgs).toMatchObject({
-        projectId: "p1",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         suiteRerun: true,
         source: "api",
         convexAuthToken: "tok",
@@ -532,21 +1237,26 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize },
         execute: vi.fn().mockRejectedValue(new Error("provider exploded")),
       });
       // The catch's terminal-status probe sees the run still running —
       // the error escaped before the runner's own finalize.
-      convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, status: "running" });
+      mockConvexQueries({
+        "testSuites:getTestSuiteRun": () => ({
+          ...RUN_DOC,
+          status: "running",
+        }),
+      });
 
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(202);
       await vi.waitFor(() => expect(finalize).toHaveBeenCalledTimes(1));
@@ -565,20 +1275,22 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize },
         // runEvalSuiteWithAiSdk semantics: finalize as failed, then rethrow.
         execute: vi.fn().mockRejectedValue(new Error("execution failed")),
       });
-      convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, status: "failed" });
+      mockConvexQueries({
+        "testSuites:getTestSuiteRun": () => ({ ...RUN_DOC, status: "failed" }),
+      });
 
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(202);
       // The teardown still runs, but no second terminal write happens.
@@ -600,8 +1312,8 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(500);
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
@@ -640,8 +1352,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn().mockResolvedValue(undefined),
@@ -650,8 +1362,8 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] },
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
         "sk_live_secret"
       );
       expect(res.status).toBe(202);
@@ -671,7 +1383,7 @@ describe("v1 write routes", () => {
       );
     });
 
-    it("forces suiteRerun on a bare suiteId rerun even when the caller sends false", async () => {
+    it("forwards a declared launcher and CI envelope from the headers", async () => {
       const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
       createAuthorizedManagerMock.mockResolvedValue({
         manager: { disconnectAllServers },
@@ -679,8 +1391,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn().mockResolvedValue(undefined),
@@ -689,8 +1401,114 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"], suiteRerun: false }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
+        "tok",
+        {
+          "x-mcpjam-launcher": JSON.stringify({
+            kind: "cli",
+            client: "mcpjam-cli",
+            version: "8.2.0",
+          }),
+          "x-mcpjam-ci": JSON.stringify({
+            provider: "github_actions",
+            commitSha: "a1b2c3",
+            branch: "main",
+            runId: "99.2",
+            job: "evals",
+            // Keys the run row has no column for. Dropped rather than stuffed
+            // somewhere: provenance that half-fits its schema is worse than
+            // provenance that fits.
+            repository: "acme/widgets",
+            workflow: "CI",
+          }),
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        // STAMPED, and unchanged by anything the caller declared.
+        source: "api",
+        launchContext: {
+          launcher: { kind: "cli", client: "mcpjam-cli", version: "8.2.0" },
+          ciMetadata: {
+            provider: "github_actions",
+            commitSha: "a1b2c3",
+            branch: "main",
+            // GitHub's own spelling, mapped to the run row's.
+            pipelineId: "99.2",
+            jobId: "evals",
+          },
+        },
+      });
+      expect(
+        prepareEvalRunMock.mock.calls[0][1].launchContext.ciMetadata
+      ).not.toHaveProperty("repository");
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+
+    it("ignores an unusable launcher header instead of failing the launch", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
+        "tok",
+        {
+          // `ui` is stamped by the server; a caller declaring it is trying to
+          // restate a value it does not get to set.
+          "x-mcpjam-launcher": JSON.stringify({ kind: "ui" }),
+          "x-mcpjam-ci": "{not json",
+        }
+      );
+
+      // A LABEL must never cost someone their run. The claim is dropped; the
+      // launch proceeds and the stamped source is what it always was.
+      expect(res.status).toBe(202);
+      const prepareArgs = prepareEvalRunMock.mock.calls[0][1];
+      expect(prepareArgs.source).toBe("api");
+      expect(prepareArgs.launchContext).toBeUndefined();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+
+    it("forces suiteRerun on a bare suiteId rerun even when the caller sends false", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"], suiteRerun: false }
       );
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
@@ -709,8 +1527,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn().mockResolvedValue(undefined),
@@ -719,9 +1537,9 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           serverIds: ["s1"],
           tests: [
             {
@@ -771,7 +1589,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -791,7 +1609,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -811,7 +1629,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -826,11 +1644,32 @@ describe("v1 write routes", () => {
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
     });
 
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hostIds: ["h1"],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a case with an empty steps array (400)", async () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -855,7 +1694,7 @@ describe("v1 write routes", () => {
         },
       });
       authorEvalSuiteMock.mockResolvedValue({
-        suiteId: "suite_new",
+        suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
         suiteName: "Fresh suite",
         caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
       });
@@ -863,7 +1702,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -879,7 +1718,7 @@ describe("v1 write routes", () => {
         name?: string;
         servers?: unknown;
       };
-      expect(body.suiteId).toBe("suite_new");
+      expect(body.suiteId).toBe("suitenewxxxxxxxxxxxxxxxxxxxxxxxx");
       expect(body.name).toBe("Fresh suite");
 
       // The run engine is never invoked — this is author-only.
@@ -898,6 +1737,93 @@ describe("v1 write routes", () => {
       ]);
       expect(authoredArgs.tests[0].runs).toBe(1);
       expect(authoredArgs.tests[0].provider).toBe("anthropic");
+      expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+    });
+
+    it("attaches the named clients after authoring the suite", async () => {
+      // A suite authored over the API had no way to name its client, so every
+      // CLI/MCP/SDK-created suite read back with an empty Client — and the
+      // run route's host selector, which only accepts an ATTACHED host, had
+      // nothing to select.
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { listServers: () => ["s1"], disconnectAllServers },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+      mockConvexQueries({
+        "hosts:listHosts": () => [{ hostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx", name: "Claude" }],
+        "testSuites:getTestSuite": () => ({
+          _id: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          name: "Fresh suite",
+          environment: {
+            servers: ["Echo"],
+            serverBindings: [{ serverName: "Echo", projectServerId: "s1" }],
+          },
+        }),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hosts: [{ host: "Claude", servers: ["Echo"] }],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      expect((await res.json()) as { hosts?: unknown }).toMatchObject({
+        hosts: [{ id: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+      });
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "testSuites:updateTestSuite",
+        {
+          suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+          hostAttachments: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx", selectedServerIds: ["s1"] },
+          ],
+        }
+      );
+    });
+
+    it("rejects an unknown client BEFORE authoring anything", async () => {
+      // Resolving after the write would leave a half-created suite behind for
+      // a request that was never satisfiable.
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { listServers: () => ["s1"], disconnectAllServers },
+      });
+      mockConvexQueries({
+        "hosts:listHosts": () => [{ hostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx", name: "Claude" }],
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hosts: [{ host: "Nope" }],
+        }
+      );
+
+      expect(res.status).toBe(404);
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+      expect(convexMutationMock).not.toHaveBeenCalled();
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
   });
@@ -922,8 +1848,8 @@ describe("v1 write routes", () => {
       });
       const releaseGates: Array<() => void> = [];
       prepareEvalRunMock.mockImplementation(async () => ({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn(
@@ -934,8 +1860,8 @@ describe("v1 write routes", () => {
         request(
           app,
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", serverIds: ["s1"] },
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
           token
         );
 
@@ -969,35 +1895,1232 @@ describe("v1 write routes", () => {
     });
   });
 
+
+  describe("POST /eval-run-groups", () => {
+    // A suite with two attached hosts — the shape a fan-out is for. The route
+    // reads `hostAttachments` for names and attachment membership.
+    const HOST_SUITE = {
+      ...SUITE_DOC,
+      hostAttachments: [
+        { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx", hostName: "Claude" },
+        { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx", hostName: "ChatGPT" },
+      ],
+    };
+
+    /**
+     * A prepare seam whose `execute` never settles until released, so a test
+     * can observe the group HOLDING its slot. Returns the release handles and
+     * the manager teardown spy.
+     */
+    function mockPendingLaunches(perCall?: () => Record<string, unknown>) {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const releaseGates: Array<() => void> = [];
+      let call = 0;
+      prepareEvalRunMock.mockImplementation(async () => {
+        call += 1;
+        return {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: `run${call}`.padEnd(32, "x"),
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn(
+            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+          ),
+          ...(perCall ? perCall() : {}),
+        };
+      });
+      return { releaseGates, disconnectAllServers };
+    }
+
+    function hostSuiteQueries(
+      extra: Record<string, (args: any) => unknown> = {}
+    ) {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => HOST_SUITE,
+        "testSuites:getSuiteRunServerSelection": () => ({
+          serverIds: ["s_alpha"],
+          serverNames: ["alpha"],
+          source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+        }),
+        // The group's dry pass resolves each target's host config to run the
+        // static admission checks. A plain (non-harness) host by default;
+        // the harness test overrides this.
+        "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+        ...extra,
+      });
+    }
+
+    async function drain(
+      releaseGates: Array<() => void>,
+      disconnectAllServers: ReturnType<typeof vi.fn>,
+      expected: number
+    ) {
+      for (const release of releaseGates.splice(0)) release();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(expected)
+      );
+    }
+
+    it("applies ONE launch context to every target of a fan-out", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        },
+        "tok",
+        {
+          "x-mcpjam-launcher": JSON.stringify({
+            kind: "github_action",
+            client: "mcpjam-cli",
+          }),
+          "x-mcpjam-ci": JSON.stringify({
+            provider: "github_actions",
+            commitSha: "abc123",
+            runId: "42.1",
+            job: "evals",
+          }),
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      // One fan-out is one launch by one process. Siblings that badged
+      // differently would make one comparison look like two things.
+      for (const call of prepareEvalRunMock.mock.calls) {
+        expect(call[1]).toMatchObject({
+          source: "api",
+          launchContext: {
+            launcher: { kind: "github_action", client: "mcpjam-cli" },
+            ciMetadata: {
+              provider: "github_actions",
+              commitSha: "abc123",
+              pipelineId: "42.1",
+              jobId: "evals",
+            },
+          },
+        });
+      }
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("sends the SAME approvals to every target of a fan-out", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const approvals = [
+        { testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", reason: "Reviewed against the rubric." },
+      ];
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          importApprovals: approvals,
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      // A case's approximation is approximated the same way on each target,
+      // so one human decision covers the whole fan-out. Approving per target
+      // would turn one decision into N, and refusing every target after the
+      // first would fail a launch the caller approved.
+      for (const call of prepareEvalRunMock.mock.calls) {
+        expect(call[1]).toMatchObject({ importApprovals: approvals });
+      }
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("reports an import refusal as a validation failure, not INTERNAL_ERROR", async () => {
+      hostSuiteQueries();
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      // What `startTestSuiteRun` throws for a selected approximation carrying
+      // no approval.
+      prepareEvalRunMock.mockRejectedValue(
+        Object.assign(new Error("Uncaught ConvexError: not approved"), {
+          data: {
+            code: "IMPORT_INELIGIBLE",
+            message:
+              'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
+            reason: "approval_required",
+          },
+        })
+      );
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as {
+        targets: Array<{ error?: { code?: string; message?: string } }>;
+      };
+      // `describeLaunchFailure` keeps a WebRouteError's code and flattens
+      // everything else to INTERNAL_ERROR. Reporting a server fault for a
+      // decision the CALLER can make — approve the case or exclude it — sends
+      // them to the wrong place entirely.
+      expect(body.targets[0]?.error?.code).toBe("VALIDATION_ERROR");
+      expect(body.targets[0]?.error?.message).toMatch(/approximated/);
+    });
+
+    it("refuses a caller-supplied approver on the group body (400, no launch)", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          importApprovals: [
+            { testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", reason: "ok", approvedBy: "user_9" },
+          ],
+          targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(400);
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("launches unattached environments when ephemeralEnvironment is true", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          environmentIds: [],
+        }),
+        "projectEnvironments:getEnvironment": () => ({
+          environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          name: "Adhoc",
+        }),
+        "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+          environmentRef: {
+            environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx",
+            name: "Adhoc",
+            revision: 1,
+          },
+          hostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
+          hostConfigId: "hc_1",
+          selectedServerIds: ["s_env"],
+          effectiveServerIds: ["s_env"],
+          servers: [{ serverId: "s_env", name: "env" }],
+        }),
+        "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          ephemeralEnvironment: true,
+          targets: [{ environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx",
+        ephemeralEnvironment: true,
+      });
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
+
+    it("launches one run per target under a single minted group id", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.outcome).toBe("started");
+      expect(body.startedCount).toBe(2);
+      expect(body.failedCount).toBe(0);
+      expect(typeof body.runGroupId).toBe("string");
+      expect(body.targets.map((entry: any) => entry.target.name)).toEqual([
+        "Claude",
+        "ChatGPT",
+      ]);
+      expect(body.targets.every((entry: any) => entry.status === "started")).toBe(
+        true
+      );
+      // The entry discriminant owns `status`; the RUN's own status is
+      // `runStatus`, so a reader can never branch on the wrong one.
+      expect(body.targets[0].runStatus).toBe("running");
+      // Deprecated mirrors of the first started run, for readers written
+      // against the single-run receipt.
+      expect(body.runId).toBe("run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+      expect(body.status).toBe("running");
+
+      // Every sibling carries the SAME group id, and each target's own host.
+      const groupIds = prepareEvalRunMock.mock.calls.map(
+        (call) => call[1].runGroupId
+      );
+      expect(new Set(groupIds).size).toBe(1);
+      expect(groupIds[0]).toBe(body.runGroupId);
+      expect(
+        prepareEvalRunMock.mock.calls.map((call) => call[1].namedHostId)
+      ).toEqual(["hostclaudexxxxxxxxxxxxxxxxxxxxxx", "hostchatgptxxxxxxxxxxxxxxxxxxxxx"]);
+
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("holds ONE slot for the whole group, and releases it only after the LAST sibling", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+
+      const group = await request(
+        app,
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(group.status).toBe(202);
+
+      // Two targets under ONE slot: with the cap at 2, a single further launch
+      // still fits. Charging per target would have exhausted the cap here,
+      // which is what makes a 3-target fan-out unlaunchable.
+      const single = await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        serverIds: ["s1"],
+      });
+      expect(single.status).toBe(202);
+
+      // …and the next one is gated, so the group's slot is genuinely held.
+      const gated = await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        serverIds: ["s1"],
+      });
+      expect(gated.status).toBe(429);
+
+      // Release exactly ONE sibling: the group still owns its slot.
+      releaseGates.splice(0, 1)[0]!();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+      expect(
+        (
+          await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            serverIds: ["s1"],
+          })
+        ).status
+      ).toBe(429);
+
+      await drain(releaseGates, disconnectAllServers, 3);
+      expect(
+        (
+          await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            serverIds: ["s1"],
+          })
+        ).status
+      ).toBe(202);
+      await drain(releaseGates, disconnectAllServers, 4);
+    });
+
+    it("RATE_LIMITs a group when the caller is already at the cap", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      for (let i = 0; i < 2; i += 1) {
+        expect(
+          (
+            await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+              serverIds: ["s1"],
+            })
+          ).status
+        ).toBe(202);
+      }
+      const res = await request(
+        app,
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }] }
+      );
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        code: "RATE_LIMITED",
+        details: { reason: "CONCURRENT_RUN_LIMIT" },
+      });
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("a PARTIAL group releases the slot fully — the failed target never reaches a .finally", async () => {
+      hostSuiteQueries();
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const releaseGates: Array<() => void> = [];
+      let call = 0;
+      prepareEvalRunMock.mockImplementation(async () => {
+        call += 1;
+        if (call === 2) throw new Error("environment revision conflict");
+        return {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn(
+            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+          ),
+        };
+      });
+
+      const app = makeApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.outcome).toBe("partial");
+      expect(body.startedCount).toBe(1);
+      expect(body.failedCount).toBe(1);
+      expect(body.targets[1]).toMatchObject({
+        status: "failed",
+        error: { message: expect.stringContaining("revision conflict") },
+      });
+      // A runtime per-target failure does NOT abort its siblings.
+      expect(body.runId).toBe("run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+
+      // The failed target decremented in the launch loop, so releasing the one
+      // started sibling releases the whole group's slot.
+      await drain(releaseGates, disconnectAllServers, 1);
+      expect(
+        (
+          await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            serverIds: ["s1"],
+          })
+        ).status
+      ).toBe(202);
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("an ALL-FAILED group releases its slot — a leak here bricks the org's quota", async () => {
+      hostSuiteQueries();
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockRejectedValue(new Error("backend unavailable"));
+
+      const app = makeApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.outcome).toBe("failed");
+      expect(body.startedCount).toBe(0);
+      expect(body.failedCount).toBe(2);
+      // No first started run to mirror — the deprecated fields stay ABSENT
+      // rather than inventing one.
+      expect(body.runId).toBeUndefined();
+
+      // The slot must be back. Two fresh single launches both fit.
+      const { releaseGates, disconnectAllServers: d2 } = mockPendingLaunches();
+      for (let i = 0; i < 2; i += 1) {
+        expect(
+          (
+            await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+              serverIds: ["s1"],
+            })
+          ).status
+        ).toBe(202);
+      }
+      await drain(releaseGates, d2, 2);
+    });
+
+    it("rejects an unattached target with ZERO runs started", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostnopexxxxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        code: "VALIDATION_ERROR",
+        details: { reason: "HOST_NOT_ATTACHED" },
+      });
+      // The whole point of validating first: nothing spent on a request that
+      // was never satisfiable.
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a HETEROGENEOUS target list", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "HETEROGENEOUS_TARGETS" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects more targets than the fan-out bound allows", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: Array.from({ length: MAX_RUN_GROUP_TARGETS + 1 }, (_, i) => ({
+            namedHostId: `host_${i}`,
+          })),
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a target whose host selects an unavailable harness, before any sibling starts", async () => {
+      // The static half of the harness admission gate, run during the group's
+      // dry pass. Without it target 1 would already be spending when target 2
+      // failed a check that needed no run row.
+      //
+      // The unavailability is stated by the FIXTURE, not inherited from the
+      // machine: switching broker delivery off makes the shared runtime check
+      // fail for a reason this test controls, so a CI box that happens to
+      // carry harness credentials still exercises the refusal.
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      hostSuiteQueries({
+        "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
+      });
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+      expect(body.message).toContain("Claude");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("judges an ENVIRONMENT target against its OWN host, not the suite default", async () => {
+      // An environment pins a `hostId`, and that is the host whose config the
+      // run row freezes. Judging the suite's default host instead would admit
+      // an environment pinned to a harness this server cannot drive — the
+      // exact mis-attribution the gate exists to stop.
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+        }),
+        "projectEnvironments:listEnvironments": () => [
+          { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging" },
+          { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Prod" },
+        ],
+        "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+          environmentRef: { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 1 },
+          hostId: "hostharnessxxxxxxxxxxxxxxxxxxxxx",
+          selectedServerIds: ["s_env"],
+        }),
+        "testSuites:getSuiteRunServerSelection": () => ({
+          serverIds: ["s_env"],
+          serverNames: ["env server"],
+          source: "environment",
+        }),
+        // The SUITE default is a plain host; only the environment's own host
+        // carries the harness. A gate reading the wrong one answers 202.
+        "hostConfigsV2:getSuiteConfig": () => ({ hostStyle: "mcpjam" }),
+        "hosts:getHost": (args: any) =>
+          args?.hostId === "hostharnessxxxxxxxxxxxxxxxxxxxxx"
+            ? { config: { harness: "claude-code" } }
+            : { config: { hostStyle: "mcpjam" } },
+      });
+      mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "HARNESS_UNAVAILABLE" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("REJECTS a knob this route does not carry instead of dropping it", async () => {
+      // `serverIds` and `refreshSnapshot` are single-run-only, and they are
+      // precisely what a caller adapting a working single-run body will try.
+      // Stripping them would answer 202 while discarding the thing asked for.
+      hostSuiteQueries();
+      mockPendingLaunches();
+      for (const knob of [{ serverIds: ["s_alpha"] }, { refreshSnapshot: true }]) {
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+          {
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+            ...knob,
+          }
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()) as any).toMatchObject({
+          code: "VALIDATION_ERROR",
+        });
+      }
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("deduplicates repeated targets instead of launching twice", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      expect(((await res.json()) as any).startedCount).toBe(1);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
+
+    it("normalizes the PUBLIC match-option vocabulary and forwards the knobs", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+          iterationOverride: 3,
+          caseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          matchOptionsOverride: {
+            toolCallOrder: "in-order",
+            extraToolCalls: "unlimited",
+            arguments: "partial",
+          },
+          skillsOverride: "exclude",
+          notes: "nightly",
+          passCriteria: { minimumPassRate: 80 },
+        }
+      );
+      expect(res.status).toBe(202);
+      const forwarded = prepareEvalRunMock.mock.calls[0][1];
+      expect(forwarded.iterationOverride).toBe(3);
+      expect(forwarded.caseIds).toEqual(["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"]);
+      expect(forwarded.skillsOverride).toBe("exclude");
+      expect(forwarded.notes).toBe("nightly");
+      expect(forwarded.passCriteria).toEqual({ minimumPassRate: 80 });
+      expect(forwarded.matchOptionsOverride).toEqual({
+        toolCallOrder: "superset",
+        maxExtraToolCalls: null,
+        argumentMatching: "partial",
+      });
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
+
+    it("replays a keyed group onto the SAME group id and the same per-target run keys", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      const body = {
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        targets: [
+          { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+          { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+        ],
+        idempotencyKey: "trigger-42",
+      };
+
+      const first = (await (
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
+      ).json()) as any;
+      const firstKeys = prepareEvalRunMock.mock.calls.map(
+        (call) => call[1].idempotencyKey
+      );
+      // Each target gets its OWN derived key. One shared key would return
+      // target 1's run for every target; no key at all would double-launch.
+      expect(new Set(firstKeys).size).toBe(2);
+
+      await drain(releaseGates, disconnectAllServers, 2);
+      prepareEvalRunMock.mockClear();
+
+      // Simulate a retry after a crash mid-launch: the SAME request replays.
+      const { releaseGates: gates2, disconnectAllServers: d2 } =
+        mockPendingLaunches();
+      const replay = (await (
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
+      ).json()) as any;
+      expect(replay.runGroupId).toBe(first.runGroupId);
+      expect(
+        prepareEvalRunMock.mock.calls.map((call) => call[1].idempotencyKey)
+      ).toEqual(firstKeys);
+      await drain(gates2, d2, 2);
+    });
+
+    it("does not treat a client-supplied runGroupId on the single-run route as a group", async () => {
+      mockConvexQueries({
+        "testSuites:getSuiteRunServerSelection": () => ({
+          serverIds: ["s_alpha"],
+          serverNames: ["alpha"],
+        }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      const post = () =>
+        request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runGroupId: "client-minted",
+        });
+
+      const first = await post();
+      expect(first.status).toBe(202);
+      // Echoed as a label…
+      expect((await first.json()) as any).toMatchObject({
+        runGroupId: "client-minted",
+      });
+      expect((await post()).status).toBe(202);
+      // …and metered as N independent launches, not one group.
+      expect((await post()).status).toBe(429);
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+  });
+
+  describe("POST /eval-suites/:suiteId/environments", () => {
+    it("appends atomically and reports the resulting attachment list", async () => {
+      // NOT a read-modify-write on the replace door: that would silently
+      // detach an environment someone else attached in between, and the
+      // compose-and-run path attaches on every launch.
+      mockConvexQueries();
+      convexMutationMock.mockResolvedValue({
+        attached: true,
+        environmentIds: ["envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        attached: true,
+        environmentIds: ["envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+      });
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "testSuites:attachEnvironment",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+      );
+    });
+
+    it("reports an already-attached environment as a no-op, not a failure", async () => {
+      // What lets a retried compose-and-run converge.
+      mockConvexQueries();
+      convexMutationMock.mockResolvedValue({
+        attached: false,
+        environmentIds: ["envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+      });
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+      );
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).attached).toBe(false);
+    });
+
+    it("404s a suite from another project before touching the backend", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          projectId: "other",
+        }),
+      });
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+      );
+      expect(res.status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names the alternative when the backend has no atomic append yet", async () => {
+      mockConvexQueries();
+      convexMutationMock.mockRejectedValue(
+        new Error("Could not find public function for 'testSuites'")
+      );
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details.reason).toBe("ATTACH_UNAVAILABLE");
+      expect(body.message).toContain("environmentIds");
+    });
+
+    it("404s a malformed body environmentId WITHOUT calling the mutation", async () => {
+      // The path `suiteId` was gated and the BODY id next to it was not, so a
+      // joined pair here reached `v.id('projectEnvironments')` and came back as
+      // production's redacted string — which the WRITE translator has no
+      // argument-validation branch for, so it answered its terminal 500:
+      // `origin=mcpjam`, captured, paging. The absent mutation call is the
+      // assertion that pins this to the boundary rather than to a translator.
+      mockConvexQueries();
+      convexMutationMock.mockClear();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        {
+          environmentId:
+            "envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        }
+      );
+
+      expect(res.status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The grouped-launch route is where the incident's shape came FROM: it hands
+   * a model N run ids, and `operations.ts` tells it to poll "the returned
+   * runId" (singular). Its own request body took the same treatment the run-id
+   * path segment did — a plain string — so the identical joined-ids value
+   * arrived here and produced the identical page.
+   */
+  describe("POST /eval-run-groups — target id shapes", () => {
+    const JOINED_ENV =
+      "envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    const JOINED_HOST =
+      "hostclaudexxxxxxxxxxxxxxxxxxxxxx hostchatgptxxxxxxxxxxxxxxxxxxxxx";
+
+    it("404s a joined environmentId before any run starts", async () => {
+      mockConvexQueries();
+      prepareEvalRunMock.mockClear();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          ephemeralEnvironment: true,
+          targets: [{ environmentId: JOINED_ENV }],
+        }
+      );
+
+      expect(res.status).toBe(404);
+      // ZERO runs started, which is this route's whole contract: a group that
+      // starts target 1 and then rejects target 2 has already spent.
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("404s a joined namedHostId before any run starts", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          hostAttachments: [
+            {
+              namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
+              hostName: "Claude",
+            },
+          ],
+        }),
+      });
+      prepareEvalRunMock.mockClear();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: JOINED_HOST }],
+        }
+      );
+
+      expect(res.status).toBe(404);
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("keeps the 400 for a WELL-SHAPED id that is merely unattached", async () => {
+      // The two answers must stay distinguishable. "Not a Convex id" is a 404
+      // like any unnameable resource; "a real id, not attached to this suite"
+      // keeps its 400 and its list of what IS acceptable — which is the only
+      // one of the two a caller can act on.
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          hostAttachments: [
+            {
+              namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
+              hostName: "Claude",
+            },
+          ],
+        }),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: "hostnopexxxxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).details.reason).toBe("HOST_NOT_ATTACHED");
+    });
+  });
+
   describe("eval read proxies", () => {
     it("returns the run DTO for a project-matched run", async () => {
       convexQueryMock.mockResolvedValueOnce(RUN_DOC);
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        id: "run_1",
-        suiteId: "suite_1",
+        id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        environment: null,
         runNumber: 3,
         status: "completed",
         result: "passed",
         summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
         source: "api",
         notes: null,
+        // `null`, never omitted — the same convention `judges` uses below, and
+        // for the same reason: a caller must be able to tell "no waiver in
+        // force" from "an API deployment that does not report one", and an
+        // absent field collapses those into one answer.
+        gateWaiver: null,
         createdAt: 1,
         completedAt: 2,
+        // Always present on the detail, so a caller can branch on
+        // `judges.<name>.status` without first proving the field exists.
+        // `null` here means this run was never sent to that judge.
+        judges: {
+          goalCompletion: {
+            status: null,
+            errorCode: null,
+            summary: null,
+            generatedAt: null,
+            modelUsed: null,
+            threshold: null,
+            cases: [],
+          },
+          groundedness: {
+            status: null,
+            errorCode: null,
+            summary: null,
+            generatedAt: null,
+            modelUsed: null,
+            threshold: null,
+            cases: [],
+          },
+        },
+      });
+    });
+
+    it("surfaces a RECORDED execution engine, and only when the run has one", async () => {
+      // The omission case is pinned by the exact-match assertion above: a run
+      // whose snapshot predates the field must not acquire `executionEngine`,
+      // because absent means UNKNOWN and reporting `emulated` would be a claim
+      // about a run nobody attributed.
+      convexQueryMock.mockResolvedValueOnce({
+        ...RUN_DOC,
+        configSnapshot: { executionEngine: "harness:claude-code" },
+      });
+      const res = await request(
+        makeApp(),
+        "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()) as any).toMatchObject({
+        id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        executionEngine: "harness:claude-code",
+      });
+    });
+
+    /**
+     * The import-eligibility projection on the run DTO.
+     *
+     * This object decides whether a run may gate a deploy, so what a
+     * partially-valid payload does matters more than what a good one does:
+     * a gate cannot tell a missing field from a satisfied one, so half a
+     * projection is worse than none.
+     */
+    describe("importEligibility", () => {
+      const ELIGIBILITY = {
+        status: "incomplete",
+        gateable: false,
+        importedCaseCount: 3,
+        claimedExactCaseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+        approvedApproximationCaseIds: ["case2xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+        approvedApproximationReceipts: [
+          {
+            testCaseId: "case2xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            caseKey: "ui_abc",
+            sourceCaseKey: "upstream/refunds/out-of-window",
+            approvedBy: "user_9",
+            approvedAt: 1756100000000,
+            reason: "Reviewed against the upstream rubric.",
+          },
+        ],
+        issues: [
+          {
+            code: "APPROXIMATION_NOT_APPROVED",
+            testCaseId: "case3xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            caseKey: "ui_def",
+            toolName: "render_gone",
+          },
+        ],
+      };
+
+      async function readRun(importEligibility: unknown) {
+        convexQueryMock.mockResolvedValueOnce({
+          ...RUN_DOC,
+          ...(importEligibility !== undefined ? { importEligibility } : {}),
+        });
+        const res = await request(
+          makeApp(),
+          "GET",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        );
+        expect(res.status).toBe(200);
+        return (await res.json()) as { importEligibility?: unknown };
+      }
+
+      it("projects the eligibility, receipts and issues field by field", async () => {
+        expect((await readRun(ELIGIBILITY)).importEligibility).toEqual(
+          ELIGIBILITY
+        );
+      });
+
+      it("omits the field entirely when the platform reported none", async () => {
+        // Absence says "this deployment has no opinion"; `legacy` says "there
+        // were no imported cases". A gate reading the second where the first
+        // was true would vouch for a run nobody had checked.
+        expect("importEligibility" in (await readRun(undefined))).toBe(false);
+      });
+
+      it("drops internal fields the platform sent alongside the contract", async () => {
+        const body = await readRun({
+          ...ELIGIBILITY,
+          internalCursor: "should not be published",
+          approvedApproximationReceipts: [
+            {
+              ...ELIGIBILITY.approvedApproximationReceipts[0],
+              internalActorEmail: "someone@example.test",
+            },
+          ],
+        });
+        // Spreading whatever the platform sent would publish every field it
+        // gains next without anybody deciding to — and a public field cannot
+        // be un-published once a client depends on it.
+        expect(body.importEligibility).toEqual(ELIGIBILITY);
+      });
+
+      it.each([
+        ["an unknown status", { ...ELIGIBILITY, status: "probably-fine" }],
+        ["a non-boolean gateable", { ...ELIGIBILITY, gateable: "false" }],
+        ["no importedCaseCount", { ...ELIGIBILITY, importedCaseCount: null }],
+        // The LISTS are validated exactly like the scalars. Coercing a
+        // malformed one to `[]` would publish a projection that reads as
+        // complete while the evidence behind it is missing — an `eligible`
+        // run whose approval audit silently became empty.
+        [
+          "a missing claimedExactCaseIds",
+          { ...ELIGIBILITY, claimedExactCaseIds: undefined },
+        ],
+        [
+          "a non-array approvedApproximationCaseIds",
+          { ...ELIGIBILITY, approvedApproximationCaseIds: "case2xxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+        ],
+        [
+          "a non-string entry among the case ids",
+          { ...ELIGIBILITY, claimedExactCaseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", 7] },
+        ],
+        [
+          "a non-array approvedApproximationReceipts",
+          { ...ELIGIBILITY, approvedApproximationReceipts: {} },
+        ],
+        ["a non-array issues", { ...ELIGIBILITY, issues: null }],
+        [
+          "an issue carrying no code",
+          { ...ELIGIBILITY, issues: [{ testCaseId: "case2xxxxxxxxxxxxxxxxxxxxxxxxxxx" }] },
+        ],
+      ] as const)("drops the whole projection given %s", async (_l, payload) => {
+        // Not partially projected: a gate cannot tell a missing field from a
+        // satisfied one, and absence is already handled correctly downstream
+        // as "older deployment, behave as before".
+        expect("importEligibility" in (await readRun(payload))).toBe(false);
+      });
+
+      it("drops the whole projection for a receipt missing who, when, why, or which case", async () => {
+        const body = await readRun({
+          ...ELIGIBILITY,
+          approvedApproximationReceipts: [
+            ELIGIBILITY.approvedApproximationReceipts[0],
+            { testCaseId: "case4xxxxxxxxxxxxxxxxxxxxxxxxxxx", approvedBy: "user_9", reason: "no time" },
+          ],
+        });
+        // Every field of a receipt is load-bearing. One missing `approvedAt`
+        // is not a weaker receipt; it is one a reader would have to guess at.
+        //
+        // The whole projection goes rather than just that entry: dropping the
+        // entry alone would leave `approvedApproximationCaseIds` naming a case
+        // whose receipt is nowhere, so the payload would contradict itself and
+        // a reader could not tell that anything was missing at all.
+        expect("importEligibility" in body).toBe(false);
       });
     });
 
     it("404s when the run belongs to a different project", async () => {
-      convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, projectId: "p2" });
+      convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, projectId: "proj2xxxxxxxxxxxxxxxxxxxxxxxxxxx" });
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
@@ -1010,7 +3133,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(404);
     });
@@ -1019,9 +3142,9 @@ describe("v1 write routes", () => {
       convexQueryMock.mockResolvedValueOnce(RUN_DOC).mockResolvedValueOnce({
         page: [
           {
-            _id: "iter_1",
-            testCaseId: "case_1",
-            suiteRunId: "run_1",
+            _id: "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             iterationNumber: 1,
             status: "completed",
             result: "passed",
@@ -1045,7 +3168,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1/iterations?limit=1"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations?limit=1"
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -1054,7 +3177,7 @@ describe("v1 write routes", () => {
       };
       expect(body.nextCursor).toBe("cursor_2");
       expect(body.items[0]).toMatchObject({
-        id: "iter_1",
+        id: "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         title: "case",
         model: "m",
         provider: "anthropic",
@@ -1068,12 +3191,12 @@ describe("v1 write routes", () => {
     it("returns the trace blob and 404s with TRACE_NOT_AVAILABLE when missing", async () => {
       convexQueryMock
         .mockResolvedValueOnce(RUN_DOC)
-        .mockResolvedValueOnce({ _id: "iter_1", suiteRunId: "run_1" });
+        .mockResolvedValueOnce({ _id: "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx", suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
       convexActionMock.mockResolvedValueOnce(null);
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1/iterations/iter_1/trace"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace"
       );
       expect(res.status).toBe(404);
       expect(await res.json()).toMatchObject({
@@ -1098,7 +3221,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/oauth/import-tokens",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
         {
           serverUrl: "https://server.example.com/mcp",
           tokens: { access_token: "at", refresh_token: "rt" },
@@ -1111,7 +3234,7 @@ describe("v1 write routes", () => {
       const forwarded = JSON.parse(String(init.body));
       // Path params win over the body; kind pinned to generic.
       expect(forwarded).toMatchObject({
-        projectId: "p1",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverId: "s1",
         kind: "generic",
         tokens: { access_token: "at" },
@@ -1122,7 +3245,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/oauth/import-tokens",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
         { serverUrl: "https://server.example.com/mcp" }
       );
       expect(res.status).toBe(400);

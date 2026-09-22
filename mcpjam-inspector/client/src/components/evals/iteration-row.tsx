@@ -1,9 +1,21 @@
+import {
+  modelDisplayName,
+  ModelDisplayNamesContext,
+} from "@/lib/model-display-name";
+import { useContext } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { EvalIteration, EvalCase } from "./types";
 import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { parseIterationPredicates } from "./predicates-list";
+import {
+  isGatingScore,
+  parseEvaluationConfig,
+  parseIterationScores,
+  parseScoreIntegrity,
+  scoreFailsGate,
+} from "./scores-list";
 
 interface IterationRowProps {
   iteration: EvalIteration;
@@ -28,6 +40,7 @@ export function CompactIterationRow({
   isOpen = false,
   onToggle,
 }: IterationRowProps) {
+  const availableModels = useContext(ModelDisplayNamesContext);
   const startedAt = iteration.startedAt ?? iteration.createdAt;
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
   const durationMs =
@@ -36,19 +49,42 @@ export function CompactIterationRow({
 
   const actualToolCalls = iteration.actualToolCalls || [];
 
-  // X/Y checks passed badge — read from the same parsed predicate verdicts
-  // PredicatesList renders. User-facing wording is "checks"; the internal
-  // data is `metadata.predicates` (the SDK-defined PredicateResult[] shape).
+  // X/Y assertions passed badge — read from the same parsed verdicts the detail
+  // view renders. User-facing wording is "checks".
+  //
+  // Gating SCORES win when present, and are not added to the predicate count:
+  // every predicate is itself projected into a gating score, so summing both
+  // would double-count the same verdict. Advisory scores are excluded outright
+  // — a red advisory judge must never make a passing run look failed in a list.
+  // Runs that predate scoring fall back to `metadata.predicates`.
+  const scores = parseIterationScores(iteration.metadata);
+  const evaluationConfig = parseEvaluationConfig(iteration.metadata);
+  const gatingScores = scores
+    ? scores.filter((score) => isGatingScore(score, evaluationConfig))
+    : [];
   const predicates = parseIterationPredicates(iteration.metadata);
   const checksBadge =
-    predicates && predicates.length > 0
+    gatingScores.length > 0
       ? {
-          total: predicates.length,
-          passed: predicates.filter((p) => p.passed).length,
+          total: gatingScores.length,
+          passed: gatingScores.filter(
+            (score) => !scoreFailsGate(score, evaluationConfig),
+          ).length,
         }
-      : null;
+      : predicates && predicates.length > 0
+        ? {
+            total: predicates.length,
+            passed: predicates.filter((p) => p.passed).length,
+          }
+        : null;
+  // An integrity downgrade means the gating evidence did not verify. The rows
+  // that survived may all be green, so the chip must not read as a pass.
+  const scoreIntegrityInvalid =
+    parseScoreIntegrity(iteration.metadata) === "score_integrity_invalid";
   const allChecksPassed =
-    checksBadge !== null && checksBadge.passed === checksBadge.total;
+    checksBadge !== null &&
+    checksBadge.passed === checksBadge.total &&
+    !scoreIntegrityInvalid;
 
   return (
     <div
@@ -74,9 +110,14 @@ export function CompactIterationRow({
             {testCase?.title || "—"}
           </span>
           <span className="text-xs text-muted-foreground min-w-[140px] max-w-[140px] truncate">
-            {iteration.testCaseSnapshot?.model ||
-              iterationTestCase?.models?.[0]?.model ||
-              "—"}
+            {modelDisplayName(
+              iteration.testCaseSnapshot?.model
+                ? `${iteration.testCaseSnapshot.provider}/${iteration.testCaseSnapshot.model}`
+                : iterationTestCase?.models?.[0]?.model
+                  ? `${iterationTestCase.models[0].provider}/${iterationTestCase.models[0].model}`
+                  : "—",
+              availableModels,
+            )}
           </span>
           <span className="text-xs font-mono text-muted-foreground min-w-[60px] max-w-[60px] text-right">
             {actualToolCalls.length}
@@ -92,12 +133,12 @@ export function CompactIterationRow({
               className={cn(
                 "text-[10px] font-semibold rounded px-1.5 py-0.5 min-w-[100px] max-w-[110px] text-center",
                 allChecksPassed
-                  ? "bg-green-500/15 text-green-700 dark:text-green-300"
-                  : "bg-red-500/15 text-red-700 dark:text-red-300",
+                  ? "bg-success/15 text-success"
+                  : "bg-destructive/15 text-destructive",
               )}
-              title={`${checksBadge.passed} of ${checksBadge.total} deterministic checks passed`}
+              title={`${checksBadge.passed} of ${checksBadge.total} assertions passed`}
             >
-              {checksBadge.passed} / {checksBadge.total} checks
+              {checksBadge.passed} / {checksBadge.total} assertions
             </span>
           ) : null}
           {isPending && (

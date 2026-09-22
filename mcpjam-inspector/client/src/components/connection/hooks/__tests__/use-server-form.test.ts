@@ -18,10 +18,61 @@ describe("useServerForm", () => {
     vi.mocked(hasOAuthConfig).mockReturnValue(false);
   });
 
-  it("defaults OAuth protocol mode to explicit latest", () => {
+  it("defaults OAuth protocol mode to the deferred 'auto' sentinel", () => {
+    // "auto" (not a concrete era) is what makes the wire-pin bridge reachable:
+    // a fresh form defers its OAuth era to the server's MCP wire pin instead of
+    // hard-pinning 2025-11-25 and stranding a 2026-pinned server on the 2025
+    // flow. The concrete version is resolved only when OAuth starts.
     const { result } = renderHook(() => useServerForm());
 
-    expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+    expect(result.current.oauthProtocolMode).toBe("auto");
+  });
+
+  describe("default OAuth protocol Auto persistence", () => {
+    const startDefaultOAuthAdd = (result: {
+      current: ReturnType<typeof useServerForm>;
+    }) => {
+      act(() => {
+        result.current.setName("Draft server");
+        result.current.setUrl("https://example.com/mcp");
+        result.current.setAuthType("oauth");
+        result.current.setShowAuthSettings(true);
+        // Note: oauthProtocolMode is left at its "auto" default — the user
+        // never touched the Protocol dropdown.
+      });
+    };
+
+    it("preserves Auto instead of baking a wire pin into the saved intent", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(result.current.buildFormData()).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "auto",
+      });
+    });
+
+    it("keeps Auto when no wire pin exists", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(result.current.buildFormData()).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "auto",
+      });
+    });
+
+    it("lets an explicit protocol selection win over a 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+      act(() => {
+        result.current.setOauthProtocolMode("2025-06-18");
+      });
+
+      expect(result.current.buildFormData().oauthProtocolMode).toBe(
+        "2025-06-18"
+      );
+    });
   });
 
   it("rejects malformed HTTP URLs even when HTTPS is optional", () => {
@@ -112,6 +163,113 @@ describe("useServerForm", () => {
     });
   });
 
+  it("does not require or emit preregistered credentials for explicit XAA CIMD", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setClientId("stale-preregistered-client");
+      result.current.setClientSecret("stale-preregistered-secret");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      registrationMode: "cimd",
+      clientId: undefined,
+      clientSecret: undefined,
+      hasClientSecret: undefined,
+      clearClientSecret: undefined,
+    });
+  });
+
+  it("retains hidden preregistered credentials for explicit XAA DCR", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA DCR server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("dcr");
+      result.current.setClientId("stored-preregistered-client");
+      result.current.setClientSecret("stored-preregistered-secret");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      registrationMode: "dcr",
+      clientId: "stored-preregistered-client",
+      clientSecret: "stored-preregistered-secret",
+      hasClientSecret: true,
+    });
+  });
+
+  it("emits public CIMD without stored client credentials", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Public CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("none");
+      result.current.setClientId("stale-client");
+      result.current.setClientSecret("stale-secret");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    const built = result.current.buildFormData();
+    expect(built).toMatchObject({
+      useXaa: true,
+      registrationMode: "cimd",
+      xaaClientAuth: "none",
+    });
+    expect(built.clientId).toBeUndefined();
+    expect(built.clientSecret).toBeUndefined();
+    expect(built.clearClientSecret).toBeUndefined();
+  });
+
+  it("allows a short client secret for pre-registered XAA", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Pre-registered XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("resource-client-id");
+      result.current.setClientSecret("short");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+  });
+
+  it("emits confidential CIMD when the local capability is available", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Private CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("private_key_jwt");
+    });
+
+    expect(result.current.confidentialCimdCapability.status).toBe("ready");
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      registrationMode: "cimd",
+      xaaClientAuth: "private_key_jwt",
+    });
+  });
+
   it("omits the identity pair entirely when the override fields are untouched (no force-default)", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -138,6 +296,7 @@ describe("useServerForm", () => {
       useXaa: true,
       useOAuth: false,
       authServerMode: "mcpjam",
+      clientId: "resource-client-id",
       xaaSubject: "stored-sub",
       xaaEmail: "stored@example.com",
       lastConnectionTime: new Date(),
@@ -188,6 +347,7 @@ describe("useServerForm", () => {
       useXaa: true,
       useOAuth: false,
       authServerMode: "mcpjam",
+      oauthFlowProfile: { clientId: "resource-client-id" },
       xaaSubject: "stored-sub",
       xaaEmail: "stored@example.com",
       lastConnectionTime: new Date(),
@@ -828,7 +988,7 @@ describe("useServerForm", () => {
     });
   });
 
-  it("normalizes legacy automatic OAuth protocol mode to explicit latest for existing servers", async () => {
+  it("preserves a stored 'auto' OAuth protocol mode so the wire-pin bridge still applies on edit", async () => {
     const server = {
       name: "Existing OAuth server",
       config: {
@@ -850,11 +1010,45 @@ describe("useServerForm", () => {
 
     const { result } = renderHook(() => useServerForm(server));
 
+    // Round-2: a stored "auto" is NOT coerced to a concrete era during
+    // hydration — the deferred sentinel survives so the submit-time bridge can
+    // route a 2026-pinned server through the 2026 OAuth flow.
     await waitFor(() => {
-      expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+      expect(result.current.oauthProtocolMode).toBe("auto");
     });
 
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("auto");
+
     localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
+  });
+
+  it("keeps 'auto' when editing an OAuth server with no stored protocol so the wire-pin bridge applies", async () => {
+    // Round-2: the edit initializer called normalizeOauthProtocolMode(undefined)
+    // → a concrete 2025-11-25, stranding an edited OAuth server (no stored
+    // protocol) on the 2025 flow even under a 2026 wire pin. With no stored
+    // protocol the deferred "auto" default must survive.
+    const server = {
+      name: "OAuth server without stored protocol",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("oauth");
+    });
+    expect(result.current.oauthProtocolMode).toBe("auto");
+    // The preserved sentinel is a no-op change (initial snapshot is "auto" too).
+    expect(result.current.hasChanges).toBe(false);
+
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("auto");
   });
 
   it("normalizes invalid stored OAuth registration strategies back to auto", async () => {
@@ -1060,6 +1254,63 @@ describe("useServerForm", () => {
     expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
   });
 
+  describe("validateClientSecret", () => {
+    it("allows an empty client secret (public/PKCE client)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("")).toBeNull();
+    });
+
+    it("rejects a whitespace-only client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("   ")).toBe(
+        "Client Secret cannot be only whitespace",
+      );
+    });
+
+    it("allows a single-character client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("a")).toBeNull();
+    });
+
+    it("allows the reported repro value ('banana', 6 characters)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("banana")).toBeNull();
+    });
+
+    it("still allows client secrets 8+ characters long", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(
+        result.current.validateClientSecret("a-long-enough-secret"),
+      ).toBeNull();
+    });
+
+    it("does not affect validateClientId's own minimum-length rule", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientId("ab")).toBe(
+        "Client ID must be at least 3 characters",
+      );
+      expect(result.current.validateClientId("abc")).toBeNull();
+    });
+  });
+
+  it("preserves leading/trailing whitespace in the saved client secret", () => {
+    // buildFormData() only trims to check whether a replacement was typed
+    // at all (see validateClientSecret above) — it must not trim the value
+    // it actually saves, or a secret that legitimately has surrounding
+    // whitespace gets silently corrupted.
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setType("http");
+      result.current.setAuthType("oauth");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("client-id");
+      result.current.setClientSecret(" secret ");
+    });
+
+    expect(result.current.buildFormData().clientSecret).toBe(" secret ");
+  });
+
   it("represents a stored client secret without exposing the value", async () => {
     const server = {
       name: "Stored secret server",
@@ -1136,5 +1387,176 @@ describe("useServerForm", () => {
       clearClientSecret: true,
     });
     expect(result.current.buildFormData().clientSecret).toBeUndefined();
+  });
+});
+
+/**
+ * MJ-003 — the form has to say, before the save, that this edit will destroy
+ * the row's stored credentials. `credential-origin.test.ts` pins the rules;
+ * these pin that the hook feeds them the right values and gates Save on the
+ * acknowledgement.
+ */
+describe("useServerForm credential-clear warning", () => {
+  const httpServer = {
+    name: "Hosted server",
+    config: { url: "https://owner.example.com/mcp" },
+    hasHeaders: true,
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  const stdioServer = {
+    name: "Local server",
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+      env: { API_KEY: "secret" },
+    },
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  it("warns and blocks Save on a cross-origin URL edit", async () => {
+    const { result } = renderHook(() => useServerForm(httpServer));
+    await waitFor(() => {
+      expect(result.current.url).toBe("https://owner.example.com/mcp");
+    });
+
+    act(() => {
+      result.current.setUrl("https://elsewhere.example.com/mcp");
+    });
+
+    expect(result.current.pendingCredentialClear).toMatchObject({
+      kind: "url-origin",
+      nextOrigin: "https://elsewhere.example.com",
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  it("requires acknowledgment when another member's OAuth tokens are absent from runtime state", async () => {
+    const server = {
+      ...httpServer,
+      hasHeaders: false,
+      oauthTokens: undefined,
+      config: { ...httpServer.config, useOAuth: true },
+    };
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => expect(result.current.url).toBe(httpServer.config.url));
+    act(() => result.current.setUrl("https://elsewhere.example.com/mcp"));
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  it("warns and blocks Save on a stdio command swap", async () => {
+    // The vector the form was silent about: the row's env secret goes to
+    // whatever process this command names, and the backend clears it.
+    const { result } = renderHook(() => useServerForm(stdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).toBe(
+        "npx -y @modelcontextprotocol/server-everything"
+      );
+    });
+
+    act(() => {
+      result.current.setCommandInput("node exfiltrate.js");
+    });
+
+    expect(result.current.pendingCredentialClear).toMatchObject({
+      kind: "stdio-target",
+      previousCommand: "npx -y @modelcontextprotocol/server-everything",
+      nextCommand: "node exfiltrate.js",
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  it("stays silent on an edit that keeps the destination", async () => {
+    const { result } = renderHook(() => useServerForm(stdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).toBe(
+        "npx -y @modelcontextprotocol/server-everything"
+      );
+    });
+
+    act(() => {
+      result.current.setName("Renamed");
+    });
+
+    expect(result.current.pendingCredentialClear).toBeNull();
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+  });
+
+  it("releases Save once the destination is acknowledged, and re-arms on a new one", async () => {
+    const { result } = renderHook(() => useServerForm(httpServer));
+    await waitFor(() => {
+      expect(result.current.url).toBe("https://owner.example.com/mcp");
+    });
+
+    act(() => {
+      result.current.setUrl("https://one.example.com/mcp");
+    });
+    act(() => {
+      result.current.acknowledgeCredentialClear("url:https://one.example.com");
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+
+    // Consent was for one destination. Typing another is a new decision.
+    act(() => {
+      result.current.setUrl("https://two.example.com/mcp");
+    });
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
+  const spacedStdioServer = {
+    name: "Local server",
+    config: {
+      command: "node",
+      args: ["--inspect", "C:\\Program Files\\mcp\\file name.js", 'say "hi"'],
+      env: { API_KEY: "secret" },
+    },
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  it("round-trips stdio arguments that contain whitespace and quotes", async () => {
+    const { result } = renderHook(() => useServerForm(spacedStdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).not.toBe("");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      command: "node",
+      args: ["--inspect", "C:\\Program Files\\mcp\\file name.js", 'say "hi"'],
+    });
+  });
+
+  it("stays silent when a space-bearing stdio target is opened and saved unchanged", async () => {
+    // The user-visible bug: a whitespace split re-reads the stored arguments
+    // as different ones, so the form announces that an untouched row is about
+    // to lose its credentials.
+    const { result } = renderHook(() => useServerForm(spacedStdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).not.toBe("");
+    });
+
+    expect(result.current.pendingCredentialClear).toBeNull();
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+  });
+});
+
+describe("pasted command compatibility", () => {
+  it("preserves a pasted Windows path", () => {
+    const { result } = renderHook(() => useServerForm());
+    act(() => {
+      result.current.setType("stdio");
+      result.current.setCommandInput(String.raw`node C:\tools\server.js`);
+    });
+    expect(result.current.buildFormData().args).toEqual([
+      String.raw`C:\tools\server.js`,
+    ]);
   });
 });

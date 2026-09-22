@@ -48,18 +48,9 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and client styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
     docsUrl: "https://docs.mcpjam.com/inspector/playground",
   },
-  skills: {
-    title: "Skills",
-    videoUrl: "https://www.youtube.com/embed/kUdPwm6GJe8",
-    videoThumbnail:
-      "https://outstanding-fennec-304.convex.cloud/api/storage/8b3243cc-a853-4839-b5e4-f7690d5e982c",
-    previewVideoUrl:
-      "https://outstanding-fennec-304.convex.cloud/api/storage/673acc12-a14d-4ea7-878c-855185264e70",
-    description: "View, add, and manage your skills.",
-    expandedDescription:
-      "View your installed skills, upload new ones, and manage them all in one place. MCPJam discovers skills from your .claude/, .mcpjam/, and .agents/ directories automatically. Use them in the Playground or Chat — skills load based on your prompt, or inject one directly with the / command.",
-    docsUrl: "https://docs.mcpjam.com/inspector/skills",
-  },
+  // No `skills` entry: learn-more cards are keyed off sidebar nav item URLs
+  // (see nav-main.tsx) and Skills is now a Servers tab, not a sidebar item, so
+  // the card had no host left to render in.
   "oauth-flow": {
     title: "OAuth Debugger",
     videoUrl: "https://www.youtube.com/embed/tQSEnr4T5Qc",

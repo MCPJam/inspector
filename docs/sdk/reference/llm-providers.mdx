@@ -4,7 +4,7 @@ description: "API reference for LLM provider configuration"
 icon: "book"
 ---
 
-The SDK supports 10 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint.
+The SDK supports 10 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint. It can also run models on MCPJam's own credits, so an eval in CI needs no provider key at all.
 
 ## Model String Format
 
@@ -14,6 +14,57 @@ All models use the format `provider/model-id`:
 "anthropic/claude-sonnet-4-20250514"
 "openai/gpt-4o"
 "google/gemini-1.5-pro"
+```
+
+---
+
+## MCPJam-hosted (no provider key)
+
+Prefix a model with `mcpjam/` and MCPJam calls the provider for you, billing your organization's credits. The only secret you need is an MCPJam API key — which is usually already in your CI for saving results.
+
+| Property | Value |
+|----------|-------|
+| Prefix | `mcpjam/` |
+| Environment Variable | `MCPJAM_API_KEY` (an `sk_…` key from Settings → API keys) |
+
+```typescript
+const agent = new HostRunner({
+  tools,
+  // The vendor model id follows the prefix.
+  model: "mcpjam/anthropic/claude-sonnet-4.5",
+  apiKey: process.env.MCPJAM_API_KEY!,
+});
+```
+
+`apiKey` falls back to `MCPJAM_API_KEY`, so in CI you can leave it out entirely.
+
+#### Available models
+
+`mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. Other vendors are not hosted — use their own prefix and key.
+
+#### Which project pays
+
+By default the API key's organization Default project, which is also where results are saved — so nothing extra to configure. Set `MCPJAM_PROJECT_ID` to bill a specific project.
+
+#### Cost
+
+Spend appears under the organization's usage. Per-run cost attribution for these runs is not wired up yet, so an individual eval run will not show a dollar figure.
+
+#### Limits
+
+Handled for you, but worth knowing about if you see one in a log:
+
+- Leases last 30 minutes and are renewed automatically.
+- Each lease has its own spend and call ceiling; the SDK mints a fresh one when it is used up.
+- Your organization's credit balance and spend budget are checked on every call. "Spending limit reached" means add credits — it is not retried.
+- A suite revokes its leases when it finishes. If you build runs by hand, call `releaseMcpjamModelLeases()` in an `afterAll`.
+
+```typescript
+import { releaseMcpjamModelLeases } from "@mcpjam/sdk";
+
+afterAll(async () => {
+  await releaseMcpjamModelLeases();
+});
 ```
 
 ---
@@ -250,7 +301,7 @@ Any locally installed model:
 - etc.
 
 <Note>
-Ensure Ollama is running locally before use. The API key parameter is required but not used—pass any string.
+Ensure Ollama is running locally before use. The API key parameter is required but not used, so pass any string.
 </Note>
 
 #### Example

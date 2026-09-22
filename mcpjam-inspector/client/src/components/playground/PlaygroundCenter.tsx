@@ -34,6 +34,8 @@ interface PlaygroundCenterProps {
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  firstRunPrompt?: string | null;
+  onFirstRunPromptConsumed?: () => void;
 }
 
 export function PlaygroundCenter({
@@ -45,8 +47,16 @@ export function PlaygroundCenter({
   playgroundServerSelectorProps,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
+  firstRunPrompt = null,
+  onFirstRunPromptConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
+  const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
+  const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
+  const initialComposerPrompt =
+    firstRunPrompt ??
+    (state.firstRunComposerSeed ? PLAYGROUND_FIRST_RUN_PROMPT : undefined);
+  const shouldGuideFirstPrompt = Boolean(initialComposerPrompt);
 
   if (state.loadingState.kind === "skeleton") {
     return (
@@ -77,6 +87,7 @@ export function PlaygroundCenter({
       <PlaygroundMain
         activeProjectId={activeProjectId}
         serverName={serverName || ""}
+        syncConversationToUrl
         onSaveHostContext={onSaveHostContext}
         enableMultiModelChat={enableMultiModelChat}
         isExecuting={state.isExecuting}
@@ -90,20 +101,29 @@ export function PlaygroundCenter({
         deviceType={state.deviceType}
         onDeviceTypeChange={state.setDeviceType}
         playgroundServerSelectorProps={playgroundServerSelectorProps}
-        initialInput={
-          state.firstRunComposerSeed
-            ? PLAYGROUND_FIRST_RUN_PROMPT
-            : undefined
-        }
-        initialInputTypewriter={state.firstRunComposerSeed}
-        blockSubmitUntilServerConnected={state.firstRunComposerSeed}
+        initialInput={initialComposerPrompt}
+        initialInputTypewriter={shouldGuideFirstPrompt}
+        blockSubmitUntilServerConnected={state.firstRunSubmitBlocked}
         ensureServersReady={ensureServersReady}
-        pulseSubmit={state.firstRunComposerSeed}
+        pulseSubmit={shouldGuideFirstPrompt}
+        // Stays false: this branch replaces the hero rather than adding to it,
+        // so flipping it drops the logo and the selectors again — the BB-112
+        // bug. The nudge alone rides on `showPostConnectGuideCopy` (see its
+        // JSDoc).
         showPostConnectGuide={false}
+        showPostConnectGuideCopy={isGuidedPostConnect}
+        // The copy needs the server up; retiring the run does not. A message
+        // sent while Excalidraw is still connecting — or failed to — finishes
+        // the run all the same, and is its only exit now that a run resumes.
         onFirstMessageSent={
-          state.onboarding.isGuidedPostConnect
+          isFirstRunUnfinished || firstRunPrompt
             ? () => {
-                state.onboarding.completeOnboarding();
+                if (isFirstRunUnfinished) {
+                  state.onboarding.completeOnboarding();
+                }
+                if (firstRunPrompt) {
+                  onFirstRunPromptConsumed?.();
+                }
               }
             : undefined
         }

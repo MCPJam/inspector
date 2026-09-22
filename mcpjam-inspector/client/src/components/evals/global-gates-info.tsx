@@ -60,7 +60,7 @@ export function GlobalGatesSectionInfoHint({
 }) {
   return (
     <InfoHint
-      label="About global gates"
+      label="About whole-run assertions"
       className={className}
       side={side}
       align="start"
@@ -87,7 +87,7 @@ export function GlobalGateKindInfoHint({
 
   return (
     <InfoHint
-      label={description ?? "About this gate"}
+      label={description ?? "About this assertion"}
       className={className}
       side={side}
       align="start"

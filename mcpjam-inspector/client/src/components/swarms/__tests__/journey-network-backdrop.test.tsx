@@ -34,7 +34,7 @@ describe("JourneyNetworkBackdrop", () => {
     render(<JourneyNetworkBackdrop />);
 
     expect(
-      screen.getByText("Select a persona to see its journeys."),
+      screen.getByText("Select a persona to see its goals."),
     ).toBeTruthy();
     expect(screen.getByTestId("journey-network-backdrop")).toBeTruthy();
     expect(

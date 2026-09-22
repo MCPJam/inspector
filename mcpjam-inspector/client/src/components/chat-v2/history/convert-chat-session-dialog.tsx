@@ -43,7 +43,8 @@ const IDLE_DETAIL: PromoteSessionDetailState = {
  * session-servers detail through the existing `/api/web/chat-history/detail`
  * route (which also serves guest/HOSTED_MODE actors via `requestHeaders`) and
  * keeps the exact props ChatHistoryRail has always passed. Swarm sessions go
- * through `ConvertSwarmSessionDialog`, a sibling adapter over the same core.
+ * through `ConvertPromotableSessionDialog`, the sibling adapter over the same
+ * core that serves every signed-in surface.
  */
 export function ConvertChatSessionDialog({
   open,

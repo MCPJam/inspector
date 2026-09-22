@@ -1,6 +1,10 @@
 /**
- * The v1 WebMCP UI tool catalog: hand-curated tools that let a chat agent
- * drive the MCPJam inspector. Thin wrappers over the inspector command bus —
+ * The v1 `ui_*` catalog: hand-curated tools resolved in the browser — by the
+ * in-app "Ask MCPJam" agent and, for the eligible ones, by whatever
+ * browser-native WebMCP agent the user is running. Mostly tools that DRIVE the MCPJam inspector; `ui_ask_user` is the
+ * exception that collects input from it instead, which is why the namespace
+ * means "the browser fulfills this" rather than "this moves the UI" (see
+ * `shared/client-fulfilled-tools.ts`). Thin wrappers over the command bus —
  * `navigate`/`selectServer`/`openPlayground` via the hosted-aware actions in
  * `ui-actions.ts`, the playground-scoped commands via
  * `dispatchInspectorCommand` directly (their handlers are registered while
@@ -18,6 +22,12 @@
  * Tool names live in the reserved `ui_` namespace (see
  * `shared/client-fulfilled-tools.ts`) and must satisfy the server-side
  * `validateUiToolEntries` boundary.
+ *
+ * PUBLICATION — every definition here states, in `nativePublication`,
+ * whether a browser-native WebMCP agent gets it. The ordinary inspector
+ * actions do; `ui_ask_user` does not, because the card it paints and the turn
+ * it parks only exist inside an Ask MCPJam conversation. Same for the
+ * eval-authoring group. See `../native-tool-publisher.ts`.
  *
  * REGISTRATION POLICY — this catalog is global, deliberately NOT contextual.
  * Chrome's WebMCP guidance suggests registering tools only when useful in
@@ -37,6 +47,7 @@
  * the same turn can use it).
  */
 
+import { buildEvalAuthoringTools } from "./groups/eval-authoring";
 import type { UiToolDefinition } from "./ui-tools-registry";
 import { buildCoreUiTools } from "./groups/core";
 import { buildServersUiTools } from "./groups/servers";
@@ -44,6 +55,7 @@ import { buildPlaygroundUiTools } from "./groups/playground";
 
 export function buildUiToolsCatalog(): UiToolDefinition[] {
   return [
+    ...buildEvalAuthoringTools(),
     ...buildCoreUiTools(),
     ...buildServersUiTools(),
     ...buildPlaygroundUiTools(),

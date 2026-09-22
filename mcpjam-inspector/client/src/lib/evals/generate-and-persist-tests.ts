@@ -1,3 +1,4 @@
+import type { EvalMatchOptions, CasePredicates } from "@/shared/eval-matching";
 import type { ConvexReactClient } from "convex/react";
 import {
   generateEvalTests,
@@ -8,9 +9,20 @@ import {
 import { HOSTED_MODE } from "@/lib/config";
 import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
 import { promptTurnsToSteps, type TestStep } from "@/shared/steps";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 
 export type CreateEvalTestCaseInput = {
   suiteId: string;
+  /**
+   * The case's DECLARED identity, minted by the caller (`mintCaseId` from
+   * `@mcpjam/sdk/contract`). The platform validates the charset and enforces
+   * suite-scoped uniqueness; it never derives one, because deriving an id from
+   * content or position is the content-hash identity declared ids replace.
+   *
+   * Stored as `declaredCaseId`. NEVER the row's `caseKey`, which stays the
+   * platform's own random `ui_*` storage key.
+   */
+  caseId?: string;
   title: string;
   query: string;
   models: Array<{ model: string; provider: string }>;
@@ -19,6 +31,8 @@ export type CreateEvalTestCaseInput = {
   isNegativeTest: boolean;
   scenario?: string;
   expectedOutput?: string;
+  matchOptions?: EvalMatchOptions;
+  predicates?: CasePredicates;
   /**
    * Authored test steps (the unified `steps` model). The Convex mutation
    * rejects the legacy `promptTurns`/`caseType`/`probeConfig` fields, so case
@@ -74,6 +88,7 @@ function toCreateTestCaseInput(
 
   return {
     suiteId,
+    caseId: mintCaseId(),
     title: test.title || "Generated test",
     query: test.query || test.promptTurns?.[0]?.prompt || "",
     models,
@@ -85,12 +100,21 @@ function toCreateTestCaseInput(
     isNegativeTest,
     scenario: test.scenario,
     expectedOutput: test.expectedOutput,
-    steps: buildStepsForCaseInput({
-      query: test.query,
-      expectedToolCalls: test.expectedToolCalls,
-      expectedOutput: test.expectedOutput,
-      promptTurns: test.promptTurns,
-    }),
+    // Authored steps win when the generator produced them. Rebuilding from
+    // `query` / `expectedToolCalls` / `promptTurns` can only express a prompt
+    // case: a `toolCall`, an `interact`, or a widget assertion has no legacy
+    // spelling, so a Wave-0 case would silently lose exactly the steps the new
+    // shape exists to carry. The rebuild stays for the legacy shape, which has
+    // no steps of its own.
+    steps:
+      Array.isArray(test.steps) && test.steps.length > 0
+        ? (test.steps as TestStep[])
+        : buildStepsForCaseInput({
+            query: test.query,
+            expectedToolCalls: test.expectedToolCalls,
+            expectedOutput: test.expectedOutput,
+            promptTurns: test.promptTurns,
+          }),
   };
 }
 
@@ -146,8 +170,7 @@ export type GenerateAndPersistEvalTestsOptions = {
   isDirectGuest?: boolean;
   /** Override case listing; used when the caller already has the suite's cases. */
   listExistingCases?: () =>
-    | Array<Record<string, unknown>>
-    | Promise<Array<Record<string, unknown>>>;
+    Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
   /**
    * Optional server-attachment metadata for the suite the cases are being
    * generated against. When provided, the backend scopes the LLM prompt to

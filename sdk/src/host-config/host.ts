@@ -33,10 +33,11 @@
  */
 
 import { canonicalizeHostConfigV2 } from "./canonicalize.js";
-import type {
-  CanonicalHostConfigV2,
-  HostConfigInputV2,
-  HostConfigMcpProfileV1,
+import {
+  CONFORMANCE_PROFILE_KEYS,
+  type CanonicalHostConfigV2,
+  type HostConfigInputV2,
+  type HostConfigMcpProfileV1,
 } from "./types.js";
 import type {
   HostComputerInput,
@@ -72,6 +73,16 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
   if (mcp.protocolVersion !== undefined) {
     profile.mcpProtocolVersion = mcp.protocolVersion;
   }
+  if (mcp.toolParamHeaderMirroring !== undefined) {
+    profile.toolParamHeaderMirroring = mcp.toolParamHeaderMirroring;
+  }
+  // Conformance knobs share names on both sides — copy in one loop.
+  for (const key of CONFORMANCE_PROFILE_KEYS) {
+    const value = (mcp as Record<string, unknown>)[key];
+    if (value !== undefined) {
+      (profile as Record<string, unknown>)[key] = value;
+    }
+  }
   if (mcp.initialize !== undefined) profile.initialize = mcp.initialize;
   if (mcp.apps !== undefined) profile.apps = mcp.apps;
   if (mcp.extensions !== undefined) profile.extensions = mcp.extensions;
@@ -90,6 +101,10 @@ function isEmptyHostMcp(mcp: HostMcp | undefined): boolean {
   if (mcp === undefined) return true;
   return (
     mcp.protocolVersion === undefined &&
+    mcp.toolParamHeaderMirroring === undefined &&
+    CONFORMANCE_PROFILE_KEYS.every(
+      (key) => (mcp as Record<string, unknown>)[key] === undefined
+    ) &&
     mcp.initialize === undefined &&
     mcp.apps === undefined &&
     mcp.extensions === undefined
@@ -130,6 +145,15 @@ function profileToHostMcp(profile: HostConfigMcpProfileV1): HostMcp {
   if (profile.mcpProtocolVersion !== undefined) {
     mcp.protocolVersion = profile.mcpProtocolVersion;
   }
+  if (profile.toolParamHeaderMirroring !== undefined) {
+    mcp.toolParamHeaderMirroring = profile.toolParamHeaderMirroring;
+  }
+  for (const key of CONFORMANCE_PROFILE_KEYS) {
+    const value = (profile as Record<string, unknown>)[key];
+    if (value !== undefined) {
+      (mcp as Record<string, unknown>)[key] = value;
+    }
+  }
   if (profile.initialize !== undefined) mcp.initialize = profile.initialize;
   if (profile.apps !== undefined) mcp.apps = profile.apps;
   if (profile.extensions !== undefined) mcp.extensions = profile.extensions;
@@ -159,7 +183,7 @@ function serverOverridesToPublic(
  * `serverIds`, `schemaVersion`, …) onto the public `HostJson` (clean MCP
  * vocabulary). No implementation names cross this boundary.
  */
-function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
+export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   const out: HostJson = {
     style: c.hostStyle,
     model: c.modelId,

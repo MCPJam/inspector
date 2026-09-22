@@ -110,7 +110,7 @@ export function cellsForCaseRow(
   if (!byHost) return [];
 
   return liveHostColumns(hostColumns)
-    .map((col) => byHost.get(col.hostId))
+    .map((col) => byHost.get(col.columnKey ?? col.hostId))
     .filter((cell): cell is CellData => cell != null);
 }
 

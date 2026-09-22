@@ -15,6 +15,36 @@ import type {
   HostImageSupport,
 } from "./types.js";
 
+export type DocumentedCapabilityEvidence = {
+  status: "supported" | "unsupported" | "limited";
+  mcpAppsEquivalent?: string;
+  note?: string;
+};
+
+export type HostCompatibilityEvidence = {
+  profileLabel: string;
+  sourceUrl: string;
+  sourceUpdatedAt: number;
+  componentBridge: Record<string, DocumentedCapabilityEvidence>;
+  toolDescriptorMeta: Record<string, DocumentedCapabilityEvidence>;
+  toolAnnotations: Record<string, DocumentedCapabilityEvidence>;
+  componentResourceMeta: Record<string, DocumentedCapabilityEvidence>;
+  cspProperties: Record<string, DocumentedCapabilityEvidence>;
+  hostProvidedToolResultMeta: Record<string, DocumentedCapabilityEvidence>;
+  clientProvidedMeta: Record<string, DocumentedCapabilityEvidence>;
+  deployment: {
+    supportedUiStandards: string[];
+    productionAuthentication: string[];
+    developmentAuthentication: string[];
+    widgetHostPattern: string;
+    oauthRedirectUris: Array<{ surface: string; uri: string }>;
+    entraSsoRedirectUris: Array<{ surface: string; uri: string }>;
+    minimumAgentsToolkitVersion: string;
+    defaultToolDiscovery: string;
+    notes: string[];
+  };
+};
+
 /**
  * The host-compat catalog facts as pure data. The live backend catalog is the
  * normal source of truth; the SDK carries a generated fallback snapshot for
@@ -35,6 +65,18 @@ type HostCatalogMetadata = {
   verifiedAt?: number;
   /** Tool-result image handling (see `HostImageSupport`). */
   imageSupport?: HostImageSupport;
+  /** Structured vendor-document evidence that does not shape execution. */
+  compatibilityEvidence?: HostCompatibilityEvidence;
+  /**
+   * Style variables per theme, for hosts that resolve their tokens and send
+   * literals rather than `light-dark(…)`. The host config carries only the one
+   * theme the emulated host announces, so the pair lives here; each side is
+   * optional because a host may have been probed in a single theme.
+   */
+  styleVariablesByTheme?: {
+    light?: Record<string, string>;
+    dark?: Record<string, string>;
+  };
 };
 
 /**
@@ -160,10 +202,30 @@ function hostConfigFromCatalogHost(
     supportedProtocolVersions: _supportedProtocolVersions,
     verifiedAt: _verifiedAt,
     imageSupport: _imageSupport,
+    compatibilityEvidence: _compatibilityEvidence,
+    styleVariablesByTheme: _styleVariablesByTheme,
     ...config
   } = host;
+  // The rest object is a real host config that callers save back through
+  // `hosts:updateHost`, whose validator rejects unknown fields. So every
+  // metadata-only key has to be named above: miss one and the leak only shows
+  // up as a server-side ArgumentValidationError at save time. This assignment
+  // stops compiling the moment `HostCatalogMetadata` gains a key that is not
+  // destructured out.
+  const _noMetadataLeak: [
+    Extract<keyof typeof config, MetadataOnlyKey>,
+  ] extends [never]
+    ? true
+    : ["metadata key leaks into host config", keyof typeof config] = true;
+  void _noMetadataLeak;
   return config;
 }
+
+/** Catalog facts that describe a host but are not part of its saved config. */
+type MetadataOnlyKey = Exclude<
+  keyof HostCatalogMetadata,
+  keyof SeededHostConfigInput
+>;
 
 function templateRendersOpenAiApps(
   host: HostCompatCatalogHost | undefined
@@ -180,7 +242,7 @@ function templateRendersOpenAiApps(
  * catalog data.
  */
 function getTemplateSandboxPermissionAllow(
-  host: HostCompatCatalogHost | undefined,
+  host: HostCompatCatalogHost | undefined
 ): Record<string, boolean> | undefined {
   const permissions = (
     host?.mcpProfile?.apps as
@@ -188,15 +250,11 @@ function getTemplateSandboxPermissionAllow(
       | undefined
   )?.sandbox?.permissions;
   const allow = permissions?.allow;
-  if (
-    !allow ||
-    typeof allow !== "object" ||
-    Array.isArray(allow)
-  ) {
+  if (!allow || typeof allow !== "object" || Array.isArray(allow)) {
     return undefined;
   }
   const entries = Object.entries(allow).filter(
-    ([, value]) => typeof value === "boolean",
+    ([, value]) => typeof value === "boolean"
   );
   return Object.fromEntries(entries);
 }
@@ -215,6 +273,12 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
           ...p.capabilities,
           availableDisplayModes: p.capabilities.availableDisplayModes
             ? [...p.capabilities.availableDisplayModes]
+            : undefined,
+          cspConnectDomains: p.capabilities.cspConnectDomains
+            ? { ...p.capabilities.cspConnectDomains }
+            : undefined,
+          cspResourceDomains: p.capabilities.cspResourceDomains
+            ? { ...p.capabilities.cspResourceDomains }
             : undefined,
         }
       : undefined,

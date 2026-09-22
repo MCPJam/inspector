@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
   HOST_CONFIG_FIELDS,
@@ -120,7 +120,7 @@ function HostListColumn({
   themeMode: HostThemeMode;
   mobileOptimized: boolean;
 }) {
-  const logoSrc = getChatboxHostLogo(
+  const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
     themeMode

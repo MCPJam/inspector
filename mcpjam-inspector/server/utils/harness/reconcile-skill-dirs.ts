@@ -2,7 +2,9 @@
  * Cleanup-only reconciliation of on-box skill directories.
  *
  * In the host-agnostic design the harness ADAPTER writes skills (Claude Code →
- * `~/.claude/skills/<name>/SKILL.md` at the real `$HOME`), but the adapter has no
+ * `~/.claude/skills/<name>/SKILL.md`, Codex → `~/.agents/skills/<name>/SKILL.md`,
+ * both at the real `$HOME` — the caller passes the runtime's root as
+ * `skillsBase`), but the adapter has no
  * deletion semantics and the E2B box is a long-lived, reconnected sandbox — so a
  * deleted/renamed skill would linger and stay discoverable (`skills: "all"`).
  * This pass removes only the dirs WE manage that are gone/renamed in Convex,
@@ -17,6 +19,7 @@
  */
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import { shellQuote } from "./shell-quote.js";
+import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 
 /** Minimal structural view of the harness sandbox session. */
@@ -32,9 +35,15 @@ export interface ReconcileSkill {
   name: string;
 }
 
-const SKILLS_BASE = "/home/user/.claude/skills";
-const MANIFEST_PATH = `${SKILLS_BASE}/.mcpjam-skills.json`;
+const MANIFEST_BASENAME = ".mcpjam-skills.json";
 const MANIFEST_SCHEMA_VERSION = 1 as const;
+
+/** The manifest lives beside the dirs it tracks, so it is per-ROOT: a box that
+ *  ran both runtimes keeps one manifest per runtime and neither reconciles the
+ *  other's dirs. */
+function manifestPath(skillsBase: string): string {
+  return `${skillsBase}/${MANIFEST_BASENAME}`;
+}
 
 interface ManagedSkillEntry {
   skillId: string;
@@ -57,10 +66,11 @@ function emptyManifest(): ManagedSkillsManifest {
 }
 
 async function readManifest(
-  session: ReconcileSession
+  session: ReconcileSession,
+  skillsBase: string
 ): Promise<ManagedSkillsManifest> {
   try {
-    const raw = await session.readTextFile({ path: MANIFEST_PATH });
+    const raw = await session.readTextFile({ path: manifestPath(skillsBase) });
     if (!raw) return emptyManifest();
     const parsed = JSON.parse(raw) as ManagedSkillsManifest;
     // Tolerate the older materializer manifest shape (entries carried an
@@ -77,13 +87,14 @@ async function readManifest(
 /** Remove a managed skill dir. `name` is validated, so the path is safe. */
 async function removeManagedSkillDir(
   session: ReconcileSession,
+  skillsBase: string,
   name: string
 ): Promise<void> {
   if (!isValidSkillName(name)) return; // never rm an unvalidated path
   // `--` guards option-like names (the validator forbids leading hyphens); the
   // charset is [a-z0-9-] so there are no shell metacharacters, but quote
   // anyway (shared defense-in-depth rule — see shell-quote.ts).
-  await session.run({ command: `rm -rf -- ${shellQuote(`${SKILLS_BASE}/${name}`)}` });
+  await session.run({ command: `rm -rf -- ${shellQuote(`${skillsBase}/${name}`)}` });
 }
 
 /**
@@ -95,11 +106,15 @@ export async function reconcileSkillDirs(args: {
   session: ReconcileSession;
   skills: ReconcileSkill[];
   skillsHash: string;
+  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
+   *  to Claude Code's for legacy callers. */
+  skillsBase?: string;
   signal?: AbortSignal;
 }): Promise<ReconcileResult> {
+  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
   const result: ReconcileResult = { removed: 0, managed: 0 };
   try {
-    const manifest = await readManifest(args.session);
+    const manifest = await readManifest(args.session, skillsBase);
     const next = emptyManifest();
     next.skillsHash = args.skillsHash;
     const currentBySkillId = new Map<string, ReconcileSkill>();
@@ -114,18 +129,22 @@ export async function reconcileSkillDirs(args: {
     for (const [skillId, prev] of Object.entries(manifest.skills)) {
       const current = currentBySkillId.get(skillId);
       if (current && current.name !== prev.name) {
-        await removeManagedSkillDir(args.session, prev.name).catch(() => {});
+        await removeManagedSkillDir(args.session, skillsBase, prev.name).catch(
+          () => {}
+        );
       }
     }
     // Orphans: managed skills gone from Convex → remove their dirs.
     for (const [skillId, prev] of Object.entries(manifest.skills)) {
       if (currentBySkillId.has(skillId)) continue;
-      await removeManagedSkillDir(args.session, prev.name).catch(() => {});
+      await removeManagedSkillDir(args.session, skillsBase, prev.name).catch(
+        () => {}
+      );
       result.removed += 1;
     }
 
     await args.session.writeTextFile({
-      path: MANIFEST_PATH,
+      path: manifestPath(skillsBase),
       content: JSON.stringify(next),
     });
     return result;
@@ -151,10 +170,13 @@ export async function reconcileSkillDirs(args: {
 export async function appendManagedSkills(args: {
   session: ReconcileSession;
   skills: ReconcileSkill[];
+  /** The RUNTIME's skills root; must match the `reconcileSkillDirs` root. */
+  skillsBase?: string;
 }): Promise<{ appended: number }> {
   if (args.skills.length === 0) return { appended: 0 };
+  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
   try {
-    const manifest = await readManifest(args.session);
+    const manifest = await readManifest(args.session, skillsBase);
     let appended = 0;
     for (const s of args.skills) {
       if (!isValidSkillName(s.name)) continue;
@@ -162,7 +184,7 @@ export async function appendManagedSkills(args: {
       appended += 1;
     }
     await args.session.writeTextFile({
-      path: MANIFEST_PATH,
+      path: manifestPath(skillsBase),
       content: JSON.stringify(manifest),
     });
     return { appended };

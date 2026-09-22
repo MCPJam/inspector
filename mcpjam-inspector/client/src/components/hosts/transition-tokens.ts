@@ -1,5 +1,5 @@
 /**
- * Shared timing/easing for the Connect-tab "Snappy Canyon" transition between
+ * Shared timing/easing for the Servers-tab "Snappy Canyon" transition between
  * the Servers grid and the Host canvas. Mirrors the prototype at
  * /tmp/host-transition-demo.html — bezier `[0.32, 0.72, 0, 1]` is the
  * camera-ease (zoom-out), and the durations match the demo's --t-* tokens.

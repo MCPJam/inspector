@@ -9,6 +9,116 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-22
+
+#### Changed
+
+- **Session flow columns can now be reordered and hidden** — drag any column header in the Session flow Sankey to move it next to a different neighbor. Click the **×** on a column header to hide it, and use the **+** menu at the end of the header row to restore hidden columns or add a new yes/no question. Column order and visibility are saved per surface in the browser so the layout persists across page loads.
+
+- **Adding a yes/no question opens a modal** — clicking **Add question** in the Session flow now opens a dialog instead of an inline form in the column header. The dialog has labeled fields for the column label and the yes/no question text.
+
+- **Session flow chart scrolls under sticky column headers** — the column headers are now a sticky HTML row above the chart rather than text inside the SVG. The chart scrolls horizontally under them, so headers stay readable while you pan through a wide diagram with many columns.
+
+- **Each question column gets its own color** — yes/no question columns each use a distinct hue instead of sharing the foreground color. The hue is pinned to the question's identity, not its position, so dragging a column does not change its color.
+
+- **Freshness chip removed from the Session flow header** — the analysis-freshness indicator is no longer shown in the Session flow panel header.
+
+### 2026-09-18
+
+#### Changed
+
+- **Swarms can now pick models** — the Describe step's environment composer now includes a **Models** slot, matching the Evals composer. Selecting clients × models creates one target per pair (unnamed and deduplicated), and the existing target cap still applies.
+
+- **Targets are validated before persona generation** — clicking **Continue** in the swarm wizard now checks each resolved target against the same launch rules used at run time, before any persona generation or durable writes. If a client has no model configured, the wizard blocks with an **Edit client** link that opens the client inside the project so the draft is preserved. Other launch-blocking conditions (unavailable plugins, stale configs) are caught the same way.
+
+- **Run failure banner shows one line per cause** — when a swarm run ends with multiple failure causes, the banner now lists each cause once with a session count (`10 sessions: Protocol mismatch`). The banner's tone (amber for rate-limited or retriable, red for hard failures) is set by the most serious cause. Account-limit sessions continue to appear in the existing limit callout rather than the banner, so each cause is stated exactly once.
+
+- **Protocol tab warns on unadvertised stateless pins** — pinning a client to `2026-07-28` when none of its servers advertise that version now shows a warning noting that the pin requires servers that offer this revision and has no legacy fallback. Previously, this pin was silently accepted with no warning. The warning for unadvertised stateful pins (which fail at save) is unchanged.
+
+- **Per-server protocol override shows unknown stored pins correctly** — if a server has a stored protocol override that is not one of the named dropdown options, the picker now shows it as `Pinned (…)` instead of displaying it as **Client default**.
+
+### 2026-09-17 (2)
+
+#### Added
+
+- **Sign-in gate for account-required User Testing links** — User Testing share links that require an account no longer show "Link Unavailable" for signed-out visitors. Instead, a sign-in screen appears with **Sign in** and **Create an account** buttons. After signing in, you are returned to the original scenario link automatically. Previewing a scenario from this gate does not start a test. Signed-in visitors still need the audience permission the scenario owner configured. Guest-permitted scenarios remain accessible without signing in.
+
+- **"Anyone with the link who is signed in" sharing label** — the sharing dialog now distinguishes between guest-permitted and account-required links. When a scenario requires sign-in, the access option reads **Anyone with the link who is signed in** and the note below the link reads "Testers must sign in or create an account to preview and test this scenario." Guest-permitted scenarios continue to show the existing "Anyone with the link (guests included)" label.
+
+- **Switch accounts button on access-denied screens** — when a signed-in user opens a scenario they don't have access to, an additional **Switch accounts** button appears alongside the existing **Sign in** button. Clicking it signs out and returns to the scenario link so you can sign in with a different account.
+
+### 2026-09-17
+
+#### Changed
+
+- **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. The chip headline continues to show execution state (`Running:` / `Run completed:` / `Broke:`), so both signals are visible without a second label.
+
+- **Live pane no longer shows goal result, value chain, or advisory copy** — while a run is in progress, the session detail pane no longer displays a `Goal result:` line, a `User value chain` disclosure, or advisory check rows. Chat and Trace sit directly under the session header. The Sessions tab still shows the full `SwarmSessionReport` details for a selected completed thread.
+
+- **"Rebuild clusters" and cluster tuning controls are temporarily hidden** — the voluntary **Rebuild** button and the **Balanced** cluster tuning control are no longer shown in the Session flow and Topic map panels. Analysis still runs automatically for User Testing scenarios, and error recovery (**Retry**) remains available when a run has failed or is stuck. The controls will return in a future release.
+
+- **Shared session threads now render MCP App widgets live** — when viewing a shared usage thread, MCP App tool calls now render as full interactive widgets instead of static placeholders, matching the experience in the Playground and swarm session viewer.
+
+- **Swarm run Sessions tab no longer shows project-wide session metrics** — the session metrics strip (session count, tool error rate, latency, tokens) is hidden when the Sessions tab is scoped to a specific run. The strip continues to appear on the top-level Sessions tab where it reflects the full project or persona scope.
+
+### 2026-09-16
+
+#### Changed
+
+- **Swarm run detail now has a Run tab with the live persona × client matrix** — opening a swarm run at `/swarms/:id` while a wave is in progress lands on a new **Run** tab that shows the same persona × client matrix and session stream previously only visible in the create wizard. The tab stays reachable via `?tab=run` after the wave settles, so you can always return to the matrix. A still-running wave with no explicit `?tab=` opens Run automatically; a finished wave still defaults to Findings.
+
+- **Settled outcome moved to the header; the separate Complete strip is gone** — once a wave finishes, the outcome chip (Complete / Stopped / Failed) and the session tally (`N of N`) appear in the header row before the Share button instead of on a second status bar below the tabs. The tab strip is no longer obscured by the strip on narrow viewports.
+
+- **`?tab=` is always present in the URL** — navigating to any tab, including Findings, now writes `?tab=findings` (or `?tab=run`, `?tab=insights`, `?tab=sessions`) to the URL. Share links copied from the run detail page include the active tab.
+
+### 2026-09-15
+
+#### Changed
+
+- **Session transcripts now match the Playground's visual style** — session transcripts (User Testing, Swarm, Scenarios) no longer show a generic chat-bubble icon in front of every assistant response, matching the Playground renderer which has never drawn one. JSON payloads in session transcripts are now syntax-highlighted with the same colors the Playground uses — keys, strings, numbers, booleans, and null each get a distinct color. Plain text, stack traces, and payloads over 100 KB render as uncolored monospace. Both changes apply wherever a session transcript appears; no configuration is required.
+
+- **Sessions now shows tool payloads in the Playground's collapsible JSON tree** — tool input and output in session transcripts (User Testing, Swarm, cross-surface Sessions) are now displayed in the same interactive tree the Playground uses, instead of a plain preformatted block. Objects and arrays collapse, deep payloads open two levels and stop, long strings truncate with a control to see the rest, and every node has its own copy button — so pulling one id out of a tool result is a click rather than a select-and-trim.
+
+- **Session tool cards now match the Playground's card shell** — a session transcript was showing tool calls differently from the Playground tab. The card in sessions now has the same header row (MCP mark, mono tool name, call state, chevron), and the same `INPUT` / `RESULT` headings over capped payload boxes. The whole card collapses and starts collapsed, so a transcript reads as a conversation rather than a wall of JSON. A **failed** call opens itself automatically — an error is the reason you opened the session, not something to put behind a disclosure.
+
+- **Raw tab scroll edges fade like the Chat tab in User Testing** — the Raw pane in a User Testing session detail now softens its top and bottom edges as you scroll, matching the Chat tab's behavior. A hard edge that cuts a line mid-token no longer reads as a rendering glitch.
+
+- **Detail-page back button is a raised control** — the back link on User Testing study detail and Swarm run detail pages is now a raised pill button (`h-8`, `rounded-lg`) matching the Edit and Open preview controls on the same row. On hover the arrow glides toward the left and the label darkens.
+
+### 2026-09-14
+
+#### Changed
+
+- **Selecting a stage in Findings now opens that stage's sessions** — on the Findings tab, clicking a stage in the user value chain (Connection → Discovery → Selection → Call → Response → Value) narrows the session list to the sessions that stage is actually about. A passing stage shows the sessions that passed there; a failing or warning stage shows the sessions that failed there. A stage with no verdict leaves the full goal list in place — narrowing there would show an empty list under a header that says the stage was never graded, which would read as "no sessions" rather than "not measured". The persona's sentiment filter and the hide-synthetic policy remain active alongside the stage filter, so the narrowed list stays consistent with the count that opened it.
+
+### 2026-09-11
+
+#### Added
+
+- **"Back to study" exit on the scenario preview surface** — when you open a User Testing scenario preview via **Open preview**, the chat header now shows a **Back to study** button beside Copy link. Clicking it returns you to the study detail page. The consent dialog's **Leave** button on the preview surface also navigates back to the study instead of showing the "You left this session" panel. Share-link visitors are unaffected: they see no Back to study button, and Leave still shows the terminal panel with Rejoin.
+
+### 2026-09-09
+
+#### Added
+
+- **Findings tab on User Testing scenario detail** — opening a User Testing scenario now lands on a **Findings** tab instead of Insights. The tab groups sessions by how users came across — Gave up, Frustrated, Neutral, Satisfied, or Uncategorized — and lists the goal clusters each group engaged with, ordered worst-first. Expanding a goal shows the per-goal user-value chain (Connection → Discovery → Selection → Call → Response → Value) once stage data is available. Click any goal's session count to jump to Sessions with the matching transcript pre-selected. Insights and Sessions remain reachable from the tab strip.
+
+#### Changed
+
+- **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
+
+### 2026-09-02
+
+#### Added
+
+- **GPT-5.6 models available with your own OpenAI key** — `gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-5.6-terra` are now selectable in the model picker under **Your providers → OpenAI** when you have an OpenAI API key configured. Each model has a 1,050,000-token context window. These models were already available in the free hosted catalog; this change makes them reachable for BYOK users as well.
+
+### 2026-08-31
+
+#### Changed
+
+- **Public score runner redesign** — the score runner landing page has been rebuilt with a new design. After you paste a public MCP server URL and click **Score this server**, you are now prompted for an email address before the scan starts. The scorecard is delivered to that address once the run completes. The email is preserved across OAuth redirects, so servers that require authorization before scanning still collect it. Legacy OAuth resume records that predate the email step are kept on the email prompt rather than bypassing it. The featured scores section on the landing page now shows real MCP endpoints (Linear, GitHub Copilot, Notion), and each row populates the URL field when clicked. URL examples default to Streamable HTTP at `/mcp`.
+
 ### 2026-06-26
 
 #### Added
@@ -152,13 +262,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Coming Soon
 
-We're actively working on new features and improvements:
+We're working on:
 
 - Enhanced evaluation templates
 - More LLM provider integrations
 - Advanced debugging tools
 - Performance analytics dashboard
-- CI/CD integration support
 
 ## Stay Updated
 

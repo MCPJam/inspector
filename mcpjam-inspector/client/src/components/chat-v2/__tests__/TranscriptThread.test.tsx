@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { TranscriptThread } from "../thread/transcript-thread";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 
 const mockMessageView = vi.fn();
 
@@ -400,13 +400,13 @@ describe("TranscriptThread", () => {
 
   it("attaches an animated Claude footer to the latest assistant message in a Claude host context", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <TranscriptThread
           {...defaultProps}
           isLoading={true}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -425,13 +425,13 @@ describe("TranscriptThread", () => {
 
   it("attaches the MCPJam dot footer to the latest assistant message while loading", () => {
     render(
-      <ChatboxHostStyleProvider value="mcpjam">
+      <ScenarioHostStyleProvider value="mcpjam">
         <TranscriptThread
           {...defaultProps}
           isLoading={true}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -451,13 +451,13 @@ describe("TranscriptThread", () => {
 
   it("does not attach a Claude footer to MCPJam host messages", () => {
     render(
-      <ChatboxHostStyleProvider value="mcpjam">
+      <ScenarioHostStyleProvider value="mcpjam">
         <TranscriptThread
           {...defaultProps}
           isLoading={false}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -471,19 +471,93 @@ describe("TranscriptThread", () => {
 
   it("keeps the latest Claude assistant footer static after loading completes", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <TranscriptThread
           {...defaultProps}
           isLoading={false}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
         claudeFooterMode: "static",
+      })
+    );
+  });
+
+  it("suppresses the per-turn rating footer on the streaming message", () => {
+    // Rating a half-written answer rates something the tester has not read.
+    const renderFooter = vi.fn(() => null);
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={true}
+        lastRenderableMessageId="assistant-1"
+        renderAssistantTurnFooter={renderFooter}
+      />
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        renderAssistantTurnFooter: undefined,
+      })
+    );
+  });
+
+  it("passes the per-turn rating footer through once streaming finishes", () => {
+    const renderFooter = vi.fn(() => null);
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={false}
+        lastRenderableMessageId="assistant-1"
+        renderAssistantTurnFooter={renderFooter}
+      />
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        renderAssistantTurnFooter: renderFooter,
+      })
+    );
+  });
+
+  it("keeps the footer on earlier assistant messages while the last one streams", () => {
+    // Only the message being written is suppressed; a completed turn earlier
+    // in the thread is still rateable.
+    const renderFooter = vi.fn(() => null);
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={true}
+        lastRenderableMessageId="assistant-2"
+        messages={[
+          ...defaultProps.messages,
+          {
+            id: "assistant-2",
+            role: "assistant",
+            parts: [{ type: "text", text: "still writing" }],
+          } as unknown as UIMessage,
+        ]}
+        renderAssistantTurnFooter={renderFooter}
+      />
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        renderAssistantTurnFooter: renderFooter,
+      })
+    );
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-2" }),
+        renderAssistantTurnFooter: undefined,
       })
     );
   });

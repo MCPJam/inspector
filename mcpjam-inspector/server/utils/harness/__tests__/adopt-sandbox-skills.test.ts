@@ -57,6 +57,41 @@ describe("adoptSandboxSkills", () => {
     ]);
   });
 
+  it("scans the runtime's own root when given one (codex)", async () => {
+    // Adoption reads whatever the user hand-placed next to our managed dirs.
+    // On a Codex turn that is `~/.agents/skills`; scanning the Claude root
+    // would both miss those and adopt another runtime's leftovers.
+    vi.mocked(convexAdoptComputerSkills).mockResolvedValue({
+      results: [{ name: "hand-made", status: "adopted", skillId: "sk_9" }],
+    });
+    const CODEX_BASE = "/home/user/.agents/skills";
+    const session = {
+      run: vi.fn(async ({ command }: { command: string }) => ({
+        exitCode: 0,
+        stdout:
+          command.startsWith("ls -1") && command.includes(CODEX_BASE)
+            ? "hand-made"
+            : "",
+        stderr: "",
+      })),
+      readTextFile: vi.fn(async ({ path }: { path: string }) =>
+        path === `${CODEX_BASE}/hand-made/SKILL.md`
+          ? skillMd("hand-made")
+          : null
+      ),
+    };
+
+    const out = await adoptSandboxSkills({
+      session,
+      authHeader: "Bearer x",
+      projectId: "proj_1",
+      managedNames: new Set(),
+      skillsBase: CODEX_BASE,
+    });
+
+    expect(out.adopted).toEqual([{ skillId: "sk_9", name: "hand-made" }]);
+  });
+
   it("skips a dir already delivered as a cloud skill (managedNames)", async () => {
     const session = fakeSession(["shared-skill"], {
       "shared-skill": skillMd("shared-skill"),

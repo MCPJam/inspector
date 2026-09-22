@@ -26,6 +26,19 @@ export function toolPart(opts: {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  /**
+   * The trace adapter's readable rendering of the result, attached to the part
+   * under `toolResultDisplay: "attached-to-tool"`. Optional here for the same
+   * reason it is optional in the renderer: a part that never went through the
+   * adapter has no such field.
+   */
+  traceDisplayText?: string;
+  /**
+   * How the adapter says that text should be rendered. Written alongside
+   * `traceDisplayText` in production; separable here so a test can pin what a
+   * reader does with a mode it does not recognise.
+   */
+  traceDisplayMode?: string;
 }): Record<string, unknown> {
   return {
     type: `tool-${opts.toolName}`,
@@ -34,5 +47,11 @@ export function toolPart(opts: {
     input: opts.input,
     output: opts.output,
     errorText: opts.errorText,
+    ...(opts.traceDisplayText !== undefined
+      ? { traceDisplayText: opts.traceDisplayText }
+      : {}),
+    ...(opts.traceDisplayMode !== undefined
+      ? { traceDisplayMode: opts.traceDisplayMode }
+      : {}),
   };
 }

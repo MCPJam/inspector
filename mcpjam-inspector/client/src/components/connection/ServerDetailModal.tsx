@@ -1,5 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
+import { reportCaught } from "@/lib/error-reporting";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -31,27 +42,36 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { getConnectionStatusMeta } from "./server-card-utils";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+  isConnectionStatus,
+} from "./server-card-utils";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
-import type {
-  ProjectServerConfigDto,
-  ProjectServerConfigInput,
-  ProjectServerOverrideEntry,
+import {
+  applyMcpProtocolVersionOverride,
+  type ProjectServerConfigDto,
+  type ProjectServerConfigInput,
+  type ProtocolOverrideAutoEnrollRecord,
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 
 export type ServerDetailTab =
   | "overview"
   | "configuration"
+  | "authorization"
   | "tools-metadata"
   | "compatibility"
   | "history";
@@ -60,7 +80,6 @@ interface ServerDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
-  needsReconnect?: boolean;
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
@@ -71,6 +90,7 @@ interface ServerDetailModalProps {
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -78,6 +98,8 @@ interface ServerDetailModalProps {
   projectClientConfig?: Project["clientConfig"];
   projectId?: string | null;
   hostedServerId?: string | null;
+  organizationId?: string | null;
+  isSignedIn?: boolean;
   /**
    * Host-default outbound MCP wire mode resolved from the surrounding
    * client's hostConfig.mcpProfile. Kept as an explicit prop (PROP-FIRST,
@@ -87,83 +109,15 @@ interface ServerDetailModalProps {
    * Undefined = no host-level pin = "Legacy · default" attribution on
    * the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion | "auto";
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
-
-type ProtocolOverrideAutoEnrollRecord = {
-  previousServerIds: string[];
-};
-
-const PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX =
-  "mcpjam:protocol-override-auto-enroll";
-
-const getProtocolOverrideAutoEnrollKey = (
-  projectId: string,
-  serverId: string
-) => `${PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX}:${projectId}:${serverId}`;
-
-const readProtocolOverrideAutoEnrollRecord = (
-  key: string
-): ProtocolOverrideAutoEnrollRecord | undefined => {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.sessionStorage.getItem(key);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<ProtocolOverrideAutoEnrollRecord>;
-    if (!Array.isArray(parsed.previousServerIds)) return undefined;
-    return {
-      previousServerIds: parsed.previousServerIds.filter(
-        (id): id is string => typeof id === "string"
-      ),
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-const writeProtocolOverrideAutoEnrollRecord = (
-  key: string,
-  record: ProtocolOverrideAutoEnrollRecord
-) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(key, JSON.stringify(record));
-  } catch {
-    // Losing this marker only affects cleanup of an implicit enrollment.
-  }
-};
-
-const removeProtocolOverrideAutoEnrollRecord = (key: string) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch {
-    // Best-effort cleanup only.
-  }
-};
-
-const matchesImplicitAutoEnrollment = (
-  currentServerIds: string[],
-  serverId: string,
-  previousServerIds: string[]
-) => {
-  const previousServerIdSet = new Set(previousServerIds);
-  if (previousServerIdSet.has(serverId)) return false;
-  if (!currentServerIds.includes(serverId)) return false;
-  if (currentServerIds.length !== previousServerIdSet.size + 1) return false;
-  return currentServerIds.every(
-    (currentServerId) =>
-      currentServerId === serverId || previousServerIdSet.has(currentServerId)
-  );
-};
 
 export function ServerDetailModal({
   isOpen,
   onClose,
   server,
-  needsReconnect = false,
   defaultTab = "overview",
   onSubmit,
   onDisconnect,
@@ -172,17 +126,29 @@ export function ServerDetailModal({
   projectClientConfig,
   projectId = null,
   hostedServerId = null,
+  organizationId = null,
+  isSignedIn = false,
   hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
-  const [isReconnecting, setIsReconnecting] = useState(false);
+  // Any HTTP server, matching the token section's own guard rather than
+  // `useOAuth`: a server that has since had OAuth turned off can still hold
+  // stored tokens, or unparseable ones, and "Saved auth data is invalid" has
+  // to stay reachable. The sections inside hide themselves when there is
+  // nothing to show.
+  const showAuthorization = "url" in server.config;
+  // Reconnects overlap: two quick wire-mode changes start a second one while
+  // the first is still running. A boolean would be cleared by whichever
+  // finished first and let a configuration save through mid-reconnect, so the
+  // guard counts them and lifts only when the last one settles.
+  const [reconnectsInFlight, setReconnectsInFlight] = useState(0);
+  const isReconnecting = reconnectsInFlight > 0;
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
-
   const initializationInfo = server.initializationInfo;
   const version = initializationInfo?.serverVersion?.version;
 
@@ -192,9 +158,17 @@ export function ServerDetailModal({
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
+  // Only a real Convex project id may reach this query — `getConfig` validates
+  // `projectId` as `v.id("projects")`, and a LOCAL id (UUID, or a `local_` /
+  // `project_` placeholder) makes it reject during render. Same guard every
+  // other project-scoped Convex consumer uses; callers in local mode should
+  // pass null, but this keeps a stray local id from taking down the page.
+  const isUserReady = useDbUserReady();
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(projectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    canQueryProjectServerConfig ? ({ projectId } as never) : "skip"
   ) as ProjectServerConfigDto | null | undefined;
   const setProjectServerConfigMutation = useMutation(
     "projectServerConfig:setConfig" as never
@@ -212,7 +186,7 @@ export function ServerDetailModal({
   // The History tab + drift chip surface persisted snapshot revisions, which
   // only exist for project-scoped (hosted) servers — hidden in local mode.
   // Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId);
+  const showHistory = isUserReady && Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -231,10 +205,16 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const storedHostDefaultMcpProtocolVersion =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+    storedHostDefaultMcpProtocolVersion === "auto"
+      ? undefined
+      : storedHostDefaultMcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
-    projectId && serverId && projectServerConfigDto !== undefined
+    canQueryProjectServerConfig &&
+      serverId &&
+      projectServerConfigDto !== undefined
   );
   const protocolOverrideAutoEnrolledRef = useRef<
     Map<string, ProtocolOverrideAutoEnrollRecord>
@@ -251,27 +231,56 @@ export function ServerDetailModal({
     target: McpProtocolVersion | undefined;
   } | null>(null);
   const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
+  const fallbackReconnectTimerRef = useRef<number | null>(null);
+  // The safety-net timer below outlives the modal: closing it a moment after
+  // the toggle otherwise still fires a reconnect 1.5s later, against a server
+  // the user has navigated away from.
+  useEffect(
+    () => () => {
+      if (fallbackReconnectTimerRef.current !== null) {
+        window.clearTimeout(fallbackReconnectTimerRef.current);
+      }
+    },
+    []
+  );
+  /**
+   * The wire-mode override's own reconnect, flagged in flight so the
+   * configuration Save is blocked for its duration like a user-initiated one.
+   * Both paths below reach it — the reactive watcher and the 1.5s safety net —
+   * because neither goes through `handleConnect`, which is where
+   * `isReconnecting` used to be set. Errors are reported, not toasted: the
+   * toggle owns that.
+   */
+  const reconnectForWireModeOverride = useCallback(async () => {
+    setReconnectsInFlight((count) => count + 1);
+    try {
+      await onReconnect(server.name, { allowInteractiveOAuthFlow: false });
+    } catch (err) {
+      reportCaught(err, {
+        source: "server_detail_wire_mode_reconnect",
+        level: "warning",
+      });
+    } finally {
+      setReconnectsInFlight((count) => count - 1);
+    }
+  }, [onReconnect, server.name]);
+
   useEffect(() => {
     const pending = pendingReconnectRef.current;
     if (!pending) return;
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
-    void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
-      () => {
-        // Reconnect failures surface their own toast inside the handler.
-      }
-    );
+    void reconnectForWireModeOverride();
   }, [
     currentMcpProtocolVersionOverride,
-    onReconnect,
-    server.name,
+    reconnectForWireModeOverride,
     pendingReconnectTick,
   ]);
 
   const handleMcpProtocolVersionOverrideChange = async (
     next: McpProtocolVersion | undefined
   ): Promise<void> => {
-    if (!projectId) {
+    if (!canQueryProjectServerConfig || !projectId) {
       toast.error(
         "Wire mode override requires a project context; cannot save without projectId."
       );
@@ -292,78 +301,18 @@ export function ServerDetailModal({
       );
       return;
     }
-    // setConfig replaces the entire (serverIds, overrides) pair — read
-    // current (now guaranteed non-undefined), splice in the new
-    // override, write back. Preserve every other server's overrides
-    // verbatim. `projectServerConfigDto` may still be `null` (no row
-    // yet for this project) — that case is genuinely the empty
-    // baseline.
-    const currentServerIds = projectServerConfigDto?.serverIds ?? [];
-    const currentOverrides = projectServerConfigDto?.overrides ?? {};
-    const existingEntry = currentOverrides[serverId] ?? {};
-    const updatedEntry: ProjectServerOverrideEntry = {
-      ...existingEntry,
-      mcpProtocolVersionOverride: next,
-    };
-    // Drop entry when it collapses to nothing (no headers, no timeout,
-    // no wire-mode). Mirrors `normalizeOverrideEntry` on the backend so
-    // the canonicalizer doesn't see an empty entry.
-    const hasContent =
-      (updatedEntry.headersOverride &&
-        Object.keys(updatedEntry.headersOverride).length > 0) ||
-      updatedEntry.requestTimeoutOverride !== undefined ||
-      updatedEntry.mcpProtocolVersionOverride !== undefined;
-    const nextOverrides: Record<string, ProjectServerOverrideEntry> = {
-      ...currentOverrides,
-    };
-    if (hasContent) nextOverrides[serverId] = updatedEntry;
-    else delete nextOverrides[serverId];
-    // Backend validation requires override keys to be members of `serverIds`.
-    // If this control enrolls the server only to save the protocol pin, remember
-    // that provenance so clearing the pin can undo the implicit enrollment
-    // without removing servers that were already explicitly auto-connected.
-    const autoEnrollKey = getProtocolOverrideAutoEnrollKey(projectId, serverId);
-    const autoEnrollRecord =
-      protocolOverrideAutoEnrolledRef.current.get(autoEnrollKey) ??
-      readProtocolOverrideAutoEnrollRecord(autoEnrollKey);
-    const shouldAutoEnrollForOverride =
-      hasContent && !currentServerIds.includes(serverId);
-    const shouldUndoAutoEnroll =
-      !hasContent &&
-      autoEnrollRecord !== undefined &&
-      matchesImplicitAutoEnrollment(
-        currentServerIds,
-        serverId,
-        autoEnrollRecord.previousServerIds
-      );
-    const nextServerIds = shouldAutoEnrollForOverride
-      ? [...currentServerIds, serverId]
-      : shouldUndoAutoEnroll
-      ? currentServerIds.filter(
-          (currentServerId) => currentServerId !== serverId
-        )
-      : currentServerIds;
     try {
-      await setProjectServerConfigMutation({
+      // Shared splice + implicit-enrollment bookkeeping — same helper the
+      // Add Server flow uses (`applyMcpProtocolVersionOverride`). The
+      // `null` case is genuinely the empty baseline (no row yet).
+      await applyMcpProtocolVersionOverride({
         projectId,
-        input: { serverIds: nextServerIds, overrides: nextOverrides },
+        serverId,
+        current: projectServerConfigDto ?? null,
+        next,
+        setConfig: setProjectServerConfigMutation,
+        autoEnrollCache: protocolOverrideAutoEnrolledRef.current,
       });
-      if (shouldAutoEnrollForOverride) {
-        const nextAutoEnrollRecord = {
-          previousServerIds: [...currentServerIds],
-        };
-        protocolOverrideAutoEnrolledRef.current.set(
-          autoEnrollKey,
-          nextAutoEnrollRecord
-        );
-        writeProtocolOverrideAutoEnrollRecord(
-          autoEnrollKey,
-          nextAutoEnrollRecord
-        );
-      } else if (!hasContent && autoEnrollRecord !== undefined) {
-        protocolOverrideAutoEnrolledRef.current.delete(autoEnrollKey);
-        removeProtocolOverrideAutoEnrollRecord(autoEnrollKey);
-      }
       // Reconnect-after-save race: `onReconnect` ultimately reads from
       // `activeHostConfig.serverConnectionOverrides` to compute the new
       // wire mode. That value is a derivation of the same Convex row we
@@ -382,12 +331,11 @@ export function ServerDetailModal({
       // Fallback: if the reactive refetch is delayed (network blip,
       // backend slow), trigger reconnect after 1.5s anyway. The watcher
       // effect short-circuits if it already fired.
-      window.setTimeout(() => {
+      fallbackReconnectTimerRef.current = window.setTimeout(() => {
+        fallbackReconnectTimerRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name, {
-            allowInteractiveOAuthFlow: false,
-          }).catch(() => {});
+          void reconnectForWireModeOverride();
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
@@ -407,6 +355,9 @@ export function ServerDetailModal({
 
   const formState = useServerForm(server, {
     projectClientConfig,
+    confidentialCimdProbeEnabled: isOpen,
+    organizationId,
+    isSignedIn,
   });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
@@ -415,8 +366,11 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = server.connectionStatus === "connected";
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  /** See ServerConnectionCard: unreadable is not the same claim as offline. */
+  const { label: connectionStatusLabel, indicatorClassName } =
+    isConnectionStatus(server.connectionStatus)
+      ? getConnectionStatusMeta(server.connectionStatus)
+      : UNKNOWN_CONNECTION_STATUS;
 
   useEffect(() => {
     let isCancelled = false;
@@ -534,9 +488,9 @@ export function ServerDetailModal({
         }
       }
 
-      const finalFormData = formState.buildFormData(
-        revealedHeaders ? { revealedHeaders } : undefined
-      );
+      const finalFormData = formState.buildFormData({
+        ...(revealedHeaders ? { revealedHeaders } : {}),
+      });
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
@@ -545,9 +499,10 @@ export function ServerDetailModal({
 
   const handleConnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
-    setIsReconnecting(true);
+    setReconnectsInFlight((count) => count + 1);
     track("server_detail_modal_connect_clicked", {
       location: "server_detail_modal",
       server_id: server.name,
@@ -557,9 +512,9 @@ export function ServerDetailModal({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to connect to ${server.name}: ${errorMessage}`);
+      toastServerConnectionFailure(server.name, errorMessage);
     } finally {
-      setIsReconnecting(false);
+      setReconnectsInFlight((count) => count - 1);
     }
   };
 
@@ -593,20 +548,50 @@ export function ServerDetailModal({
     }
   };
 
-  const tabTriggerClass =
-    "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
+  const tabTriggerClass = "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
+
+  /**
+   * The single condition that decides whether this configuration may be saved.
+   *
+   * Extracted because the Save button's `disabled` and the form's submit
+   * handler were two different lists, and Enter in any configuration input
+   * submits the form — so every condition the button enforced was bypassable
+   * from the keyboard. That matters most for MJ-003's credential-clear
+   * acknowledgement, which is there precisely so a destructive save cannot
+   * happen without one, but it was equally true of the duplicate-name check,
+   * the auth-configuration block, and the in-flight reconnect guard.
+   */
+  const saveBlocked =
+    isDuplicateServerName ||
+    isSaving ||
+    isReconnecting ||
+    (!formState.hasChanges && !isConnected) ||
+    formState.authConfigurationBlocksSubmit ||
+    formState.credentialClearBlocksSubmit;
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!isConfigurationTab || isSaving) return;
+    if (!isConfigurationTab || saveBlocked) return;
     void handleSave();
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        // Browser translators rewrite text nodes in-place. React then cannot
+        // safely remove this portaled dialog after its close animation.
+        translate="no"
+        // The `sm:` prefix is load-bearing. DialogContent's base carries
+        // `sm:max-w-lg`, and tailwind-merge only collapses classes that
+        // share a variant — so an unprefixed `max-w-2xl` never conflicts
+        // with it, and the narrower `sm:` rule wins on every viewport
+        // >= 640px. Measured: the header was 462px (= 512 - padding -
+        // border) instead of the 622px this line asks for. Prefixing also
+        // spares the base `max-w-[calc(100%-2rem)]`, which tailwind-merge
+        // used to drop as a same-variant conflict — that's the guard that
+        // keeps the dialog off both screen edges below 640px.
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}
@@ -617,7 +602,18 @@ export function ServerDetailModal({
         }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between gap-2">
+          <DialogTitle
+            // `flex-wrap` is what keeps the server name on screen. The
+            // status cluster opposite it is `flex-shrink-0`, and inside
+            // this group only the name can shrink (version + logos are
+            // `flex-shrink-0`, and `truncate`'s `overflow:hidden` lets it
+            // collapse past its text). So every pixel of deficit landed on
+            // the name alone: adding the "Tools changed" chip took it from
+            // 88px to 8px without the window moving. Wrapping moves the
+            // cluster to its own row instead of squeezing the name, and
+            // stops it overflowing the dialog on narrow viewports.
+            className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
+          >
             <div className="flex items-center gap-2 min-w-0">
               <span className="truncate">{server.name}</span>
               {version && (
@@ -660,8 +656,7 @@ export function ServerDetailModal({
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 ) : (
                   <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: indicatorColor }}
+                    className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                   />
                 )}
                 <span>
@@ -722,6 +717,11 @@ export function ServerDetailModal({
               >
                 Tools
               </TabsTrigger>
+              {showAuthorization && (
+                <TabsTrigger value="authorization" className={tabTriggerClass}>
+                  Auth
+                </TabsTrigger>
+              )}
               <TabsTrigger
                 value="compatibility"
                 aria-label="Client compatibility"
@@ -753,12 +753,20 @@ export function ServerDetailModal({
                     mcpProtocolVersionOverride={
                       currentMcpProtocolVersionOverride
                     }
+                    hostDefaultMcpProtocolVersion={
+                      resolvedHostDefaultMcpProtocolVersion
+                    }
                     onMcpProtocolVersionOverrideChange={
                       canEditMcpProtocolVersionOverride
                         ? handleMcpProtocolVersionOverrideChange
                         : undefined
                     }
                   />
+                  {/* MJ-003 AC 3: where this server has been repointed, and
+                      whether that cleared credentials. Readable on every plan,
+                      unlike the organization audit log. Renders nothing when
+                      there is no history. */}
+                  <ServerUrlChangeHistory serverId={hostedServerId} />
                 </div>
               </TabsContent>
 
@@ -782,13 +790,7 @@ export function ServerDetailModal({
                           })
                       : undefined
                   }
-                  disabled={
-                    isDuplicateServerName ||
-                    isSaving ||
-                    isReconnecting ||
-                    (!formState.hasChanges && !isConnected) ||
-                    formState.preregisteredOauthBlocksSubmit
-                  }
+                  disabled={saveBlocked}
                   size="sm"
                 >
                   {isSaving || isReconnecting ? (
@@ -799,7 +801,7 @@ export function ServerDetailModal({
                   ) : isConnected && !formState.hasChanges ? (
                     "Reconnect"
                   ) : (
-                    "Save Changes"
+                    "Save & Connect"
                   )}
                 </Button>
               </DialogFooter>
@@ -818,14 +820,51 @@ export function ServerDetailModal({
                     </div>
                   ) : (
                     <ServerInfoContent
+                      sections="info"
                       server={server}
-                      needsReconnect={needsReconnect}
                       projectId={projectId}
                       hostedServerId={hostedServerId}
                     />
                   )}
                 </div>
               </TabsContent>
+
+              {showAuthorization && (
+                <TabsContent
+                  value="authorization"
+                  // Overlays the force-mounted configuration panel, like every
+                  // other tab. Configuration's own classes are NOT reusable
+                  // here: it keeps `invisible` while inactive, which still
+                  // occupies layout, so a sibling in normal flow stacks below
+                  // its full height and spills out of the dialog.
+                  className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+                >
+                  <div className="space-y-4 pl-1 pr-6">
+                  <ConnectionAccountsSection
+                    projectId={projectId}
+                    serverId={hostedServerId}
+                    enabled={isUserReady && server.useOAuth === true}
+                    onAuthenticate={(connectionIntent) =>
+                      onReconnect(server.name, {
+                        forceOAuthFlow: true,
+                        connectionIntent,
+                      })
+                    }
+                    onSwitch={() =>
+                      onReconnect(server.name, {
+                        allowInteractiveOAuthFlow: false,
+                      })
+                    }
+                  />
+                    <ServerInfoContent
+                      sections="auth"
+                      server={server}
+                      projectId={projectId}
+                      hostedServerId={hostedServerId}
+                    />
+                  </div>
+                </TabsContent>
+              )}
 
               {/* Tools Metadata: overlays the configuration panel + footer to use full space */}
               <TabsContent

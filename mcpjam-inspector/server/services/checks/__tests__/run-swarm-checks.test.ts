@@ -1,0 +1,370 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+const claimSwarmChecksMock = vi.hoisted(() => vi.fn());
+const completeSwarmChecksMock = vi.hoisted(() => vi.fn());
+const failSwarmChecksMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../swarm-agent.js", () => ({
+  claimSwarmChecks: claimSwarmChecksMock,
+  completeSwarmChecks: completeSwarmChecksMock,
+  failSwarmChecks: failSwarmChecksMock,
+}));
+
+import { runSwarmChecks } from "../run-swarm-checks";
+import type { Predicate } from "@/shared/eval-matching";
+
+type Criterion = { id: string; label?: string; predicate: Predicate };
+
+const ARGS = {
+  convexHttpUrl: "https://backend.test",
+  bearer: "tok",
+  projectId: "proj_1",
+  runId: "run_1",
+  chatSessionId: "sess-ext-1",
+};
+
+const CRITERIA: Criterion[] = [
+  {
+    id: "crit-search",
+    label: "Searched",
+    predicate: { type: "toolCalledAtLeastOnce" as const, toolName: "search" },
+  },
+  {
+    id: "crit-quick",
+    predicate: { type: "turnCountUnder" as const, turns: 3 },
+  },
+];
+
+function claimResult(
+  messages: Array<Record<string, unknown>> | null,
+  criteria: Criterion[] = CRITERIA,
+  extras: {
+    usage?: { inputTokens?: number; outputTokens?: number } | null;
+    widgetRenderObservations?: Array<Record<string, unknown>>;
+  } = {},
+) {
+  return {
+    claimed: true as const,
+    generation: 1,
+    checkDocId: "check_1",
+    sessionDocId: "session_1",
+    criteria,
+    envelope:
+      messages === null
+        ? null
+        : {
+            messages,
+            ...(extras.widgetRenderObservations
+              ? { widgetRenderObservations: extras.widgetRenderObservations }
+              : {}),
+          },
+    usage: extras.usage ?? null,
+  };
+}
+
+describe("runSwarmChecks", () => {
+  beforeEach(() => {
+    claimSwarmChecksMock.mockReset();
+    completeSwarmChecksMock.mockReset().mockResolvedValue(undefined);
+    failSwarmChecksMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("never reports a pass from an empty or incomplete transcript", async () => {
+    for (const envelope of [
+      { messages: [] },
+      { messages: [{ role: "user", content: "help" }], traceComplete: false },
+    ]) {
+      claimSwarmChecksMock.mockResolvedValue({ ...claimResult([]), envelope });
+      expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed" });
+    }
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+  });
+
+  it("evaluates the pinned criteria and correlates verdicts back by criterionId", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([
+        { role: "user", content: "help" },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool-call", toolName: "search", input: { q: "refund" } },
+          ],
+        },
+        { role: "assistant", content: [{ type: "text", text: "done" }] },
+      ]),
+    );
+
+    const outcome = await runSwarmChecks(ARGS);
+
+    expect(outcome.status).toBe("completed");
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults).toEqual([
+      expect.objectContaining({
+        criterionId: "crit-search",
+        passed: true,
+        status: "scored",
+      }),
+      // One user turn, budget 3 ⇒ passes strictly under.
+      expect.objectContaining({ criterionId: "crit-quick", passed: true }),
+    ]);
+    // The generation from the claim is echoed back so a stale grade no-ops
+    // server-side.
+    expect(payload.generation).toBe(1);
+    expect(payload.checkDocId).toBe("check_1");
+  });
+
+  it("fails a criterion whose predicate is not satisfied — a normal COMPLETED verdict", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([
+        { role: "user", content: "one" },
+        { role: "user", content: "two" },
+        { role: "user", content: "three" },
+        { role: "assistant", content: [{ type: "text", text: "ok" }] },
+      ]),
+    );
+
+    const outcome = await runSwarmChecks(ARGS);
+
+    expect(outcome.status).toBe("completed");
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    // Never called `search`, and used exactly 3 turns against a strict `< 3`.
+    expect(payload.criterionResults.map((r: any) => r.passed)).toEqual([
+      false,
+      false,
+    ]);
+    expect(payload.criterionResults.map((r: any) => r.status)).toEqual([
+      "scored",
+      "scored",
+    ]);
+    // Reasons carry the evidence; the compact session stamp will not.
+    expect(payload.criterionResults[1].reason).toContain("3");
+  });
+
+  it("CLAIMS before it evaluates, so a crash mid-grade leaves a visible pending", async () => {
+    const order: string[] = [];
+    claimSwarmChecksMock.mockImplementation(async () => {
+      order.push("claim");
+      return claimResult([{ role: "user", content: "hi" }]);
+    });
+    completeSwarmChecksMock.mockImplementation(async () => {
+      order.push("complete");
+    });
+
+    await runSwarmChecks(ARGS);
+
+    expect(order).toEqual(["claim", "complete"]);
+  });
+
+  it("preserves evaluator errors when a check cannot read the tool inventory", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "help" }],
+        [{ id: "schema", predicate: { type: "argumentsMatchToolSchema" } }],
+      ),
+    );
+    const outcome = await runSwarmChecks(ARGS);
+    expect(outcome.status).toBe("completed");
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults).toEqual([
+      expect.objectContaining({
+        criterionId: "schema",
+        passed: false,
+        status: "error",
+      }),
+    ]);
+  });
+
+  it("skips entirely when the run carries no rubric — nothing is stamped", async () => {
+    claimSwarmChecksMock.mockResolvedValue(null);
+
+    const outcome = await runSwarmChecks(ARGS);
+
+    expect(outcome).toEqual({ status: "skipped", reason: "no_rubric" });
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a FAILED grade when the envelope has no readable messages", async () => {
+    claimSwarmChecksMock.mockResolvedValue(claimResult(null));
+
+    const outcome = await runSwarmChecks(ARGS);
+
+    expect(outcome).toEqual({
+      status: "failed",
+      error: "transcript envelope unreadable",
+    });
+    expect(failSwarmChecksMock).toHaveBeenCalledTimes(1);
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows a secondary failure while reporting the primary one", async () => {
+    claimSwarmChecksMock.mockResolvedValue(claimResult(null));
+    failSwarmChecksMock.mockRejectedValue(new Error("network down"));
+
+    // The claim's `pending` stamp is the honest fallback; masking the real
+    // cause with a transport error would help nobody.
+    await expect(runSwarmChecks(ARGS)).resolves.toEqual({
+      status: "failed",
+      error: "transcript envelope unreadable",
+    });
+  });
+
+  it("propagates a CLAIM failure — nothing was stamped, so there is no half-state", async () => {
+    claimSwarmChecksMock.mockRejectedValue(new Error("403 forbidden"));
+
+    await expect(runSwarmChecks(ARGS)).rejects.toThrow("403 forbidden");
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+  });
+
+  it("fails tokenBudgetUnder closed when the claim carries no usage", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }], [
+        {
+          id: "crit-tokens",
+          predicate: { type: "tokenBudgetUnder" as const, tokens: 1_000_000 },
+        },
+      ]),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-tokens",
+      passed: false,
+    });
+    expect(payload.criterionResults[0].reason).toContain("unavailable");
+  });
+
+  it("grades tokenBudgetUnder against the claim's session usage", async () => {
+    const tokenCriteria: Criterion[] = [
+      {
+        id: "crit-under",
+        predicate: { type: "tokenBudgetUnder" as const, tokens: 500 },
+      },
+      {
+        id: "crit-over",
+        predicate: { type: "tokenBudgetUnder" as const, tokens: 100 },
+      },
+    ];
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }], tokenCriteria, {
+        usage: { inputTokens: 120, outputTokens: 80 },
+      }),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    // 120 + 80 = 200: under 500, not under 100.
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-under",
+      passed: true,
+    });
+    expect(payload.criterionResults[1]).toMatchObject({
+      criterionId: "crit-over",
+      passed: false,
+    });
+  });
+
+  it("degrades malformed claim usage to unmeasured, never to a passing zero", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "hi" }],
+        [
+          {
+            id: "crit-tokens",
+            predicate: { type: "tokenBudgetUnder" as const, tokens: 1_000 },
+          },
+        ],
+        // Wire data a buggy or older backend could emit.
+        { usage: { inputTokens: Number.NaN } as never },
+      ),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0].passed).toBe(false);
+    expect(payload.criterionResults[0].reason).toContain("unavailable");
+  });
+
+  it("grades widget checks against the envelope's render observations", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "hi" }],
+        [
+          {
+            id: "crit-rendered",
+            predicate: { type: "widgetRendered" as const },
+          },
+        ],
+        {
+          widgetRenderObservations: [
+            {
+              toolCallId: "call_1",
+              toolName: "show_chart",
+              serverId: "srv_1",
+              status: "rendered",
+              elapsedMs: 420,
+            },
+          ],
+        },
+      ),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-rendered",
+      passed: true,
+    });
+  });
+
+  it("fails widget checks closed when the envelope carries no observations", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }], [
+        {
+          id: "crit-rendered",
+          predicate: { type: "widgetRendered" as const },
+        },
+      ]),
+    );
+
+    await runSwarmChecks(ARGS);
+
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults[0]).toMatchObject({
+      criterionId: "crit-rendered",
+      passed: false,
+    });
+  });
+
+  it("treats a `{ ok: false }` COMPLETE as a failure, not a persisted verdict", async () => {
+    // The route answers 200 with `{ ok: false }` on a rejected payload. If the
+    // wrapper swallowed that, the runner would report `completed` while the
+    // check row sat `pending` forever.
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }]),
+    );
+    completeSwarmChecksMock.mockRejectedValue(
+      new Error("Invalid response from backend completeSwarmChecks: rejected"),
+    );
+
+    await expect(runSwarmChecks(ARGS)).rejects.toThrow(/completeSwarmChecks/);
+  });
+
+  it("records unavailable grading for a session with no captured conversation", async () => {
+    claimSwarmChecksMock.mockResolvedValue(claimResult([]));
+    expect(await runSwarmChecks(ARGS)).toMatchObject({
+      status: "failed",
+      error: "transcript envelope unreadable",
+    });
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+    expect(failSwarmChecksMock).toHaveBeenCalledOnce();
+  });
+});

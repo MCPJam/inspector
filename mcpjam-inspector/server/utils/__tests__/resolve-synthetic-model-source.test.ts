@@ -40,6 +40,38 @@ describe("resolveSyntheticModelSource", () => {
     __resetHostedModelCatalogForTests();
   });
 
+  it.each([undefined, true, false])(
+    "resolves bare hosted aliases with hosted=%s consistently with chat",
+    async (hosted) => {
+      const result = await resolveSyntheticModelSource({
+        modelDefinition: {
+          id: "gpt-5-nano",
+          name: "GPT",
+          provider: "openai",
+          hosted,
+        },
+        projectId: "proj-1",
+      });
+      expect(result.source).toBe(hosted === false ? "byok" : "mcpjam");
+    },
+  );
+
+  it("uses the OpenRouter key for an explicit own-provider selection with a hosted id", async () => {
+    const result = await resolveSyntheticModelSource({
+      modelDefinition: {
+        id: "openai/gpt-5-nano",
+        name: "GPT",
+        provider: "openrouter",
+        hosted: false,
+      },
+      projectId: "proj-1",
+    });
+    expect(result).toEqual({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "openrouter" },
+    });
+  });
+
   it("returns `mcpjam` source with no orgRuntime for static-seed models", async () => {
     const result = await resolveSyntheticModelSource({
       modelDefinition: {
@@ -127,6 +159,19 @@ describe("resolveSyntheticModelSource", () => {
 });
 
 describe("buildSyntheticModelDefinition", () => {
+  it.each(["gpt-5-nano", "openai/gpt-5-nano", "custom:acme:model"])(
+    "preserves a pinned BYOK override for %s without mutating catalog definitions",
+    (id) => {
+      const legacy = buildSyntheticModelDefinition(id);
+      expect(buildSyntheticModelDefinition(id, { hosted: false })).toEqual({
+        ...legacy,
+        hosted: false,
+      });
+      expect(buildSyntheticModelDefinition(id)).toEqual(legacy);
+      expect(legacy.hosted).not.toBe(false);
+    },
+  );
+
   it("returns the catalog definition unchanged for a SUPPORTED_MODELS (BYOK) id", () => {
     // BYOK static entries still carry contextLength. Hosted models are no
     // longer in SUPPORTED_MODELS — their metadata comes from the live catalog.
@@ -182,7 +227,7 @@ describe("buildSyntheticModelDefinition", () => {
 
   it("derives provider='bedrock' for bare Bedrock-shaped ids", () => {
     // Org Bedrock models surface bare inference-profile ids in the picker,
-    // so chatbox runtime configs store them without a "bedrock/" prefix.
+    // so scenario runtime configs store them without a "bedrock/" prefix.
     expect(
       buildSyntheticModelDefinition(
         "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -224,7 +269,7 @@ describe("buildSyntheticModelDefinition", () => {
 
   it("falls back to provider='ollama' for bare ids (no slash, no recognized prefix)", () => {
     // Catalog never carries bare ids today, so the realistic BYOK case is
-    // an Ollama-style local model stored on a chatbox runtime config.
+    // an Ollama-style local model stored on a scenario runtime config.
     const result = buildSyntheticModelDefinition("llama-3:8b");
     expect(result).toEqual({
       id: "llama-3:8b",
@@ -301,6 +346,7 @@ describe("matchOrgProviderForModelId", () => {
       id: "anthropic/claude-3.5-sonnet",
       name: "anthropic/claude-3.5-sonnet",
       provider: "openrouter",
+      hosted: false,
     });
   });
 
@@ -321,6 +367,7 @@ describe("matchOrgProviderForModelId", () => {
       name: "custom:acme:acme-large",
       provider: "custom",
       customProviderName: "acme",
+      hosted: false,
     });
   });
 
@@ -424,6 +471,7 @@ describe("resolveHostModelDefinition", () => {
       id: "anthropic/claude-haiku-4.5",
       name: "anthropic/claude-haiku-4.5",
       provider: "openrouter",
+      hosted: false,
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

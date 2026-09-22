@@ -3,6 +3,7 @@ import { MessageCircle } from "lucide-react";
 import type { UIMessage } from "@ai-sdk/react";
 
 import { PartSwitch } from "./part-switch";
+import { MessageTimestamp, getMessageTimestampMs } from "./message-timestamp";
 import {
   type AnyPart,
   groupAssistantPartsIntoSteps,
@@ -10,6 +11,7 @@ import {
 } from "./internal/thread-helpers";
 import type {
   ChatUiModel,
+  JsonRenderer,
   ReasoningDisplayMode,
   ToolRenderContext,
   ToolRenderOverride,
@@ -27,16 +29,46 @@ export interface MessageViewProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   widgetPolicy?: WidgetPolicy;
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
+  /** Host override for displaying a tool's JSON payloads. */
+  renderJson?: JsonRenderer;
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
-  /** Show a generic assistant avatar to the left of assistant messages. */
+  /**
+   * Show an avatar to the left of assistant messages. Defaults to whether
+   * `renderAvatar` was supplied — so a host that passes one gets it, and a
+   * host that passes neither gets no gutter (BB-239: the generic
+   * `MessageCircle` this used to default to identified nothing, and the
+   * Playground renderer has never drawn one). Pass `true` without
+   * `renderAvatar` for the built-in placeholder.
+   */
   showAssistantAvatar?: boolean;
   /** Host override for the assistant avatar (e.g. provider logos). */
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
+  /**
+   * Host slot rendered under an ASSISTANT message's parts — the per-turn
+   * rating widget, today. Assistant-only because the thing being judged is the
+   * response; a footer under the user's own message has nothing to rate.
+   *
+   * Takes `turnIndex` as a SECOND ARGUMENT rather than closing over it. This
+   * component is `memo`ized on shallow prop equality, so a per-message arrow
+   * built in the parent's render would change identity every pass and defeat
+   * the memo for the whole transcript. A function reference plus a number both
+   * compare cleanly.
+   */
+  renderTurnFooter?: (message: UIMessage, turnIndex: number) => ReactNode;
+  /** Position of this message in the parent's VISIBLE message array. */
+  turnIndex?: number;
 }
 
 function getPartKey(part: AnyPart, stepIndex: number, partIndex: number) {
-  const candidate = part as { type?: string; toolCallId?: unknown; id?: unknown };
-  if (typeof candidate.toolCallId === "string" && candidate.toolCallId.length > 0) {
+  const candidate = part as {
+    type?: string;
+    toolCallId?: unknown;
+    id?: unknown;
+  };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
     return `tool-${candidate.toolCallId}`;
   }
   if (typeof candidate.id === "string" && candidate.id.length > 0) {
@@ -55,8 +87,11 @@ function MessageViewImpl({
   widgetPolicy = "placeholder",
   renderTool,
   renderWidget,
-  showAssistantAvatar = true,
+  renderJson,
+  showAssistantAvatar,
   renderAvatar,
+  renderTurnFooter,
+  turnIndex = 0,
 }: MessageViewProps) {
   if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
@@ -71,6 +106,7 @@ function MessageViewImpl({
     widgetPolicy,
     renderTool,
     renderWidget,
+    renderJson,
   };
 
   if (role === "user") {
@@ -79,7 +115,7 @@ function MessageViewImpl({
     const otherParts = parts.filter((part) => part.type !== "file");
 
     return (
-      <div className="mcpjam-chat-message mcpjam-chat-message-user flex w-full min-w-0 flex-col items-end gap-2">
+      <div className="mcpjam-chat-message mcpjam-chat-message-user group/user-message flex w-full min-w-0 flex-col items-end gap-2">
         {fileParts.length > 0 ? (
           <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
             {fileParts.map((part, i) => (
@@ -94,11 +130,21 @@ function MessageViewImpl({
             ))}
           </div>
         ) : null}
+        {getMessageTimestampMs(message) !== undefined ? (
+          <div className="flex items-center justify-end opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+            <MessageTimestamp message={message} />
+          </div>
+        ) : null}
       </div>
     );
   }
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
+
+  // A host that supplies `renderAvatar` and nothing else means to show it.
+  // Requiring both props would make that a silent no-op; an explicit `false`
+  // still wins, so a host can pass a renderer and suppress it per surface.
+  const withAvatar = showAssistantAvatar ?? Boolean(renderAvatar);
 
   const avatar = renderAvatar ? (
     renderAvatar(model)
@@ -114,12 +160,12 @@ function MessageViewImpl({
   return (
     <article
       className={
-        showAssistantAvatar
-          ? "mcpjam-chat-message mcpjam-chat-message-assistant flex w-full min-w-0 gap-4"
-          : "mcpjam-chat-message mcpjam-chat-message-assistant w-full min-w-0"
+        withAvatar
+          ? "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message flex w-full min-w-0 gap-4"
+          : "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message w-full min-w-0"
       }
     >
-      {showAssistantAvatar ? avatar : null}
+      {withAvatar ? avatar : null}
       <div className="min-w-0 flex-1">
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (
@@ -134,6 +180,12 @@ function MessageViewImpl({
             </div>
           ))}
         </div>
+        {getMessageTimestampMs(message) !== undefined ? (
+          <div className="flex items-center pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+            <MessageTimestamp message={message} />
+          </div>
+        ) : null}
+        {renderTurnFooter?.(message, turnIndex)}
       </div>
     </article>
   );

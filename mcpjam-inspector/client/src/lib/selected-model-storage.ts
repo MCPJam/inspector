@@ -38,6 +38,7 @@
 
 const STORAGE_KEY = "mcp-inspector-selected-model";
 const MULTI_STORAGE_KEY = "mcp-inspector-selected-models";
+const OWN_PROVIDER_STORAGE_KEY = "mcp-inspector-last-own-provider-model";
 const EVENT_NAME = "selected-model-changed";
 const ARRAY_EVENT_NAME = "selected-model-ids-changed";
 
@@ -100,6 +101,45 @@ export function saveSelectedModelId(modelId: string | null): void {
       localStorage.removeItem(STORAGE_KEY);
     }
     dispatchChanged(next);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * The last model the user picked from the "Your providers" (BYOK/org-key)
+ * side of the picker, remembered separately from the lead selection.
+ *
+ * The lead key alone can't answer "which own-provider model does this user
+ * want?" — it holds whatever is selected right now, which during the
+ * free-tier flow is an MCPJam-provided model. Without this memory, the
+ * out-of-credits → "bring your own key" hand-off had nothing to restore and
+ * fell back to list order, landing on whichever model sorts first
+ * (Claude Fable 5) even when the user's key has no access to it. See
+ * BACK2-628.
+ *
+ * Deliberately event-free: nothing subscribes to it, and it is only read at
+ * the moment the hand-off runs.
+ */
+export function loadLastOwnProviderModelId(): string | null {
+  try {
+    const raw = localStorage.getItem(OWN_PROVIDER_STORAGE_KEY);
+    if (typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastOwnProviderModelId(modelId: string | null): void {
+  try {
+    const trimmed = modelId?.trim() ?? null;
+    if (trimmed && trimmed.length > 0) {
+      localStorage.setItem(OWN_PROVIDER_STORAGE_KEY, trimmed);
+    } else {
+      localStorage.removeItem(OWN_PROVIDER_STORAGE_KEY);
+    }
   } catch {
     // ignore
   }

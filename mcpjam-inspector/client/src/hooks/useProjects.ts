@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { ProjectVisibility } from "@/state/app-types";
@@ -49,6 +49,7 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  oauthProtocolMode?: string;
   oauthProtocolVersion?: string;
   oauthRegistrationStrategy?: string;
   hasClientSecret?: boolean;
@@ -68,6 +69,14 @@ export interface RemoteServer {
   // schema + `servers:getProjectServers` query to persist/return it for hosted
   // round-trip, mirroring xaaIdentityAssertionFormat.
   xaaClientAuth?: string;
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    "client_secret_post" | "client_secret_basic" | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
+  hasXaaDcrRegistration?: boolean;
   authMethod?: string;
   createdAt: number;
   updatedAt: number;
@@ -113,13 +122,13 @@ export function shouldQueryProjectId(projectId: string | null | undefined) {
   const lower = normalized.toLowerCase();
   return Boolean(
     !INVALID_PROJECT_ID_SENTINELS.has(lower) &&
-      !UUID_PROJECT_ID_PATTERN.test(normalized) &&
-      !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix))
+    !UUID_PROJECT_ID_PATTERN.test(normalized) &&
+    !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix)),
   );
 }
 
 function isProjectMembersQueryResult(
-  value: unknown
+  value: unknown,
 ): value is ProjectMembersQueryResult {
   return (
     typeof value === "object" &&
@@ -129,7 +138,7 @@ function isProjectMembersQueryResult(
 }
 
 export function normalizeProjectMembersResult(
-  value: ProjectMember[] | ProjectMembersQueryResult | undefined
+  value: ProjectMember[] | ProjectMembersQueryResult | undefined,
 ): ProjectMembersQueryResult {
   if (Array.isArray(value)) {
     return { members: value, canManageMembers: false };
@@ -147,12 +156,12 @@ export function normalizeProjectMembersResult(
 
 export function filterProjectsForOrganization(
   projects: RemoteProject[] | undefined,
-  organizationId?: string
+  organizationId?: string,
 ) {
   if (!projects || !organizationId) return projects;
 
   return projects.filter(
-    (project) => project.organizationId === organizationId
+    (project) => project.organizationId === organizationId,
   );
 }
 
@@ -163,16 +172,24 @@ export function useProjectQueries({
   isAuthenticated: boolean;
   organizationId?: string;
 }) {
+  const isUserReady = useDbUserReady();
+  const canQueryProjects = isAuthenticated && isUserReady;
   const queriedProjects = useQuery(
     "projects:getMyProjects" as any,
-    isAuthenticated ? ({} as any) : "skip"
+    canQueryProjects ? ({} as any) : "skip",
   ) as RemoteProject[] | undefined;
 
-  const isLoading = isAuthenticated && queriedProjects === undefined;
+  // `getMyProjects` deliberately returns [] while the actor's database row
+  // does not exist yet. Starting it during bootstrap therefore turns a
+  // temporary signup state into an authoritative "no memberships" answer.
+  // Wait for user setup first; only a response from the post-bootstrap query
+  // may decide that a scoped project is unavailable.
+  const isLoading =
+    isAuthenticated && (!isUserReady || queriedProjects === undefined);
 
   const projects = useMemo(
     () => filterProjectsForOrganization(queriedProjects, organizationId),
-    [queriedProjects, organizationId]
+    [queriedProjects, organizationId],
   );
 
   const sortedProjects = useMemo(() => {
@@ -201,14 +218,14 @@ export function useProjectMembers({
 
   const membersResult = useQuery(
     "projects:getProjectMembers" as any,
-    enableQuery ? ({ projectId } as any) : "skip"
+    enableQuery ? ({ projectId } as any) : "skip",
   ) as ProjectMember[] | ProjectMembersQueryResult | undefined;
 
   const isLoading = enableQuery && membersResult === undefined;
 
   const { members, canManageMembers } = useMemo(
     () => normalizeProjectMembersResult(membersResult),
-    [membersResult]
+    [membersResult],
   );
 
   const activeMembers = useMemo(() => {
@@ -237,7 +254,21 @@ export function useProjectMembers({
 // member-only queries. A viewer may access Swarms only when they hold a
 // resolved member-or-above role; a guest — or any unresolved role — is denied.
 export function canViewSwarms(
-  role: ProjectMembershipRole | undefined
+  role: ProjectMembershipRole | undefined,
+): boolean {
+  return role === "owner" || role === "admin" || role === "member";
+}
+
+// Promoting a session into an eval test case is MEMBER-gated server-side
+// (`PROMOTION_POLICIES` — scenario and swarm rows both require project
+// 'member'). Mirror it so a guest never sees an affordance that would throw.
+//
+// Deliberately a separate export from `canViewSwarms` despite the identical
+// body today: "may I see the Swarms tab" and "may I copy a tester's words
+// into a durable suite artifact" are different questions, and collapsing them
+// would make a future divergence silent. An unresolved role denies.
+export function canPromoteSessions(
+  role: ProjectMembershipRole | undefined,
 ): boolean {
   return role === "owner" || role === "admin" || role === "member";
 }
@@ -248,9 +279,36 @@ export function canViewSwarms(
 // New/Edit/Apply/Delete affordance that would 403 on click. An unresolved
 // role denies (fail-closed).
 export function canManageHosts(
-  role: ProjectMembershipRole | undefined
+  role: ProjectMembershipRole | undefined,
 ): boolean {
   return role === "owner" || role === "admin";
+}
+
+/**
+ * Admin gate for surfaces that must ALSO stay writable for an anonymous Convex
+ * owner (Swarms, Project Environments).
+ *
+ * A WorkOS-signed-in viewer goes through the role-based gate above. An
+ * anonymous owner never produces a WorkOS email, so `useViewerProjectRole`
+ * leaves `role` undefined forever — yet they own their personal-org default
+ * project and clear the backend's `requireAdminAccess` via userId, so denying
+ * them would lock them out of their own project. They get management only once
+ * WorkOS has SETTLED (`identityLoading === false`): while it is still
+ * hydrating, an anonymous owner is indistinguishable from a member whose role
+ * hasn't loaded, so this fails CLOSED.
+ *
+ * Extracted from the route component so the branch is unit-testable — a future
+ * edit here cannot silently re-expose admin controls.
+ */
+export function canManageAsOwnerOrAdmin(args: {
+  isWorkOsSignedIn: boolean;
+  role: ProjectMembershipRole | undefined;
+  isAuthenticated: boolean;
+  hasProject: boolean;
+  identityLoading: boolean;
+}): boolean {
+  if (args.isWorkOsSignedIn) return canManageHosts(args.role);
+  return args.isAuthenticated && args.hasProject && !args.identityLoading;
 }
 
 // Resolve the *current viewer's* project-membership role for a project, reusing
@@ -279,18 +337,44 @@ export function useViewerProjectRole({
     projectId,
   });
 
+  const email = viewerEmail?.trim().toLowerCase() ?? null;
   const role = useMemo(() => {
-    const email = viewerEmail?.trim().toLowerCase();
     if (!email) return undefined;
-    return activeMembers.find(
-      (member) => member.email.toLowerCase() === email
-    )?.role;
-  }, [activeMembers, viewerEmail]);
+    return activeMembers.find((member) => member.email.toLowerCase() === email)
+      ?.role;
+  }, [activeMembers, email]);
 
-  return {
-    role,
-    isLoading: isViewerRolePending(isLoading, identityLoading, viewerEmail),
-  };
+  /**
+   * The last DECIDED answer for this (project, viewer) pair.
+   *
+   * The members list does not only load once: the Convex client throws its
+   * whole remote query set away on every websocket reconnect (`onOpen` builds a
+   * fresh `RemoteQuerySet`), so `useQuery` returns `undefined` again until the
+   * server's first transition lands. Returning to a tab that was backgrounded
+   * long enough to drop the socket therefore replays "role not decided yet" —
+   * and a caller that renders a spinner (or, worse, an access-denied state) for
+   * that UNMOUNTS its subtree, throwing away whatever the user was in the
+   * middle of. See the Swarms route gate.
+   *
+   * Latching only spans a RE-load: the first resolution still gates normally,
+   * and every later resolution overwrites the latch, so a revoked membership
+   * takes effect as soon as the list says so.
+   */
+  const decidedRef = useRef<{
+    key: string;
+    role: ProjectMembershipRole | undefined;
+  } | null>(null);
+  const decisionKey = `${projectId ?? ""}|${email ?? ""}`;
+  const pending = isViewerRolePending(isLoading, identityLoading, viewerEmail);
+  if (!pending) {
+    decidedRef.current = { key: decisionKey, role };
+  }
+  const decided = decidedRef.current;
+  if (pending && decided?.key === decisionKey) {
+    return { role: decided.role, isLoading: false };
+  }
+
+  return { role, isLoading: pending };
 }
 
 /**
@@ -306,7 +390,7 @@ export function useViewerProjectRole({
 export function isViewerRolePending(
   membersLoading: boolean,
   identityLoading: boolean,
-  viewerEmail: string | null | undefined
+  viewerEmail: string | null | undefined,
 ): boolean {
   if (identityLoading) return true;
   if (!viewerEmail?.trim()) return false;
@@ -316,7 +400,7 @@ export function isViewerRolePending(
 export function useProjectMutations() {
   const createProject = useMutation("projects:createProject" as any);
   const ensureDefaultProject = useMutation(
-    "projects:ensureDefaultProject" as any
+    "projects:ensureDefaultProject" as any,
   );
   const updateProject = useMutation("projects:updateProject" as any);
   // Phase 4: write the project default's connection portion through the
@@ -324,20 +408,20 @@ export function useProjectMutations() {
   // is still exported by the backend as a compat wrapper but the
   // inspector no longer calls it.
   const patchProjectDefaultConnection = useMutation(
-    "hostConfigsV2:patchProjectDefaultConnection" as any
+    "hostConfigsV2:patchProjectDefaultConnection" as any,
   );
   const deleteProject = useMutation("projects:deleteProject" as any);
   const inviteProjectMember = useMutation(
-    "projects:inviteProjectMember" as any
+    "projects:inviteProjectMember" as any,
   );
   const removeProjectMember = useMutation(
-    "projects:removeProjectMember" as any
+    "projects:removeProjectMember" as any,
   );
   const updateProjectMemberRole = useMutation(
-    "projects:updateProjectMemberRole" as any
+    "projects:updateProjectMemberRole" as any,
   );
   const updateProjectInviteRole = useMutation(
-    "projects:updateProjectInviteRole" as any
+    "projects:updateProjectInviteRole" as any,
   );
 
   return {
@@ -357,16 +441,16 @@ export function useProjectMutations() {
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
   const createServerIfMissing = useMutation(
-    "servers:createServerIfMissing" as any
+    "servers:createServerIfMissing" as any,
   );
   const updateServer = useMutation("servers:updateServer" as any);
   const deleteServer = useMutation("servers:deleteServer" as any);
   const createServerWithClientSecret = useAction(
-    "servers:createServerWithClientSecret" as any
+    "servers:createServerWithClientSecret" as any,
   );
   const moveServerToProject = useAction("servers:moveServerToProject" as any);
   const updateServerWithClientSecret = useAction(
-    "servers:updateServerWithClientSecret" as any
+    "servers:updateServerWithClientSecret" as any,
   );
 
   return {
@@ -394,7 +478,7 @@ export function useProjectServers({
 
   const servers = useQuery(
     "servers:getProjectServers" as any,
-    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip"
+    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as RemoteServer[] | undefined;
 
   const isLoading = shouldQuery && servers === undefined;
@@ -438,7 +522,7 @@ export function useProjectsBulkServers({
     "servers:listForProjects" as any,
     isAuthenticated && stableProjectIds.length > 0
       ? ({ projectIds: stableProjectIds } as any)
-      : "skip"
+      : "skip",
   ) as Record<string, RemoteServer[]> | undefined;
 
   const isLoading =
@@ -446,7 +530,7 @@ export function useProjectsBulkServers({
 
   const serversByProject = useMemo<Record<string, RemoteServer[]>>(
     () => data ?? {},
-    [data]
+    [data],
   );
 
   return {

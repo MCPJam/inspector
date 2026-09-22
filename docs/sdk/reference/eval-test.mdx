@@ -26,10 +26,119 @@ new EvalTest(options: EvalTestConfig)
 
 ### EvalTestConfig
 
-| Property | Type           | Required | Description                    |
-| -------- | -------------- | -------- | ------------------------------ |
-| `name`   | `string`       | Yes      | Unique identifier for the test |
-| `test`   | `TestFunction` | Yes      | The test function to run       |
+| Property            | Type                     | Required | Description                                                                    |
+| ------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `id`                | `string`                 | Yes      | The case's identity. **Required from 5.0** — see below.                         |
+| `name`              | `string`                 | Yes      | Human-readable display name for the test                                       |
+| `test`              | `TestFunction`           | Yes      | The test function to run                                                       |
+| `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0** — see below. |
+| `matchOptions`      | `EvalMatchOptions`       | No       | How `expectedToolCalls` is matched (order, arguments, extras)                   |
+| `intent`            | `string`                 | No       | Analytics grouping label for this case. Forwarded with every result but never affects scoring or the verdict. Must be 1–64 characters, already trimmed (no leading or trailing whitespace). |
+| `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
+
+<Warning>
+  **New in 5.0: `id` is required.** A case's identity used to be its `name`, so
+  renaming a test forked its history — the run page started a fresh series and
+  the old one was orphaned. `id` separates the two: history joins on `id`, and
+  `name` is free to change.
+
+  Mint one **once** and commit the literal beside the test:
+
+  ```typescript
+  import { mintCaseId } from "@mcpjam/sdk/contract";
+  console.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in
+  ```
+
+  Any URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an
+  id you already have — a hosted case id, a ticket number, a slug you maintain —
+  works as-is; the `c_` prefix is only a grep convenience. Do **not** call
+  `mintCaseId()` inline: an id regenerated on every run is not an identity.
+  Constructing an `EvalTest` without an `id` throws, and the error carries a
+  freshly minted id to paste.
+
+  **Migrating from `externalCaseId`:** If your test already declares
+  `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
+  The hosted history for that case is keyed on `externalCaseId`, so setting
+  `id` to the same value keeps the history intact. Setting `id` to a different
+  value is a hard error — at construction from 6.0, and at ingest.
+
+  If your `externalCaseId` is not a valid id (it was never charset-bound, so it
+  may contain spaces, slashes or punctuation), no `id` can agree with it.
+  Rename the external id itself to a conforming value and declare that same
+  value in both fields.
+
+  ```typescript
+  // Before
+  new EvalTest({ externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+
+  // After — reuse the existing externalCaseId as id
+  new EvalTest({ id: "case_123", externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+  ```
+</Warning>
+
+<Warning>
+  **New in 5.0: step objects reject unknown fields.** `prompt`, `toolCall`,
+  `interact`, and `assert` steps — and their nested sub-objects such as
+  `elementLocator` and widget assertions — are now **closed schemas**. A step
+  carrying a field the contract does not declare fails to parse instead of
+  silently dropping that field.
+
+  Two things are deliberately left open:
+  - `toolCallStep.arguments` — the tool's own argument object, whose keys come
+    from the server's input schema.
+  - A `Predicate` inside an `assert` step — predicates are a separate contract
+    module with their own versioning.
+
+  If you generate steps programmatically (for example, from an LLM or an
+  importer), remove any fields that are not part of the step contract before
+  passing them to the SDK.
+</Warning>
+
+<Warning>
+  **Changed in 3.0.** `expectedToolCalls` used to be reporting metadata only:
+  the local verdict came from your `test` function alone, while the dashboard
+  recomputed the match — so the same run could show `accuracy() === 1` locally
+  and fail in MCPJam. It is now enforced during the run, which means a test
+  whose expectations were never actually checked can start failing on upgrade.
+
+  If that happens, the expectation was wrong or over-specified. Fix it, relax it
+  with `matchOptions` (e.g. `{ argumentMatching: "ignore" }`), or drop
+  `expectedToolCalls` if it was only ever documentation. Tests that declare
+  neither `expectedToolCalls` nor `predicates` behave exactly as before.
+</Warning>
+
+#### matchOptions
+
+Layered suite → case, and validated when the test is constructed rather than mid-run.
+
+| Option              | Values                                | Default     | Meaning                                        |
+| ------------------- | ------------------------------------- | ----------- | ---------------------------------------------- |
+| `toolCallOrder`     | `"ignore"` \| `"strict"` \| `"superset"` | `"ignore"`  | Whether expected calls must appear in order    |
+| `argumentMatching`  | `"partial"` \| `"exact"` \| `"ignore"`   | `"partial"` | How strictly arguments must match              |
+| `maxExtraToolCalls` | `number` \| `null`                       | `null`      | Cap on unexpected calls (`null` = unlimited)   |
+
+#### predicates
+
+Deterministic, state-based checks evaluated against the iteration transcript — same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting#predicate-gate) for the full list of predicate types.
+
+```typescript
+const test = new EvalTest({
+  id: "c_books_the_venue",
+  name: "books the venue",
+  expectedToolCalls: [{ toolName: "book_venue" }],
+  matchOptions: { toolCallOrder: "strict" },
+  predicates: [
+    { type: "noToolErrors" },
+    { type: "responseContains", needle: "confirmed" },
+  ],
+  test: async (executor) => {
+    const r = await executor.run("Book the venue for Friday.");
+    return r.hasToolCall("book_venue");
+  },
+});
+```
+
+The widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) need render observations only a hosted run captures, so `EvalTest` rejects them at construction instead of failing every iteration.
 
 ### TestFunction Type
 
@@ -48,6 +157,7 @@ Both `HostRunner`, `HostRuntime`, and mock executors implement the `HostExecutor
 
 ```typescript
 const test = new EvalTest({
+  id: "c_addition_accuracy",
   name: "addition-accuracy",
   test: async (agent) => {
     const result = await agent.run("Add 2 and 3");
@@ -145,7 +255,7 @@ console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 
 ### precision()
 
-Returns the precision metric.
+Returns the precision metric, micro-averaged over the run's tool-call matches.
 
 ```typescript
 precision(): number
@@ -153,13 +263,24 @@ precision(): number
 
 #### Returns
 
-`number` - True positives / (True positives + False positives).
+`number` — True positives / (True positives + False positives).
+
+Counted per iteration from the expected/actual tool calls: a matched expectation is a true positive, an unexpected call is a false positive, a missing one is a false negative, and an argument mismatch counts as both.
+
+<Warning>
+  **Changed in 3.0.** `precision()`, `recall()` and `truePositiveRate()` all
+  used to `return this.accuracy()` — three names for one number. They now
+  compute real values, and **throw** when no test in the run declared
+  `expectedToolCalls`, because there is nothing to compute them from. If you
+  were reading `precision()` as a stand-in for accuracy, call
+  [`accuracy()`](#accuracy) directly.
+</Warning>
 
 ---
 
 ### recall()
 
-Returns the recall metric.
+Returns the recall metric, micro-averaged over the run's tool-call matches.
 
 ```typescript
 recall(): number
@@ -167,7 +288,9 @@ recall(): number
 
 #### Returns
 
-`number` - True positives / (True positives + False negatives).
+`number` — True positives / (True positives + False negatives).
+
+Throws when the run declared no `expectedToolCalls`.
 
 ---
 
@@ -181,17 +304,33 @@ truePositiveRate(): number
 
 ---
 
-### falsePositiveRate()
+### unexpectedToolCallRate()
 
-Returns the false positive rate.
+The fraction of expectation-bearing iterations that made at least one tool call nobody asked for.
 
 ```typescript
-falsePositiveRate(): number
+unexpectedToolCallRate(): number
 ```
 
 #### Returns
 
-`number` - False positives / (False positives + True negatives).
+`number` — Iterations with an extra call / iterations that had expectations. `0` when the run declared no expectations.
+
+---
+
+### falsePositiveRate()
+
+<Warning>
+  **Deprecated in 3.0** — use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  The old implementation returned `failures / iterations`, which is the failure
+  rate, not a false-positive rate. For runs with no `expectedToolCalls` it still
+  returns that legacy value so existing dashboards do not change; for runs with
+  expectations it now delegates to `unexpectedToolCallRate()`.
+</Warning>
+
+```typescript
+falsePositiveRate(): number
+```
 
 ---
 
@@ -371,7 +510,7 @@ test: async (agent) => {
 ```typescript
 test: async (agent) => {
   const result = await agent.run("What is 5 + 5?");
-  return result.getText().includes("10");
+  return result.text.includes("10");
 };
 ```
 
@@ -383,7 +522,7 @@ test: async (agent) => {
   return (
     result.hasToolCall("multiply") &&
     !result.hasError() &&
-    result.getText().length > 0
+    result.text.length > 0
   );
 };
 ```
@@ -427,12 +566,13 @@ async function main() {
 
   const agent = new HostRunner({
     tools: await manager.getTools(),
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: "anthropic/claude-sonnet-5",
     apiKey: process.env.ANTHROPIC_API_KEY,
     temperature: 0.1,
   });
 
   const test = new EvalTest({
+    id: "c_addition",
     name: "addition",
     test: async (agent) => {
       const r = await agent.run("Add 2 and 3");
@@ -474,3 +614,6 @@ async function main() {
 - [EvalSuite Reference](/sdk/reference/eval-suite) - Group multiple tests
 - [Saving Eval Results](/sdk/reference/eval-reporting) - Save results to MCPJam
 - [Validators Reference](/sdk/reference/validators) - Assertion functions
+
+
+See [Reliable evals in CI](/sdk/concepts/enterprise-evals) for canonical evaluators, reporting receipts, explicit limits, metadata compatibility, and migration guidance.

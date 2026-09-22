@@ -13,7 +13,7 @@ import {
   sha256HexBytes,
 } from "../../src/plugin-bundle/hashes.js";
 import {
-  MCP_JSON_DIRECT,
+  MCP_JSON_HTTP,
   SKILL_MD,
   bundle,
   encode,
@@ -25,7 +25,7 @@ function combinedBundle(overrides: Record<string, string> = {}) {
   return minimalBundle({
     "skills/demo-skill/SKILL.md": SKILL_MD,
     "skills/demo-skill/references/guide.md": "# Guide",
-    ".mcp.json": MCP_JSON_DIRECT,
+    "mcp.json": MCP_JSON_HTTP,
     ...overrides,
   });
 }
@@ -67,7 +67,7 @@ describe("plugin bundle hashing", () => {
       minimalBundle({
         "skills/demo-skill/SKILL.md": SKILL_MD,
         "skills/demo-skill/references/guide-v2.md": "# Guide",
-        ".mcp.json": MCP_JSON_DIRECT,
+        "mcp.json": MCP_JSON_HTTP,
       })
     );
     expect(renamed.bundleHash).not.toBe(original.bundleHash);
@@ -75,9 +75,9 @@ describe("plugin bundle hashing", () => {
 
   it("is independent of the source listing order", async () => {
     const files: Record<string, string> = {
-      ".codex-plugin/plugin.json": manifestJson(),
+      "plugin.json": manifestJson(),
       "skills/demo-skill/SKILL.md": SKILL_MD,
-      ".mcp.json": MCP_JSON_DIRECT,
+      "mcp.json": MCP_JSON_HTTP,
     };
     const forward = bundle(files, {
       entries: Object.entries(files).map(([path, content]) => ({

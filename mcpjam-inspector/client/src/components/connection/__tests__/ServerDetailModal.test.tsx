@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
@@ -7,6 +14,7 @@ import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 const mockCapture = vi.fn();
 const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
+const mockDbUserReady = vi.hoisted(() => ({ value: true }));
 const mockSetProjectServerConfig = vi.hoisted(() => vi.fn());
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -30,6 +38,10 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => mockCapture(...args),
 }));
 
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mockDbUserReady.value,
+}));
+
 // ServerDetailModal reads + writes the project-server config via Convex
 // (`useQuery("projectServerConfig:getConfig")` + `useMutation` for save).
 // The tests don't exercise that round-trip; stub both to no-ops so the
@@ -38,6 +50,7 @@ vi.mock("@/lib/analytics", () => ({
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
   useMutation: () => mockSetProjectServerConfig,
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -152,10 +165,11 @@ describe("ServerDetailModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDbUserReady.value = true;
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReturnValue(undefined);
     mockSetProjectServerConfig.mockResolvedValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [],
       overrides: {},
     });
@@ -167,8 +181,73 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("prevents browser translation from rewriting the portaled dialog", () => {
+    render(<ServerDetailModal {...defaultProps} />);
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("translate", "no");
+    expect(screen.getByRole("dialog")).toHaveClass("notranslate");
+  });
+
+  // Regression: local mode used to hand this modal the LOCAL project id (a
+  // `crypto.randomUUID()` value). `projectServerConfig:getConfig` validates
+  // `projectId` as `v.id("projects")`, so the query rejected during render
+  // and — with no route ErrorBoundary — replaced the entire page with the
+  // router error screen the moment you opened a server's Config.
+  it.each([
+    ["a local UUID project id", "d0b25b78-8daa-429e-b7cc-9af4716cbe84"],
+    ["a local_ placeholder project id", "local_pending"],
+    ["no project id", null],
+  ])("skips the project-server-config query for %s", (_label, projectId) => {
+    render(<ServerDetailModal {...defaultProps} projectId={projectId} />);
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    for (const [, args] of configCalls) {
+      expect(args).toBe("skip");
+    }
+  });
+
+  it("queries the project-server config for a real Convex project id", () => {
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="jh7abc123def456ghi789jk"
+        hostedServerId="server_123"
+      />
+    );
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    expect(configCalls.at(-1)?.[1]).toEqual({
+      projectId: "jh7abc123def456ghi789jk",
+    });
+  });
+
+  it("skips hosted config and history while the database user is not ready", () => {
+    mockDbUserReady.value = false;
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="jh7abc123def456ghi789jk"
+        hostedServerId="server_123"
+      />
+    );
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    expect(configCalls.at(-1)?.[1]).toBe("skip");
+    expect(screen.queryByRole("tab", { name: "History" })).toBeNull();
+  });
+
   it("keeps the footer in the DOM but visually hidden when not on configuration tab", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     const footer = screen.getByTestId("modal-footer");
     expect(footer).toBeInTheDocument();
@@ -194,7 +273,7 @@ describe("ServerDetailModal", () => {
 
     // Overview tab uses overflow-y-auto for scrolling
     const { unmount } = render(
-      <ServerDetailModal {...defaultProps} defaultTab="overview" />
+      <ServerDetailModal {...defaultProps} defaultTab="authorization" />
     );
 
     const overviewPanel = document.querySelector(
@@ -302,7 +381,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [],
       overrides: {},
     });
@@ -310,7 +389,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -324,13 +403,11 @@ describe("ServerDetailModal", () => {
     expect(protocolSelect).toBeEnabled();
 
     await user.click(protocolSelect);
-    await user.click(
-      await screen.findByRole("option", { name: "Latest (2025-11-25)" })
-    );
+    await user.click(await screen.findByRole("option", { name: "2025-11-25" }));
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {
@@ -343,12 +420,129 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("keeps Save blocked until the last overlapping wire-mode reconnect settles", async () => {
+    // Two quick override changes run two reconnects at once. A boolean guard
+    // was cleared by whichever finished first, which let a configuration save
+    // through while the other reconnect was still in flight.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      installPointerCaptureMocks();
+      mockUseFeatureFlagEnabled.mockReturnValue(true);
+      // The read-back never reports the new override, so each change reaches
+      // the reconnect through its own 1.5s safety net.
+      mockUseQuery.mockReturnValue({
+        projectId: "jh7abc123def456ghi789jk",
+        serverIds: [],
+        overrides: {},
+      });
+      const settle: Array<() => void> = [];
+      const onReconnect = vi.fn(
+        () => new Promise<void>((resolve) => settle.push(resolve))
+      );
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          onReconnect={onReconnect}
+          projectId="jh7abc123def456ghi789jk"
+          hostedServerId="server_123"
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: /connection overrides/i })
+      );
+
+      const startReconnectFor = async (version: RegExp) => {
+        await user.click(getProtocolVersionCombobox());
+        await user.click(await screen.findByRole("option", { name: version }));
+        await act(async () => {
+          vi.advanceTimersByTime(1500);
+        });
+      };
+
+      await startReconnectFor(/2025-11-25/);
+      await waitFor(() => expect(onReconnect).toHaveBeenCalledTimes(1));
+      await startReconnectFor(/2026-07-28/);
+      await waitFor(() => expect(onReconnect).toHaveBeenCalledTimes(2));
+
+      // The footer's only button; its label tracks the reconnect, so match it
+      // by position rather than by text.
+      const saveButton = () =>
+        within(screen.getByTestId("modal-footer")).getByRole("button");
+      expect(saveButton()).toBeDisabled();
+
+      await act(async () => {
+        settle[0]();
+      });
+      expect(saveButton()).toBeDisabled();
+
+      await act(async () => {
+        settle[1]();
+      });
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fire the fallback reconnect after the modal closes", async () => {
+    // The 1.5s safety net is armed by the override change and nothing else
+    // cancels it, so an unmount in that window used to reconnect a server the
+    // user had already navigated away from.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      installPointerCaptureMocks();
+      mockUseFeatureFlagEnabled.mockReturnValue(true);
+      // The read-back never reports the new override, so only the fallback
+      // timer can drive the reconnect.
+      mockUseQuery.mockReturnValue({
+        projectId: "jh7abc123def456ghi789jk",
+        serverIds: [],
+        overrides: {},
+      });
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+
+      const { unmount } = render(
+        <ServerDetailModal
+          {...defaultProps}
+          onReconnect={onReconnect}
+          projectId="jh7abc123def456ghi789jk"
+          hostedServerId="server_123"
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: /connection overrides/i })
+      );
+      await user.click(getProtocolVersionCombobox());
+      await user.click(
+        await screen.findByRole("option", { name: "2025-11-25" })
+      );
+
+      await waitFor(() => {
+        expect(mockSetProjectServerConfig).toHaveBeenCalled();
+      });
+
+      unmount();
+      vi.advanceTimersByTime(2000);
+
+      expect(onReconnect).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("removes implicit auto-connect enrollment when clearing a modal-created protocol override", async () => {
     const user = userEvent.setup();
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     let projectServerConfig = {
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [] as string[],
       overrides: {},
     };
@@ -357,7 +551,7 @@ describe("ServerDetailModal", () => {
     const renderModal = () => (
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -371,13 +565,11 @@ describe("ServerDetailModal", () => {
     expect(hostDefaultSelect).toHaveTextContent("Client default");
 
     await user.click(hostDefaultSelect);
-    await user.click(
-      await screen.findByRole("option", { name: "Latest (2025-11-25)" })
-    );
+    await user.click(await screen.findByRole("option", { name: "2025-11-25" }));
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {
@@ -390,13 +582,13 @@ describe("ServerDetailModal", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByRole("option", { name: "Latest (2025-11-25)" })
+        screen.queryByRole("option", { name: "2025-11-25" })
       ).not.toBeInTheDocument();
     });
     unmount();
 
     projectServerConfig = {
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: ["server_123"],
       overrides: {
         server_123: {
@@ -412,7 +604,7 @@ describe("ServerDetailModal", () => {
     );
 
     const latestSelect = getProtocolVersionCombobox();
-    expect(latestSelect).toHaveTextContent("Latest (2025-11-25)");
+    expect(latestSelect).toHaveTextContent("2025-11-25");
 
     await user.click(latestSelect);
     await user.click(
@@ -421,7 +613,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: [],
           overrides: {},
@@ -435,7 +627,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: ["server_123"],
       overrides: {
         server_123: {
@@ -447,7 +639,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -457,7 +649,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const protocolSelect = getProtocolVersionCombobox();
-    expect(protocolSelect).toHaveTextContent("Latest (2025-11-25)");
+    expect(protocolSelect).toHaveTextContent("2025-11-25");
 
     await user.click(protocolSelect);
     await user.click(
@@ -466,7 +658,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {},
@@ -476,14 +668,196 @@ describe("ServerDetailModal", () => {
   });
 
   it("does not show a conformance launch button in overview", () => {
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.queryByRole("button", { name: "Run conformance" })
     ).not.toBeInTheDocument();
   });
 
-  it("renders local OAuth tokens from localStorage in overview", () => {
+  it("overlays the auth panel instead of stacking under the config panel", () => {
+    // The configuration panel is force-mounted and stays `invisible` while
+    // inactive, which still occupies its full height. A sibling panel in
+    // normal flow therefore renders BELOW that height and spills out of the
+    // dialog, so every non-configuration tab has to overlay it.
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
+    // The dialog is portalled, so query the document rather than the container.
+    const panels = screen.getAllByRole("tabpanel", { hidden: true });
+    const auth = panels.find(
+      (panel) => panel.getAttribute("data-state") === "active",
+    );
+    expect(auth).toBeTruthy();
+    for (const positioning of ["absolute", "inset-0", "overflow-y-auto"])
+      expect(auth?.className).toContain(positioning);
+    expect(auth?.className).not.toContain("max-h-[60vh]");
+  });
+
+  const connectedServerInfo = {
+    serverVersion: {
+      name: "Linear MCP",
+      title: "Linear MCP",
+    },
+    protocolVersion: "2026-07-28",
+    transport: "streamable-http",
+    instructions: "When passing string values to tools, send the content directly.",
+    serverCapabilities: { tools: { listChanged: false } },
+  };
+
+  it("keeps handshake metadata on overview, not the auth tab", () => {
+    const server = createServer({
+      useOAuth: true,
+      initializationInfo: connectedServerInfo,
+      oauthTokens: {
+        access_token: "local-access-token",
+        refresh_token: "local-refresh-token",
+        token_type: "Bearer",
+      },
+    });
+
+    const { unmount } = render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    expect(within(authPanel!).getByText("OAuth Tokens")).toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("MCP Protocol Version")
+    ).not.toBeInTheDocument();
+    expect(within(authPanel!).queryByText("Transport")).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Instructions")
+    ).not.toBeInTheDocument();
+    expect(
+      within(authPanel!).queryByText("Server Capabilities")
+    ).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={server}
+        defaultTab="overview"
+      />
+    );
+
+    const overviewPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(overviewPanel).toBeTruthy();
+    expect(within(overviewPanel!).getByText("Server Name")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).getByText("MCP Protocol Version")
+    ).toBeInTheDocument();
+    expect(within(overviewPanel!).getByText("Instructions")).toBeInTheDocument();
+    expect(
+      within(overviewPanel!).queryByText("OAuth Tokens")
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps successful OAuth trace payloads closed until a step is opened", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          lastOAuthTrace: {
+            version: 1,
+            source: "hosted_callback",
+            currentStep: "complete",
+            steps: [
+              {
+                step: "request_authorization_server_metadata",
+                title: "Fetch Authorization Server Metadata",
+                status: "success",
+                message: "Authorization server metadata loaded.",
+                details: {
+                  request: {
+                    url: "https://multiaccount.mcpjam.com/.well-known/oauth-authorization-server",
+                  },
+                },
+                startedAt: 1,
+              },
+              {
+                step: "token_request",
+                title: "Token Request",
+                status: "error",
+                error: "token endpoint rejected the grant",
+                startedAt: 2,
+              },
+            ],
+            httpHistory: [
+              {
+                step: "request_authorization_server_metadata",
+                timestamp: 1,
+                request: {
+                  method: "GET",
+                  url: "https://hidden.example/http-history",
+                  headers: {},
+                },
+              },
+            ],
+          },
+        })}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(authPanel).toBeTruthy();
+    const trace = within(authPanel!)
+      .getByText("Last OAuth Trace")
+      .closest("details");
+    expect(trace).not.toBeNull();
+    expect(trace).not.toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("Last OAuth Trace"));
+    expect(trace).toHaveAttribute("open");
+
+    const successStep = within(authPanel!)
+      .getByText("Fetch Authorization Server Metadata")
+      .closest("details");
+    const httpHistory = within(authPanel!)
+      .getByText("HTTP History")
+      .closest("details");
+    const errorStep = within(authPanel!)
+      .getByText("Token Request")
+      .closest("details");
+    expect(successStep).not.toBeNull();
+    expect(httpHistory).not.toBeNull();
+    expect(errorStep).not.toBeNull();
+    expect(successStep).not.toHaveAttribute("open");
+    expect(httpHistory).not.toHaveAttribute("open");
+    expect(errorStep).toHaveAttribute("open");
+    expect(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    ).toHaveClass("text-success");
+    expect(within(authPanel!).getByText("success")).toHaveClass("sr-only");
+    expect(within(authPanel!).getByText("Token Request")).toHaveClass(
+      "text-destructive"
+    );
+    expect(
+      within(authPanel!).getByText("token endpoint rejected the grant")
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(authPanel!).getByText("Fetch Authorization Server Metadata")
+    );
+    expect(successStep).toHaveAttribute("open");
+
+    await user.click(within(authPanel!).getByText("HTTP History"));
+    expect(httpHistory).toHaveAttribute("open");
+  });
+
+  it("renders local OAuth tokens from localStorage on the auth tab", () => {
     localStorage.setItem(
       "mcp-tokens-test-server",
       JSON.stringify({
@@ -499,7 +873,7 @@ describe("ServerDetailModal", () => {
       <ServerDetailModal
         {...defaultProps}
         server={createServer({ useOAuth: true })}
-        defaultTab="overview"
+        defaultTab="authorization"
       />
     );
 
@@ -524,14 +898,14 @@ describe("ServerDetailModal", () => {
       />
     );
 
-    // Edit a field so the form has changes and "Save Changes" is active
+    // Edit a field so the form has changes and "Save & Connect" is active
     // (connected servers with no changes show "Reconnect" instead).
     const nameInput = screen.getByDisplayValue("test-server");
     await user.clear(nameInput);
     await user.type(nameInput, "test-server-renamed");
 
     const form = screen
-      .getByRole("button", { name: "Save Changes" })
+      .getByRole("button", { name: "Save & Connect" })
       .closest("form");
 
     expect(form).not.toBeNull();
@@ -582,7 +956,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        defaultTab="overview"
+        defaultTab="authorization"
         onSubmit={onSubmit}
       />
     );
@@ -632,7 +1006,7 @@ describe("ServerDetailModal", () => {
   it("shows a reconnect message instead of crashing when stored auth data is invalid", () => {
     localStorage.setItem("mcp-tokens-test-server", '{"access_token":"broken"');
 
-    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+    render(<ServerDetailModal {...defaultProps} defaultTab="authorization" />);
 
     expect(
       screen.getByText(
@@ -659,7 +1033,7 @@ describe("ServerDetailModal", () => {
     const input = screen.getByDisplayValue("test-server");
     await user.type(input, "-edited");
 
-    const saveButton = screen.getByRole("button", { name: "Save Changes" });
+    const saveButton = screen.getByRole("button", { name: "Save & Connect" });
     fireEvent.click(saveButton);
 
     await waitFor(() => {
@@ -669,7 +1043,7 @@ describe("ServerDetailModal", () => {
     resolveSubmit?.({ ok: true, serverName: "test-server" });
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Save Changes" })
+        screen.getByRole("button", { name: "Save & Connect" })
       ).toBeEnabled();
     });
   });
@@ -688,5 +1062,119 @@ describe("ServerDetailModal", () => {
     });
 
     expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  // Regression: an "Auto" OAuth server with no stored protocol era must bake
+  // the SAME era the plan preview showed. The submit path resolves "auto"
+  // against the PROP-FIRST resolved host default (the value the chip and the
+  // preview use), NOT the raw ActiveMcpProfile context — otherwise a modal
+  // rendered without an ActiveMcpProfileProvider (context undefined) would
+  // save the 2025 default while the chip/host advertise 2026.
+  describe("preserves Auto OAuth intent independently of wire pins", () => {
+    const renameAndSave = async (name = "test-server-renamed") => {
+      const nameInput = screen.getByDisplayValue("test-server");
+      fireEvent.change(nameInput, { target: { value: name } });
+      const form = screen
+        .getByRole("button", { name: "Save & Connect" })
+        .closest("form");
+      expect(form).not.toBeNull();
+      fireEvent.submit(form!);
+    };
+
+    it("keeps Auto when the host default is pinned to 2026", async () => {
+      const onSubmit = vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      });
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ authMethod: "auto" })}
+          onSubmit={onSubmit}
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await renameAndSave();
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authMethod: "auto",
+            useOAuth: true,
+            oauthProtocolMode: "auto",
+          }),
+          "test-server"
+        );
+      });
+    });
+
+    it("keeps Auto when the host is not pinned", async () => {
+      const onSubmit = vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      });
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ authMethod: "auto" })}
+          onSubmit={onSubmit}
+        />
+      );
+
+      await renameAndSave();
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authMethod: "auto",
+            useOAuth: true,
+            oauthProtocolMode: "auto",
+          }),
+          "test-server"
+        );
+      });
+    });
+
+    it("keeps Auto when a per-server wire override is pinned to 2026", async () => {
+      const onSubmit = vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      });
+      // The per-server wire pin controls negotiation but must not replace the
+      // user's canonical OAuth Auto intent.
+      mockUseQuery.mockReturnValue({
+        projectId: "jh7abc123def456ghi789jk",
+        serverIds: ["server_123"],
+        overrides: {
+          server_123: { mcpProtocolVersionOverride: "2026-07-28" },
+        },
+      });
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ authMethod: "auto" })}
+          onSubmit={onSubmit}
+          projectId="jh7abc123def456ghi789jk"
+          hostedServerId="server_123"
+        />
+      );
+
+      await renameAndSave();
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authMethod: "auto",
+            useOAuth: true,
+            oauthProtocolMode: "auto",
+          }),
+          "test-server"
+        );
+      });
+    });
   });
 });

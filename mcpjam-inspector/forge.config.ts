@@ -8,6 +8,8 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
+import { assertWsNativeFallback } from "./src/ws-native-fallback.assert";
+import { electronBuildSurface } from "./shared/sentry-config";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -69,6 +71,20 @@ const config: ForgeConfig = {
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
+    // Writes CFBundleURLTypes into the macOS Info.plist so LaunchServices
+    // knows the bundle owns mcpjam://. macOS only routes a scheme to a
+    // bundle that declares it, and the plist can't be modified at runtime:
+    // the app.setAsDefaultProtocolClient("mcpjam") call in src/main.ts
+    // registers the scheme on Windows (via the registry), while Linux
+    // resolves the handler from the installed .desktop entry. Without this
+    // declaration the browser leg of desktop sign-in has nowhere to hand
+    // the OAuth callback back to.
+    protocols: [
+      {
+        name: "MCPJam Inspector",
+        schemes: ["mcpjam"],
+      },
+    ],
     icon: "assets/icon",
     extraResource: [
       resolve(__dirname, "dist", "client"),
@@ -165,6 +181,157 @@ const config: ForgeConfig = {
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
+
+  hooks: {
+    /**
+     * Tell the hot-restart scheduler that a spawn completed.
+     *
+     * Forge runs `postStart` after the initial spawn AND after every respawn it
+     * does in response to `rs`, which makes it the only real
+     * restart-has-finished signal: emitting `rs` returns long before the child
+     * has exited and come back. `vite.dev-plugins.ts` uses it to release its
+     * in-flight lock, cancel the watchdog, and run any restart that was
+     * requested while this one was still going.
+     *
+     * Imported dynamically so nothing is loaded on the packaging path. The
+     * scheduler's state lives on `globalThis`, which is what lets this module
+     * instance reach the one the Vite config files created -- see that file.
+     */
+    postStart: async () => {
+      const { notifyRestartComplete } = await import("./vite.dev-plugins");
+      notifyRestartComplete();
+    },
+
+    /**
+     * Inject Sentry debug ids into the Electron bundles and upload their maps.
+     *
+     * This has to live here, not in the release workflows. `.vite/build` and
+     * `.vite/renderer` are produced by @electron-forge/plugin-vite DURING
+     * `electron:make` — they do not exist when `npm run build` finishes, so a
+     * workflow step between build and make finds nothing to inject and
+     * silently no-ops. `packageAfterCopy` is the first hook that runs with the
+     * built bundles present, on the copied app tree, before asar packing —
+     * so what gets injected is exactly what ships.
+     *
+     * `dist/client` (the UI the packaged app actually serves from the embedded
+     * server) is handled by the workflow instead: it IS built by `npm run
+     * build`, and uploading it there keeps this hook to the forge-only outputs.
+     *
+     * The sourcemap half never throws — a Sentry outage must not fail a signed
+     * release. `assertWsNativeFallback` deliberately DOES: it guards a
+     * defect that only exists after bundling, and a build that ships it is
+     * worse than a build that fails.
+     */
+    packageAfterCopy: async (_forgeConfig, buildPath) => {
+      const { execFileSync } = await import("node:child_process");
+      const { existsSync, rmSync, readdirSync, statSync, readFileSync } =
+        await import("node:fs");
+      const fsBits = { existsSync, rmSync, readdirSync, statSync };
+
+      // Before anything best-effort: refuse to pack a main bundle whose `ws`
+      // would reach for the empty optional-peer-dep stub. Runs on every
+      // package/make, costs a grep over already-built output.
+      assertWsNativeFallback(resolve(buildPath, ".vite/build"), {
+        existsSync,
+        readdirSync,
+        statSync,
+        readFileSync,
+      });
+
+      // Release name must match what the SDKs init with: `app.getVersion()`
+      // in main, `__APP_VERSION__` in the renderer — both package.json. Same
+      // for `--dist` below: `electronBuildSurface(process.platform)` is what
+      // main reports (src/main.ts) and what vite.renderer.config.mts stamps
+      // into the renderer, so all three agree by construction.
+      const targets: Array<[string, string]> = [
+        [resolve(buildPath, ".vite/build"), "inspector-electron"],
+        [resolve(buildPath, ".vite/renderer"), "inspector-client"],
+      ];
+
+      // Cleanup is NOT conditional on the token. A tokenless build still
+      // emits the maps; returning early here would pack them into the asar,
+      // which is the leak this hook exists to prevent. No upload, but no maps
+      // in the installer either.
+      if (!process.env.SENTRY_AUTH_TOKEN) {
+        console.warn(
+          "[forge] SENTRY_AUTH_TOKEN unset; dropping maps without upload",
+        );
+        for (const [dir] of targets) deleteMapsIn(dir, fsBits);
+        return;
+      }
+
+      const version = String(
+        JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf8"))
+          .version,
+      );
+
+      // On Windows `npx` resolves to `npx.cmd`, and since Node's
+      // CVE-2024-27980 hardening spawning a `.cmd` with `shell: false` throws
+      // EINVAL — which the catch below would swallow, silently killing
+      // Windows symbolication. With a shell, args have to be quoted by hand.
+      // `timeout` bounds a best-effort upload: a hung sentry-cli must not
+      // stall a signed release.
+      const isWindows = process.platform === "win32";
+      const quote = (arg: string) =>
+        isWindows && /[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg;
+      const run = (args: string[]) =>
+        execFileSync("npx", args.map(quote), {
+          stdio: "inherit",
+          shell: isWindows,
+          timeout: 5 * 60_000,
+        });
+
+      for (const [dir, project] of targets) {
+        if (!existsSync(dir)) {
+          console.warn(`[forge] ${dir} absent; skipping sourcemaps`);
+          continue;
+        }
+        try {
+          const cli = ["@sentry/cli", "sourcemaps"];
+          run([...cli, "inject", dir]);
+          run([
+            ...cli,
+            "upload",
+            `--release=${version}`,
+            `--dist=${electronBuildSurface(process.platform)}`,
+            "--org=mcpjam-gh",
+            `--project=${project}`,
+            dir,
+          ]);
+        } catch (error) {
+          console.warn(`[forge] sourcemap upload failed for ${dir}`, error);
+        } finally {
+          // Always drop the maps, even if the upload failed — the injected JS
+          // is what ships, and loose maps in the installer are a leak.
+          deleteMapsIn(dir, fsBits);
+        }
+      }
+    },
+  },
 };
+
+type FsBits = {
+  existsSync: (p: string) => boolean;
+  rmSync: (p: string) => void;
+  readdirSync: (p: string) => string[];
+  statSync: (p: string) => { isDirectory: () => boolean };
+};
+
+/** Recursively remove `*.map` files under `dir`. Never throws. */
+function deleteMapsIn(dir: string, fs: FsBits): void {
+  try {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir)) {
+      const full = resolve(dir, entry);
+      if (fs.statSync(full).isDirectory()) {
+        deleteMapsIn(full, fs);
+      } else if (entry.endsWith(".map")) {
+        fs.rmSync(full);
+      }
+    }
+  } catch {
+    // Best effort.
+  }
+}
 
 export default config;

@@ -70,11 +70,15 @@ export function buildAvailableModels(params: {
   const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
   // BYOK models the user has a key for — hosted ids handled by `hosted` above,
   // so exclude them here to avoid duplicates when a static model is both.
+  // `hosted: false` is stamped explicitly, not left absent: many of these
+  // bare ids (`claude-fable-5`, `gpt-5-nano`, …) canonicalize WITH their
+  // provider to a hosted twin, and the server reads that pair as hosted on
+  // purpose (legacy host pins are bare). The flag is the only way a request
+  // can say "this row is the user's own key". See `ModelDefinition.hosted`.
   const byok = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return providerHasKey[m.provider];
   });
-  const cloud = [...hosted, ...byok];
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
@@ -93,12 +97,12 @@ export function buildAvailableModels(params: {
     }))
   );
 
-  let models: ModelDefinition[] = cloud;
+  let models: ModelDefinition[] = byok;
   if (isOllamaRunning && ollamaModels.length > 0)
     models = models.concat(ollamaModels);
   if (openRouterModels.length > 0) models = models.concat(openRouterModels);
   if (customModels.length > 0) models = models.concat(customModels);
-  return models;
+  return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
 }
 
 /**
@@ -159,11 +163,14 @@ export function buildAvailableModelsFromOrgConfig(
 
   // Hosted models plus the org-key-derived provider models (hosted ids excluded
   // from the latter so a static model that is both isn't duplicated).
+  // Explicit `hosted: false` for the same reason as the local BYOK rows in
+  // `buildAvailableModels`: the bare id + provider would otherwise be read as
+  // the hosted twin server-side and billed to MCPJam instead of the org's key.
   const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return availableProviderKeys.has(m.provider);
   });
-  const models: ModelDefinition[] = [...hosted, ...orgKeyModels];
+  const models: ModelDefinition[] = [...orgKeyModels];
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
@@ -239,7 +246,7 @@ export function buildAvailableModelsFromOrgConfig(
     }
   }
 
-  return models;
+  return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
 }
 
 /** Strip the redundant "(Free)" tier suffix for denser labels. */
@@ -279,6 +286,11 @@ export function isMCPJamProvidedModelMenuItem(model: ModelMenuItem): boolean {
   // (not in the static list) still classifies as MCPJam-provided.
   if (model.hosted === true) {
     return true;
+  }
+  // An explicit `false` is the picker's own-provider stamp; it wins over the
+  // id-based back-compat check below for the same reason `true` does.
+  if (model.hosted === false) {
+    return false;
   }
   if (OWN_PROVIDER_SOURCES.has(model.provider)) {
     return false;
@@ -365,7 +377,15 @@ export const getDefaultModel = (
     "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini",
     "meta-llama/llama-4-scout",
-    Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
+    // BYOK counterparts of the hosted picks above. A "Your providers"-only
+    // list matched none of the hosted ids and fell through to Sonnet 3.7 —
+    // or, with no anthropic key, all the way to `availableModels[0]`, which
+    // is whatever sorts first in SUPPORTED_MODELS (Claude Fable 5). A BYOK
+    // key that has no access to that model then fails on the first tool
+    // call. See BACK2-628.
+    Model.CLAUDE_HAIKU_4_5, // anthropic
+    Model.GPT_5_MINI, // openai
+    Model.CLAUDE_SONNET_4_5, // anthropic
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google
     Model.DEEPSEEK_CHAT, // deepseek
@@ -378,3 +398,36 @@ export const getDefaultModel = (
   }
   return availableModels[0];
 };
+
+/**
+ * Pick which "Your providers" model to land on when the out-of-credits
+ * hand-off switches the user off the free tier.
+ *
+ * Order:
+ *   1. the own-provider model they last chose, when it is still available
+ *      (the user's own answer beats any heuristic);
+ *   2. `getDefaultModel`'s priority list, restricted to own-provider rows;
+ *   3. the first selectable row.
+ *
+ * Step 3 used to be the only step. Own-provider models are never marked
+ * `disabled` — availability is inferred from "the user has a key for this
+ * provider at all", not from what that key can actually reach — so the
+ * previous `.find(m => !m.disabled)` could not screen out a model the key
+ * has no access to, and alphabetical provider order plus SUPPORTED_MODELS
+ * order made that Claude Fable 5 every time. See BACK2-628.
+ */
+export function pickOwnProviderModel(
+  configuredModels: ModelDefinition[],
+  lastUsedModelId?: string | null
+): ModelDefinition | undefined {
+  const selectable = configuredModels.filter((model) => !model.disabled);
+  if (selectable.length === 0) return undefined;
+
+  const lastUsed = lastUsedModelId?.trim();
+  if (lastUsed) {
+    const match = selectable.find((model) => String(model.id) === lastUsed);
+    if (match) return match;
+  }
+
+  return getDefaultModel(selectable);
+}

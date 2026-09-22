@@ -1,12 +1,27 @@
 import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(serverDir, "..");
 
+// Baked at build time so the bundled server can tag Sentry events with a
+// release. There is no package.json next to `dist/server/index.js` at runtime,
+// and in dev (tsx, no bundler) the define is absent — `server/sentry.ts` falls
+// back to `npm_package_version`.
+const packageVersion = JSON.parse(
+  readFileSync(join(rootDir, "package.json"), "utf8"),
+).version as string;
+
 export default defineConfig({
-  entry: ["server/index.ts"],
+  // Two entries: the server, and the `harness install` subcommand's installer.
+  // The subcommand cannot import the server entry — that module starts a
+  // listening server as a side effect of being imported.
+  entry: ["server/index.ts", "server/harness-install-cli.ts"],
+  define: {
+    "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
+  },
   format: ["esm"],
   target: "node22",
   outDir: join(rootDir, "dist/server"),
@@ -40,6 +55,12 @@ export default defineConfig({
     "execa",
     // Sentry packages with native modules must remain external
     "@sentry/node",
+    // node-pty (local computer terminal) is an OPTIONAL dependency with a
+    // native addon: it may be absent entirely (no build toolchain on an npx
+    // install) and can never be bundled. Keep it external so the runtime
+    // `import("node-pty")` resolves from node_modules — and cleanly fails to,
+    // degrading the terminal off, when it isn't there. See utils/computers/local-pty.ts.
+    "node-pty",
     // evals-cli dependencies
     "posthog-node",
     "@openrouter/ai-sdk-provider",
@@ -61,6 +82,14 @@ export default defineConfig({
     // fails on the optional `chromium-bidi` dependency.
     "playwright",
     "playwright-core",
+    // Reached through browserd/electron/** when the local engine runs inside
+    // Electron. The standalone Node server does not load this runtime import.
+    // Inside the desktop app the server runs in the Electron main process, so
+    // the import resolves; this bundle is the STANDALONE server, where it never
+    // runs — but esbuild would still try to follow the specifier and fail the
+    // build outright. External keeps the specifier intact for the one runtime
+    // that can satisfy it.
+    "electron",
   ],
   noExternal: [
     // Force bundling of problematic packages
@@ -71,11 +100,15 @@ export default defineConfig({
     "@mcpjam/sdk/model-factory",
     "@mcpjam/sdk/matchers",
     "@mcpjam/sdk/predicates",
+    "@mcpjam/sdk/contract",
     "@mcpjam/sdk/host-config/internal",
     "@mcpjam/sdk/host-config/templates",
     "@mcpjam/sdk/platform",
     "@mcpjam/sdk/public-api",
     "@mcpjam/sdk/host-compat",
+    "@mcpjam/sdk/plugin-bundle",
+    "@mcpjam/sdk/oauth/node",
+    "@mcpjam/sdk/widget-runtime",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -85,11 +118,28 @@ export default defineConfig({
       // Specific subpaths BEFORE the bare alias — shared/xaa.ts re-exports XAA
       // primitives from the browser entry, so the server bundle must resolve it.
       "@mcpjam/sdk/browser": join(rootDir, "../sdk/dist/browser.js"),
+      // Node-only SSRF guard + DNS-pinned transport, used by the connection
+      // flow's discovery and validation steps.
+      //
+      // MUST be listed before the bare alias, like every subpath here: the bare
+      // entry is a PREFIX replacement, so without its own line this specifier
+      // rewrites to `sdk/dist/index.js/oauth/node` and fails to resolve. The
+      // failure only appears once something actually IMPORTS the module —
+      // esbuild never resolves an unreferenced file, so this stayed invisible
+      // while the discovery preflight was dead code.
+      "@mcpjam/sdk/oauth/node": join(rootDir, "../sdk/dist/oauth/node.js"),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
-      "@mcpjam/sdk/model-factory": join(rootDir, "../sdk/dist/model-factory.js"),
+      "@mcpjam/sdk/model-factory": join(
+        rootDir,
+        "../sdk/dist/model-factory.js",
+      ),
       "@mcpjam/sdk/matchers": join(rootDir, "../sdk/dist/matchers.js"),
-      "@mcpjam/sdk/predicates": join(rootDir, "../sdk/dist/predicates/index.js"),
+      "@mcpjam/sdk/predicates": join(
+        rootDir,
+        "../sdk/dist/predicates/index.js",
+      ),
+      "@mcpjam/sdk/contract": join(rootDir, "../sdk/dist/contract/index.js"),
       "@mcpjam/sdk/host-config/internal": join(
         rootDir,
         "../sdk/dist/host-config/internal.js",
@@ -106,6 +156,14 @@ export default defineConfig({
       "@mcpjam/sdk/host-compat": join(
         rootDir,
         "../sdk/dist/host-compat/index.js",
+      ),
+      "@mcpjam/sdk/plugin-bundle": join(
+        rootDir,
+        "../sdk/dist/plugin-bundle/index.js",
+      ),
+      "@mcpjam/sdk/widget-runtime": join(
+        rootDir,
+        "../sdk/dist/widget-runtime/index.js",
       ),
     };
   },

@@ -9,6 +9,15 @@ import type {
   ClientRequestOptions,
 } from "./types.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
+import { z } from "zod";
+
+/**
+ * The 2025-11-25 in-core `tasks/*` methods are not spec methods in beta.4's
+ * method-dispatch map, so the generic `request()` refuses them ("not a spec
+ * method"). They must ride the explicit-schema seam; the payloads are then
+ * shape-checked by the callers/routes.
+ */
+const LEGACY_TASKS_RESULT_SCHEMA = z.looseObject({});
 
 export const TaskStatusNotificationMethod =
   "notifications/tasks/status" as const;
@@ -30,13 +39,21 @@ export async function listTasks(
   cursor?: string,
   options?: ClientRequestOptions
 ): Promise<MCPListTasksResult> {
-  return client.request(
+  return client.requestWithSchema(
     {
       method: "tasks/list",
-      params: cursor ? { cursor } : {},
+      // Presence, not truthiness: `""` is a valid continuation cursor. MCP
+      // 2026-07-28 `server/utilities/pagination` states that a client "MUST
+      // NOT" decide anything from a cursor's value beyond whether a non-null
+      // one was provided, and that "an empty string is a valid cursor and thus
+      // MUST NOT be treated as the end of results". A truthiness test here
+      // dropped a `""` handed back by the previous page, which does not end a
+      // caller's walk so much as silently restart it at page one.
+      params: cursor !== undefined ? { cursor } : {},
     },
+    LEGACY_TASKS_RESULT_SCHEMA,
     options
-  );
+  ) as Promise<MCPListTasksResult>;
 }
 
 /**
@@ -52,13 +69,14 @@ export async function getTask(
   taskId: string,
   options?: ClientRequestOptions
 ): Promise<MCPTask> {
-  return client.request(
+  return client.requestWithSchema(
     {
       method: "tasks/get",
       params: { taskId },
     },
+    LEGACY_TASKS_RESULT_SCHEMA,
     options
-  );
+  ) as Promise<MCPTask>;
 }
 
 /**
@@ -75,13 +93,14 @@ export async function getTaskResult(
   taskId: string,
   options?: ClientRequestOptions
 ): Promise<unknown> {
-  return client.request(
+  return client.requestWithSchema(
     {
       method: "tasks/result",
       params: { taskId },
     },
+    LEGACY_TASKS_RESULT_SCHEMA,
     options
-  );
+  ) as Promise<unknown>;
 }
 
 /**
@@ -97,13 +116,14 @@ export async function cancelTask(
   taskId: string,
   options?: ClientRequestOptions
 ): Promise<MCPTask> {
-  return client.request(
+  return client.requestWithSchema(
     {
       method: "tasks/cancel",
       params: { taskId },
     },
+    LEGACY_TASKS_RESULT_SCHEMA,
     options
-  );
+  ) as Promise<MCPTask>;
 }
 
 // ============================================================================

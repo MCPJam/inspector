@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 
 /**
  * Perplexity's thinking indicator — captured verbatim from a live perplexity.ai
@@ -26,19 +26,19 @@ const PERPLEXITY_STRIP_PATH =
 
 export function PerplexityMarkIndicator({ className }: { className?: string }) {
   // Chat-shell host theme. Falls back to "dark" to match the rest of the
-  // inspector's "no chatbox context" behavior (see CopilotMessageHeader).
-  const chatboxHostTheme = useChatboxHostTheme() ?? "dark";
+  // inspector's "no scenario context" behavior (see CopilotMessageHeader).
+  const scenarioHostTheme = useScenarioHostTheme() ?? "dark";
 
   return (
     <span
       data-testid="loading-indicator-perplexity"
-      data-theme={chatboxHostTheme}
+      data-theme={scenarioHostTheme}
       aria-live="polite"
       className={cn("inline-flex min-h-6 items-center", className)}
       // Strip strokes in currentColor; paint it Perplexity's brand cyan
       // (#1FB8CD, the logo mark) — a touch deeper on light surfaces for
       // contrast.
-      style={{ color: chatboxHostTheme === "light" ? "#0e7c8c" : "#1fb8cd" }}
+      style={{ color: scenarioHostTheme === "light" ? "#0e7c8c" : "#1fb8cd" }}
     >
       <span className="sr-only">Thinking</span>
       <span

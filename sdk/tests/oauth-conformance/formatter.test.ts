@@ -5,10 +5,22 @@ import {
   type OAuthConformanceSuiteResult,
 } from "../../src/oauth-conformance/index.js";
 
+/**
+ * `outcome` is derived from the merged result rather than hardcoded, so a
+ * fixture built with `{ passed: false }` cannot silently claim `"passed"`.
+ * Callers testing the not-applicable path override `outcome` explicitly.
+ */
+function withOutcome(result: ConformanceResult): ConformanceResult {
+  return {
+    ...result,
+    outcome: result.outcome ?? (result.passed ? "passed" : "failed"),
+  };
+}
+
 function createPassingResult(
   overrides: Partial<ConformanceResult> = {},
 ): ConformanceResult {
-  return {
+  return withOutcome({
     passed: true,
     protocolVersion: "2025-11-25",
     registrationStrategy: "dcr",
@@ -29,13 +41,13 @@ function createPassingResult(
       "OAuth conformance passed for https://mcp.example.com/mcp (2025-11-25, dcr)",
     durationMs: 120,
     ...overrides,
-  };
+  });
 }
 
 function createHtmlFailureResult(
   overrides: Partial<ConformanceResult> = {},
 ): ConformanceResult {
-  return {
+  return withOutcome({
     passed: false,
     protocolVersion: "2025-06-18",
     registrationStrategy: "dcr",
@@ -126,7 +138,7 @@ function createHtmlFailureResult(
       "OAuth conformance failed at received_authorization_code: Headless authorization requires auto-consent. The authorization endpoint returned a 200 response instead of redirecting back with a code.",
     durationMs: 220,
     ...overrides,
-  };
+  });
 }
 
 describe("OAuth conformance human formatter", () => {
@@ -319,9 +331,37 @@ describe("OAuth conformance suite human formatter", () => {
     expect(output.match(/^\[flow-/gm)).toHaveLength(1);
   });
 
-  it("shows verification details for flows that fail only post-auth verification", () => {
-    const verificationFailure: ConformanceResult = {
+  it("labels a suite INCOMPLETE when its only non-passing flow is unestablished", () => {
+    const incompleteFlow: ConformanceResult = {
       ...createPassingResult(),
+      passed: false,
+      outcome: "incomplete",
+      incompleteReason: "1 of 2 selected check(s) could not run",
+    };
+    const suite: OAuthConformanceSuiteResult = {
+      name: "Incomplete Suite",
+      serverUrl: "https://mcp.example.com/mcp",
+      passed: false,
+      results: [
+        { ...createPassingResult(), label: "flow-1" },
+        { ...incompleteFlow, label: "flow-2" },
+      ],
+      summary: "1/2 flows passed. Incomplete: flow-2",
+      durationMs: 100,
+    };
+
+    const output = formatOAuthConformanceSuiteHuman(suite);
+
+    // Unestablished, not violated: the header and the flow line both say so.
+    expect(output).toContain("OAuth conformance suite: INCOMPLETE");
+    expect(output).toContain("INC  flow-2");
+    expect(output).not.toContain("suite: FAILED");
+  });
+
+  it("shows verification details for flows that fail only post-auth verification", () => {
+    // Post-auth verification failure: the runner downgrades BOTH `passed` and
+    // `outcome`, so the fixture goes through the builder to stay consistent.
+    const verificationFailure: ConformanceResult = createPassingResult({
       passed: false,
       summary: "listTools verification failed",
       verification: {
@@ -331,7 +371,7 @@ describe("OAuth conformance suite human formatter", () => {
           error: "MCP server closed connection",
         },
       },
-    };
+    });
 
     const suite: OAuthConformanceSuiteResult = {
       name: "Verification-only failure",

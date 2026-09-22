@@ -57,10 +57,10 @@ describe("ConfirmChatResetDialog", () => {
     );
 
     await user.click(screen.getByLabelText("Don't show this again"));
-    await user.click(screen.getByRole("button", { name: "Reset chat" }));
+    await user.click(screen.getByRole("button", { name: "Clear chat" }));
 
     expect(localStorage.getItem(SKIP_CHAT_RESET_CONFIRMATION_KEY)).toBe("true");
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("Reset chat?")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clear chat?")).not.toBeInTheDocument();
   });
 });

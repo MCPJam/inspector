@@ -22,6 +22,7 @@ import {
   dispatchInspectorCommand,
 } from "../ui-actions";
 import {
+  PUBLISH_NATIVE_UNTRUSTED,
   asOptionalString,
   asStringRecord,
   errorResult,
@@ -61,9 +62,7 @@ export function buildPromptsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
-      // Result is arbitrary content from a THIRD-PARTY MCP server — flag it
-      // untrusted for native WebMCP agents.
-      nativeUntrustedContentHint: true,
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       execute: async (args) => {
         const prompt = asOptionalString(args.prompt);
         if (!prompt) {

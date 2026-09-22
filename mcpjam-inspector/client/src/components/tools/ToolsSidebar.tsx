@@ -1,11 +1,5 @@
 import type { Tool } from "@modelcontextprotocol/client";
 import { RefreshCw, Play, Clock, PanelLeftClose, Save } from "lucide-react";
-import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@mcpjam/design-system/accordion";
 import { type RefObject, useState, useEffect } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -17,8 +11,12 @@ import type { SavedRequest } from "@/lib/types/request-types";
 import { track } from "@/lib/analytics";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import type { FormField } from "@/lib/tool-form";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 
 interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
@@ -33,6 +31,8 @@ interface ToolsSidebarProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   onRefresh: () => void;
+  /** SEP-2549 provenance for the most recent fetch — present ONLY on a hit. */
+  servedFromCache?: ServedFromCache;
   onSelectTool: (name: string) => void;
   savedRequests: SavedRequest[];
   highlightedRequestId: string | null;
@@ -43,7 +43,13 @@ interface ToolsSidebarProps {
   displayedToolCount: number;
   sentinelRef: RefObject<HTMLDivElement | null>;
   loadingMore: boolean;
-  cursor: string;
+  /**
+   * The next-page cursor, or `undefined` when the walk is finished. NOT a
+   * `string` defaulting to `""`: MCP 2026-07-28 `server/utilities/pagination`
+   * makes `""` a valid cursor that MUST NOT be treated as the end of results,
+   * so "no cursor" and "empty cursor" have to stay distinguishable here.
+   */
+  cursor: string | undefined;
   serverConnected?: boolean;
   // Parameters form props (for full-page replacement pattern)
   formFields?: FormField[];
@@ -57,8 +63,25 @@ interface ToolsSidebarProps {
   onExecuteAsTaskChange?: (value: boolean) => void;
   taskRequired?: boolean;
   taskTtl?: number;
+  /** Which tasks wire the connection speaks; drives the task affordance. */
+  taskWire?: "none" | "legacy" | "extension";
   onTaskTtlChange?: (value: number) => void;
   serverSupportsTaskToolCalls?: boolean;
+  /**
+   * The host's task policy is `off`. Kept SEPARATE from
+   * `serverSupportsTaskToolCalls`, which stays truthful about the server, so
+   * the panel can say "this server supports tasks; this host disabled them"
+   * rather than pretending the capability isn't there.
+   */
+  tasksDisabledByHost?: boolean;
+  /**
+   * Execution is blocked for the SELECTED tool (e.g. it requires task
+   * execution while the host disabled tasks). Affordance only — the owning
+   * tab guards `executeTool` itself, so this just keeps the buttons honest.
+   */
+  executeDisabled?: boolean;
+  /** Human-readable reason shown when `executeDisabled` is set. */
+  executeDisabledReason?: string;
   // Collapsible sidebar
   onClose?: () => void;
 }
@@ -75,6 +98,7 @@ export function ToolsSidebar({
   searchQuery,
   onSearchQueryChange,
   onRefresh,
+  servedFromCache,
   onSelectTool,
   savedRequests,
   highlightedRequestId,
@@ -99,8 +123,12 @@ export function ToolsSidebar({
   onExecuteAsTaskChange,
   taskRequired,
   taskTtl,
+  taskWire,
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
+  tasksDisabledByHost,
+  executeDisabled,
+  executeDisabledReason,
   onClose,
 }: ToolsSidebarProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
@@ -111,11 +139,12 @@ export function ToolsSidebar({
   useEffect(() => {
     setOpenSections(hasParameters ? ["parameters"] : ["description"]);
   }, [selectedToolName, hasParameters]);
-  const canExecute = serverConnected && !!selectedToolName && !!onExecute;
+  const canExecute =
+    serverConnected && !!selectedToolName && !!onExecute && !executeDisabled;
   const canSave = !!selectedToolName && !!onSave;
 
   const handleExecute = () => {
-    if (!onExecute) return;
+    if (!onExecute || executeDisabled) return;
     track("execute_tool", {
       location: "tools_sidebar",
       as_task: executeAsTask ?? false,
@@ -218,6 +247,7 @@ export function ToolsSidebar({
             disabled={loading || !canExecute}
             size="sm"
             className="h-8 px-3 text-xs ml-auto"
+            title={executeDisabled ? executeDisabledReason : undefined}
           >
             {loading ? (
               <RefreshCw className="h-3 w-3 animate-spin" />
@@ -239,72 +269,72 @@ export function ToolsSidebar({
             toolName={selectedToolName}
             onExpand={() => onSelectTool("")}
             toolSwitchList={{
-              names: toolNames,
+              items: toolNames.map((name) => ({ id: name, label: name })),
+              selectedId: selectedToolName,
               onSelect: (name) => onSelectTool(name),
             }}
           />
 
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full">
-              <Accordion
-                type="multiple"
-                value={openSections}
-                onValueChange={setOpenSections}
-                className="px-3"
-              >
-                {selectedTool?.description && (
-                  <AccordionItem value="description">
-                    <AccordionTrigger className="text-xs">
-                      Description
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {selectedTool.description}
-                      </p>
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-                {selectedTool?.inputSchema && (
-                  <AccordionItem value="input-schema">
-                    <AccordionTrigger className="text-xs">
-                      Input Schema
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <SchemaViewer schema={selectedTool.inputSchema} />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-                {selectedTool?.outputSchema && (
-                  <AccordionItem value="output-schema">
-                    <AccordionTrigger className="text-xs">
-                      Output Schema
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <SchemaViewer schema={selectedTool.outputSchema} />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-                {formFields && formFields.length > 0 && (
-                  <AccordionItem value="parameters">
-                    <AccordionTrigger className="text-xs">
-                      Parameters
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <ParametersForm
-                        fields={formFields}
-                        onFieldChange={onFieldChange}
-                        onToggleField={onToggleField ?? (() => {})}
-                        onExecute={onExecute}
-                      />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-              </Accordion>
+              <ToolDetailsAccordion
+                description={selectedTool?.description}
+                inputSchema={selectedTool?.inputSchema}
+                outputSchema={selectedTool?.outputSchema}
+                annotations={selectedTool?.annotations}
+                metadata={selectedTool?._meta}
+                openSections={openSections}
+                onOpenSectionsChange={setOpenSections}
+                parameters={
+                  formFields && formFields.length > 0 ? (
+                    <ParametersForm
+                      fields={formFields}
+                      onFieldChange={onFieldChange}
+                      onToggleField={onToggleField ?? (() => {})}
+                      onExecute={onExecute}
+                    />
+                  ) : undefined
+                }
+              />
 
               {/* Task execution options */}
-              {serverSupportsTaskToolCalls && (
+              {serverSupportsTaskToolCalls && tasksDisabledByHost && (
+                <div className="px-3 py-3 border-t border-border space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    <span>
+                      This server supports tasks, but this host has task
+                      execution turned off.
+                    </span>
+                  </span>
+                  {executeDisabled && executeDisabledReason && (
+                    // The required case: the selected tool can ONLY run as a
+                    // task, so with tasks off it cannot run at all.
+                    <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                      <Clock className="h-3 w-3" />
+                      <span>{executeDisabledReason}</span>
+                    </span>
+                  )}
+                </div>
+              )}
+              {serverSupportsTaskToolCalls && !tasksDisabledByHost && (
                 <div className="px-3 py-3 border-t border-border">
-                  {taskRequired ? (
+                  {taskWire === "extension" ? (
+                    // The extension has no client-side TTL or opt-in: the
+                    // client only declares that a task response is acceptable.
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={executeAsTask ?? false}
+                        onChange={(e) =>
+                          onExecuteAsTaskChange?.(e.target.checked)
+                        }
+                        className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                      />
+                      <Clock className="h-3 w-3" />
+                      <span>Allow task response</span>
+                    </label>
+                  ) : taskRequired ? (
                     <div className="flex items-center gap-2">
                       <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
                         <Clock className="h-3 w-3" />
@@ -380,6 +410,11 @@ export function ToolsSidebar({
                   : "Search saved requests..."
               }
             />
+            {activeTab === "tools" && servedFromCache && (
+              <div className="mt-1.5">
+                <CacheProvenanceBadge servedFromCache={servedFromCache} />
+              </div>
+            )}
           </div>
 
           {/* List content */}
@@ -387,7 +422,7 @@ export function ToolsSidebar({
             {activeTab === "tools" ? (
               <ScrollArea className="h-full">
                 <div className="p-2 pb-16">
-                  {fetchingTools && !cursor ? (
+                  {fetchingTools && cursor === undefined ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
                         <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
@@ -436,7 +471,7 @@ export function ToolsSidebar({
                         </div>
                       )}
 
-                      {!cursor &&
+                      {cursor === undefined &&
                         filteredToolNames.length > 0 &&
                         !loadingMore && (
                           <div className="text-center py-3 text-xs text-muted-foreground">

@@ -1,12 +1,17 @@
+import { verifyGithubCredentialAccess, githubExecutionPolicy } from "../services/github-checks/credential-policy.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
   getModelById,
   isBedrockModelId,
   type ModelDefinition,
-  type ModelProvider,
 } from "@/shared/types";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import {
+  classifyModelIdProvider,
+  isRuntimeChosenModelSentinel,
+  runtimeChosenModelSentinelName,
+} from "@/shared/model-provider";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
@@ -43,12 +48,12 @@ export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
   bearerToken?: string;
   /**
-   * Chatbox identity is `chatboxId` + `accessVersion`. The cache key hashes
+   * Scenario identity is `scenarioId` + `accessVersion`. The cache key hashes
    * these so a link-token rotation does not invalidate model-config cache
    * entries, while an `accessVersion` bump (mode change, revoke, allowlist
    * edit) does.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
 };
@@ -126,16 +131,16 @@ function buildCacheKey(
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
   const target = formatTargetForCache(params);
-  // Cache key hashes (chatboxId, accessVersion) so a link-token rotation
+  // Cache key hashes (scenarioId, accessVersion) so a link-token rotation
   // doesn't invalidate cache entries while an accessVersion bump (mode
   // change, revoke, allowlist edit) does.
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        chatboxId: auth?.chatboxId?.trim() ?? "",
+        scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
-          auth?.chatboxId && auth.chatboxId.trim() &&
+          auth?.scenarioId && auth.scenarioId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
@@ -162,9 +167,10 @@ export async function resolveOrgModelConfig(
 
   const authHeader = normalizeAuthHeader(auth);
   const serverIds = normalizeServerIds(auth?.serverIds);
+  await verifyGithubCredentialAccess();
   const cacheKey = buildCacheKey(params, auth);
   const cached = resolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!githubExecutionPolicy() && cached && cached.expiresAt > Date.now()) {
     return cached.result;
   }
 
@@ -182,10 +188,10 @@ export async function resolveOrgModelConfig(
       },
       body: JSON.stringify({
         ...params,
-        ...(auth?.chatboxId?.trim()
-          ? { chatboxId: auth.chatboxId.trim() }
+        ...(auth?.scenarioId?.trim()
+          ? { scenarioId: auth.scenarioId.trim() }
           : {}),
-        ...(auth?.chatboxId?.trim() && Number.isFinite(auth?.accessVersion)
+        ...(auth?.scenarioId?.trim() && Number.isFinite(auth?.accessVersion)
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
@@ -249,10 +255,12 @@ export async function resolveOrgModelConfig(
     }
 
     const result: ResolvedOrgModelConfig = { providers };
-    resolveCache.set(cacheKey, {
-      result,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
+    if (!githubExecutionPolicy()) {
+      resolveCache.set(cacheKey, {
+        result,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+    }
     return result;
   } finally {
     clearTimeout(timeout);
@@ -274,6 +282,28 @@ export type DeriveOrgProviderKeyResult =
 export function deriveOrgProviderKey(
   modelDefinition: ModelDefinition,
 ): DeriveOrgProviderKeyResult {
+  // A RUNTIME-CHOSEN SENTINEL has no provider key, and inventing one is the
+  // bug: `cursor` is a registered ModelProvider so `cursor/auto` classifies
+  // honestly, but nobody can configure a BYOK `cursor` key — the request goes
+  // to Convex and comes back `provider_not_configured: cursor is not enabled
+  // for this project/workspace organization`, which reads as a setup mistake
+  // the customer could fix. They cannot. Refuse HERE, where the caller still
+  // has the context to say what actually went wrong, rather than asking the
+  // org-provider config a question about a model no provider serves.
+  const sentinelName = runtimeChosenModelSentinelName(
+    String(modelDefinition.id),
+  );
+  if (sentinelName) {
+    return {
+      ok: false,
+      error:
+        `"${String(modelDefinition.id)}" (${sentinelName}) is a placeholder ` +
+        "for a runtime that chooses its own model on your own account — it " +
+        "names no model provider, so there is no key to configure for it. " +
+        "Run this turn on a host whose harness provides that runtime, or " +
+        "pick a real model.",
+    };
+  }
   if (modelDefinition.provider === "custom") {
     if (!modelDefinition.customProviderName) {
       return {
@@ -475,9 +505,9 @@ function buildRuntimeCacheKey(
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        chatboxId: auth?.chatboxId?.trim() ?? "",
+        scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
-          auth?.chatboxId && auth.chatboxId.trim() &&
+          auth?.scenarioId && auth.scenarioId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
@@ -522,11 +552,12 @@ export async function resolveOrgProviderRuntimeForTarget(
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
+  await verifyGithubCredentialAccess();
   const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (!githubExecutionPolicy() && cached && cached.expiresAt > now) {
     return cached.result;
   }
 
@@ -549,10 +580,10 @@ export async function resolveOrgProviderRuntimeForTarget(
         ...target,
         providerKey,
         model,
-        ...(auth?.chatboxId?.trim()
-          ? { chatboxId: auth.chatboxId.trim() }
+        ...(auth?.scenarioId?.trim()
+          ? { scenarioId: auth.scenarioId.trim() }
           : {}),
-        ...(auth?.chatboxId?.trim() && Number.isFinite(auth?.accessVersion)
+        ...(auth?.scenarioId?.trim() && Number.isFinite(auth?.accessVersion)
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
@@ -628,10 +659,12 @@ export async function resolveOrgProviderRuntimeForTarget(
 
   const writeNow = Date.now();
   pruneRuntimeResolveCache(writeNow);
-  runtimeResolveCache.set(cacheKey, {
-    result,
-    expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
-  });
+  if (!githubExecutionPolicy()) {
+    runtimeResolveCache.set(cacheKey, {
+      result,
+      expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
+    });
+  }
   return result;
 }
 
@@ -641,16 +674,29 @@ export async function resolveOrgProviderRuntimeForTarget(
 // makes per session.
 // ---------------------------------------------------------------------------
 
-/** Persisted attribution label on chatSessions / llmUsageRecord rows. */
-export type SyntheticModelSource = "mcpjam" | "byok" | "local_byok";
+/**
+ * Persisted attribution label on chatSessions / llmUsageRecord rows.
+ *
+ * `"external-account"` — the customer's own account with the RUNTIME vendor
+ * (Cursor), where MCPJam holds no model credential at all. Distinct from
+ * `"byok"` on purpose: both mean "MCPJam is not charged", but byok also asserts
+ * a configured model PROVIDER and its key, which an external-account turn does
+ * not have. Mirrors `PersistChatSessionOptions["modelSource"]`.
+ */
+export type SyntheticModelSource =
+  | "mcpjam"
+  | "byok"
+  | "local_byok"
+  | "external-account";
 
 /**
  * Result of {@link resolveSyntheticModelSource}.
  *
- * `orgRuntime` is present when `source !== "mcpjam"` so the synthetic
+ * `orgRuntime` is present when the source is a BYOK one, so the synthetic
  * dispatcher can reuse the resolved runtime (cloud providerKey OR local
  * `OrgProviderResolvedConfig`) for the actual handler call — no
- * duplicate `resolveOrgProviderRuntime` round-trip.
+ * duplicate `resolveOrgProviderRuntime` round-trip. Absent for `"mcpjam"` and
+ * for `"external-account"`, neither of which resolves an org provider.
  */
 export interface SyntheticModelResolution {
   source: SyntheticModelSource;
@@ -658,7 +704,7 @@ export interface SyntheticModelResolution {
 }
 
 /**
- * Single source of truth for "what model-source class is this chatbox?"
+ * Single source of truth for "what model-source class is this scenario?"
  * Mirrors the three-way split the chat path does in `web-chat-turn.ts`,
  * narrowed to the surfaces synthetic can target (no user-API-key direct).
  *
@@ -682,13 +728,21 @@ export async function resolveSyntheticModelSource(args: {
   modelDefinition: ModelDefinition;
   projectId: string;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isHostedCatalogModel(modelIdStr)) {
+  if (isHostedModelDefinition(args.modelDefinition)) {
     return { source: "mcpjam" };
+  }
+  // A runtime-chosen sentinel resolves NO org provider — see
+  // `deriveOrgProviderKey`. Answered before the key derivation below so the
+  // resolver returns an attribution ("nobody billed MCPJam, and there is no
+  // configured provider either") instead of throwing on a key it must not ask
+  // for. `orgRuntime` is deliberately absent: there is no runtime to reuse.
+  if (isRuntimeChosenModelSentinel(modelIdStr)) {
+    return { source: "external-account" };
   }
   const keyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!keyResult.ok) {
@@ -703,7 +757,7 @@ export async function resolveSyntheticModelSource(args: {
         modelIdStr,
         {
           authHeader: args.authHeader,
-          chatboxId: args.chatboxId,
+          scenarioId: args.scenarioId,
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
@@ -717,124 +771,69 @@ export async function resolveSyntheticModelSource(args: {
 
 // ---------------------------------------------------------------------------
 // Synthetic model-definition builder — used by the synthetic runner when
-// the chatbox is on a BYOK model that isn't in the static SUPPORTED_MODELS
+// the scenario is on a BYOK model that isn't in the static SUPPORTED_MODELS
 // catalog (Ollama BYOK, custom: providers, OpenRouter-style ids, etc.).
 // ---------------------------------------------------------------------------
 
 /**
- * Map a model-id prefix to a ModelProvider. The catalog uses
- * provider/model ids where the prefix is the canonical provider name
- * with one quirk: `meta-llama/...` lives under provider `meta`, and
- * `x-ai/...` lives under provider `xai`. Mirrors the catalog entries in
- * `shared/types.ts::SUPPORTED_MODELS`.
- */
-const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
-  anthropic: "anthropic",
-  azure: "azure",
-  bedrock: "bedrock",
-  deepseek: "deepseek",
-  google: "google",
-  "meta-llama": "meta",
-  minimax: "minimax",
-  moonshotai: "moonshotai",
-  openai: "openai",
-  ollama: "ollama",
-  openrouter: "openrouter",
-  qwen: "qwen",
-  mistral: "mistral",
-  "x-ai": "xai",
-  "z-ai": "z-ai",
-};
-
-/**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
- * `runtime.config.modelId` returns from `fetchChatboxRuntimeConfig`).
+ * `runtime.config.modelId` returns from `fetchScenarioRuntimeConfig`).
+ *
+ * Optional routing provenance comes from the pinned snapshot, never the live
+ * host. Omitted keeps legacy inference; copying avoids mutating the catalog.
  *
  * Resolution order:
- *   1. `getModelById(modelId)` — MCPJam catalog hit returns the full
- *      definition unchanged (correct provider, contextLength, etc.).
- *   2. `custom:` prefix — provider="custom", customProviderName is the
- *      segment after `custom:` up to the first `:` or `/` (the picker
- *      mints `custom:<slug>:<modelId>`). Matches the
- *      `deriveOrgProviderKey` shape for custom providers.
- *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
- *      `ollama/...`, etc.) — provider is derived from the prefix via
- *      ID_PREFIX_TO_PROVIDER.
- *   4. Bedrock-shaped bare id (`[geo.]vendor.name...:N`) — provider
- *      "bedrock". Org Bedrock models surface bare inference-profile ids
- *      in the picker, so chatbox runtime configs store them unprefixed.
- *   5. Bare id with no recognized shape — fall back to "ollama" since
- *      bare ids are how Ollama BYOK models are typically stored on
- *      chatbox runtime configs (no catalog ID uses a bare shape).
+ *   1. Blank id — THROWS. An unpinned host persists modelId "", and without
+ *      this guard the bare-id fallback silently classifies it as an Ollama
+ *      BYOK model, with the failure surfacing many hops later as an opaque
+ *      backend "model is required".
+ *   2. `getModelById(modelId)` — MCPJam catalog hit returns the full
+ *      definition unchanged (correct provider, contextLength, curated display
+ *      name). This is the one step the shared classifier cannot do: it is pure
+ *      and has no catalog.
+ *   3. Everything else is {@link classifyModelIdProvider} — `custom:` slugs,
+ *      the `<prefix>/` map and its aliases, bare Bedrock shapes, and the
+ *      bare-id Ollama catch-all. See `shared/model-provider.ts` for the rules;
+ *      this function deliberately holds NO copy of them.
  *
  * Callers: the synthetic session runner (which only has
- * `runtime.config.modelId` — the chatbox runtime endpoint doesn't expose
+ * `runtime.config.modelId` — the scenario runtime endpoint doesn't expose
  * provider today) and the chat routes' host-wins merges, where the host
  * config likewise pins a bare modelId and the provider must come from the
  * id shape, never from the request body's model.
  */
 export function buildSyntheticModelDefinition(
   modelId: string,
+  routing: Pick<ModelDefinition, "hosted"> = {},
 ): ModelDefinition {
-  // An unpinned host persists modelId "" — without this guard the bare-id
-  // fallback below silently classifies it as an Ollama BYOK model and the
-  // failure surfaces many hops later as an opaque backend "model is
-  // required". Both interactive host-wins call sites gate on a truthy
-  // modelId before reaching here, so only genuinely modelless flows throw.
-  if (!modelId.trim()) {
+  const classification = classifyModelIdProvider(modelId);
+  // Both interactive host-wins call sites gate on a truthy modelId before
+  // reaching here, so only genuinely modelless flows throw.
+  if (!classification) {
     throw new Error(
       "No model selected for this chat. Pick a model on the host before running."
     );
   }
 
   const supported = getModelById(modelId);
-  if (supported) return supported;
-
-  if (modelId.startsWith("custom:")) {
-    const rest = modelId.slice("custom:".length);
-    // Picker-minted ids are `custom:<slug>:<modelId>` (both the local and
-    // org builders in model-helpers use a colon; the evals runner parses
-    // the same way); tolerate `custom:<slug>/<modelId>` too. The slug is
-    // the segment before the first `:` or `/`.
-    const customProviderName = rest.split(/[:/]/, 1)[0];
-    return {
-      id: modelId,
-      name: modelId,
-      provider: "custom",
-      customProviderName: customProviderName || undefined,
-    };
+  if (supported) {
+    return routing.hosted === undefined
+      ? supported
+      : { ...supported, hosted: routing.hosted };
   }
 
-  const slashIdx = modelId.indexOf("/");
-  if (slashIdx > 0) {
-    const prefix = modelId.slice(0, slashIdx);
-    const provider = ID_PREFIX_TO_PROVIDER[prefix];
-    if (provider) {
-      return {
-        id: modelId,
-        name: modelId,
-        provider,
-      };
-    }
-  }
-
-  if (isBedrockModelId(modelId)) {
-    return {
-      id: modelId,
-      name: modelId,
-      provider: "bedrock",
-    };
-  }
-
-  // Bare id (no `/`, not Bedrock-shaped) — Ollama BYOK is the remaining
-  // realistic case since no catalog id is bare. If the org has a different
-  // bare-id provider in the future, deriveOrgProviderKey will produce
-  // "ollama" and the resolver round-trip will fail with a clearer error
-  // than the previously-fatal catalog-miss path.
   return {
     id: modelId,
-    name: modelId,
-    provider: "ollama",
+    // A runtime-chosen sentinel gets its curated label ("Cursor Auto"); every
+    // other unknown id keeps the raw string, which is all there is to show.
+    // The id itself is NEVER rewritten — it is what traces and eval metadata
+    // record, and the whole point of the sentinel is that it names no model.
+    name: runtimeChosenModelSentinelName(modelId) ?? modelId,
+    ...(routing.hosted !== undefined ? { hosted: routing.hosted } : {}),
+    provider: classification.provider,
+    ...(classification.customProviderName !== undefined
+      ? { customProviderName: classification.customProviderName }
+      : {}),
   };
 }
 
@@ -857,11 +856,16 @@ export function matchOrgProviderForModelId(
   for (const p of config.providers) {
     if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
       if (p.selectedModels?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: p.providerKey };
+        return {
+          id: modelId,
+          name: modelId,
+          provider: p.providerKey,
+          hosted: false,
+        };
       }
     } else if (p.providerKey === "ollama") {
       if (p.modelIds?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: "ollama" };
+        return { id: modelId, name: modelId, provider: "ollama", hosted: false };
       }
     } else if (p.providerKey.startsWith("custom:")) {
       const slug = p.providerKey.slice("custom:".length);
@@ -875,6 +879,7 @@ export function matchOrgProviderForModelId(
           name: modelId,
           provider: "custom",
           customProviderName: slug,
+          hosted: false,
         };
       }
     }
@@ -892,7 +897,8 @@ export function matchOrgProviderForModelId(
  * id, that provider wins; catalog/shape inference is the fallback.
  *
  * `custom:`-prefixed and Bedrock-shaped ids skip the config fetch — their
- * shape is exact, and this path sits on a live chat turn.
+ * shape is exact, and this path sits on a live chat turn. So does a
+ * runtime-chosen sentinel, which no org provider can list.
  */
 export async function resolveHostModelDefinition(args: {
   modelId: string;
@@ -903,7 +909,15 @@ export async function resolveHostModelDefinition(args: {
 
   const shapeIsExact =
     modelId.startsWith("custom:") || isBedrockModelId(modelId);
-  if (!shapeIsExact && projectId) {
+  // A RUNTIME-CHOSEN SENTINEL skips the fetch for a different reason than the
+  // exact shapes above: not "we already know which provider serves it" but "no
+  // provider serves it at all". `matchOrgProviderForModelId` can only ever miss
+  // on `cursor/auto`, so the round-trip is pure cost — and not a cheap one on a
+  // live turn: `resolveOrgModelConfig` carries a 15 s timeout, and this call
+  // sits between the request and the first token of an external-account harness
+  // turn that needs nothing from the org's model config.
+  const skipOrgConfig = shapeIsExact || isRuntimeChosenModelSentinel(modelId);
+  if (!skipOrgConfig && projectId) {
     try {
       const config = await resolveOrgModelConfig({ projectId }, auth);
       const fromConfig = matchOrgProviderForModelId(config, modelId);

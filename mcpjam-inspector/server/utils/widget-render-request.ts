@@ -16,6 +16,8 @@ export interface ParsedWidgetRenderRequest {
   parameters: Record<string, unknown>;
   injectOpenAiCompat: boolean;
   viewport?: { width: number; height: number };
+  /** Also return the widget as an accessibility tree (see the core's option). */
+  includeSnapshot: boolean;
 }
 
 export type WidgetRenderRequestParse =
@@ -82,6 +84,11 @@ export function parseWidgetRenderRequestBody(
     };
   }
 
+  // Diagnostic opt-in, default OFF on this LOCAL route: its caller
+  // (`mcpjam apps render`) is a person looking at a screenshot. The hosted v1
+  // op reverses the default, because its caller is a model that cannot see one.
+  const includeSnapshot = b.includeSnapshot === true;
+
   return {
     ok: true,
     value: {
@@ -90,6 +97,7 @@ export function parseWidgetRenderRequestBody(
       parameters,
       injectOpenAiCompat: b.injectOpenAiCompat === true,
       viewport,
+      includeSnapshot,
     },
   };
 }

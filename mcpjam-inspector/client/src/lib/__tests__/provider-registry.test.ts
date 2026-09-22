@@ -8,23 +8,35 @@ import {
   providerHasLogo,
 } from "@/lib/provider-registry";
 
-// Vendors present in the hosted snapshot that INTENTIONALLY ship no bundled
-// logo (they render a monogram). This is a snapshot-time guard: a vendor the
-// hourly catalog adds AFTER the last snapshot regen won't appear in
-// HOSTED_MODEL_IDS yet — runtime miss telemetry (hosted_provider_logo_missing)
-// covers that gap. What this test catches: a vendor that IS in the snapshot,
-// has no logo, and isn't listed here — add a logo, or add it here on purpose.
-const KNOWN_MONOGRAM_PREFIXES = new Set([
-  "amazon",
-  "arcee-ai",
-  "bytedance",
-  "cohere",
-  "inception",
-  "kwaipilot",
-  "nvidia",
+// Vendors that INTENTIONALLY ship no bundled logo (they render a monogram),
+// split by whether the committed snapshot actually contains them.
+//
+// The split is not cosmetic. The guard below walks HOSTED_MODEL_IDS, so it only
+// ever consults a prefix the snapshot has — an entry for a vendor that is NOT
+// in it is never asserted and cannot fail, which is how a wrong entry sits
+// green forever. The reverse assertions further down close that: a snapshot
+// entry must be in the snapshot, and a pre-snapshot entry must not be. When a
+// regen lands, the pre-snapshot list is what tells you to promote.
+const SNAPSHOT_MONOGRAM_PREFIXES = new Set([
   "sakana",
-  "stepfun",
+  // Only a `Xiaomi MiMo` WORDMARK is available upstream — unreadable at the
+  // 12px the badge renders at, so the monogram is the better badge here.
   "xiaomi",
+]);
+
+// Registered AHEAD of the next snapshot regen: these vendors appear in the
+// catalog but not yet in the committed HOSTED_MODEL_IDS, so nothing here
+// asserts them. Runtime miss telemetry (hosted_provider_logo_missing) is what
+// covers the gap until the regen promotes them above.
+const PRE_SNAPSHOT_MONOGRAM_PREFIXES = new Set([
+  "inclusionai",
+  "interfaze",
+  "thinkingmachines",
+]);
+
+const KNOWN_MONOGRAM_PREFIXES = new Set([
+  ...SNAPSHOT_MONOGRAM_PREFIXES,
+  ...PRE_SNAPSHOT_MONOGRAM_PREFIXES,
 ]);
 
 describe("provider-registry — snapshot-time logo guard", () => {
@@ -38,12 +50,41 @@ describe("provider-registry — snapshot-time logo guard", () => {
       ).toBe(true);
     }
   );
+
+  // The other direction. Without these, an entry can name a vendor the
+  // snapshot never had and no test ever notices.
+  it("keeps every snapshot monogram entry backed by the snapshot", () => {
+    const inSnapshot = new Set(prefixes);
+    for (const prefix of SNAPSHOT_MONOGRAM_PREFIXES) {
+      expect(inSnapshot.has(prefix)).toBe(true);
+    }
+  });
+
+  it("keeps pre-snapshot entries out of the snapshot list", () => {
+    // A hit here is good news, not a failure to paper over: the regen landed
+    // and the vendor belongs in SNAPSHOT_MONOGRAM_PREFIXES now.
+    const inSnapshot = new Set(prefixes);
+    for (const prefix of PRE_SNAPSHOT_MONOGRAM_PREFIXES) {
+      expect(inSnapshot.has(prefix)).toBe(false);
+    }
+  });
+
+  // `it.each` only generates cases for prefixes the snapshot has, so a brand
+  // entry for a vendor it does not have yet is unasserted — a typo'd key or a
+  // broken asset import would ship green. These three are that case today.
+  it.each(["tencent", "morph", "poolside"])(
+    "pre-snapshot brand entry '%s' resolves a logo",
+    (prefix) => {
+      expect(providerHasLogo(prefix)).toBe(true);
+    }
+  );
 });
 
 describe("normalizeProviderKey", () => {
   it("collapses every raw/aliased prefix to one canonical key", () => {
     expect(normalizeProviderKey("x-ai")).toBe("xai");
     expect(normalizeProviderKey("xai")).toBe("xai");
+    expect(normalizeProviderKey("spacexai")).toBe("xai");
     expect(normalizeProviderKey("meta-llama")).toBe("meta");
     expect(normalizeProviderKey("meta")).toBe("meta");
     expect(normalizeProviderKey("mistralai")).toBe("mistral");
@@ -68,9 +109,21 @@ describe("getProviderDisplayName", () => {
     expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
     expect(getProviderDisplayName("x-ai")).toBe("xAI");
     expect(getProviderDisplayName("z-ai")).toBe("Zhipu AI");
+    expect(getProviderDisplayName("spacexai")).toBe("xAI");
     expect(getProviderDisplayName("custom:My Provider")).toBe("My Provider");
+    // Registered vendors keep their branded casing rather than the fallback.
+    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee AI");
+    expect(getProviderDisplayName("nvidia")).toBe("NVIDIA");
     // Unknown catalog vendors → clean title-cased name, no code change needed.
-    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee Ai");
-    expect(getProviderDisplayName("nvidia")).toBe("Nvidia");
+    expect(getProviderDisplayName("sakana")).toBe("Sakana");
+    // The catalog slug has no hyphen (`thinkingmachines/inkling`), and
+    // `titleCaseProviderKey` only splits on [-_], so this is the string the
+    // product actually renders. Asserting the hyphenated spelling pinned a
+    // prettier name nothing ever produces. A brand entry is what would fix
+    // the casing, if it turns out to be worth one when the vendor lands.
+    expect(getProviderDisplayName("thinkingmachines")).toBe("Thinkingmachines");
+    // The one brand entry whose displayName deliberately diverges from its
+    // key — the intent a future refactor would silently revert.
+    expect(getProviderDisplayName("tencent")).toBe("Tencent Hunyuan");
   });
 });

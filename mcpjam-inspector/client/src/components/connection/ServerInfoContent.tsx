@@ -9,11 +9,14 @@ import {
   EyeOff,
   Loader2,
 } from "lucide-react";
+import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
+import { connectionLabel } from "@/shared/oauth-connections";
 import { ServerWithName } from "@/hooks/use-app-state";
 import {
   fetchHostedOAuthTokens,
   type HostedOAuthTokensResult,
 } from "@/lib/apis/hosted-oauth-tokens-api";
+import { serverDeclaresSkillsExtension } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
@@ -22,29 +25,48 @@ import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { ErrorCard } from "@/components/ui/error-card";
 
 interface ServerInfoContentProps {
+  /**
+   * Which half to render. The OAuth sections moved to their own tab, so
+   * Overview asks for "info" and Authorization for "auth"; "all" keeps the
+   * original behaviour for any other caller.
+   */
+  sections?: "all" | "info" | "auth";
   server: ServerWithName;
-  needsReconnect?: boolean;
   projectId?: string | null;
   hostedServerId?: string | null;
 }
 
 export function ServerInfoContent({
+  sections = "all",
   server,
-  needsReconnect = false,
   projectId = null,
   hostedServerId = null,
 }: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [hostedTokenResult, setHostedTokenResult] =
-    useState<HostedOAuthTokensResult | null>(null);
-  const [isLoadingHostedTokens, setIsLoadingHostedTokens] = useState(false);
-  const [hostedTokenError, setHostedTokenError] = useState<string | null>(null);
+  // Keyed by connection id ("" is the default connection, and the only key a
+  // single-account server ever uses).
+  const [hostedTokensByConnection, setHostedTokensByConnection] = useState<
+    Record<string, HostedOAuthTokensResult>
+  >({});
+  const [loadingConnection, setLoadingConnection] = useState<string | null>(
+    null,
+  );
+  const [hostedTokenErrors, setHostedTokenErrors] = useState<
+    Record<string, string>
+  >({});
   const hostedRevealRequestIdRef = useRef(0);
+  const { connections } = useHostedOAuthConnections(
+    projectId,
+    hostedServerId,
+    sections !== "info" && server.useOAuth === true,
+  );
 
+  const serverUrl =
+    "url" in server.config ? server.config.url?.toString() : undefined;
   const storedTokensState = server.oauthTokens
     ? { tokens: undefined, isInvalid: false }
-    : getStoredTokensState(server.name);
+    : getStoredTokensState(server.name, serverUrl);
   const oauthTokens = server.oauthTokens ?? storedTokensState.tokens;
   const hasInvalidStoredAuthData =
     server.oauthTokens == null && storedTokensState.isInvalid;
@@ -62,7 +84,6 @@ export function ServerInfoContent({
   // Extract server info
   const serverName = initializationInfo?.serverVersion?.name;
   const serverTitle = initializationInfo?.serverVersion?.title;
-  const serverIcon = initializationInfo?.serverVersion?.icons?.[0];
   const websiteUrl = initializationInfo?.serverVersion?.websiteUrl;
   const protocolVersion = initializationInfo?.protocolVersion;
   const transport = initializationInfo?.transport;
@@ -74,9 +95,9 @@ export function ServerInfoContent({
 
   useEffect(() => {
     hostedRevealRequestIdRef.current += 1;
-    setHostedTokenResult(null);
-    setHostedTokenError(null);
-    setIsLoadingHostedTokens(false);
+    setHostedTokensByConnection({});
+    setHostedTokenErrors({});
+    setLoadingConnection(null);
     setExpandedTokens((prev) => {
       const next = new Set(prev);
       for (const key of next) {
@@ -93,6 +114,22 @@ export function ServerInfoContent({
   if (serverCapabilities?.tools) capabilities.push("Tools");
   if (serverCapabilities?.prompts) capabilities.push("Prompts");
   if (serverCapabilities?.resources) capabilities.push("Resources");
+  // Skills over MCP (SEP-2640). Read through the SDK guard rather than a
+  // `capabilities.extensions[...]` truthiness check: the guard requires the
+  // VALUE to be an object, so a malformed `true` / `"yes"` declaration does
+  // not earn a chip that would imply working `skills/*` support.
+  //
+  // The narrowing exists because `InitializationInfo.serverCapabilities` is a
+  // `Record<string, any>` here while the guard takes the SDK's structured
+  // `ServerCapabilities`; the guard reads the value defensively, so the shapes
+  // are compatible at runtime.
+  if (
+    serverDeclaresSkillsExtension(
+      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0]
+    )
+  ) {
+    capabilities.push("Skills");
+  }
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -116,34 +153,37 @@ export function ServerInfoContent({
     });
   };
 
-  const revealHostedTokens = async () => {
-    if (!projectId || !hostedServerId || isLoadingHostedTokens) return;
+  const revealHostedTokens = async (connectionId?: string) => {
+    if (!projectId || !hostedServerId || loadingConnection !== null) return;
+    const key = connectionId ?? "";
 
     const requestId = ++hostedRevealRequestIdRef.current;
-    setHostedTokenError(null);
-    setIsLoadingHostedTokens(true);
+    setHostedTokenErrors((prev) => {
+      const { [key]: _dropped, ...rest } = prev;
+      return rest;
+    });
+    setLoadingConnection(key);
 
     try {
       const result = await fetchHostedOAuthTokens({
         projectId,
         serverId: hostedServerId,
+        ...(connectionId ? { connectionId } : {}),
       });
-      if (hostedRevealRequestIdRef.current === requestId) {
-        setHostedTokenResult(result);
-      }
+      if (hostedRevealRequestIdRef.current === requestId)
+        setHostedTokensByConnection((prev) => ({ ...prev, [key]: result }));
     } catch (error) {
-      if (hostedRevealRequestIdRef.current === requestId) {
-        setHostedTokenResult(null);
-        setHostedTokenError(
-          error instanceof Error
-            ? error.message
-            : "Failed to reveal hosted OAuth tokens",
-        );
-      }
+      if (hostedRevealRequestIdRef.current === requestId)
+        setHostedTokenErrors((prev) => ({
+          ...prev,
+          [key]:
+            error instanceof Error
+              ? error.message
+              : "Failed to reveal hosted OAuth tokens",
+        }));
     } finally {
-      if (hostedRevealRequestIdRef.current === requestId) {
-        setIsLoadingHostedTokens(false);
-      }
+      if (hostedRevealRequestIdRef.current === requestId)
+        setLoadingConnection(null);
     }
   };
 
@@ -151,7 +191,7 @@ export function ServerInfoContent({
     label: string,
     tokenValue: string | undefined,
     tokenKey: string,
-    options?: { maskedByDefault?: boolean },
+    options?: { maskedByDefault?: boolean }
   ) => {
     if (!tokenValue) return null;
     const isExpanded = expandedTokens.has(tokenKey);
@@ -161,8 +201,8 @@ export function ServerInfoContent({
     const displayValue = isMasked
       ? "****************"
       : isExpanded || options?.maskedByDefault || tokenValue.length <= 50
-        ? tokenValue
-        : `${tokenValue.substring(0, 50)}...`;
+      ? tokenValue
+      : `${tokenValue.substring(0, 50)}...`;
     const showDecodedControls =
       decoded && (!options?.maskedByDefault || isExpanded);
 
@@ -239,59 +279,95 @@ export function ServerInfoContent({
   };
 
   const renderHostedOAuthVaultSection = () => {
-    const tokens = hostedTokenResult?.tokens;
+    // One block per connected account. A multi-account server used to show a
+    // single pair — the default connection's — however many accounts were
+    // connected, because the reveal never named one.
+    const targets =
+      connections.length > 1
+        ? connections.map((connection, index) => ({
+            key: connection.connectionId,
+            title: connectionLabel(connection, index),
+            needsReauth: connection.needsReauth === true,
+          }))
+        : [{ key: "", title: undefined, needsReauth: false }];
 
     return (
       <div className="space-y-3 text-xs pt-2">
         <div className="text-sm font-medium text-muted-foreground">
           OAuth Tokens
         </div>
-        <div className="space-y-3 rounded-md bg-muted/40 p-3">
-          {hostedTokenError ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
-              {hostedTokenError}
-            </div>
-          ) : null}
+        {targets.map((target) => {
+          const tokens = hostedTokensByConnection[target.key]?.tokens;
+          const error = hostedTokenErrors[target.key];
+          const suffix = target.key ? `:${target.key}` : "";
+          return (
+            <div
+              key={target.key || "default"}
+              className="space-y-3 rounded-md bg-muted/40 p-3"
+            >
+              {target.title && (
+                <div className="text-sm font-medium text-foreground">
+                  {target.title}
+                </div>
+              )}
+              {error ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                  {error}
+                </div>
+              ) : null}
 
-          {!tokens ? (
-            canRevealHostedOAuthTokens ? (
-              <button
-                type="button"
-                onClick={() => void revealHostedTokens()}
-                disabled={isLoadingHostedTokens}
-                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isLoadingHostedTokens ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : null}
-                {isLoadingHostedTokens ? "Revealing..." : "Reveal tokens"}
-              </button>
-            ) : (
-              <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
-                Token reveal is unavailable until this server is synced to the
-                hosted project.
-              </div>
-            )
-          ) : (
-            <>
-              {renderToken(
-                "Access Token",
-                tokens.access_token,
-                "hostedAccessToken",
-                { maskedByDefault: true },
+              {target.needsReauth ? (
+                <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
+                  This account needs reconnecting before it holds tokens.
+                </div>
+              ) : !tokens ? (
+                canRevealHostedOAuthTokens ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void revealHostedTokens(target.key || undefined)
+                    }
+                    disabled={loadingConnection !== null}
+                    className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loadingConnection === target.key ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    {loadingConnection === target.key
+                      ? "Revealing..."
+                      : "Reveal tokens"}
+                  </button>
+                ) : (
+                  <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
+                    Token reveal is unavailable until this server is synced to
+                    the hosted project.
+                  </div>
+                )
+              ) : (
+                <>
+                  {renderToken(
+                    "Access Token",
+                    tokens.access_token,
+                    `hostedAccessToken${suffix}`,
+                    { maskedByDefault: true },
+                  )}
+                  {renderToken(
+                    "Refresh Token",
+                    tokens.refresh_token,
+                    `hostedRefreshToken${suffix}`,
+                    { maskedByDefault: true },
+                  )}
+                  {renderToken(
+                    "ID Token",
+                    tokens.id_token,
+                    `hostedIdToken${suffix}`,
+                    { maskedByDefault: true },
+                  )}
+                </>
               )}
-              {renderToken(
-                "Refresh Token",
-                tokens.refresh_token,
-                "hostedRefreshToken",
-                { maskedByDefault: true },
-              )}
-              {renderToken("ID Token", tokens.id_token, "hostedIdToken", {
-                maskedByDefault: true,
-              })}
-            </>
-          )}
-        </div>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -328,7 +404,7 @@ export function ServerInfoContent({
           {renderToken(
             "Refresh Token",
             oauthTokens.refresh_token,
-            "refreshToken",
+            "refreshToken"
           )}
           {renderToken("ID Token", (oauthTokens as any).id_token, "idToken")}
 
@@ -350,10 +426,12 @@ export function ServerInfoContent({
     }
 
     return (
-      <div className="space-y-3 text-xs pt-2">
-        <div className="text-sm font-medium text-muted-foreground">
+      <details className="group/trace space-y-3 text-xs pt-2">
+        <summary className="mb-2 flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-3.5 shrink-0 group-open/trace:hidden" />
+          <ChevronDown className="hidden size-3.5 shrink-0 group-open/trace:block" />
           Last OAuth Trace
-        </div>
+        </summary>
         <div className="space-y-3 rounded-md bg-muted/40 p-3">
           <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
             <span>Source: {oauthTrace.source.replaceAll("_", " ")}</span>
@@ -366,81 +444,92 @@ export function ServerInfoContent({
           </div>
 
           <div className="space-y-2">
-            {oauthTrace.steps.map((step, index) => (
-              <div
-                key={`${step.step}-${index}-${step.startedAt}`}
-                className="rounded-md border border-border/40 bg-background/60 p-2"
-              >
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-medium text-foreground">
+            {oauthTrace.steps.map((step, index) => {
+              const hasBody = Boolean(
+                step.message || step.error || step.details,
+              );
+              const statusClass =
+                step.status === "error"
+                  ? "text-destructive"
+                  : step.status === "success"
+                    ? "text-success"
+                    : "text-warning";
+              const header = (
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                  <span className={`font-medium ${statusClass}`}>
                     {step.title}
                   </span>
-                  <span
-                    className={
-                      step.status === "error"
-                        ? "text-destructive"
-                        : step.status === "success"
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-amber-600 dark:text-amber-400"
-                    }
-                  >
-                    {step.status}
-                  </span>
+                  <span className="sr-only">{step.status}</span>
                 </div>
-                {step.message ? (
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {step.message}
+              );
+              const body = (
+                <>
+                  {step.message ? (
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {step.message}
+                    </div>
+                  ) : null}
+                  {step.error ? (
+                    <div className="mt-1 break-all text-sm text-destructive">
+                      {step.error}
+                    </div>
+                  ) : null}
+                  {step.details ? (
+                    <ScrollableJsonView
+                      value={step.details}
+                      showLineNumbers={false}
+                      containerClassName="mt-2 max-h-48 rounded-lg"
+                    />
+                  ) : null}
+                </>
+              );
+
+              if (!hasBody) {
+                return (
+                  <div
+                    key={`${step.step}-${index}-${step.startedAt}`}
+                    className="rounded-md border border-border/40 bg-background/60 p-2"
+                  >
+                    {header}
                   </div>
-                ) : null}
-                {step.error ? (
-                  <div className="mt-1 break-all text-sm text-destructive">
-                    {step.error}
-                  </div>
-                ) : null}
-                {step.details ? (
-                  <ScrollableJsonView
-                    value={step.details}
-                    showLineNumbers={false}
-                    containerClassName="mt-2 max-h-48 rounded-lg"
-                  />
-                ) : null}
-              </div>
-            ))}
+                );
+              }
+
+              return (
+                <details
+                  key={`${step.step}-${index}-${step.startedAt}`}
+                  className="group/step rounded-md border border-border/40 bg-background/60 p-2"
+                  open={step.status === "error"}
+                >
+                  <summary className="flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground group-open/step:hidden" />
+                    <ChevronDown className="hidden size-3.5 shrink-0 text-muted-foreground group-open/step:block" />
+                    {header}
+                  </summary>
+                  {body}
+                </details>
+              );
+            })}
           </div>
 
           {oauthTrace.httpHistory.length > 0 ? (
-            <div>
-              <div className="mb-2 text-sm font-medium text-muted-foreground">
+            <details className="group/http">
+              <summary className="mb-2 flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="size-3.5 shrink-0 group-open/http:hidden" />
+                <ChevronDown className="hidden size-3.5 shrink-0 group-open/http:block" />
                 HTTP History
-              </div>
+              </summary>
               <ScrollableJsonView
                 value={oauthTrace.httpHistory}
                 showLineNumbers={false}
                 containerClassName="max-h-96 rounded-lg"
               />
-            </div>
+            </details>
           ) : null}
         </div>
-      </div>
+      </details>
     );
   };
-
-  const renderIconRow = () => (
-    <div>
-      <div className="text-sm font-medium text-muted-foreground mb-1">Icon</div>
-      {serverIcon?.src ? (
-        <img
-          src={serverIcon.src}
-          alt={serverTitle || serverName || "Server icon"}
-          className="h-10 w-10 rounded border border-border/40 bg-muted object-contain"
-        />
-      ) : (
-        <div className="text-sm text-muted-foreground italic">
-          No icon provided
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <div className="space-y-4">
@@ -457,112 +546,116 @@ export function ServerInfoContent({
           />
         </div>
       ) : null}
-      {needsReconnect ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
-          Connection settings differ from this server's last initialize payload.
-          Turn the connection off and on to apply the new connection settings.
-        </div>
-      ) : null}
-      {serverName && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Server Name
-          </div>
-          <div className="text-sm font-mono">{serverName}</div>
-        </div>
+
+      {sections !== "auth" && (
+        <>
+          {serverName && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Server Name
+              </div>
+              <div className="text-sm font-mono">{serverName}</div>
+            </div>
+          )}
+
+          {serverTitle && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Server Title
+              </div>
+              <div className="text-sm">{serverTitle}</div>
+            </div>
+          )}
+
+          {protocolVersion && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                MCP Protocol Version
+              </div>
+              <div className="text-sm">{protocolVersion}</div>
+              {protocolVersion === "2026-07-28" && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  As of 2026-07-28, <code>logging/setLevel</code> is deprecated
+                  (SEP-2577). This server already uses the modern per-request
+                  opt-in instead — see the Logs panel's log-level control.
+                </div>
+              )}
+            </div>
+          )}
+
+          {transport && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Transport
+              </div>
+              <div className="text-sm font-mono">{transport}</div>
+            </div>
+          )}
+
+          {capabilities.length > 0 && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-1">
+                Capabilities
+              </div>
+              <div className="text-sm">{capabilities.join(", ")}</div>
+            </div>
+          )}
+
+          {instructions && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-2">
+                Instructions
+              </div>
+              <div className="text-sm whitespace-pre-wrap bg-muted/30 p-3 rounded border border-border/20">
+                {instructions}
+              </div>
+            </div>
+          )}
+
+          {serverCapabilities && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-2">
+                Server Capabilities
+              </div>
+              <ScrollableJsonView
+                value={serverCapabilities}
+                showLineNumbers={false}
+                containerClassName="max-h-96 rounded-lg"
+              />
+            </div>
+          )}
+
+          {clientCapabilities && (
+            <div>
+              <div className="text-sm font-medium text-muted-foreground mb-2">
+                Client Capabilities
+              </div>
+              <ScrollableJsonView
+                value={clientCapabilities}
+                showLineNumbers={false}
+                containerClassName="max-h-96 rounded-lg"
+              />
+            </div>
+          )}
+
+          {websiteUrl && websiteUrl.startsWith("https://") && (
+            <div>
+              <a
+                href={websiteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+              >
+                Visit documentation
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </div>
+          )}
+        </>
       )}
 
-      {serverTitle && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Server Title
-          </div>
-          <div className="text-sm">{serverTitle}</div>
-        </div>
-      )}
-
-      {renderIconRow()}
-
-      {protocolVersion && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            MCP Protocol Version
-          </div>
-          <div className="text-sm">{protocolVersion}</div>
-        </div>
-      )}
-
-      {transport && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Transport
-          </div>
-          <div className="text-sm font-mono">{transport}</div>
-        </div>
-      )}
-
-      {capabilities.length > 0 && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-1">
-            Capabilities
-          </div>
-          <div className="text-sm">{capabilities.join(", ")}</div>
-        </div>
-      )}
-
-      {instructions && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">
-            Instructions
-          </div>
-          <div className="text-sm whitespace-pre-wrap bg-muted/30 p-3 rounded border border-border/20">
-            {instructions}
-          </div>
-        </div>
-      )}
-
-      {serverCapabilities && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">
-            Server Capabilities
-          </div>
-          <ScrollableJsonView
-            value={serverCapabilities}
-            showLineNumbers={false}
-            containerClassName="max-h-96 rounded-lg"
-          />
-        </div>
-      )}
-
-      {clientCapabilities && (
-        <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">
-            Client Capabilities
-          </div>
-          <ScrollableJsonView
-            value={clientCapabilities}
-            showLineNumbers={false}
-            containerClassName="max-h-96 rounded-lg"
-          />
-        </div>
-      )}
-
-      {websiteUrl && websiteUrl.startsWith("https://") && (
-        <div>
-          <a
-            href={websiteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-          >
-            Visit documentation
-            <ExternalLink className="h-4 w-4" />
-          </a>
-        </div>
-      )}
-
-      {renderOAuthTokensSection()}
-      {renderOAuthTraceSection()}
+      {sections !== "info" && renderOAuthTokensSection()}
+      {sections !== "info" && renderOAuthTraceSection()}
     </div>
   );
 }

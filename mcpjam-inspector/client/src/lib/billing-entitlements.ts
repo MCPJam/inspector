@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { convexErrMessage } from "@/lib/convex-error";
 import type {
   BillingFeatureName,
   BillingInterval,
@@ -13,19 +14,20 @@ import type {
 export function getDisplayPriceCentsForPlan(
   _plan: OrganizationPlan,
   interval: BillingInterval,
-  catalogEntry: PlanCatalogEntry
+  catalogEntry: PlanCatalogEntry,
 ): number | null {
   return catalogEntry.prices[interval];
 }
 
 export function getAnnualDiscountPercent(
-  planCatalog: PlanCatalog | undefined
+  planCatalog: PlanCatalog | undefined,
+  plan: "pro" | "team" = "team",
 ): number {
   if (!planCatalog) {
     return 0;
   }
-  const monthly = planCatalog.plans.team.prices.monthly;
-  const annual = planCatalog.plans.team.prices.annual;
+  const monthly = planCatalog.plans[plan]?.prices.monthly;
+  const annual = planCatalog.plans[plan]?.prices.annual;
   if (monthly == null || annual == null || monthly <= 0) {
     return 0;
   }
@@ -33,15 +35,21 @@ export function getAnnualDiscountPercent(
 }
 
 export const BILLING_FEATURE_BY_TAB = {
+  // Both Evaluate lenses (Suites and Runs) gate on `evals`: they are one tab
+  // now, and this map is keyed by tab id. `cicd` still exists as a backend
+  // feature — server-side ingest enforces it — it just no longer gates a
+  // client route.
   evals: "evals",
-  "ci-evals": "cicd",
-  chatboxes: "chatboxes",
-  // The agent Swarm surface shares the human Chatbox's billing feature.
-  swarms: "chatboxes",
+  // Evaluate (New) is the same product behind a flag, so it gates on the same
+  // feature — a preview must not be a way around the paywall.
+  evaluate: "evals",
+  scenarios: "scenarios",
+  // The agent Swarm surface shares the human Scenario's billing feature.
+  swarms: "scenarios",
 } as const satisfies Record<string, BillingFeatureName>;
 
 export function getRequiredBillingFeatureForTab(
-  tab: string
+  tab: string,
 ): BillingFeatureName | null {
   return (
     BILLING_FEATURE_BY_TAB[tab as keyof typeof BILLING_FEATURE_BY_TAB] ?? null
@@ -50,7 +58,7 @@ export function getRequiredBillingFeatureForTab(
 
 /** Maps inspector tabs to premiumness gate keys (feature gates only). */
 export function getPremiumnessGateForTab(
-  tab: string
+  tab: string,
 ): PremiumnessGateKey | null {
   const feature = getRequiredBillingFeatureForTab(tab);
   if (!feature) return null;
@@ -58,14 +66,14 @@ export function getPremiumnessGateForTab(
 }
 
 export function isBillingEnforcementActive(
-  premiumness: PremiumnessState | undefined
+  premiumness: PremiumnessState | undefined,
 ): boolean {
   return !!premiumness && premiumness.enforcementState !== "disabled";
 }
 
 export function isGateAccessDenied(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey
+  gateKey: PremiumnessGateKey,
 ): boolean {
   const decision = getGateDecision(premiumness, gateKey);
   if (!decision) {
@@ -107,7 +115,7 @@ export function isPremiumnessGateDeniedForShell(params: {
 
 export function getUpgradePlanForDeniedGate(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey | null
+  gateKey: PremiumnessGateKey | null,
 ): OrganizationPlan | null {
   const decision = gateKey ? getGateDecision(premiumness, gateKey) : null;
   if (!decision || decision.canAccess !== false) {
@@ -118,7 +126,7 @@ export function getUpgradePlanForDeniedGate(
 
 export function getGateDecision(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey
+  gateKey: PremiumnessGateKey,
 ): GateDecision | null {
   if (!premiumness) {
     return null;
@@ -134,7 +142,7 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
       return "Generate Evals";
     case "cicd":
       return "Evals CI/CD";
-    case "chatboxes":
+    case "scenarios":
       return "Swarms";
     case "auditLog":
       return "Audit Log";
@@ -152,7 +160,7 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
 export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
   switch (gateKey) {
     case "evals":
-    case "chatboxes":
+    case "scenarios":
     case "cicd":
     case "auditLog":
       return formatBillingFeatureName(gateKey as BillingFeatureName);
@@ -162,7 +170,7 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Projects";
     case "maxServersPerProject":
       return "Servers per project";
-    case "maxChatboxesPerProject":
+    case "maxScenariosPerProject":
       return "Swarms per project";
     case "maxEvalRunsPerMonth":
       return "Eval runs per month";
@@ -170,17 +178,21 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Eval iterations per month";
     case "insightsPerDay":
       return "Insights per day";
+    case "journeyRunsPerDay":
+      return "Journey launches per day";
     default:
       return gateKey;
   }
 }
 
 export function formatPlanName(
-  plan: OrganizationPlan | null | undefined
+  plan: OrganizationPlan | null | undefined,
 ): string {
   switch (plan) {
     case "free":
       return "Free";
+    case "pro":
+      return "Pro";
     case "team":
       return "Team";
     case "enterprise":
@@ -236,7 +248,7 @@ function tryParseJsonPayload(value: string): BillingErrorPayload | null {
 }
 
 function extractBillingErrorPayload(
-  error: unknown
+  error: unknown,
 ): BillingErrorPayload | null {
   if (error instanceof ConvexError) {
     if (error.data && typeof error.data === "object") {
@@ -268,6 +280,47 @@ function resolveFeatureLabel(payload: BillingErrorPayload): string | null {
   return null;
 }
 
+/**
+ * "Resets Aug 16, 12:00 AM" — the same sentence every daily cap needs.
+ *
+ * Extracted because four limits now want it and each inline copy was a chance
+ * to format the date slightly differently. The instant comes from the
+ * backend's `resetsAt` (epoch ms of the UTC day roll) and is rendered in the
+ * VIEWER's locale and zone: the cap is a UTC boundary, but "when can I try
+ * again" is a question about the reader's clock.
+ */
+function resetsSentence(resetsAt: number): string | null {
+  // `Number.isFinite` is not enough. `Number.MAX_VALUE` is finite and outside
+  // the range `Date` can represent, so `new Date(it)` is an Invalid Date and
+  // `Intl.DateTimeFormat.format` THROWS on it — turning a malformed field in
+  // an error payload into a second, worse error while the caller was already
+  // trying to explain the first one.
+  if (!Number.isFinite(resetsAt)) return null;
+  const date = new Date(resetsAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const resetTime = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `Resets ${resetTime}.`;
+}
+
+/**
+ * `resetsSentence` for a value that may be absent or malformed.
+ *
+ * The four daily/monthly caps all had to answer the same question — "is this
+ * `resetsAt` worth rendering?" — and each answered it with its own inline
+ * guard. One of them used a weaker guard than the others, which is exactly the
+ * kind of divergence a shared helper exists to prevent.
+ */
+function resolveResetsSentence(
+  resetsAt: number | null | undefined,
+): string | null {
+  return typeof resetsAt === "number" ? resetsSentence(resetsAt) : null;
+}
+
 export function formatBillingLimitReachedMessage(
   limitName: BillingLimitName | string | undefined,
   allowedValue: number | null | undefined,
@@ -275,7 +328,7 @@ export function formatBillingLimitReachedMessage(
   options?: {
     resetsAt?: number | null;
     windowKind?: "day" | "month";
-  }
+  },
 ): string | null {
   if (typeof allowedValue !== "number") {
     return null;
@@ -287,31 +340,40 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxEvalIterationsPerMonth") {
-    if (
-      typeof options?.resetsAt === "number" &&
-      Number.isFinite(options.resetsAt)
-    ) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(options.resetsAt));
-      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `This organization has reached its eval iteration limit (${allowedValue}). ${resets}`;
     }
     return canManageBilling
       ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its eval iteration limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
-  if (limitName === "maxChatboxesPerProject") {
+  if (limitName === "maxScenariosPerProject") {
     return canManageBilling
       ? `This project has reached its swarm limit (${allowedValue}). Upgrade to continue.`
       : `This project has reached its swarm limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "insightsPerDay") {
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `This organization has reached its daily insights limit (${allowedValue}). ${resets}`;
+    }
     return canManageBilling
       ? `This organization has reached its daily insights limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its daily insights limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "journeyRunsPerDay") {
+    // A DAILY cap, so "Upgrade to continue" is the wrong lead: the limit lifts
+    // by itself at the UTC roll, and sending someone to a pricing page for a
+    // wait would be the same mistake as reporting a 429 as a 402. The upgrade
+    // line stays as the fallback for a payload that carried no reset.
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `This organization has reached its daily journey launch limit (${allowedValue}). ${resets}`;
+    }
+    return canManageBilling
+      ? `This organization has reached its daily journey launch limit (${allowedValue}). Upgrade to launch more.`
+      : `This organization has reached its daily journey launch limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxMembers") {
     return canManageBilling
@@ -324,17 +386,9 @@ export function formatBillingLimitReachedMessage(
       : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "computerStartsPerDay") {
-    if (
-      typeof options?.resetsAt === "number" &&
-      Number.isFinite(options.resetsAt)
-    ) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(options.resetsAt));
-      return `Daily computer limit reached (${allowedValue}). Resets ${resetTime}.`;
+    const resets = resolveResetsSentence(options?.resetsAt);
+    if (resets) {
+      return `Daily computer limit reached (${allowedValue}). ${resets}`;
     }
     return `Daily computer limit reached (${allowedValue}).`;
   }
@@ -355,14 +409,81 @@ export function isComputerStartLimitError(error: unknown): boolean {
   return (payload.limitName ?? payload.limit) === "computerStartsPerDay";
 }
 
+export interface EvalIterationLimitError {
+  allowed: number | null;
+  used: number;
+  resetsAt: number | null;
+  windowKind: "day" | "month";
+}
+
+/**
+ * The server is the authority on the eval-iteration cap. The client's quota
+ * query can be stale — a teammate spending the last iterations while this user
+ * sits on the Run button — so a run can clear the pre-check and still be
+ * rejected. Detected here so that rejection can reach the same upgrade wall as
+ * the pre-check instead of the dead-end toast the wall replaced.
+ */
+export function getEvalIterationLimitFromError(
+  error: unknown,
+): EvalIterationLimitError | null {
+  const payload = extractBillingErrorPayload(error);
+  if (!payload || payload.code !== "billing_limit_reached") {
+    return null;
+  }
+  if ((payload.limitName ?? payload.limit) !== "maxEvalIterationsPerMonth") {
+    return null;
+  }
+
+  const allowed =
+    typeof payload.allowedValue === "number" ? payload.allowedValue : null;
+  const used =
+    typeof payload.currentValue === "number"
+      ? payload.currentValue
+      : typeof payload.current === "number"
+      ? payload.current
+      : allowed ?? 0;
+
+  return {
+    allowed,
+    used,
+    resetsAt: typeof payload.resetsAt === "number" ? payload.resetsAt : null,
+    // One limit NAME, two windows: the backend enforces `maxEvalIterationsPerMonth`
+    // as a DAILY cap on Free and a MONTHLY allowance on paid plans, and says
+    // which through `windowKind`. The wall renders that word literally ("out of
+    // eval iterations today" vs "this month"), so a payload that omits the field
+    // must not be answered with a constant: hardcoding "month" would tell a Free
+    // user a cap that lifts at the next UTC roll is a month-long block — a wait
+    // sold as an upgrade — and hardcoding "day" mislabels the paid-plan allowance.
+    // The plan is the field the window is derived FROM, so fall back to it; it
+    // also survives payload paths that drop `windowKind` (the v1 route's
+    // `billingDetails` allowlist keeps `plan` and not `windowKind`). Unknown plan
+    // stays "day", the narrower claim: it never overstates how long the block lasts.
+    windowKind:
+      payload.windowKind === "month" || payload.windowKind === "day"
+        ? payload.windowKind
+        : payload.plan === "pro" ||
+          payload.plan === "team" ||
+          payload.plan === "enterprise"
+        ? "month"
+        : "day",
+  };
+}
+
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,
-  canManageBilling = true
+  canManageBilling = true,
 ): string {
   const payload = extractBillingErrorPayload(error);
   if (!payload) {
-    return error instanceof Error ? error.message : fallback;
+    // Not a billing rejection — a write-boundary validator, say. Its message
+    // lives on `err.data`; `err.message` is the redacted "Server Error"/Request
+    // ID string, which reads as a crash rather than "fix this field".
+    return convexErrMessage(error, fallback);
+  }
+
+  if (payload.code === "COLLABORATIVE_EDITING_REQUIRED") {
+    return "Editing another member's work requires Team or Enterprise.";
   }
 
   if (payload.code === "billing_feature_not_included") {
@@ -398,7 +519,7 @@ export function getBillingErrorMessage(
       {
         resetsAt: payload.resetsAt,
         windowKind: payload.windowKind,
-      }
+      },
     );
     if (message) {
       return message;
@@ -412,9 +533,14 @@ export function getBillingErrorMessage(
     );
   }
 
-  if (payload.message) {
-    return payload.message;
-  }
-
-  return error instanceof Error ? error.message : fallback;
+  // A payload carrying only a message is not a billing rejection at all —
+  // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
+  // like any other Convex failure so the redacted "[Request ID: …] Server
+  // Error" prefix never reaches the toast. Shape the PARSED message rather than
+  // re-reading the error: for a JSON-encoded `Error.message`, `convexErrMessage`
+  // hands back the raw JSON blob instead of the sentence inside it.
+  const parsed =
+    typeof payload.message === "string" ? payload.message.trim() : "";
+  if (!parsed) return convexErrMessage(error, fallback);
+  return parsed.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
 }

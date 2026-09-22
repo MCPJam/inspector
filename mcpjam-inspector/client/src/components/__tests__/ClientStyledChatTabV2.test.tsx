@@ -4,11 +4,13 @@ import { ClientStyledChatTabV2 } from "../ClientStyledChatTabV2";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { HOST_STYLE_KEY } from "@/stores/preferences/preferences-store";
 
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({ useHostCatalog: () => ({ catalog: null }) }));
+
 const mockChatTabV2 = vi.hoisted(() => vi.fn());
 
 vi.mock("../ChatTabV2", async () => {
-  const { useChatboxHostStyle, useChatboxHostTheme } =
-    await import("@/contexts/chatbox-client-style-context");
+  const { useScenarioHostStyle, useScenarioHostTheme } =
+    await import("@/contexts/scenario-client-style-context");
 
   return {
     ChatTabV2: (props: {
@@ -17,8 +19,8 @@ vi.mock("../ChatTabV2", async () => {
       onHostStyleChange?: (hostStyle: "claude" | "chatgpt") => void;
     }) => {
       mockChatTabV2(props);
-      const hostStyle = useChatboxHostStyle();
-      const hostTheme = useChatboxHostTheme();
+      const hostStyle = useScenarioHostStyle();
+      const hostTheme = useScenarioHostTheme();
 
       return (
         <div
@@ -90,7 +92,7 @@ describe("ClientStyledChatTabV2", () => {
 
     const shell = screen.getByTestId("wrapped-chat-tab").parentElement;
     expect(shell).toHaveAttribute("data-host-style", "claude");
-    expect(shell?.className).toContain("chatbox-host-shell");
+    expect(shell?.className).toContain("scenario-host-shell");
     expect(shell?.className).toContain("dark");
     expect(shell?.getAttribute("style")).toContain("--background");
   });
@@ -118,4 +120,15 @@ describe("ClientStyledChatTabV2", () => {
       "chatgpt",
     );
   });
+});
+
+it("keeps active-host selection authoritative and suppresses its preference selector", () => {
+  render(<PreferencesStoreProvider themeMode="light" themePreset="default">
+    <ClientStyledChatTabV2 connectedOrConnectingServerConfigs={{} as any}
+      selectedServerNames={[]} showHostStyleSelector
+      activeHost={{ hostStyle: "codex", chatUiOverride: { label: "Unused" } } as any} />
+  </PreferencesStoreProvider>);
+  expect(screen.getByTestId("wrapped-chat-tab")).toHaveAttribute("data-context-host-style", "codex");
+  expect(screen.getByTestId("wrapped-chat-tab")).toHaveAttribute("data-context-host-theme", "light");
+  expect(screen.getByTestId("wrapped-chat-prop-selector")).toHaveTextContent("false");
 });

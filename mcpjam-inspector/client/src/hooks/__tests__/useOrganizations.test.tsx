@@ -2,7 +2,10 @@ import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
-import { useOrganizationQueries } from "../useOrganizations";
+import {
+  canManageOrgModels,
+  useOrganizationQueries,
+} from "../useOrganizations";
 
 const mockUseQuery = vi.hoisted(() => vi.fn());
 
@@ -77,5 +80,20 @@ describe("useOrganizationQueries", () => {
       "skip"
     );
     expect(result.current.isLoading).toBe(false);
+  });
+});
+
+describe("canManageOrgModels", () => {
+  it("allows owners and admins", () => {
+    expect(canManageOrgModels({ myRole: "owner" })).toBe(true);
+    expect(canManageOrgModels({ myRole: "admin" })).toBe(true);
+  });
+
+  it("fails closed for everyone else", () => {
+    expect(canManageOrgModels({ myRole: "member" })).toBe(false);
+    expect(canManageOrgModels({ myRole: "guest" })).toBe(false);
+    expect(canManageOrgModels({ myRole: undefined })).toBe(false);
+    expect(canManageOrgModels(null)).toBe(false);
+    expect(canManageOrgModels(undefined)).toBe(false);
   });
 });

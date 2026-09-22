@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { useWidgetSurfaceStore } from "../thread/mcp-apps/widget-surface-store";
 
 const mockMessageView = vi.fn();
@@ -17,7 +17,7 @@ const renderWithHost = (
 ) =>
   render(
     hostStyle ? (
-      <ChatboxHostStyleProvider value={hostStyle}>{ui}</ChatboxHostStyleProvider>
+      <ScenarioHostStyleProvider value={hostStyle}>{ui}</ScenarioHostStyleProvider>
     ) : (
       ui
     ),
@@ -95,6 +95,12 @@ describe("Thread", () => {
     toolsMetadata: {},
     toolServerMap: {},
   };
+
+  it("aligns an empty-stream indicator without adding transcript vertical padding", () => {
+    render(<Thread {...defaultProps} isLoading />);
+    expect(screen.getByTestId("thinking-indicator").parentElement).toHaveClass("max-w-4xl", "mx-auto", "px-4");
+    expect(screen.getByTestId("thinking-indicator").parentElement).not.toHaveClass("pt-8", "pb-16");
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -516,7 +522,7 @@ describe("Thread", () => {
 
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
       // The overlay no longer takes a loadingIndicatorVariant prop — it
-      // resolves the brand indicator from ChatboxHostStyleProvider context.
+      // resolves the brand indicator from ScenarioHostStyleProvider context.
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
         expect.not.objectContaining({ loadingIndicatorVariant: expect.anything() }),
       );

@@ -1,0 +1,23 @@
+{
+  "startedAt": "2026-09-09T19:41:30.031Z",
+  "sandboxId": "i9x3h83o1pnxhp0wvrzoy",
+  "buildDependencies": true,
+  "started": true,
+  "attempt": true,
+  "reply": true,
+  "identity": true,
+  "redaction": true,
+  "monitorHealthy": true,
+  "cleanup": "verified_stopped",
+  "finishedAt": "2026-09-09T19:41:45.559Z",
+  "connectionRecords": 38,
+  "observedOutcomes": ["attempted", "syn_ack_observed"],
+  "policy": {
+    "triggerId": "synthetic-network-smoke",
+    "repoFullName": "synthetic/network-probe",
+    "prNumber": 0,
+    "policyVersion": "private-networks-v1",
+    "denyOut": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+    "policySource": "default"
+  }
+}

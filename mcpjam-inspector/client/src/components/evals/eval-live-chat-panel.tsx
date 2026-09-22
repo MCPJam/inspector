@@ -52,16 +52,7 @@ import {
   PlaygroundStateProvider,
   usePlaygroundState,
 } from "@/components/ui-playground/hooks/use-playground-state";
-import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
-import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
-import { cn } from "@/lib/utils";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useSharedAppState } from "@/state/app-state-context";
 import { PlaygroundMain } from "@/components/ui-playground/PlaygroundMain";
@@ -168,7 +159,6 @@ export function EvalLiveChatPanel({
   // widget runtime scope is derived from preferences (mirrors how the old
   // TraceViewer preview installed its own scope). Threading the case's host so
   // caps match the suite Run exactly is a follow-up.
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   // Bind the surface to the case's servers (single-server mode falls back to the
   // first). Empty → PlaygroundMain still shows the composer (no server gate).
@@ -190,56 +180,41 @@ export function EvalLiveChatPanel({
 
   return (
     <PlaygroundStateProvider value={state}>
-      <ActiveMcpProfileProvider value={undefined}>
-        <ActiveHostCapsResolverScope activeHost={null} hostStyle={hostStyle}>
-          <ChatboxHostStyleProvider value={hostStyle}>
-            <ChatboxHostCapabilitiesOverrideProvider
-              value={hostCapabilitiesOverride}
-            >
-              <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-                <ChatboxHostThemeProvider value={themeMode}>
-                  <div
-                    className={cn(
-                      "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                      themeMode === "dark" && "dark",
-                    )}
-                    data-host-style={hostStyle}
-                    style={shellStyle}
-                  >
-                    <PlaygroundMain
-                      activeProjectId={projectId}
-                      serverName={primaryServerName}
-                      enableMultiModelChat={false}
-                      isExecuting={state.isExecuting}
-                      executingToolName={state.selectedTool}
-                      invokingMessage={state.invokingMessage}
-                      pendingExecution={state.pendingExecution}
-                      onExecutionInjected={state.handleExecutionInjected}
-                      onWidgetStateChange={(_toolCallId, widgetState) =>
-                        state.setWidgetState(widgetState)
-                      }
-                      deviceType={state.deviceType}
-                      onDeviceTypeChange={state.setDeviceType}
-                      ensureServersReady={ensureServersReady}
-                      initialInput={autoRun ? undefined : initialPrompt}
-                      autoRunInput={autoRun ? initialPrompt : undefined}
-                      blockSubmitUntilServerConnected
-                      hideWelcomeHero
-                      hideCenterHeaderChrome
-                      hideInlineEdit
-                      suppressHistoryConflictToast
-                      onMessagesChange={handleMessagesChange}
-                      recorder={recorder}
-                      evalChatHandoff={evalChatHandoff}
-                      onEvalChatHandoffConsumed={onEvalChatHandoffConsumed}
-                    />
-                  </div>
-                </ChatboxHostThemeProvider>
-              </ChatboxChatUiOverrideProvider>
-            </ChatboxHostCapabilitiesOverrideProvider>
-          </ChatboxHostStyleProvider>
-        </ActiveHostCapsResolverScope>
-      </ActiveMcpProfileProvider>
+      <HostStyledShell
+        hostSnapshot={{ hostStyle, hostCapabilitiesOverride, chatUiOverride }}
+        activeHost={null}
+        themeMode={themeMode}
+        className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        <PlaygroundMain
+          activeProjectId={projectId}
+          serverName={primaryServerName}
+          enableMultiModelChat={false}
+          isExecuting={state.isExecuting}
+          executingToolName={state.selectedTool}
+          invokingMessage={state.invokingMessage}
+          pendingExecution={state.pendingExecution}
+          onExecutionInjected={state.handleExecutionInjected}
+          onWidgetStateChange={(_toolCallId, widgetState) =>
+            state.setWidgetState(widgetState)
+          }
+          deviceType={state.deviceType}
+          onDeviceTypeChange={state.setDeviceType}
+          ensureServersReady={ensureServersReady}
+          initialInput={autoRun ? undefined : initialPrompt}
+          autoRunInput={autoRun ? initialPrompt : undefined}
+          blockSubmitUntilServerConnected
+          hideWelcomeHero
+          hideCenterHeaderChrome
+          hideInlineEdit
+          hideMessageEdit
+          suppressHistoryConflictToast
+          onMessagesChange={handleMessagesChange}
+          recorder={recorder}
+          evalChatHandoff={evalChatHandoff}
+          onEvalChatHandoffConsumed={onEvalChatHandoffConsumed}
+        />
+      </HostStyledShell>
     </PlaygroundStateProvider>
   );
 }

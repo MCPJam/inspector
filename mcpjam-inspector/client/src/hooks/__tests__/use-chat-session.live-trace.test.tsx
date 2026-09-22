@@ -727,4 +727,189 @@ describe("useChatSession live trace state", () => {
     );
     expect(seenHeartbeat).not.toBe(true);
   });
+
+  it("evicts the oldest turns once the live trace turn cap is exceeded", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    // MAX_LIVE_TRACE_TURNS is 200 — push 10 turns past it so the boundary is
+    // unambiguous: turn-0..turn-9 must be evicted, turn-10..turn-209 must
+    // survive (exactly 200 turns).
+    const MAX_LIVE_TRACE_TURNS = 200;
+    const TOTAL_TURNS = 210;
+    act(() => {
+      for (let i = 0; i < TOTAL_TURNS; i += 1) {
+        const turnId = `turn-${i}`;
+        mockState.chatOnData?.(
+          tracePart({
+            type: "turn_start",
+            turnId,
+            promptIndex: i,
+            startedAtMs: i * 1000,
+          }),
+        );
+        mockState.chatOnData?.(
+          tracePart({
+            type: "request_payload",
+            turnId,
+            promptIndex: i,
+            stepIndex: 0,
+            payload: {
+              system: "System",
+              tools: {},
+              messages: [{ role: "user", content: `Prompt ${i}` }],
+            },
+          }),
+        );
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current.requestPayloadHistory).toHaveLength(
+        MAX_LIVE_TRACE_TURNS,
+      );
+    });
+
+    const payloadTurnIds = result.current.requestPayloadHistory.map(
+      (entry) => entry.turnId,
+    );
+    expect(payloadTurnIds).not.toContain("turn-9");
+    expect(payloadTurnIds[0]).toBe("turn-10");
+    expect(payloadTurnIds).toContain(`turn-${TOTAL_TURNS - 1}`);
+
+    // `turnOrder`/`turns` (surfaced via liveTraceEnvelope.turns) must be
+    // bounded too, not just requestPayloadHistory — a regression that only
+    // trims the payload history would still leak turn state.
+    const envelopeTurnIds = result.current.liveTraceEnvelope?.turns?.map(
+      (turn) => turn.turnId,
+    );
+    expect(envelopeTurnIds).toHaveLength(MAX_LIVE_TRACE_TURNS);
+    expect(envelopeTurnIds).not.toContain("turn-9");
+    expect(envelopeTurnIds?.[0]).toBe("turn-10");
+    expect(envelopeTurnIds).toContain(`turn-${TOTAL_TURNS - 1}`);
+  });
+
+  it("evicts the oldest turn when the 201st turn arrives via trace_snapshot", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    const MAX_LIVE_TRACE_TURNS = 200;
+    act(() => {
+      for (let i = 0; i < MAX_LIVE_TRACE_TURNS; i += 1) {
+        mockState.chatOnData?.(
+          tracePart({
+            type: "turn_start",
+            turnId: `turn-${i}`,
+            promptIndex: i,
+            startedAtMs: i * 1000,
+          }),
+        );
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current.liveTraceEnvelope?.turns).toHaveLength(
+        MAX_LIVE_TRACE_TURNS,
+      );
+    });
+
+    // The 201st turn arrives only as a trace_snapshot (no turn_start) — this
+    // return path must evict turn-0 the same way turn_start/request_payload
+    // do.
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "trace_snapshot",
+          turnId: "turn-200",
+          promptIndex: 200,
+          snapshot: {
+            traceVersion: 1,
+            promptIndex: 200,
+            messages: [{ role: "user", content: "Prompt 200" }],
+            spans: [],
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      const turnIds = result.current.liveTraceEnvelope?.turns?.map(
+        (turn) => turn.turnId,
+      );
+      expect(turnIds).toHaveLength(MAX_LIVE_TRACE_TURNS);
+      expect(turnIds).not.toContain("turn-0");
+      expect(turnIds).toContain("turn-200");
+    });
+  });
+
+  it("evicts the oldest turn when the 201st turn arrives via turn_finish", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    const MAX_LIVE_TRACE_TURNS = 200;
+    act(() => {
+      for (let i = 0; i < MAX_LIVE_TRACE_TURNS; i += 1) {
+        mockState.chatOnData?.(
+          tracePart({
+            type: "turn_start",
+            turnId: `turn-${i}`,
+            promptIndex: i,
+            startedAtMs: i * 1000,
+          }),
+        );
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current.liveTraceEnvelope?.turns).toHaveLength(
+        MAX_LIVE_TRACE_TURNS,
+      );
+    });
+
+    // The 201st turn arrives only as a turn_finish (no prior turn_start) —
+    // `ensureTurnState` creates it fresh, and this return path must also
+    // evict turn-0.
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "turn_finish",
+          turnId: "turn-200",
+          promptIndex: 200,
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      const turnIds = result.current.liveTraceEnvelope?.turns?.map(
+        (turn) => turn.turnId,
+      );
+      expect(turnIds).toHaveLength(MAX_LIVE_TRACE_TURNS);
+      expect(turnIds).not.toContain("turn-0");
+      expect(turnIds).toContain("turn-200");
+    });
+  });
 });

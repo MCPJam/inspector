@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import type { ViewPhase } from "./transition-tokens";
 
 /**
- * Connect-tab transition phase. Lets ServersTab (which is passed into HostsTab
+ * Servers-tab transition phase. Lets ServersTab (which is passed into HostsTab
  * as a ReactNode) opt into a slide-out animation on the logs rail when the
  * user toggles to the Host view, without ServersTab needing to know about
  * the parent's animation orchestration.

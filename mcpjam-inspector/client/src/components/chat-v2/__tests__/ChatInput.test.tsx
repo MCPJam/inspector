@@ -8,9 +8,9 @@ import {
 } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
 import type { ModelDefinition } from "@/shared/types";
 import { authFetch } from "@/lib/session-token";
 
@@ -25,6 +25,12 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
+}));
+
+// Passing `onAddServer` mounts the real AddServerModal, which requires an
+// AuthKitProvider; the popover behavior under test doesn't need its internals.
+vi.mock("@/components/connection/AddServerModal", () => ({
+  AddServerModal: () => null,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -292,11 +298,11 @@ describe("ChatInput", () => {
       ).toBeInTheDocument();
     });
 
-    it("uses ChatGPT submit styling inside ChatGPT chatboxes", () => {
+    it("uses ChatGPT submit styling inside ChatGPT scenarios", () => {
       render(
-        <ChatboxHostStyleProvider value="chatgpt">
+        <ScenarioHostStyleProvider value="chatgpt">
           <ChatInput {...defaultProps} value="Hello" />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       );
 
       expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
@@ -306,11 +312,11 @@ describe("ChatInput", () => {
 
     it("keeps the textarea transparent inside a dark host-scoped composer", () => {
       render(
-        <ChatboxHostStyleProvider value="chatgpt">
-          <ChatboxHostThemeProvider value="dark">
+        <ScenarioHostStyleProvider value="chatgpt">
+          <ScenarioHostThemeProvider value="dark">
             <ChatInput {...defaultProps} />
-          </ChatboxHostThemeProvider>
-        </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioHostStyleProvider>
       );
 
       expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(
@@ -664,7 +670,7 @@ describe("ChatInput", () => {
           voiceInputContext={{
             projectId: "project-1",
             selectedServerIds: ["server-1"],
-            chatboxId: "chatbox-1",
+            scenarioId: "scenario-1",
             accessVersion: 2,
           }}
           voiceInputAuthHeaders={{ Authorization: "Bearer user-token" }}
@@ -706,7 +712,7 @@ describe("ChatInput", () => {
         model: "openai/whisper-1",
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         accessVersion: 2,
         input_audio: {
           data: expect.any(String),
@@ -1420,6 +1426,322 @@ describe("ChatInput", () => {
 
       expect(onReconnectServer).toHaveBeenCalledWith("downSrv");
       expect(onServerToggle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("environment servers (environment mode)", () => {
+    const environmentServers = [
+      { serverId: "srv_a", name: "bart", enabled: true, source: "host_or_group" },
+      { serverId: "srv_b", name: "excalidraw", enabled: true, source: "plugin" },
+      { serverId: "srv_c", name: "stateless", enabled: false, source: null },
+    ];
+
+    it("replaces the ad-hoc connection rows with the environment's servers", () => {
+      // Ad-hoc props are ALSO passed, as a caller bug would: the environment
+      // section must win outright — no Connect, no Add server.
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={vi.fn()}
+          allServerConfigs={
+            {
+              adhoc: {
+                name: "adhoc",
+                config: { url: "http://localhost/x" },
+                connectionStatus: "disconnected",
+              },
+            } as any
+          }
+          onDisconnectServer={vi.fn()}
+          onReconnectServer={vi.fn()}
+          onAddServer={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.getByText("Environment servers")).toBeInTheDocument();
+      expect(
+        screen.getByText("Connected automatically on every message.")
+      ).toBeInTheDocument();
+      expect(screen.getByText("bart")).toBeInTheDocument();
+      expect(screen.getByText("excalidraw")).toBeInTheDocument();
+      expect(screen.getByText("stateless")).toBeInTheDocument();
+      expect(screen.queryByText("adhoc")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Connect" })
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Add server")).not.toBeInTheDocument();
+    });
+
+    it("toggling a row reports the per-turn override, not a disconnect", () => {
+      const onEnvironmentServerToggle = vi.fn();
+      const onDisconnectServer = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={onEnvironmentServerToggle}
+          onDisconnectServer={onDisconnectServer}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      fireEvent.click(screen.getByRole("switch", { name: "Include bart" }));
+      expect(onEnvironmentServerToggle).toHaveBeenCalledWith("srv_a", false);
+
+      fireEvent.click(
+        screen.getByRole("switch", { name: "Include stateless" })
+      );
+      expect(onEnvironmentServerToggle).toHaveBeenCalledWith("srv_c", true);
+
+      expect(onDisconnectServer).not.toHaveBeenCalled();
+    });
+
+    it("shows Modified + reset only while a per-turn override exists", () => {
+      const onResetEnvironmentServers = vi.fn();
+      const { rerender } = render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={vi.fn()}
+          environmentServersOverridden={false}
+          onResetEnvironmentServers={onResetEnvironmentServers}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+      expect(screen.queryByText("Modified")).not.toBeInTheDocument();
+
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={vi.fn()}
+          environmentServersOverridden={true}
+          onResetEnvironmentServers={onResetEnvironmentServers}
+        />
+      );
+
+      expect(screen.getByText("Modified")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset to environment" })
+      );
+      expect(onResetEnvironmentServers).toHaveBeenCalled();
+    });
+
+    it("locks the toggles and reset while a turn is streaming", () => {
+      const onEnvironmentServerToggle = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          isLoading={true}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={onEnvironmentServerToggle}
+          environmentServersOverridden={true}
+          onResetEnvironmentServers={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      // Same guard the header section applied before these controls moved
+      // here: the in-flight turn keeps its resolved set, so a mid-stream
+      // flip would change NEXT turn while appearing to change this one.
+      expect(screen.getByRole("switch", { name: "Include bart" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Reset to environment" })
+      ).toBeDisabled();
+      fireEvent.click(screen.getByRole("switch", { name: "Include bart" }));
+      expect(onEnvironmentServerToggle).not.toHaveBeenCalled();
+    });
+
+    it("shows no server section at all for an environment with zero servers", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={[]}
+          onEnvironmentServerToggle={vi.fn()}
+          onAddServer={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.queryByText("Environment servers")).not.toBeInTheDocument();
+      expect(screen.queryByText("Servers")).not.toBeInTheDocument();
+      expect(screen.queryByText("Add server")).not.toBeInTheDocument();
+    });
+
+    it("keeps Modified + reset visible when an overridden environment resolves to zero servers", () => {
+      // An override survives live edits of the environment, so an environment
+      // edited down to zero servers can still carry one — and a retained id
+      // can still run if it's an authorized project server. The section must
+      // stay so the override is visible and resettable.
+      const onResetEnvironmentServers = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={[]}
+          onEnvironmentServerToggle={vi.fn()}
+          environmentServersOverridden={true}
+          onResetEnvironmentServers={onResetEnvironmentServers}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.getByText("Environment servers")).toBeInTheDocument();
+      expect(screen.getByText("Modified")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset to environment" })
+      );
+      expect(onResetEnvironmentServers).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * BB-183 — Up/Down through what you already sent. The composer owns the key
+   * handling; `input-history.ts` owns the walk and is unit-tested beside it.
+   * What can only be checked here is that the keys reach it, that a modifier
+   * or a multi-line caret keeps them away from it, and that the recalled text
+   * leaves through `onChange` like any other edit.
+   */
+  describe("input history", () => {
+    const history = ["most recent", "older one"];
+
+    const renderWithHistory = (props: Record<string, unknown> = {}) => {
+      const onChange = vi.fn();
+      const view = render(
+        <ChatInput {...defaultProps} onChange={onChange} inputHistory={history} {...props} />
+      );
+      return { onChange, view };
+    };
+
+    const textarea = () => screen.getByPlaceholderText("Type your message...");
+
+    it("recalls the most recent message on ArrowUp", () => {
+      const { onChange } = renderWithHistory();
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).toHaveBeenCalledWith("most recent");
+    });
+
+    it("walks further back on a second ArrowUp", () => {
+      // The composer is controlled, so the caller echoes the recalled value
+      // back in — exactly as `ChatTabV2` does through `setInput`.
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <ChatInput {...defaultProps} onChange={onChange} inputHistory={history} />
+      );
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          value="most recent"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).toHaveBeenLastCalledWith("older one");
+    });
+
+    it("gives the half-written draft back on the way down", () => {
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <ChatInput
+          {...defaultProps}
+          value="half written"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          value="most recent"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.keyDown(textarea(), { key: "ArrowDown" });
+
+      expect(onChange).toHaveBeenLastCalledWith("half written");
+    });
+
+    it("leaves the arrows alone with no history behind the composer", () => {
+      const onChange = vi.fn();
+      render(<ChatInput {...defaultProps} onChange={onChange} />);
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves the arrows to the caret inside a multi-line draft", () => {
+      // Otherwise a long draft could not be edited at all — you could never
+      // reach its first line to fix a word.
+      const { onChange } = renderWithHistory({ value: "one\ntwo" });
+      const field = textarea() as HTMLTextAreaElement;
+      field.setSelectionRange(7, 7);
+
+      fireEvent.keyDown(field, { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("stays out of the way while the composer is disabled", () => {
+      const { onChange } = renderWithHistory({ disabled: true });
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite the draft hidden behind a recording", async () => {
+      // Mid-recording the box shows "Listening..." while `value` holds the
+      // draft underneath. A recall there would replace something the user
+      // cannot see, and the textarea's own onChange already refuses to write
+      // in this state.
+      installAudioRecordingMocks();
+      const onChange = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="the hidden draft"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+      await waitFor(() => {
+        expect(screen.getByDisplayValue("Listening...")).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(screen.getByDisplayValue("Listening..."), {
+        key: "ArrowUp",
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("does not hijack Shift+ArrowUp, which selects", () => {
+      const { onChange } = renderWithHistory();
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp", shiftKey: true });
+
+      expect(onChange).not.toHaveBeenCalled();
     });
   });
 });

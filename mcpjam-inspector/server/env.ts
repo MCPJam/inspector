@@ -15,6 +15,8 @@ export interface LoadedInspectorEnv {
 export interface InspectorClientRuntimeConfig {
   convexUrl?: string;
   convexSiteUrl?: string;
+  workosClientId?: string;
+  workosApiHostname?: string;
 }
 
 function getInspectorEnvMode(): InspectorEnvMode {
@@ -116,6 +118,11 @@ function replaceConvexHostnameSuffix(
   }
 }
 
+function getNonEmptyEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig {
   const convexSiteUrl =
     normalizeUrlOrigin(process.env.CONVEX_HTTP_URL) ??
@@ -132,15 +139,39 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
       ".convex.cloud",
     ) ?? normalizeUrlOrigin(process.env.VITE_CONVEX_URL);
 
+  // WorkOS client config is served at runtime rather than inlined by Vite.
+  // A build-time value has to be listed in THREE places that are maintained by
+  // hand — the Railway service variables, the `ARG` allowlist in
+  // `mcpjam-inspector/Dockerfile`, and the environment it is set for — and a
+  // value present in one but missing from another produces a client that is
+  // silently misconfigured rather than one that fails to build. Staging shipped
+  // without `VITE_WORKOS_API_HOSTNAME` for months: its AuthKit refresh went
+  // cross-site to `api.workos.com`, the session cookie was never sent, and
+  // every page load ended in a 400 that wiped the session. Read here, the same
+  // variable takes effect on restart, in every environment, with no rebuild.
+  //
+  // The unprefixed names are canonical; the `VITE_`-prefixed ones are accepted
+  // so an environment already carrying the build-time variable keeps working
+  // through the migration.
+  const workosClientId =
+    getNonEmptyEnv("WORKOS_CLIENT_ID") ??
+    getNonEmptyEnv("VITE_WORKOS_CLIENT_ID");
+
+  const workosApiHostname =
+    getNonEmptyEnv("WORKOS_API_HOSTNAME") ??
+    getNonEmptyEnv("VITE_WORKOS_API_HOSTNAME");
+
   return {
     convexUrl,
     convexSiteUrl,
+    workosClientId,
+    workosApiHostname,
   };
 }
 
 export function getInspectorClientRuntimeConfigScript(): string | null {
   const runtimeConfig = getInspectorClientRuntimeConfig();
-  if (!runtimeConfig.convexUrl && !runtimeConfig.convexSiteUrl) {
+  if (!Object.values(runtimeConfig).some((value) => value !== undefined)) {
     return null;
   }
 
@@ -161,15 +192,32 @@ function getConvexDeploymentSlug(url: string | undefined): string | null {
   }
 }
 
+// The first hostname label is the deployment name only on Convex's default
+// hosts. On a custom domain (`rt.mcpjam.com` / `rt-http.mcpjam.com` both front
+// the production deployment) the labels legitimately differ, so a slug
+// comparison there would only ever produce a false mismatch warning.
+function isConvexDefaultHost(url: string | undefined): boolean {
+  if (!url) return false;
+
+  try {
+    const { hostname } = new URL(url);
+    return (
+      hostname.endsWith(".convex.cloud") || hostname.endsWith(".convex.site")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
-  const response = await fetch(`${convexHttpUrl}/chatbox/bootstrap`, {
+  const response = await fetch(`${convexHttpUrl}/scenario/bootstrap`, {
     method: "OPTIONS",
     signal: AbortSignal.timeout(2_000),
   });
 
   if (response.status === 404) {
     appLogger.warn(
-      `[boot] CONVEX_HTTP_URL does not expose /chatbox/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`,
+      `[boot] CONVEX_HTTP_URL does not expose /scenario/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`,
     );
   }
 }
@@ -196,8 +244,12 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   const viteConvexUrl = process.env.VITE_CONVEX_URL;
 
-  const httpSlug = getConvexDeploymentSlug(convexHttpUrl);
-  const viteSlug = getConvexDeploymentSlug(viteConvexUrl);
+  const httpSlug = isConvexDefaultHost(convexHttpUrl)
+    ? getConvexDeploymentSlug(convexHttpUrl)
+    : null;
+  const viteSlug = isConvexDefaultHost(viteConvexUrl)
+    ? getConvexDeploymentSlug(viteConvexUrl)
+    : null;
 
   if (httpSlug && viteSlug && httpSlug !== viteSlug) {
     appLogger.warn(
@@ -209,7 +261,7 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
 
   void checkBootstrapRoute(convexHttpUrl).catch((error) => {
     appLogger.warn(
-      `[boot] Failed to verify /chatbox/bootstrap on CONVEX_HTTP_URL. cwd=${env.cwd} CONVEX_HTTP_URL=${convexHttpUrl} error=${error instanceof Error ? error.message : String(error)}`,
+      `[boot] Failed to verify /scenario/bootstrap on CONVEX_HTTP_URL. cwd=${env.cwd} CONVEX_HTTP_URL=${convexHttpUrl} error=${error instanceof Error ? error.message : String(error)}`,
     );
   });
 }

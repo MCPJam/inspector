@@ -13,6 +13,36 @@ vi.mock("@/lib/convex-site-url", () => ({
   getConvexSiteUrl: getConvexSiteUrlMock,
 }));
 
+function storeSessionless2026Flow(): void {
+  localStorage.setItem("mcp-oauth-issued-state-asana", "expected-state");
+  localStorage.setItem("mcp-verifier-asana", "verifier");
+  localStorage.setItem(
+    "mcp-client-asana",
+    JSON.stringify({ client_id: "client-id" })
+  );
+  localStorage.setItem(
+    "mcp-oauth-config-asana",
+    JSON.stringify({ protocolVersion: "2025-11-25" })
+  );
+  localStorage.setItem(
+    "mcp-oauth-flow-state-asana",
+    JSON.stringify({
+      version: 1,
+      protocolVersion: "2026-07-28",
+      registrationStrategy: "dcr",
+      state: {
+        recordedIssuer: "https://auth.asana.com",
+        authorizationServerMetadata: {
+          issuer: "https://auth.asana.com",
+          authorization_response_iss_parameter_supported: true,
+        },
+        authorizationUrl:
+          "https://auth.asana.com/authorize?resource=https%3A%2F%2Fmcp.asana.com%2Fsse",
+      },
+    })
+  );
+}
+
 describe("mcp-oauth hosted callback sessions", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -36,10 +66,17 @@ describe("mcp-oauth hosted callback sessions", () => {
 
       if (url === "https://test.convex.site/web/oauth/complete") {
         return Promise.resolve(
-          new Response(JSON.stringify({ success: true, expiresAt: 123 }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          })
+          new Response(
+            JSON.stringify({
+              success: true,
+              expiresAt: 123,
+              protocolVersion: "2026-07-28",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
         );
       }
 
@@ -56,18 +93,20 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
       "oauth-code",
       {
         callbackState: "oauth-state-1",
+        callbackIss: "https://auth.asana.com",
       }
     );
 
     expect(result.success).toBe(true);
     expect(result.expiresAt).toBe(123);
+    expect(result.serverConfig?.mcpProtocolVersion).toBe("2026-07-28");
     expect(authFetchMock).toHaveBeenCalledWith(
       "https://test.convex.site/web/oauth/complete",
       expect.any(Object)
@@ -84,11 +123,204 @@ describe("mcp-oauth hosted callback sessions", () => {
       projectId: "ws_1",
       serverId: "srv_asana",
       code: "oauth-code",
+      // RFC 9207 iss threaded through for backend exact-match validation.
+      iss: "https://auth.asana.com",
       oauthResourceUrl: "https://mcp.asana.com/sse",
       state: "oauth-state-1",
       sessionId: "hosted-session-1",
       accessScope: "project_member",
     });
+  });
+
+  it("records and returns the same formatted hosted callback error", async () => {
+    authFetchMock.mockImplementation((url: string) => {
+      if (url === "https://test.convex.site/web/oauth/session/progress") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: false, error: "not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      if (url === "https://test.convex.site/web/oauth/complete") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "Uncaught InvalidGrantError: Token is not active\n    at async exchangeGenericAuthorizationCode",
+            }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
+        );
+      }
+
+      throw new Error(`Unexpected authFetch URL: ${url}`);
+    });
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        sessionId: "hosted-session-1",
+        accessScope: "project_member",
+        scenarioId: null,
+        returnPath: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      { callbackState: "oauth-state-1" }
+    );
+
+    const expectedError =
+      "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match. Server response: Token is not active";
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(expectedError);
+    expect(result.oauthTrace?.error).toBe(expectedError);
+    expect(
+      result.oauthTrace?.steps.find((step) => step.status === "error")?.error
+    ).toBe(expectedError);
+  });
+
+  it("uses the flow session version for sessionless completion and reconnect", async () => {
+    storeSessionless2026Flow();
+    authFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          protocolVersion: "2026-07-28",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        scenarioId: null,
+        returnPath: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      {
+        callbackState: "expected-state",
+        callbackIss: "https://auth.asana.com",
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.serverConfig?.mcpProtocolVersion).toBe("2026-07-28");
+    const completeCall = authFetchMock.mock.calls.find(
+      ([url]) => url === "https://test.convex.site/web/oauth/complete"
+    );
+    const sentBody = JSON.parse(
+      String((completeCall?.[1] as RequestInit | undefined)?.body)
+    );
+    expect(sentBody.protocolVersion).toBe("2026-07-28");
+    expect(sentBody.iss).toBe("https://auth.asana.com");
+  });
+
+  it.each([
+    {
+      name: "missing",
+      callbackIss: undefined,
+      backendError:
+        "OAuth issuer validation failed (RFC 9207): callback omitted `iss`.",
+    },
+    {
+      name: "mismatched",
+      callbackIss: "https://evil.example.com",
+      backendError:
+        "OAuth issuer validation failed (RFC 9207): callback `iss` does not match the recorded issuer.",
+    },
+  ])(
+    "rejects a sessionless 2026 hosted callback with a $name issuer",
+    async ({ callbackIss, backendError }) => {
+      storeSessionless2026Flow();
+      authFetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ success: false, error: backendError }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+      const result = await completeHostedOAuthCallback(
+        {
+          surface: "project",
+          projectId: "ws_1",
+          serverId: "srv_asana",
+          serverName: "asana",
+          serverUrl: "https://mcp.asana.com/sse",
+          accessScope: "project_member",
+          scenarioId: null,
+          returnPath: "#servers",
+          startedAt: Date.now(),
+        },
+        "oauth-code",
+        {
+          callbackState: "expected-state",
+          callbackIss,
+        }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed.*RFC 9207/i);
+      const completeCall = authFetchMock.mock.calls.find(
+        ([url]) => url === "https://test.convex.site/web/oauth/complete"
+      );
+      const sentBody = JSON.parse(
+        String((completeCall?.[1] as RequestInit | undefined)?.body)
+      );
+      expect(sentBody.protocolVersion).toBe("2026-07-28");
+      expect(sentBody.iss).toBe(callbackIss);
+    }
+  );
+
+  it("rejects a sessionless hosted callback when state does not match", async () => {
+    localStorage.setItem("mcp-oauth-issued-state-asana", "expected-state");
+    localStorage.setItem("mcp-verifier-asana", "verifier");
+    localStorage.setItem(
+      "mcp-client-asana",
+      JSON.stringify({ client_id: "client-id" })
+    );
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        scenarioId: null,
+        returnPath: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      { callbackState: "attacker-state" }
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/state.*mismatch/i);
+    expect(authFetchMock).not.toHaveBeenCalled();
   });
 
   it("allows hosted callbacks to complete when the provider omits state", async () => {
@@ -124,7 +356,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -197,7 +429,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.linear.app",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -252,7 +484,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.linear.app",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -339,7 +571,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverUrl: "https://mcp.asana.com/sse",
           sessionId: "hosted-session-1",
           accessScope: "project_member",
-          chatboxId: null,
+          scenarioId: null,
           returnPath: "#servers",
           startedAt: Date.now(),
         },
@@ -460,7 +692,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverUrl: "https://mcp.linear.app/mcp",
           sessionId: "hosted-session-1",
           accessScope: "project_member",
-          chatboxId: null,
+          scenarioId: null,
           returnPath: "#servers",
           startedAt: Date.now(),
         },

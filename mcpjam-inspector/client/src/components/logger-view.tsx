@@ -2,16 +2,13 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { track } from "@/lib/analytics";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
-  ChevronRight,
   AlertCircle,
-  Search,
   Trash2,
-  PanelRightClose,
-  Copy,
   Download,
 } from "lucide-react";
+import { LogRow } from "@/components/ui/log-row";
+import { LogToolbar } from "@/components/ui/log-toolbar";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Input } from "@mcpjam/design-system/input";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
@@ -20,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   ingestOAuthTraceLogs,
   useTrafficLogStore,
@@ -27,7 +25,15 @@ import {
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
+import {
+  describeTruncatedRpcPayload,
+  isTruncatedRpcPayload,
+} from "@/shared/rpc-log-truncation";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "@/lib/toast";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -50,8 +56,12 @@ import {
   requestOpenOAuthDebugger,
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
+import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
+import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
+import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
+import { isWebMcpError } from "@/lib/webmcp-traffic";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http" | "webmcp";
 
 interface RenderableRpcItem {
   id: string;
@@ -87,6 +97,37 @@ const LOGGING_LEVELS: LoggingLevel[] = [
   "alert",
   "emergency",
 ];
+
+type LoggingMechanism = "setLevel" | "per-request-meta" | "none";
+
+/**
+ * Client-side mirror of `MCPClientManager.getLoggingMechanism` (server/sdk)
+ * — same predicate (capability + negotiated era), computed here from the
+ * connection's already-fetched `initializationInfo` so the popover can
+ * choose which control to render without an extra round trip. Keep this in
+ * sync with the SDK helper if the era predicate ever changes.
+ */
+function getClientLoggingMechanism(
+  server: ServerWithName,
+): LoggingMechanism {
+  const info = server.initializationInfo;
+  if (!info?.serverCapabilities?.logging) return "none";
+  // Mirror `MCPClientManager.getLoggingMechanism` (server/sdk): the modern
+  // `per-request-meta` path is chosen only when the NEGOTIATED version is a
+  // *known* stateless (modern-era) version. This matches the SDK's own version
+  // routing, whose `isStatelessProtocolVersion` is documented to be called
+  // ONLY after `isKnownProtocolVersion` — without the known-check, an
+  // unrecognized/typo version would misroute to `per-request-meta` (it returns
+  // true for any non-empty non-stateful string). An absent or unknown version
+  // resolves to the legacy `setLevel` path, exactly as the SDK does when
+  // `getProtocolEra() !== "modern"`.
+  const version = info.protocolVersion;
+  return version &&
+    isKnownProtocolVersion(version) &&
+    isStatelessProtocolVersion(version)
+    ? "per-request-meta"
+    : "setLevel";
+}
 
 function buildOAuthTraceIngestionKey(trace: {
   source: string;
@@ -233,6 +274,22 @@ function DirectionLabel({
     );
   }
 
+  if (source === "http") {
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-amber-600 dark:text-amber-400">
+        http
+      </span>
+    );
+  }
+
+  if (source === "webmcp") {
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-muted-foreground">
+        {direction === "SEND" ? "webmcp →" : "← webmcp"}
+      </span>
+    );
+  }
+
   const isSend = direction === "SEND";
   return (
     <span
@@ -262,6 +319,13 @@ export function LoggerView({
   const [searchQuery, setSearchQuery] = useState("");
   const [serverLogLevels, setServerLogLevels] = useState<
     Record<string, LoggingLevel>
+  >({});
+  // Modern (per-request `_meta`) mechanism only: whether this session has
+  // opted in to logging for a server. Defaults to OFF/opt-out — the level
+  // select is inert until this is flipped on, matching the wire default
+  // (absent `_meta` key ⇒ no `logLevel` sent).
+  const [serverLogOptIn, setServerLogOptIn] = useState<
+    Record<string, boolean>
   >({});
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
     "all"
@@ -328,6 +392,10 @@ export function LoggerView({
       source:
         item.kind === "oauth"
           ? ("oauth" as TrafficSource)
+          : item.kind === "http"
+          ? ("http" as TrafficSource)
+          : item.kind === "webmcp"
+          ? ("webmcp" as TrafficSource)
           : ("mcp-server" as TrafficSource),
       oauthStatus: item.oauthStatus,
       oauthRecovered: item.oauthRecovered,
@@ -441,13 +509,40 @@ export function LoggerView({
     );
   }, [mcpServerItems, mcpAppsItems]);
 
-  const filteredItems = useMemo(() => {
-    let result = allItems;
-
-    // Filter by source type
-    if (sourceFilter !== "all") {
-      result = result.filter((item) => item.source === sourceFilter);
+  // Precomputed, lowercased search text per item — the same four fields the
+  // search used to concatenate inline (server label, method, direction, and
+  // the stringified payload). Keyed by `source:id` (not bare id) because
+  // mcpServerItems and mcpAppsItems generate ids independently — a hosted
+  // eventId or a `${timestamp}-${random}` id could collide across the two
+  // arrays and silently overwrite an entry. Memoized over `allItems`, so
+  // JSON.stringify runs once per row when the log set changes, not for
+  // every row on every keystroke.
+  const searchIndex = useMemo(() => {
+    const index = new Map<string, string>();
+    for (const item of allItems) {
+      index.set(
+        `${item.source}:${item.id}`,
+        [
+          getDisplayServerLabel(item),
+          item.method,
+          item.direction,
+          JSON.stringify(item.payload),
+        ]
+          .join("\n")
+          .toLowerCase()
+      );
     }
+    return index;
+  }, [allItems]);
+
+  // Everything EXCEPT the source filter. Split out so we can tell how many
+  // rows actually match the search before the source funnel removes them —
+  // that count is what powers the "N matches hidden by filter" banner and
+  // stops the "Server" filter from silently returning zero. The source
+  // filter is a plain conjunction like the others, so pulling it out of the
+  // chain does not change the final visible set.
+  const itemsBeforeSourceFilter = useMemo(() => {
+    let result = allItems;
 
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
@@ -469,43 +564,54 @@ export function LoggerView({
     }
 
     // Filter by search query
-    if (searchQuery.trim()) {
-      const queryLower = searchQuery.toLowerCase();
-      result = result.filter((item) => {
-        return (
-          getDisplayServerLabel(item).toLowerCase().includes(queryLower) ||
-          item.method.toLowerCase().includes(queryLower) ||
-          item.direction.toLowerCase().includes(queryLower) ||
-          JSON.stringify(item.payload).toLowerCase().includes(queryLower)
-        );
-      });
+    const queryLower = searchQuery.trim().toLowerCase();
+    if (queryLower) {
+      result = result.filter((item) =>
+        (searchIndex.get(`${item.source}:${item.id}`) ?? "").includes(
+          queryLower
+        )
+      );
     }
 
     return result;
-  }, [allItems, searchQuery, serverIds, sinceTimestamp, sourceFilter]);
+  }, [allItems, searchQuery, searchIndex, serverIds, sinceTimestamp]);
+
+  const filteredItems = useMemo(() => {
+    if (sourceFilter === "all") return itemsBeforeSourceFilter;
+    return itemsBeforeSourceFilter.filter(
+      (item) => item.source === sourceFilter
+    );
+  }, [itemsBeforeSourceFilter, sourceFilter]);
 
   const totalItemCount = allItems.length;
   const filteredItemCount = filteredItems.length;
 
+  // How many rows match the search + other filters but are being removed
+  // purely by the source filter. Zero when the filter is "all".
+  const matchesHiddenBySourceFilter =
+    itemsBeforeSourceFilter.length - filteredItemCount;
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="@container/logger-toolbar flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-        {isSearchVisible && (
-          <>
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search logs"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 text-xs"
-              />
-            </div>
-            <span className="hidden whitespace-nowrap text-xs text-muted-foreground @min-[400px]/logger-toolbar:inline-block">
-              {filteredItemCount} / {totalItemCount}
-            </span>
-
-            {/* Source filter + log levels — hide on narrow panels; search + copy/clear stay */}
+      <LogToolbar
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        searchVisible={isSearchVisible}
+        filteredCount={filteredItemCount}
+        totalCount={totalItemCount}
+        onCopy={copyLogs}
+        copyDisabled={filteredItemCount === 0}
+        onClose={
+          onClose && isCollapsable
+            ? () => {
+                captureLogger("logger_collapsed");
+                onClose();
+              }
+            : undefined
+        }
+        closeTitle="Hide JSON-RPC panel"
+        leading={
+            /* Source filter + log levels — hide on narrow panels; search + copy/clear stay */
             <div className="hidden items-center gap-1.5 @min-[340px]/logger-toolbar:flex">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -552,8 +658,14 @@ export function LoggerView({
                     <DropdownMenuRadioItem value="oauth" className="text-xs">
                       OAuth
                     </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="http" className="text-xs">
+                      HTTP
+                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="webmcp" className="text-xs">
+                      WebMCP
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
@@ -581,62 +693,146 @@ export function LoggerView({
                           No connected servers
                         </p>
                       ) : (
-                        <div className="space-y-2">
-                          {selectableServers.map((server) => (
-                            <div
-                              key={server.id}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span
-                                className="max-w-[120px] truncate text-[11px] font-medium"
-                                title={server.id}
-                              >
-                                {server.id}
-                              </span>
+                        <div className="space-y-3">
+                          {selectableServers.map(({ id, server }) => {
+                            const mechanism = getClientLoggingMechanism(
+                              server,
+                            );
+                            const level = serverLogLevels[id] || "debug";
+
+                            const applyLevel = (
+                              nextLevel: LoggingLevel | null,
+                            ) => {
+                              captureLogger("logger_log_level_changed", {
+                                to: nextLevel ?? "opt-out",
+                              });
+                              setServerLoggingLevel(id, nextLevel)
+                                .then((res) => {
+                                  if (res?.success)
+                                    toast.success(
+                                      nextLevel === null
+                                        ? `Opted ${id} out of logging`
+                                        : `Updated ${id} to ${nextLevel}`,
+                                    );
+                                  else
+                                    toast.error(
+                                      res?.error || "Failed to update",
+                                    );
+                                })
+                                .catch(() =>
+                                  toast.error("Failed to update"),
+                                );
+                            };
+
+                            const levelSelect = (
+                              disabled: boolean,
+                            ) => (
                               <Select
-                                value={serverLogLevels[server.id] || "debug"}
+                                value={level}
+                                disabled={disabled}
                                 onValueChange={(val) => {
-                                  const level = val as LoggingLevel;
-                                  captureLogger("logger_log_level_changed", {
-                                    to: level,
-                                  });
+                                  const nextLevel = val as LoggingLevel;
                                   setServerLogLevels((prev) => ({
                                     ...prev,
-                                    [server.id]: level,
+                                    [id]: nextLevel,
                                   }));
-                                  setServerLoggingLevel(server.id, level)
-                                    .then((res) => {
-                                      if (res?.success)
-                                        toast.success(
-                                          `Updated ${server.id} to ${level}`
-                                        );
-                                      else
-                                        toast.error(
-                                          res?.error || "Failed to update"
-                                        );
-                                    })
-                                    .catch(() =>
-                                      toast.error("Failed to update")
-                                    );
+                                  applyLevel(nextLevel);
                                 }}
                               >
                                 <SelectTrigger className="h-6 w-[100px] text-[10px]">
                                   <SelectValue placeholder="Level" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {LOGGING_LEVELS.map((level) => (
+                                  {LOGGING_LEVELS.map((l) => (
                                     <SelectItem
-                                      key={level}
-                                      value={level}
+                                      key={l}
+                                      value={l}
                                       className="text-[10px]"
                                     >
-                                      {level}
+                                      {l}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
-                            </div>
-                          ))}
+                            );
+
+                            if (mechanism === "none") {
+                              return (
+                                <div
+                                  key={id}
+                                  className="flex items-center justify-between gap-2"
+                                >
+                                  <span
+                                    className="max-w-[120px] truncate text-[11px] font-medium text-muted-foreground"
+                                    title={id}
+                                  >
+                                    {id}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground">
+                                    Not supported
+                                  </span>
+                                </div>
+                              );
+                            }
+
+                            if (mechanism === "setLevel") {
+                              return (
+                                <div key={id} className="space-y-0.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span
+                                      className="max-w-[120px] truncate text-[11px] font-medium"
+                                      title={id}
+                                    >
+                                      {id}
+                                    </span>
+                                    {levelSelect(false)}
+                                  </div>
+                                  <div
+                                    className="text-right text-[9px] text-muted-foreground"
+                                    title="logging/setLevel — SEP-2577 deprecates this mechanism in favor of the modern per-request opt-in"
+                                  >
+                                    Deprecated (SEP-2577)
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            // mechanism === "per-request-meta": default is
+                            // OFF/opt-out — no `_meta` key rides the wire
+                            // until the switch is flipped on.
+                            const optedIn = serverLogOptIn[id] ?? false;
+                            return (
+                              <div key={id} className="space-y-0.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span
+                                    className="max-w-[100px] truncate text-[11px] font-medium"
+                                    title={id}
+                                  >
+                                    {id}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    {levelSelect(!optedIn)}
+                                    <Switch
+                                      checked={optedIn}
+                                      onCheckedChange={(checked) => {
+                                        setServerLogOptIn((prev) => ({
+                                          ...prev,
+                                          [id]: checked,
+                                        }));
+                                        applyLevel(checked ? level : null);
+                                      }}
+                                      aria-label={`Toggle per-request logging for ${id}`}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="text-right text-[9px] text-muted-foreground">
+                                  {optedIn
+                                    ? "opt-in — level sent with every request"
+                                    : "opt-out (no logLevel sent)"}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -644,22 +840,9 @@ export function LoggerView({
                 </Popover>
               )}
             </div>
-          </>
-        )}
-
-        {/* Push action buttons to the right when search is hidden */}
-        {!isSearchVisible && <div className="flex-1" />}
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={copyLogs}
-          disabled={filteredItemCount === 0}
-          className="hidden h-7 w-7 shrink-0 @min-[300px]/logger-toolbar:inline-flex"
-          title="Copy logs to clipboard"
-        >
-          <Copy className="h-3.5 w-3.5" />
-        </Button>
+        }
+        actions={
+          <>
         <Button
           variant="ghost"
           size="icon"
@@ -680,29 +863,59 @@ export function LoggerView({
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
-        {onClose && isCollapsable && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              captureLogger("logger_collapsed");
-              onClose();
-            }}
-            className="h-7 w-7 flex-shrink-0"
-            title="Hide JSON-RPC panel"
-          >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
+          </>
+        }
+      />
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+        {searchQuery.trim() && matchesHiddenBySourceFilter > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              captureLogger("logger_source_filter_changed", {
+                from: sourceFilter,
+                to: "all",
+              });
+              setSourceFilter("all");
+            }}
+            className="flex w-full items-center justify-between gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted"
+            title="Clear the source filter to show these matches"
+          >
+            <span>
+              {matchesHiddenBySourceFilter}{" "}
+              {matchesHiddenBySourceFilter === 1 ? "match" : "matches"} hidden by
+              the source filter
+            </span>
+            <span className="whitespace-nowrap font-medium text-primary">
+              Clear filter
+            </span>
+          </button>
+        )}
         {filteredItemCount === 0 ? (
           <div className="text-center py-8">
-            <div className="text-xs text-muted-foreground">{"No logs yet"}</div>
-            <div className="text-[10px] text-muted-foreground mt-1">
-              {"Logs will appear here"}
-            </div>
+            {totalItemCount > 0 ? (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {"No matches in this view"}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {matchesHiddenBySourceFilter > 0
+                    ? "Clear the source filter to see hidden matches"
+                    : searchQuery.trim()
+                      ? "Try a different search term"
+                      : "Adjust the active filters"}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {"No logs yet"}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {"Logs will appear here"}
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -710,6 +923,10 @@ export function LoggerView({
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
               const isOAuthTraffic = it.source === "oauth";
+              const isHttpExchange = it.source === "http";
+              const httpExchange = isHttpExchange
+                ? (it.payload as HttpExchangeLogEvent)
+                : undefined;
               const oauthInlineSummary = isOAuthTraffic
                 ? getOAuthInlineSummary(it.payload)
                 : undefined;
@@ -720,7 +937,14 @@ export function LoggerView({
               const isError =
                 it.method === "error" ||
                 it.method === "csp-violation" ||
-                (isOAuthTraffic && it.oauthStatus === "error");
+                (it.source === "webmcp" && isWebMcpError(it.payload)) ||
+                (isOAuthTraffic && it.oauthStatus === "error") ||
+                // A 4xx/5xx or a fetch that never got a response. `401` is not
+                // excluded here the way the OAuth card excludes its expected
+                // challenge: on the RPC endpoint a 401 IS the failure.
+                (httpExchange !== undefined &&
+                  (httpExchange.error !== undefined ||
+                    (httpExchange.response?.status ?? 0) >= 400));
 
               // Left border: 2px — red for errors (incl. OAuth failures), purple for Apps,
               // transparent otherwise (OAuth success has no rail)
@@ -738,26 +962,17 @@ export function LoggerView({
                 oauthDebuggerTargetServerName !== undefined;
 
               return (
-                <div
+                <LogRow
                   key={it.id}
-                  className={cn(
-                    "group border-b border-border border-l-2",
-                    borderClass,
-                    isError && "bg-destructive/5",
-                    isExpanded && "bg-muted/20"
-                  )}
-                >
-                  <div
-                    className="h-7 px-2 flex items-center gap-1.5 cursor-pointer select-none hover:bg-muted/30 transition-colors"
-                    onClick={() => toggleExpanded(it.id)}
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform duration-150",
-                        isExpanded && "rotate-90"
-                      )}
-                    />
-                    {isError && !isOAuthTraffic ? (
+                  expanded={isExpanded}
+                  onToggle={() => toggleExpanded(it.id)}
+                  isError={isError}
+                  borderClass={borderClass}
+                  badge={
+                    isError &&
+                    !isOAuthTraffic &&
+                    !isHttpExchange &&
+                    it.source !== "webmcp" ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel
@@ -770,71 +985,91 @@ export function LoggerView({
                         }
                         oauthRecovered={it.oauthRecovered}
                       />
-                    )}
-                    <span
-                      className={cn(
-                        "flex-1 min-w-0 font-mono text-xs truncate",
-                        isError ? "text-destructive" : "text-foreground"
-                      )}
-                      title={displayMethod}
-                    >
-                      {displayMethod}
-                    </span>
-                    <span
-                      className={cn(
-                        "hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]",
-                        showOAuthDebuggerCta &&
-                          "order-4 max-sm:order-5 group-hover:order-5 group-focus-within:order-5"
-                      )}
-                      title={getDisplayServerTitle(it)}
-                    >
-                      {getDisplayServerLabel(it)}
-                    </span>
-                    {showOAuthDebuggerCta && (
-                      <div
+                    )
+                  }
+                  title={displayMethod}
+                  titleTooltip={displayMethod}
+                  meta={
+                    <>
+                      <span
                         className={cn(
-                          "order-5 max-sm:order-4 flex max-h-7 shrink-0 overflow-hidden transition-[max-width,opacity] duration-150 ease-out",
-                          "max-w-0 opacity-0",
-                          "max-sm:max-w-[min(100%,15rem)] max-sm:opacity-100",
-                          "group-hover:order-4 group-focus-within:order-4",
-                          "group-hover:max-w-[min(100%,15rem)] group-hover:opacity-100",
-                          "group-focus-within:max-w-[min(100%,15rem)] group-focus-within:opacity-100"
+                          "hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]",
+                          showOAuthDebuggerCta &&
+                            "order-4 max-sm:order-5 group-hover:order-5 group-focus-within:order-5"
                         )}
+                        title={getDisplayServerTitle(it)}
                       >
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="h-6 shrink-0 px-2 text-[10px] leading-none"
-                          asChild
+                        {getDisplayServerLabel(it)}
+                      </span>
+                      {showOAuthDebuggerCta && (
+                        <div
+                          className={cn(
+                            "order-5 max-sm:order-4 flex max-h-7 shrink-0 overflow-hidden transition-[max-width,opacity] duration-150 ease-out",
+                            "max-w-0 opacity-0",
+                            "max-sm:max-w-[min(100%,15rem)] max-sm:opacity-100",
+                            "group-hover:order-4 group-focus-within:order-4",
+                            "group-hover:max-w-[min(100%,15rem)] group-hover:opacity-100",
+                            "group-focus-within:max-w-[min(100%,15rem)] group-focus-within:opacity-100"
+                          )}
                         >
-                          <a
-                            href={OAUTH_DEBUGGER_HASH}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (oauthDebuggerTargetServerName) {
-                                requestOpenOAuthDebugger(
-                                  oauthDebuggerTargetServerName,
-                                );
-                              }
-                            }}
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="h-6 shrink-0 px-2 text-[10px] leading-none"
+                            asChild
                           >
-                            Continue in OAuth Debugger
-                          </a>
-                        </Button>
-                      </div>
-                    )}
-                    <span
-                      className={cn(
-                        "text-muted-foreground font-mono text-[11px] whitespace-nowrap tabular-nums",
-                        showOAuthDebuggerCta && "order-6"
+                            <a
+                              href={OAUTH_DEBUGGER_HASH}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (oauthDebuggerTargetServerName) {
+                                  requestOpenOAuthDebugger(
+                                    oauthDebuggerTargetServerName,
+                                  );
+                                }
+                              }}
+                            >
+                              Continue in OAuth Debugger
+                            </a>
+                          </Button>
+                        </div>
                       )}
-                    >
-                      {new Date(it.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  {isExpanded && (
-                    <div className="border-t border-border bg-muted/10 p-2">
-                      <div className="max-h-[40vh] overflow-auto">
+                    </>
+                  }
+                  timestamp={new Date(it.timestamp).toLocaleTimeString()}
+                >
+                  <div className="max-h-[40vh] overflow-auto">
+                    {isHttpExchange ? (
+                      <HttpExchangeDetails
+                        exchange={it.payload as HttpExchangeLogEvent}
+                        // The `Mcp-Param-*` verdicts need the call's
+                        // arguments, which live on the JSON-RPC frame this
+                        // exchange carried — capture stores no bodies. The
+                        // dedicated HTTP row has no frame in hand, so it
+                        // hands over the raw materials and lets the details
+                        // component pair back to one INSIDE a memo: the
+                        // reverse correlation is the expensive direction,
+                        // and deriving it here would re-run it on every
+                        // render of the list (each search keystroke, each
+                        // log-store update) and hand a fresh object down
+                        // that defeats the memo below it.
+                        exchangeItem={it}
+                        items={allItems}
+                      />
+                    ) : (
+                      <div className="space-y-2">
+                        {/*
+                          A body over the retention cap was never kept — by
+                          the server bus, by the store, or by both. Say so
+                          in a sentence, then show what did survive: the
+                          JSON-RPC envelope is preserved, so the frame's
+                          id and method are still worth rendering.
+                        */}
+                        {isTruncatedRpcPayload(it.payload) && (
+                          <p className="text-muted-foreground px-1 text-xs">
+                            {describeTruncatedRpcPayload(it.payload)}
+                          </p>
+                        )}
                         <JsonEditor
                           height="100%"
                           value={normalizePayload(it.payload) as object}
@@ -844,10 +1079,27 @@ export function LoggerView({
                           defaultExpandDepth={2}
                           collapseStringsAfterLength={100}
                         />
+                        {/*
+                          The headers this frame rode in, when they can be
+                          correlated confidently. Collapsed by default: the
+                          body is what a reader opened the row for, and on
+                          every era before 2026-07-28 the headers carry
+                          nothing they need. Absent entirely when nothing
+                          matched — see `findExchangeForFrame`.
+                        */}
+                        {/*
+                          Correlated against `allItems`, never
+                          `filteredItems`: with the funnel on "Server" the
+                          exchanges are filtered OUT of the list, and
+                          searching the filtered view would make the
+                          headers vanish under exactly the filter a reader
+                          picks to look at frames.
+                        */}
+                        <InlineFrameHeaders frame={it} items={allItems} />
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                </LogRow>
               );
             })}
           </>

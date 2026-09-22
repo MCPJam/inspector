@@ -2,10 +2,16 @@
  * Master-detail results surface for a multi-host suite. Replaces the
  * Runs ⟷ Cases tab switcher with one screen:
  *   • Left rail  — the run timeline. The unit is a RUN GROUP (one launch across
- *                  N hosts; child runs share `runGroupId`, differ by
- *                  `namedHostId`). Single-host launches render as standalone
- *                  items. A pinned "All runs" item sits on top, and an optional
- *                  "Monitoring" item at the bottom.
+ *                  N execution CONTEXTS; child runs share `runGroupId` and
+ *                  differ by {@link runContextKey} — a project environment when
+ *                  the run carries `configSnapshot.environmentRef`, otherwise
+ *                  the legacy `namedHostId`). Single-context launches render as
+ *                  standalone items. A pinned "All runs" item sits on top, and
+ *                  an optional "Monitoring" item at the bottom.
+ *
+ *                  A group header never claims one revision: an environment is
+ *                  live-editable, so a group can legitimately span several. The
+ *                  exact revision lives on the individual run row.
  *   • Right pane — scoped to the selection, all sharing one case×host matrix:
  *       · "All runs"  → `CrossHostDashboard` across every run (latest per host
  *                       + historical columns). Falls back to the authoring case
@@ -43,11 +49,21 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
-import { HostChip } from "@/components/hosts/host-chip";
+import { RunContextChip } from "./run-context-chip";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { computeRunEffectiveStats } from "./suite-runs-list";
-import { formatRelativeTime, formatRunId } from "./helpers";
+import {
+  formatRelativeTime,
+  formatRunId,
+  hasEnvironmentRun,
+  runContextKeys,
+  runContextLabel,
+  runContextRevisionSummary,
+  runHostLabel,
+} from "./helpers";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
+import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { GroupCrossHostDashboard } from "./group-cross-host-dashboard";
 import {
   CASE_ROW_SORT_STORAGE_KEY,
@@ -64,8 +80,18 @@ export interface SuiteResultsSplitProps {
   cases: EvalCase[];
   runs: EvalSuiteRun[];
   allIterations: EvalIteration[];
-  /** namedHostId → display name, from suite.hostAttachments. */
+  /**
+   * namedHostId → display name, from the suite's attachments plus the project
+   * host list (see `buildHostNamesById`) — the latter is the only source for
+   * the resolved host of an environment-backed run, which has no attachment.
+   */
   hostNamesById: Map<string, string | null>;
+  /**
+   * The suite's project environments, owned by the parent like `hostNamesById`.
+   * Without them the matrix can only place a run by its resolved host, so two
+   * model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
   /**
    * The full "All runs" surface (TestCasesOverview), built by the parent so we
    * don't re-thread its ~20 props. Shown when the "All runs" rail item is
@@ -82,6 +108,14 @@ export interface SuiteResultsSplitProps {
   onRunClick: (runId: string) => void;
   /** Render the Monitoring rail item + pane. */
   showMonitoring?: boolean;
+  /**
+   * WHICH HALF of the Monitoring pane may render. The pane serves two features
+   * on different flags, and `showMonitoring` is their OR — so it says the pane
+   * is reachable, never which sections are allowed inside it. Passed through
+   * rather than re-derived here: `suite-dashboard.tsx` reads the flags.
+   */
+  showScheduledRuns?: boolean;
+  showProbeLatency?: boolean;
   /**
    * The run currently in the URL. When set, the right pane shows `runDetailPane`
    * and the rail highlights that run (auto-expanding its group). The URL is the
@@ -121,20 +155,32 @@ type RailGroup = {
   runs: EvalSuiteRun[];
   timestamp: number;
   passRate: number | null;
-  hostCount: number;
+  /**
+   * Distinct execution contexts in the group (environments, or legacy hosts).
+   * Counting `namedHostId` here undercounted environment fan-outs to 1, since
+   * environment runs carry no `namedHostId`.
+   */
+  contextCount: number;
+  /** "environment" when any run in the group is environment-backed. */
+  contextNoun: "environment" | "client";
+  /**
+   * Revision RANGE (or single agreed revision) across the group's environment
+   * runs — never one arbitrary revision. `null` for legacy groups.
+   */
+  revisionSummary: string | null;
 };
 
 const runTimestamp = (r: EvalSuiteRun): number =>
   r.completedAt ?? r.createdAt ?? r._creationTime ?? 0;
 
 function toneFor(value: number): string {
-  return value >= 85 ? "bg-success" : value >= 70 ? "bg-amber-500" : "bg-destructive";
+  return value >= 85 ? "bg-success" : value >= 70 ? "bg-warning" : "bg-destructive";
 }
 function textToneFor(value: number): string {
   return value >= 85
     ? "text-success"
     : value >= 70
-      ? "text-amber-600 dark:text-amber-400"
+      ? "text-warning"
       : "text-destructive";
 }
 
@@ -227,6 +273,36 @@ function PinnedItem({
   );
 }
 
+/**
+ * The rail item's context line. One context ⇒ its NAME (environment name, or
+ * the resolved host name for a legacy run); several ⇒ a count on the right
+ * axis. A revision RANGE may ride along, but the header never claims one
+ * arbitrary revision — that belongs on the individual run row below.
+ *
+ * The Project Environments kill-switch gates NAMES and REVISIONS only — those
+ * are the environment's identity. The count and the axis NOUN stay ungated
+ * (they leak no identity), which is also what `GroupRunRows` in
+ * suite-runs-list does for the same data; gating the noun here made the rail
+ * and the flat runs list disagree on identical runs.
+ */
+function groupContextSummary(
+  group: RailGroup,
+  hostNamesById: Map<string, string | null>,
+  projectEnvironmentsEnabled: boolean,
+): string {
+  const plural = group.contextCount === 1 ? "" : "s";
+  const countText = `${group.contextCount} ${group.contextNoun}${plural}`;
+  const onlyRun = group.contextCount === 1 ? group.runs[0] : undefined;
+  if (!projectEnvironmentsEnabled) {
+    // Host-only: a legacy group keeps its host name; an environment group has
+    // none, so it degrades to the bare count rather than naming the env.
+    return (onlyRun ? runHostLabel(onlyRun, hostNamesById) : null) ?? countText;
+  }
+  const base =
+    (onlyRun ? runContextLabel(onlyRun, hostNamesById) : null) ?? countText;
+  return group.revisionSummary ? `${base} · ${group.revisionSummary}` : base;
+}
+
 function RunGroupItem({
   group,
   iterationsByRun,
@@ -261,13 +337,19 @@ function RunGroupItem({
 }) {
   const rate = group.passRate;
   const delta = rate == null || prevPassRate == null ? null : rate - prevPassRate;
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const contextSummary = groupContextSummary(
+    group,
+    hostNamesById,
+    projectEnvironmentsEnabled,
+  );
 
   if (collapsed) {
     return (
       <button
         type="button"
         onClick={onSelect}
-        title={`${group.label} · ${rate ?? "—"}% · ${group.hostCount} client${group.hostCount > 1 ? "s" : ""} · ${formatRelativeTime(group.timestamp)}`}
+        title={`${group.label} · ${rate ?? "—"}% · ${contextSummary} · ${formatRelativeTime(group.timestamp)}`}
         className={cn(
           "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
           active ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted",
@@ -285,7 +367,7 @@ function RunGroupItem({
         active ? "border-primary/40 bg-primary/[0.06]" : "border-transparent hover:bg-muted/60",
       )}
     >
-      <div className="flex items-stretch">
+      <div className="flex min-w-0 items-stretch">
         {!group.isStandalone ? (
           <button
             type="button"
@@ -298,7 +380,7 @@ function RunGroupItem({
         ) : (
           <span className="w-7 shrink-0" />
         )}
-        <button type="button" onClick={onSelect} className="flex-1 py-2.5 pr-3 text-left">
+        <button type="button" onClick={onSelect} className="min-w-0 flex-1 py-2.5 pr-3 text-left">
           <div className="flex items-center justify-between gap-2">
             <span className="truncate font-mono text-xs font-medium text-foreground">{group.label}</span>
             <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
@@ -318,8 +400,8 @@ function RunGroupItem({
             )}
           </div>
           <div className="mt-1 flex items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">
-              {group.hostCount} client{group.hostCount > 1 ? "s" : ""}
+            <span className="truncate text-[11px] text-muted-foreground">
+              {contextSummary}
             </span>
             {delta != null && delta !== 0 ? (
               <span
@@ -355,9 +437,6 @@ function RunGroupItem({
         <div className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
           {group.runs.map((run) => {
             const childRate = computeRunEffectiveStats(run, iterationsByRun.get(run._id) ?? []).passRate;
-            const hostName = run.namedHostId
-              ? hostNamesById.get(run.namedHostId) ?? formatRunId(run.namedHostId)
-              : formatRunId(run._id);
             const runActive = selectedRunId === run._id;
             return (
               <div
@@ -373,10 +452,13 @@ function RunGroupItem({
                   className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-1"
                   title={`Open run ${formatRunId(run._id)}`}
                 >
-                  <HostChip
-                    name={hostName}
-                    hostId={run.namedHostId}
-                    className="max-w-[130px] gap-1 px-2 py-0.5 text-[10px] shadow-none"
+                  {/* The RUN row is where the exact environment revision
+                      belongs — the group header above spans all of them. */}
+                  <RunContextChip
+                    run={run}
+                    hostNamesById={hostNamesById}
+                    fallbackName={formatRunId(run._id)}
+                    className="max-w-[170px] gap-1 px-2 py-0.5 text-[10px] shadow-none"
                   />
                   <span className="flex items-center gap-1.5">
                     <span className="font-mono text-[10px] text-muted-foreground">{formatRunId(run._id)}</span>
@@ -425,11 +507,14 @@ export function SuiteResultsSplit({
   runs,
   allIterations,
   hostNamesById,
+  environments,
   allRunsPane,
   onTestCaseClick,
   onOpenCaseIteration,
   onRunClick,
   showMonitoring = false,
+  showScheduledRuns = true,
+  showProbeLatency = true,
   selectedRunId,
   runDetailPane,
   onExitRun,
@@ -535,9 +620,20 @@ export function SuiteResultsSplit({
       }
       return total > 0 ? Math.round((passed / total) * 100) : null;
     };
-    const distinctHosts = (groupRuns: EvalSuiteRun[]): number => {
-      const set = new Set(groupRuns.map((r) => r.namedHostId).filter(Boolean));
-      return set.size || 1;
+    // Distinct execution CONTEXTS, keyed by environment id when the run is
+    // environment-backed. Environment runs carry no `namedHostId`, so the old
+    // `namedHostId` count reported a 3-environment fan-out as "1 client"; and
+    // two environments sharing one host must still count as two.
+    const contextFacts = (groupRuns: EvalSuiteRun[]) => {
+      const count = runContextKeys(groupRuns).length || 1;
+      const noun: RailGroup["contextNoun"] = hasEnvironmentRun(groupRuns)
+        ? "environment"
+        : "client";
+      return {
+        contextCount: count,
+        contextNoun: noun,
+        revisionSummary: runContextRevisionSummary(groupRuns),
+      };
     };
 
     const nodes: RailGroup[] = [];
@@ -554,7 +650,7 @@ export function SuiteResultsSplit({
         runs: sorted,
         timestamp: sorted.reduce((m, r) => Math.max(m, runTimestamp(r)), 0),
         passRate: aggregate(sorted),
-        hostCount: distinctHosts(sorted),
+        ...contextFacts(sorted),
       });
     }
     for (const run of standalones) {
@@ -565,7 +661,7 @@ export function SuiteResultsSplit({
         runs: [run],
         timestamp: runTimestamp(run),
         passRate: aggregate([run]),
-        hostCount: distinctHosts([run]),
+        ...contextFacts([run]),
       });
     }
     return nodes.sort((a, b) => b.timestamp - a.timestamp);
@@ -766,22 +862,18 @@ export function SuiteResultsSplit({
         {/* Compare owns its own header (the pickers). */}
         {view.kind === "run" && selectedRun ? (
           // Slim run-identity header — the run's KPIs live in the shared metric
-          // strip above, so this just names the run + status + host.
+          // strip above, so this just names the run + status + the context it
+          // ran against (environment + revision, or the legacy host).
           <div className="flex items-center gap-2 border-b border-border/60 px-4 py-2.5">
             <span className="font-mono text-sm font-semibold text-foreground">
               Run {formatRunId(selectedRun._id)}
             </span>
             <RunStatusBadge run={selectedRun} />
-            {selectedRun.namedHostId ? (
-              <HostChip
-                name={
-                  hostNamesById.get(selectedRun.namedHostId) ??
-                  formatRunId(selectedRun.namedHostId)
-                }
-                hostId={selectedRun.namedHostId}
-                className="gap-1 px-2 py-0.5 text-[11px] shadow-none"
-              />
-            ) : null}
+            <RunContextChip
+              run={selectedRun}
+              hostNamesById={hostNamesById}
+              className="gap-1 px-2 py-0.5 text-[11px] shadow-none"
+            />
           </div>
         ) : view.kind !== "compare" ? (
           <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
@@ -825,7 +917,12 @@ export function SuiteResultsSplit({
             // per host + historical columns). Falls back to the authoring case
             // list when there's no host-scoped run data yet (no attachments or
             // no runs), so empty states + add/edit survive on legacy/fresh suites.
-            (suite.hostAttachments?.length ?? 0) >= 1 && runs.length > 0 ? (
+            // An environment-backed suite has NO host attachments by design, but
+            // its runs still name the environment's resolved host — so it gets
+            // the matrix too. Legacy attachment-less suites are unchanged.
+            ((suite.hostAttachments?.length ?? 0) >= 1 ||
+              hasEnvironmentRun(runs)) &&
+            runs.length > 0 ? (
               <div className="min-h-0 flex-1 overflow-auto p-4">
                 <CrossHostDashboard
                   suite={suite}
@@ -840,6 +937,8 @@ export function SuiteResultsSplit({
                   onTestCaseClick={onTestCaseClick}
                   onCellOpen={handleCellOpen}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  hostNamesById={hostNamesById}
+                  environments={environments}
                 />
               </div>
             ) : (
@@ -848,7 +947,12 @@ export function SuiteResultsSplit({
               </div>
             )
           ) : view.kind === "monitoring" ? (
-            <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
+            <MonitoringTab
+              suiteId={suite._id}
+              onRunClick={onRunClick}
+              showScheduledRuns={showScheduledRuns}
+              showProbeLatency={showProbeLatency}
+            />
           ) : view.kind === "compare" ? (
             <SuiteGroupCompare
               groups={railGroups.map((g) => ({ key: g.key, label: g.label, runs: g.runs }))}
@@ -869,6 +973,8 @@ export function SuiteResultsSplit({
                 onTestCaseClick={onTestCaseClick}
                 onCellOpen={handleCellOpen}
                 onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                hostNamesById={hostNamesById}
+                environments={environments}
               />
             </div>
           ) : (

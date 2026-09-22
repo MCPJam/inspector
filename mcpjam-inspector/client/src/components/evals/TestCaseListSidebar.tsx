@@ -24,10 +24,16 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
+import { ImportClaimBadge } from "./import-claim-badge";
 import { isModelFree } from "@/shared/steps";
+import {
+  getDefaultTestCaseModelValue,
+  getRunnableCaseModels,
+} from "./single-test-case-runner";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -72,6 +78,11 @@ interface TestCaseListSidebarProps {
   hideRunInsightsRow?: boolean;
   /** Overrides nav row label below the header (playground uses e.g. "Runs"). */
   insightsNavLabel?: string;
+  /**
+   * Iteration override the Run control will send (quick-run state), forwarded to
+   * the credit estimate so it prices the run this button actually launches.
+   */
+  quickRunIterationOverride?: number;
 }
 
 export function TestCaseListSidebar({
@@ -105,6 +116,7 @@ export function TestCaseListSidebar({
   hideRunAction = false,
   hideRunInsightsRow = false,
   insightsNavLabel = RUN_INSIGHTS_SIDEBAR_LABEL,
+  quickRunIterationOverride,
 }: TestCaseListSidebarProps) {
   const selectedTestCase = useMemo(
     () => testCases.find((testCase) => testCase._id === selectedTestId) ?? null,
@@ -113,6 +125,9 @@ export function TestCaseListSidebar({
   // Effective list = legacy `environment.servers` merged with any host
   // attachments' `resolvedServerNames`. Without the merge, sidebar Run
   // buttons stay disabled on attachment-only suites.
+  // Environment suites route single-case runs to "Run all", so this control
+  // never spends for them — and an estimate beside a non-running control lies.
+  const isEnvironmentSuite = (suite?.environmentIds?.length ?? 0) > 0;
   const suiteServers = suite ? getEffectiveSuiteServers(suite) : [];
   const hasConfiguredSuiteServers = suiteServers.length > 0;
   const missingServers = suiteServers.filter(
@@ -121,6 +136,9 @@ export function TestCaseListSidebar({
   const selectedCaseIsProbe = selectedTestCase
     ? isModelFree(selectedTestCase.steps)
     : false;
+  // The models quick-run will REALLY execute. A case whose entries are all
+  // malformed has `models.length > 0` yet still toasts "Add a model first".
+  const runnableSelectedCaseModels = getRunnableCaseModels(selectedTestCase);
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
     !selectedCaseIsProbe &&
@@ -135,7 +153,7 @@ export function TestCaseListSidebar({
         onNavigateToOverview(suiteId);
         return;
       }
-      navigateApp(buildEvalsPath({ type: "suite-overview", suiteId }));
+      navigateApp(buildEvaluatePath({ type: "suite-overview", suiteId }));
     }
   };
 
@@ -224,6 +242,26 @@ export function TestCaseListSidebar({
                               : "Run selected case"}
               </TooltipContent>
             </Tooltip>
+          ) : null}
+          {!hideRunAction ? (
+            // Suppressed wherever the Run control won't actually run: an
+            // environment suite (quick-run routes to Run all), a case with no
+            // models, a render check, or no selection at all.
+            <QuickCaseRunCostEstimateHint
+              suiteId={suiteId}
+              caseId={selectedTestCase?._id ?? null}
+              models={runnableSelectedCaseModels}
+              {...(quickRunIterationOverride !== undefined
+                ? { runs: quickRunIterationOverride }
+                : {})}
+              suppressed={
+                !canRunSelectedCase ||
+                isEnvironmentSuite ||
+                runnableSelectedCaseModels.length === 0 ||
+                // Same index-0 default-model guard `handleRunTestCase` applies.
+                !getDefaultTestCaseModelValue(selectedTestCase)
+              }
+            />
           ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -372,7 +410,7 @@ export function TestCaseListSidebar({
                               onSelectTestCase(suiteId, testCase._id);
                               return;
                             }
-                            navigateApp(buildEvalsPath({
+                            navigateApp(buildEvaluatePath({
                               type: "test-edit",
                               suiteId: suiteId,
                               testId: testCase._id,
@@ -417,6 +455,7 @@ export function TestCaseListSidebar({
                             >
                               {line1}
                             </span>
+                            <ImportClaimBadge claim={testCase.import} />
                           </div>
                           {line2 ? (
                             <span

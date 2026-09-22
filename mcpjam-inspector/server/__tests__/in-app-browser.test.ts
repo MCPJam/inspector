@@ -100,6 +100,58 @@ describe("detectInAppBrowser", () => {
   it("returns null for undefined-like input", () => {
     expect(detectInAppBrowser("")).toBeNull();
   });
+
+  // Crawlers must bail BEFORE the in-app-browser loop: Twitterbot's UA
+  // contains "Twitter", which would otherwise match the Twitter in-app
+  // pattern and send the link-preview fetch to the interstitial page instead
+  // of the real document with its OG/Twitter tags.
+  it("returns null for Twitterbot (would otherwise match the Twitter pattern)", () => {
+    expect(detectInAppBrowser("Twitterbot/1.0")).toBeNull();
+  });
+
+  it("returns null for Discordbot", () => {
+    expect(
+      detectInAppBrowser(
+        "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for Slackbot-LinkExpanding", () => {
+    expect(
+      detectInAppBrowser(
+        "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for facebookexternalhit", () => {
+    expect(
+      detectInAppBrowser(
+        "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for Googlebot", () => {
+    expect(
+      detectInAppBrowser(
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+      )
+    ).toBeNull();
+  });
+
+  // BOT_OR_CRAWLER_PATTERN anchors "bot" at its end only (`bot\b`, not
+  // `\bbot\b`) — a fully word-bounded pattern would stop matching
+  // "Twitterbot"/"Discordbot"/"LinkedInBot" entirely, since none of them have
+  // a delimiter *before* "bot". This still has to reject a "bot" landing
+  // mid-word in an unrelated token, so a genuine in-app-browser human isn't
+  // misclassified as a crawler and denied the "open in your browser" page.
+  it("still detects a real in-app browser even when the UA has an unrelated mid-word 'bot' token", () => {
+    const ua =
+      "Mozilla/5.0 (Linux; Android 12; RobotVacuumApp) AppleWebKit/537.36 [FBAN/FBIOS;FBAV/430.0.0]";
+    expect(detectInAppBrowser(ua)).toBe("Facebook");
+  });
 });
 
 // ─── generateRedirectPage() ─────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "./mcp-tool-origin-metadata";
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   type McpLinkedResourceReader,
@@ -11,11 +12,25 @@ import {
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
 import { isAbortError } from "./abort-errors";
+import { isMrtrSuspendSignalShape } from "./mrtr-continuation";
+import { SCOPE_STEP_UP_SUSPEND_CODE } from "./scope-step-up";
 import { isClientFulfilledToolName } from "./client-fulfilled-tools";
-import { mergeMcpToolOriginMetadata } from "./mcp-tool-origin-metadata";
+import {
+  buildMcpToolErrorResultMessage,
+  buildMcpToolResultMessage,
+} from "./mcp-tool-result-message";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
+
+function isToolExecutionSuspendSignal(value: unknown): boolean {
+  return (
+    isMrtrSuspendSignalShape(value) ||
+    (!!value &&
+      typeof value === "object" &&
+      (value as { code?: unknown }).code === SCOPE_STEP_UP_SUSPEND_CODE)
+  );
+}
 
 /**
  * Flatten toolsets and attach serverId metadata to each tool
@@ -106,6 +121,28 @@ function isSkippableClientFulfilledToolCall(
     !!tool &&
     typeof tool === "object" &&
     typeof (tool as { execute?: unknown }).execute !== "function"
+  );
+}
+
+/** Approval responses still awaiting reconciliation by the approval handler. */
+export function hasUnresolvedApprovalResponses(
+  messages: ModelMessage[],
+): boolean {
+  const requests = new Map<string, string>();
+  const results = new Set<string>();
+  const responses = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === "tool-approval-request")
+        requests.set(part.approvalId, part.toolCallId);
+      if (part.type === "tool-approval-response")
+        responses.add(part.approvalId);
+      if (part.type === "tool-result") results.add(part.toolCallId);
+    }
+  }
+  return [...responses].some(
+    (id) => requests.has(id) && !results.has(requests.get(id)!),
   );
 }
 
@@ -341,7 +378,7 @@ export async function executeToolCallsFromMessages(
       const tool = index[toolName];
       const directTool = tools[toolName];
       const serverId = extractServerId(toolName);
-      const readResource = buildLinkedResourceReader(serverId);
+
       if (!tool) {
         if (
           isSkippableClientFulfilledToolCall(
@@ -377,6 +414,16 @@ export async function executeToolCallsFromMessages(
         ...(signal ? { abortSignal: signal } : {}),
       });
 
+      const connection = toolConnectionAttribution(
+        tool,
+        input,
+        content.toolCallId,
+      );
+      const selectedKey =
+        tool._connectionForCall?.(content.toolCallId)?.key ??
+        tool._connectionForInput?.(input)?.key;
+      const readResource = buildLinkedResourceReader(selectedKey ?? serverId);
+
       // If a tool ignored the signal (or returned `result` after the
       // signal fired) the result must NOT be serialized into a
       // tool-result — that would persist into conversation history
@@ -395,6 +442,8 @@ export async function executeToolCallsFromMessages(
       const toModelOutput = (
         tool as {
           toModelOutput?: (ctx: {
+            toolCallId: string;
+            input: unknown;
             output: unknown;
             abortSignal?: AbortSignal;
           }) => ToolResultPart | Promise<ToolResultPart>;
@@ -402,44 +451,46 @@ export async function executeToolCallsFromMessages(
       ).toModelOutput;
       if (typeof toModelOutput === "function") {
         const mappedOutput = await toModelOutput({
+          toolCallId: content.toolCallId,
+          input,
           output: result,
           ...(signal ? { abortSignal: signal } : {}),
         });
         throwIfAborted(signal);
-        const providerOptions = mergeMcpToolOriginMetadata(
-          undefined,
-          serverId
-        );
-        // MCP App tools scrub structuredContent from the model-facing copy
-        // (`mappedOutput`), but their widgets read structuredContent from
-        // the raw result. Preserve the raw result for UI hydration whenever
-        // it carries structuredContent — the model copy no longer does.
-        // Other toModelOutput tools (e.g. the eval `computer` tool) return
-        // no structuredContent, so they keep omitting `result:` and don't
-        // bloat subsequent per-step request bodies with large content.
-        const rawHasStructuredContent =
-          !!result &&
-          typeof result === "object" &&
-          "structuredContent" in (result as Record<string, unknown>);
-        const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
-        return {
-          role: "tool" as const,
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: content.toolCallId,
-              toolName: toolName,
-              output: mappedOutput,
-              // UI-only raw result for app-tool widgets (stripped from the
-              // model copy via `output`/toModelOutput above).
-              ...(rawHasStructuredContent || preserveRawResultForUi
-                ? { result }
-                : {}),
-              serverId,
-              ...(providerOptions ? { providerOptions } : {}),
-            },
-          ],
-        } as any;
+        // SDK-converted MCP tools intentionally return `undefined` from
+        // toModelOutput for ordinary text/JSON results: the mapper is an
+        // image-specialization hook, not a replacement for the normal
+        // serialization path. Falling through preserves the CallToolResult
+        // instead of emitting an output-less tool result (which becomes `{}`
+        // on the wire and can leave the resumed model turn with no answer).
+        if (mappedOutput !== undefined) {
+          // MCP App tools scrub structuredContent from the model-facing copy
+          // (`mappedOutput`), but their widgets read structuredContent from
+          // the raw result. Preserve the raw result for UI hydration whenever
+          // it carries structuredContent — the model copy no longer does.
+          // Other toModelOutput tools (e.g. the eval `computer` tool) return
+          // no structuredContent, so they keep omitting `result:` and don't
+          // bloat subsequent per-step request bodies with large content.
+          const rawHasStructuredContent =
+            !!result &&
+            typeof result === "object" &&
+            "structuredContent" in (result as Record<string, unknown>);
+          const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
+          return buildMcpToolResultMessage({
+            toolCallId: content.toolCallId,
+            toolName,
+            serverId,
+            connection,
+            output: mappedOutput,
+            rawResult: result,
+            // UI-only raw result for app-tool widgets (stripped from the model
+            // copy via `output`/toModelOutput above). Withheld unless the tool
+            // opts in — hence the explicit flag rather than "attach whatever
+            // was passed".
+            includeRawResult:
+              rawHasStructuredContent || preserveRawResultForUi,
+          }) as any;
+        }
       }
 
       let output: ToolResultPart;
@@ -510,35 +561,33 @@ export async function executeToolCallsFromMessages(
 
       throwIfAborted(signal);
 
-      return {
-        role: "tool" as const,
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: content.toolCallId,
-            toolName: toolName,
-            output: llmOutput,
-            // Preserve full result including _meta for UI hydration
-            result: result,
-            // Add serverId for OpenAI component resolution
-            serverId,
-            ...(serverId
-              ? {
-                  providerOptions: mergeMcpToolOriginMetadata(
-                    undefined,
-                    serverId
-                  ),
-                }
-              : {}),
-          },
-        ],
-      } as any;
+      // The shared builder, so the harness engine's evidence-projected
+      // transcript and this one cannot drift into grading the same tool result
+      // differently. `result` is preserved in full (including `_meta`) for UI
+      // hydration; `serverId` drives OpenAI component resolution.
+      return buildMcpToolResultMessage({
+        toolCallId: content.toolCallId,
+        toolName,
+        serverId,
+        connection,
+        output: llmOutput,
+        rawResult: result,
+        includeRawResult: true,
+      }) as any;
     } catch (error: any) {
       // Abort errors must propagate — they represent user/client
       // cancellation, NOT a tool failure. Capturing them as an
       // error-text result would persist a phantom "tool failed" into
       // conversation history.
       if (isAbortError(error)) {
+        throw error;
+      }
+      // Hosted MRTR (§12.5): a tool call that returned `input_required` was
+      // SUSPENDED to a durable continuation by the collector, which threw the
+      // suspend signal to unwind and return control to the worker. Like an
+      // abort, this must propagate — capturing it as an error-text result would
+      // both hide the pause AND poison history with a phantom tool failure.
+      if (isToolExecutionSuspendSignal(error)) {
         throw error;
       }
       // -32042: the server wants an out-of-band interaction first. Surface
@@ -558,33 +607,62 @@ export async function executeToolCallsFromMessages(
             ? error.message
             : String(error),
       } as any;
-      return {
-        role: "tool" as const,
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: content.toolCallId,
-            toolName: content.toolName,
-            output: errorOutput,
-          },
-        ],
-      } as any;
+      // No `result` and no `serverId` on this path: there is no server result
+      // to preserve, and attaching an origin to a call that never returned one
+      // would make a failure read as a reply.
+      return buildMcpToolErrorResultMessage({
+        toolCallId: content.toolCallId,
+        toolName: content.toolName,
+        output: errorOutput,
+      }) as any;
     }
   };
 
-  // An abort rejection from any call propagates (Promise.all rejects, nothing
-  // below runs, no results are inserted) — matching sequential abort
-  // semantics, where the throw prevented the final splice.
-  let outcomes: Array<ModelMessage | null>;
+  // An abort rejection from any call propagates (nothing below runs, no
+  // results are inserted) — matching sequential abort semantics, where the
+  // throw prevented the final splice.
+  //
+  // A hosted-MRTR SUSPEND signal is different: it means one tool call paused to
+  // a durable continuation while SIBLING calls in the same step already ran to
+  // completion. Their side effects happened, so their results MUST be spliced
+  // before the suspend propagates — otherwise the resume (which only re-drives
+  // the suspended call) would leave the siblings unresolved and the next turn
+  // would re-execute them, double-firing their side effects (exactly-once
+  // violation). We therefore collect completed results, splice them, and only
+  // THEN rethrow the suspend.
+  let outcomes: Array<ModelMessage | null> = [];
+  let suspendSignal: unknown;
   if (options.parallelToolExecution === false) {
-    outcomes = [];
     for (const pending of pendingToolCalls) {
-      outcomes.push(await executeSingleToolCall(pending.content));
+      try {
+        outcomes.push(await executeSingleToolCall(pending.content));
+      } catch (error) {
+        if (isToolExecutionSuspendSignal(error)) {
+          suspendSignal = error;
+          break;
+        }
+        throw error;
+      }
     }
   } else {
-    outcomes = await Promise.all(
+    const settled = await Promise.allSettled(
       pendingToolCalls.map((pending) => executeSingleToolCall(pending.content))
     );
+    // Preserve Promise.all abort semantics: a NON-suspend rejection (abort or
+    // an unexpected throw) fails the whole batch with nothing spliced.
+    for (const s of settled) {
+      if (s.status === "rejected" && !isToolExecutionSuspendSignal(s.reason)) {
+        throw s.reason;
+      }
+    }
+    for (const s of settled) {
+      if (s.status === "fulfilled") {
+        outcomes.push(s.value);
+      } else {
+        suspendSignal = suspendSignal ?? s.reason;
+        outcomes.push(null);
+      }
+    }
   }
 
   // Assemble in original call order so history is deterministic regardless
@@ -603,6 +681,12 @@ export async function executeToolCallsFromMessages(
   const sortedKeys = [...resultsByAssistantIdx.keys()].sort((a, b) => b - a);
   for (const idx of sortedKeys) {
     messages.splice(idx + 1, 0, ...resultsByAssistantIdx.get(idx)!);
+  }
+
+  // Completed sibling results are now spliced into `messages`; surface the
+  // durable-pause signal so the engine can suspend the turn.
+  if (suspendSignal) {
+    throw suspendSignal;
   }
 
   return allNewResults;

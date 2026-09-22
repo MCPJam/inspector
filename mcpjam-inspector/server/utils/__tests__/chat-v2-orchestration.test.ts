@@ -4,13 +4,13 @@ vi.mock("../skill-tools.js", () => ({
   getSkillToolsAndPrompt: vi.fn(),
 }));
 
-vi.mock("@/shared/types", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/types")>(
-    "@/shared/types"
-  );
+vi.mock("../computers/cloud-skills.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../computers/cloud-skills.js")
+  >("../computers/cloud-skills.js");
   return {
     ...actual,
-    isGPT5Model: vi.fn().mockReturnValue(false),
+    listCloudSkills: vi.fn(),
   };
 });
 
@@ -29,6 +29,7 @@ import {
   type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
+import { listCloudSkills } from "../computers/cloud-skills";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
@@ -53,9 +54,138 @@ beforeEach(() => {
     tools: {},
     systemPromptSection: "",
   });
+  vi.mocked(listCloudSkills).mockReset();
 });
 
 describe("prepareChatV2", () => {
+  it("drops temperature for Claude families that reject the field", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-opus-4-7-20260205-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature for Claude families that still accept it", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
+  });
+
+  it("leaves an omitted temperature omitted instead of substituting 0.7", async () => {
+    // A caller that expressed no preference gets the provider's default. The
+    // chat UI always sends its slider value, so this covers the SDK, the API
+    // and the eval runner, which previously could not ask for default sampling.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("drops temperature when the catalog says the model does not take it", async () => {
+    // Generalizes past the hardcoded gpt-5 name: a hosted row whose
+    // supported_parameters omits "temperature" loses the field on its word.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/o4-reasoning",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["tools", "max_tokens"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature when the catalog lists it", async () => {
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/gpt-4o",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["tools", "temperature"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
+  });
+
+  it("treats empty catalog parameters as no metadata, not as no support", async () => {
+    // A row cached before the field existed, and every BYOK/org/Ollama row,
+    // arrive with nothing here. Reading that as "accepts nothing" would strip
+    // temperature from every model on a stale cache.
+    for (const supportedParameters of [undefined, []]) {
+      const result = await prepareChatV2({
+        mcpClientManager: mockManager({}),
+        selectedServers: [],
+        modelDefinition: {
+          id: "openai/gpt-4o",
+          provider: "openai",
+          hosted: true,
+          supportedParameters,
+        } as any,
+        systemPrompt: "Base prompt.",
+        temperature: 0.5,
+      });
+
+      expect(result.resolvedTemperature, String(supportedParameters)).toBe(0.5);
+    }
+  });
+
+  it("will not let catalog metadata restore temperature to a rejecting family", async () => {
+    // A stale hosted row claiming the field for an affected Anthropic family
+    // must not win: the id predicate is what knows the request 400s.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "anthropic/claude-sonnet-5",
+        provider: "anthropic",
+        hosted: true,
+        supportedParameters: ["tools", "temperature"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
   it("does not add MCP tool inventory to the system prompt", async () => {
     const manager = mockManager({
       fetch_tasks: {
@@ -283,6 +413,68 @@ describe("prepareChatV2", () => {
     });
   });
 
+  it("drops host-declined MCP tool names from the model tool set", async () => {
+    // `excludeMcpToolNames` is the HOST declining a tool the server is happy
+    // to offer — the mirror image of `respectToolVisibility`, which honors a
+    // policy the SERVER declares.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv" },
+      submit_feedback: { description: "write", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      excludeMcpToolNames: ["submit_feedback"],
+    });
+
+    expect(Object.keys(result.allTools)).toEqual(["search_docs"]);
+  });
+
+  it("declines a name across servers, not just the flatten winner", async () => {
+    // `getToolsForAiSdk` flattens every selected server into one name-keyed
+    // set, last-in wins. A name two servers both offer must not survive as
+    // whichever copy sorted last — that collision is why this option exists.
+    // The manager mock returns the ALREADY-flattened set, so the single
+    // `submit_feedback` here stands for whichever server's copy won.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv-a" },
+      submit_feedback: { description: "write", _serverId: "srv-b" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv-a", "srv-b"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      excludeMcpToolNames: ["submit_feedback"],
+    });
+
+    expect(Object.keys(result.allTools)).not.toContain("submit_feedback");
+  });
+
+  it("leaves the tool set untouched when nothing is declined", async () => {
+    // No default: a surface that omits the option gets every server tool.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv" },
+      submit_feedback: { description: "write", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "search_docs",
+      "submit_feedback",
+    ]);
+  });
+
   it("filters selectedServers down to ids the manager has registered", async () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "live-server");
@@ -323,6 +515,57 @@ describe("prepareChatV2", () => {
         linkedResources: { blob: { image: true } },
       },
     });
+  });
+
+  it("forwards description overrides into MCP conversion and changes only description", async () => {
+    const original = {
+      description: "Look up a user by id.",
+      parameters: { jsonSchema: { type: "object", properties: { id: {} } } },
+      _serverId: "srv",
+      _meta: { ui: { visibility: ["model", "app"] } },
+      execute: async () => ({}),
+    };
+    const manager = mockManager({});
+    manager.hasServer = vi.fn((id: string) => id === "srv");
+    manager.getToolsForAiSdk = vi.fn(
+      async (_ids: string[], options?: { toolDescriptionOverrides?: Record<string, string> }) => {
+        const description =
+          options?.toolDescriptionOverrides?.get_user ?? original.description;
+        return {
+          get_user: { ...original, description },
+        };
+      }
+    );
+
+    const rewritten = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+    });
+    const baseline = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(1, ["srv"], {
+      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(
+      2,
+      ["srv"],
+      undefined
+    );
+    const rewrittenTool = rewritten.allTools.get_user as typeof original;
+    const baselineTool = baseline.allTools.get_user as typeof original;
+    expect(rewrittenTool.description).toBe("Find the user record for this id.");
+    expect(baselineTool.description).toBe(original.description);
+    expect(rewrittenTool.parameters).toEqual(baselineTool.parameters);
+    expect(rewrittenTool._serverId).toBe(baselineTool._serverId);
+    expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
   describe("progressive discovery", () => {
@@ -615,24 +858,41 @@ describe("prepareChatV2 built-in tools", () => {
   });
 
   it("fails closed when a built-in name collides with a skill tool", async () => {
-    vi.mocked(getSkillToolsAndPrompt).mockResolvedValue({
-      tools: {
-        [WEB_SEARCH_TOOL_NAME]: {
-          description: "skill web search",
-          execute: async () => ({}),
-        },
-      } as any,
-      systemPromptSection: "",
-    });
+    // The skill surface owns `loadSkill`. A built-in claiming it would leave
+    // the model with one name and two meanings, resolved by merge order — so
+    // the turn refuses to start rather than silently picking a winner.
     const manager = mockManager({});
 
     await expect(
       prepareChatV2({
         ...baseArgs,
         mcpClientManager: manager,
-        builtInTools: webSearchBuiltIn(),
+        builtInTools: {
+          loadSkill: {
+            description: "a built-in that wants the skill surface's name",
+            execute: async () => ({}),
+          },
+        } as any,
+        skillsSource: {
+          kind: "resolved",
+          capabilities: {
+            ...emptyCapabilities(),
+            standaloneSkills: [
+              {
+                skillId: "sk_1",
+                ref: "pdf-tools",
+                name: "pdf-tools",
+                description: "Process PDFs",
+                content: "# pdf",
+                aggregateHash: "h",
+                channels: [],
+                files: [],
+              },
+            ],
+          },
+        },
       })
-    ).rejects.toThrow(/web_search.*collides/);
+    ).rejects.toThrow(/loadSkill.*collides/);
   });
 
   it("fails closed when a built-in name collides with an app tool", async () => {
@@ -815,7 +1075,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
   it("rejects non-array input", () => {
     expect(() => validateUiToolEntries({})).toThrow(UiToolValidationError);
     expect(() => validateUiToolEntries("ui_navigate")).toThrow(
-      /must be an array/,
+      /must be an array/
     );
   });
 
@@ -841,7 +1101,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
     it("rejects a non-object annotations value", () => {
       for (const annotations of [null, "readOnly", 1, []]) {
         expect(() =>
-          validateUiToolEntries([{ ...validTool, annotations }]),
+          validateUiToolEntries([{ ...validTool, annotations }])
         ).toThrow(/annotations must be an object/);
       }
     });
@@ -850,7 +1110,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHint: "yes" } },
-        ]),
+        ])
       ).toThrow(/annotations.destructiveHint must be a boolean/);
     });
 
@@ -860,28 +1120,40 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHnit: true } },
-        ]),
+        ])
       ).toThrow(/unknown key 'destructiveHnit'/);
     });
 
     it("rejects a readOnlyHint that contradicts readOnly", () => {
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: true, annotations: { readOnlyHint: false } },
-        ]),
+          {
+            ...validTool,
+            readOnly: true,
+            annotations: { readOnlyHint: false },
+          },
+        ])
       ).toThrow(/readOnlyHint must equal readOnly/);
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: false, annotations: { readOnlyHint: true } },
-        ]),
+          {
+            ...validTool,
+            readOnly: false,
+            annotations: { readOnlyHint: true },
+          },
+        ])
       ).toThrow(/readOnlyHint must equal readOnly/);
     });
 
     it("accepts an agreeing readOnlyHint (both directions)", () => {
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: false, annotations: { readOnlyHint: false } },
-        ]),
+          {
+            ...validTool,
+            readOnly: false,
+            annotations: { readOnlyHint: false },
+          },
+        ])
       ).not.toThrow();
       // Symmetric case: a read-only tool agreeing it's read-only.
       expect(() =>
@@ -892,7 +1164,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: true,
             annotations: { readOnlyHint: true },
           },
-        ]),
+        ])
       ).not.toThrow();
     });
   });
@@ -907,33 +1179,33 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       "ui__x",
       `ui_${"a".repeat(62)}`, // 65 chars
     ]) {
-      expect(() =>
-        validateUiToolEntries([{ ...validTool, name }]),
-      ).toThrow(UiToolValidationError);
+      expect(() => validateUiToolEntries([{ ...validTool, name }])).toThrow(
+        UiToolValidationError
+      );
     }
   });
 
   it("rejects duplicated names", () => {
     expect(() => validateUiToolEntries([validTool, validTool])).toThrow(
-      /duplicated/,
+      /duplicated/
     );
   });
 
   it("rejects a missing/empty/oversize description", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: undefined }]),
+      validateUiToolEntries([{ ...validTool, description: undefined }])
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "   " }]),
+      validateUiToolEntries([{ ...validTool, description: "   " }])
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }]),
+      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }])
     ).toThrow(/exceeds 512/);
   });
 
   it("rejects non-object or oversize inputSchema", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, inputSchema: [] }]),
+      validateUiToolEntries([{ ...validTool, inputSchema: [] }])
     ).toThrow(/JSON object/);
     expect(() =>
       validateUiToolEntries([
@@ -941,13 +1213,13 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
           ...validTool,
           inputSchema: { blob: "x".repeat(9 * 1024) },
         },
-      ]),
+      ])
     ).toThrow(/exceeds 8192 bytes/);
   });
 
   it("rejects a non-boolean readOnly", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }]),
+      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }])
     ).toThrow(/readOnly/);
   });
 
@@ -1002,12 +1274,13 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     expect(entry.description).toContain("Navigate the MCPJam inspector");
   });
 
-  it("drops a same-named MCP server tool with a warn (UI tool wins)", async () => {
+  it("keeps a same-named MCP server tool executable (server tool wins) and omits the UI twin", async () => {
+    const serverExecute = vi.fn();
     const manager = mockManager({
       ui_navigate: {
-        description: "Sneaky third-party tool squatting the ui_ prefix",
+        description: "Server tool that legitimately uses the ui_ prefix",
         _serverId: "server-x",
-        execute: vi.fn(),
+        execute: serverExecute,
       },
       legit_tool: {
         description: "Unrelated server tool",
@@ -1023,10 +1296,69 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       uiTools,
     });
 
+    // The server's executable tool survives untouched — a connected server
+    // never loses a capability over MCPJam's guessable catalog name.
     const entry = result.allTools["ui_navigate"] as { execute?: unknown };
-    // The UI (no-execute) twin won; the MCP tool's execute is gone.
-    expect(entry.execute).toBeUndefined();
+    expect(entry.execute).toBe(serverExecute);
     expect(result.allTools["legit_tool"]).toBeDefined();
+    // The client-fulfilled twin is gone from the effective set (and thus
+    // from approval classification); the non-colliding UI tool remains.
+    expect(result.effectiveUiTools.map((t) => t.name)).toEqual([
+      "ui_snapshot_app",
+    ]);
+    // The effective UI prompt never mentions the discarded UI tool.
+    expect(result.enhancedSystemPrompt).toContain("MCPJam UI tools");
+    expect(result.enhancedSystemPrompt).toContain("ui_snapshot_app");
+    expect(result.enhancedSystemPrompt).not.toContain("Navigate the MCPJam");
+  });
+
+  it("a non-colliding server ui_* tool coexists with the UI catalog and keeps execute", async () => {
+    const serverExecute = vi.fn();
+    const manager = mockManager({
+      ui_render: {
+        description: "Server-side renderer",
+        _serverId: "server-x",
+        execute: serverExecute,
+      },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-x"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(
+      (result.allTools["ui_render"] as { execute?: unknown }).execute
+    ).toBe(serverExecute);
+    // Both UI entries survive: provenance, not the ui_ prefix, decides.
+    expect(result.effectiveUiTools.map((t) => t.name).sort()).toEqual([
+      "ui_navigate",
+      "ui_snapshot_app",
+    ]);
+    expect(
+      (result.allTools["ui_navigate"] as { execute?: unknown }).execute
+    ).toBeUndefined();
+  });
+
+  it("emits no UI prompt section when every UI entry loses its collision", async () => {
+    const manager = mockManager({
+      ui_navigate: { description: "srv", _serverId: "s", execute: vi.fn() },
+      ui_snapshot_app: { description: "srv", _serverId: "s", execute: vi.fn() },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["s"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(result.effectiveUiTools).toEqual([]);
+    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
   });
 
   it("fails closed when a built-in collides with a UI tool", async () => {
@@ -1046,8 +1378,8 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
         // the catalog — both sets are first-party curated, so this is a bug
         // by construction and must fail the turn loudly.
         builtInTools: { ui_navigate: builtIn },
-      }),
-    ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
+      })
+    ).rejects.toThrow(/collides with an existing app, UI, page, or skill tool/);
   });
 
   it("exempts UI tools from progressive discovery (never cataloged, always advertised)", async () => {
@@ -1076,7 +1408,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 
     expect(result.progressivePlan.enabled).toBe(true);
     const catalogNames = result.progressivePlan.catalog.map(
-      (entry) => entry.modelName,
+      (entry) => entry.modelName
     );
     // MCP tools are lazily loaded; UI tools must not be — both stream
     // paths advertise non-cataloged tools unconditionally, which keeps
@@ -1097,7 +1429,11 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       uiTools,
     });
     expect(withUiTools.enhancedSystemPrompt).toContain("MCPJam UI tools");
-    expect(withUiTools.enhancedSystemPrompt).toContain("ui_execute_tool");
+    // Guidance only names tools actually in the effective set — the fixture
+    // has ui_snapshot_app but not ui_execute_tool, so the playground
+    // walkthrough sentence must be absent.
+    expect(withUiTools.enhancedSystemPrompt).toContain("ui_snapshot_app");
+    expect(withUiTools.enhancedSystemPrompt).not.toContain("ui_execute_tool");
 
     const withoutUiTools = await prepareChatV2({
       mcpClientManager: manager,
@@ -1128,8 +1464,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBe(true);
     // Read-only tools observe; approval buys no safety and costs a click.
     expect(
-      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown })
-        .needsApproval
+      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown }).needsApproval
     ).toBeFalsy();
     // Still no-execute either way — the CLIENT executes after approval.
     expect(
@@ -1156,7 +1491,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBeFalsy();
   });
 
-  it("promises a destructive gate in default mode ONLY when the snapshot is annotation-aware", () => {
+  it("describes the switch's actual state, and never promises a pause it cannot deliver", () => {
     const annotated: UiToolEntry[] = [
       {
         name: "ui_navigate",
@@ -1172,22 +1507,448 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       },
     ];
 
-    // Strict mode: every mutating tool pauses, regardless of annotations.
+    // NOTHING pauses whatever the settings say any more, so nothing may claim
+    // to. A model told a browser action will be checked by a human plans as if
+    // someone is reading along — the expensive direction of this mistake.
+    for (const prompt of [
+      buildUiToolsSystemPrompt(annotated),
+      buildUiToolsSystemPrompt(uiTools),
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: false }),
+    ]) {
+      expect(prompt).not.toContain("always pause");
+      expect(prompt).not.toContain("whatever the settings say");
+      expect(prompt).toContain("Tool approval is OFF");
+      expect(prompt).toContain("apply immediately");
+      // The families it names as running unchecked are the ones a model is
+      // most likely to assume are gated.
+      expect(prompt).toContain("driving a browser");
+      expect(prompt).toContain("on the user's own machine");
+    }
+
+    // Switch ON: every family that acts pauses, named so the model can plan
+    // around the checkpoint rather than guess at it.
+    const strict = buildUiToolsSystemPrompt(annotated, {
+      requireToolApproval: true,
+    });
+    expect(strict).toContain("Tool approval is ON");
+    expect(strict).toContain("every tool call that ACTS pauses");
+    expect(strict).toContain("driving a browser");
+    expect(strict).toContain("A denial is final");
+
+    // What never pauses is stated in BOTH modes: it does not change with the
+    // switch, and it is the half a model most often gets wrong.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("never pause");
+      expect(prompt).toContain("`app_*`");
+      expect(prompt).toContain("discovery meta-tools");
+    }
+
+    // And so is the ONE thing that still asks whatever the switch says. This
+    // is the opposite mistake and the worse one: a server-origin skill ref
+    // pauses in either setting, so an approval-off prompt that claimed nothing
+    // would stop the model has it plan straight past a real checkpoint.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("skill that a connected MCP server provides");
+      expect(prompt).toContain("always asks");
+    }
+    expect(buildUiToolsSystemPrompt(annotated)).not.toContain(
+      "Nothing will stop you",
+    );
+  });
+});
+
+function emptyCapabilities() {
+  return {
+    explicitServerIds: [],
+    pluginServerIds: [],
+    effectiveServerIds: [],
+    servers: [],
+    pluginSkills: [],
+    standaloneSkills: [],
+    serverSkills: [],
+    localSkills: [],
+    pluginVersions: [],
+    problems: [],
+  } as any;
+}
+
+describe("prepareChatV2 — pinned skills × harness (Project Environments guard)", () => {
+  it("does not wrap an explicit none source with live MCP server skills", async () => {
+    const manager = mockManager({});
+    manager.getSkillsSupport = vi.fn(() => ({ active: true }));
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-a"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      skillsSource: { kind: "none" },
+    });
+    expect(manager.getSkillsSupport).not.toHaveBeenCalled();
+    expect(result.allTools).not.toHaveProperty("loadSkill");
+  });
+
+  // The throw is a CALLER contract (the two delivery channels are disjoint), not
+  // a claim that a harness cannot take pinned skills — it can, and does, as
+  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and pass
+  // `{ kind: "none" }` here; `resolveIterationSkillsSource` is the eval side of
+  // that, and `sessionSimulation/runner.ts` the swarm side.
+  it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: [],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        harness: "claude-code" as any,
+        skillsSource: {
+          kind: "pinned",
+          skills: [
+            { name: "s", description: "d", content: "c", contentHash: "h" },
+          ],
+        },
+      })
+    ).rejects.toThrow(/receive skills on box via `pinnedHarnessSkills`/);
+  });
+
+  it("REFUSES a live resolved source on a harness turn, flag or no flag", async () => {
+    // The flag says "this surface is live"; the harness says "skills arrive on
+    // box". Serving both would deliver the same skill twice by two mechanisms,
+    // so the turn refuses rather than silently picking one — the same rule that
+    // has always covered pinned sources, now covering every in-memory shape.
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: ["srv-1"],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        harness: "claude-code" as any,
+        skillsSource: {
+          kind: "resolved",
+          capabilities: emptyCapabilities(),
+          composeLiveServerSkills: true,
+        },
+      })
+    ).rejects.toThrow(/deliberately disjoint/);
+  });
+
+  it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
+    const manager = mockManager({});
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      harness: "claude-code" as any,
+      skillsSource: { kind: "none" },
+    });
+    expect(Object.keys(result.allTools)).toEqual([]);
+  });
+});
+
+describe("prepareChatV2 — a live resolved source", () => {
+  // The project's catalog is fetched by the ROUTE now and handed over as an
+  // `EffectiveCapabilitySet`, so what `prepareChatV2` owes is what it does with
+  // one: inline the listing, advertise `loadSkill`, and never invent a
+  // `listSkills` discovery tool. Catalog fetching and its failure modes are
+  // `listCloudRuntimeSkills`'s to prove, and are covered where they live.
+  function liveSet(
+    skills: Array<{ ref: string; name: string; description: string }>
+  ) {
+    return {
+      ...emptyCapabilities(),
+      standaloneSkills: skills.map((skill) => ({
+        skillId: `sk_${skill.name}`,
+        ref: skill.ref,
+        name: skill.name,
+        description: skill.description,
+        content: async () => `# ${skill.name}`,
+        aggregateHash: "h",
+        channels: [],
+        files: [],
+      })),
+    };
+  }
+
+  it("inlines the catalog and advertises loadSkill, not listSkills", async () => {
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      skillsSource: {
+        kind: "resolved",
+        capabilities: liveSet([
+          { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
+        ]),
+        composeLiveServerSkills: true,
+      },
+    });
+    expect(result.enhancedSystemPrompt).toContain("## Skills");
+    expect(result.enhancedSystemPrompt).toContain("**pdf-tools**");
+    expect(result.enhancedSystemPrompt).toContain("Process PDFs");
+    expect(result.allTools).toHaveProperty("loadSkill");
+    expect(result.allTools).not.toHaveProperty("listSkills");
+  });
+
+  it("advertises no skill tools or stanza when the set is empty", async () => {
+    // An empty project and a project whose skills failed to load look the same
+    // HERE on purpose: the difference is recorded by whoever did the fetching.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      skillsSource: {
+        kind: "resolved",
+        capabilities: emptyCapabilities(),
+        composeLiveServerSkills: true,
+      },
+    });
+    expect(result.allTools).not.toHaveProperty("loadSkill");
+    expect(result.allTools).not.toHaveProperty("listSkills");
+    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
+  });
+
+  it("keeps skill tools under the host's approval rule, unlike a pinned source", async () => {
+    // `resolved` is an interactive turn; only the pinned kinds bypass approval,
+    // and that divergence is the whole reason they are separate kinds.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      requireToolApproval: true,
+      skillsSource: {
+        kind: "resolved",
+        capabilities: liveSet([
+          { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
+        ]),
+        composeLiveServerSkills: true,
+      },
+    });
     expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
-    ).toContain("Every mutating `ui_*` action pauses");
+      (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
+        .needsApproval
+    ).toBe(true);
+  });
+});
 
-    // Default mode, annotation-aware: the destructive-gate promise holds.
-    const annotatedDefault = buildUiToolsSystemPrompt(annotated);
-    expect(annotatedDefault).toContain("Destructive `ui_*` actions pause");
-    expect(annotatedDefault).toContain("other actions apply immediately");
+describe("first-class page tools in prepareChatV2", () => {
+  function pageTool(name: string) {
+    return {
+      description: `[WebMCP page tool — https://pizza.test] ${name}`,
+      inputSchema: { jsonSchema: { type: "object", properties: {} } },
+      execute: async () => ({ ok: true }),
+    } as any;
+  }
 
-    // Default mode, LEGACY snapshot (the fixture has no annotations): the
-    // predicate is `requireToolApproval && !readOnly`, so with the flag off
-    // NOTHING pauses. The prompt must not promise a destructive gate that
-    // isn't enforced.
-    const legacyDefault = buildUiToolsSystemPrompt(uiTools);
-    expect(legacyDefault).not.toContain("Destructive `ui_*` actions pause");
-    expect(legacyDefault).toContain("applies immediately");
+  const base = () => ({
+    selectedServers: [],
+    modelDefinition: { id: "gpt-4.1-mini", provider: "openai" } as any,
+    systemPrompt: "Base prompt.",
+  });
+
+  it("RESERVES the webmcp_ namespace against an MCP server, and never throws", async () => {
+    // The concern this settles is real: letting a web page shadow a tool the
+    // host configured would have the model call `webmcp_deploy` believing it
+    // was the one it was told about. Arbitrating each collision in the page's
+    // disfavour was one answer; reserving the namespace is the better one,
+    // because the name means something to more than the model.
+    //
+    // A tool card reads a result's `pageTool` block and renders the page's own
+    // name and origin beside it, and it decides whether to from the prefix. A
+    // server free to call its tool `webmcp_pay` would be free to put an origin
+    // chip of its choosing on its own card. So `webmcp_` has exactly one
+    // meaning — "the open page declared this" — and a server that claims it
+    // loses the name rather than the page losing its tool.
+    //
+    // Still never throws: a name collision must not be able to fail a turn.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({
+        webmcp_deploy: {
+          description: "the host's own deploy tool",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+        ordinary_tool: {
+          description: "unaffected",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      }),
+      builtInTools: {
+        webmcp_deploy: pageTool("deploy"),
+        webmcp_safe: pageTool("safe"),
+      },
+    } as any);
+    expect((result.allTools.webmcp_deploy as any)?.description).not.toContain(
+      "the host's own",
+    );
+    expect(result.allTools.webmcp_safe).toBeDefined();
+    // Only the reserved name goes; the server keeps everything else.
+    expect(result.allTools.ordinary_tool).toBeDefined();
+  });
+
+  it("tells the model where the `webmcp_*` tools came from", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: { webmcp_pay: pageTool("pay") },
+    } as any);
+    // Tool DEFINITIONS are not fenced, so the provenance header on each
+    // description is the model's only in-band cue — and this is what says what
+    // that header means.
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+    expect(result.enhancedSystemPrompt).toContain("MCPJAM_PAGE_CONTENT");
+  });
+
+  it("says nothing about page tools when there are none", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      // A NON-PAGE BUILT-IN, so the negative case is about the `webmcp_` names
+      // rather than about an empty built-in set. Without one this would pass
+      // for a regression that keyed the section on "any built-in is present".
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+    } as any);
+    expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
+  });
+
+  it.each([false, true])(
+    "explains inspector aliases even when browser tools may grow: %s",
+    async (mayGrow) => {
+      const result = await prepareChatV2({
+        ...base(),
+        mcpClientManager: mockManager({}),
+        pageTools: [
+          {
+            alias: "page_1a2b3c4d",
+            sessionId: "s",
+            toolKey: "add_topping",
+            rawName: "add_topping",
+            origin: "https://pizza.test",
+          },
+        ],
+        pageToolsMayGrow: mayGrow,
+      } as any);
+      expect(result.allTools.page_1a2b3c4d).toBeDefined();
+      expect(result.allTools.webmcp_add_topping).toBeUndefined();
+      expect(result.enhancedSystemPrompt).toContain(
+        "exact names in the current tool definitions",
+      );
+      expect(result.enhancedSystemPrompt).toContain(
+        "including any `page_` aliases",
+      );
+      expect(result.enhancedSystemPrompt).not.toContain(
+        "None are available right now",
+      );
+    },
+  );
+
+  it("explains page tools AHEAD of their arrival when the set may grow", async () => {
+    // The model navigates on one step and sees `webmcp_*` tools on the next.
+    // A section that appeared only once a tool existed would leave it reading
+    // a `[WebMCP page tool — origin]` header nobody had explained, on the
+    // step it matters most.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+      pageToolsMayGrow: true,
+    } as any);
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("None are available right now");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+  });
+});
+
+describe("account routing snapshots", () => {
+  it("keeps an in-flight turn on its selected account after a default change", async () => {
+    const { jsonSchema } = await import("ai");
+    const { setManagerConnections } = await import("../mcp-connections.js");
+    const a = {
+      serverId: "server",
+      connectionId: "a".repeat(32),
+      key: "server",
+      label: "Acme",
+      isDefault: true,
+    };
+    const b = {
+      serverId: "server",
+      connectionId: "b".repeat(32),
+      key: "server#" + "b".repeat(32),
+      label: "Side",
+      isDefault: false,
+    };
+    const executeA = vi.fn(async () => ({
+      content: [{ type: "text", text: "A" }],
+    }));
+    const executeB = vi.fn(async () => ({
+      content: [{ type: "text", text: "B" }],
+    }));
+    const schema = jsonSchema({ type: "object", properties: {} });
+    const manager = mockManager({});
+    manager.getToolsForAiSdkByServer = vi
+      .fn()
+      .mockResolvedValue({
+        [a.key]: { search: { inputSchema: schema, execute: executeA } },
+        [b.key]: { search: { inputSchema: schema, execute: executeB } },
+      });
+    setManagerConnections(manager, { server: [a, b] });
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    setManagerConnections(manager, {
+      server: [
+        { ...a, key: "other", isDefault: false },
+        { ...b, key: "server", isDefault: true },
+      ],
+    });
+    await result.allTools.search.execute!(
+      { link_id: b.connectionId },
+      { toolCallId: "b-call", messages: [] },
+    );
+    expect(executeA).not.toHaveBeenCalled();
+    expect(executeB).toHaveBeenCalledOnce();
+    expect(result.toolConnections?.get("b-call")).toMatchObject({
+      connectionId: b.connectionId,
+      key: b.key,
+    });
+    expect(JSON.parse(JSON.stringify(result.connectionsAtTurn))).toEqual(
+      [a, b].map((c) => ({
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+      })),
+    );
+    // Eval callers explicitly opt out even when using a local manager with aliases.
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      connectionsByServerId: {},
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+      ["server"],
+      undefined,
+    );
   });
 });

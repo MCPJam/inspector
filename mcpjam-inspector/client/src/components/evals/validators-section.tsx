@@ -15,7 +15,13 @@ import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { OverrideBadge } from "./override-badge";
 
-const ORDER_OPTIONS: Array<{
+/**
+ * Exported so the settings draft can describe a change in the same words the
+ * control uses. A review dialog saying `strict → superset` next to a dropdown
+ * reading "Allow gaps (superset)" makes the reader translate; a second copy of
+ * these labels makes them drift.
+ */
+export const ORDER_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["toolCallOrder"], undefined>;
   label: string;
 }> = [
@@ -24,7 +30,7 @@ const ORDER_OPTIONS: Array<{
   { value: "ignore", label: "Any order" },
 ];
 
-const ARGS_OPTIONS: Array<{
+export const ARGS_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["argumentMatching"], undefined>;
   label: string;
 }> = [

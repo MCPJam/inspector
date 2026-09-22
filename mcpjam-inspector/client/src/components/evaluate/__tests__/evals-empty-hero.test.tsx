@@ -1,0 +1,125 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import {
+  EVALS_EMPTY_HERO_DENSE_THRESHOLD,
+  EvalsEmptyHero,
+} from "../evals-empty-hero";
+
+const defaultProps = {
+  onCreateSuite: vi.fn(),
+  onQuickstart: vi.fn(),
+  isQuickstartRunning: false,
+  showQuickstart: true,
+};
+
+describe("EvalsEmptyHero", () => {
+  it("renders the illustration-led empty state and wires Create suite", () => {
+    const onCreateSuite = vi.fn();
+    render(
+      <EvalsEmptyHero
+        {...defaultProps}
+        onCreateSuite={onCreateSuite}
+      />,
+    );
+
+    expect(screen.getByTestId("evals-empty-hero")).toBeTruthy();
+    expect(
+      screen.getByText("Automate the checks you'd run by hand"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "We generate cases from a server you already use, then keep running them in CI.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("What a suite looks like")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^create suite$/i }));
+    expect(onCreateSuite).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires Try sample suite when quickstart is available", () => {
+    const onQuickstart = vi.fn();
+    render(
+      <EvalsEmptyHero {...defaultProps} onQuickstart={onQuickstart} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^try sample suite$/i }));
+    expect(onQuickstart).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Try sample suite when quickstart is unavailable", () => {
+    render(<EvalsEmptyHero {...defaultProps} showQuickstart={false} />);
+
+    expect(
+      screen.queryByRole("button", { name: /^try sample suite$/i }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^create suite$/i }),
+    ).toBeTruthy();
+  });
+
+  it("starts Create suite from Eval my server with that server, not the blank form", () => {
+    const onEvalServer = vi.fn();
+    render(
+      <EvalsEmptyHero
+        {...defaultProps}
+        onEvalServer={onEvalServer}
+        servers={[
+          { id: "srv-1", name: "checkout-server" },
+          { id: "srv-2", name: "payments-server" },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Eval my server: checkout-server" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Eval my server: payments-server" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /^try sample suite$/i }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /^create suite$/i }),
+    ).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Eval my server: checkout-server" }),
+    );
+    expect(onEvalServer).toHaveBeenCalledTimes(1);
+    expect(onEvalServer).toHaveBeenCalledWith({
+      id: "srv-1",
+      name: "checkout-server",
+    });
+  });
+
+  it("shows a card for every server, however many there are", () => {
+    const servers = Array.from(
+      { length: EVALS_EMPTY_HERO_DENSE_THRESHOLD + 4 },
+      (_, i) => ({ id: `srv-${i}`, name: `server-${i}` }),
+    );
+    render(
+      <EvalsEmptyHero {...defaultProps} servers={servers} onEvalServer={vi.fn()} />,
+    );
+
+    for (const server of servers) {
+      expect(
+        screen.getByRole("button", { name: `Eval my server: ${server.name}` }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("holds the CTAs until project servers finish loading", () => {
+    render(
+      <EvalsEmptyHero {...defaultProps} servers={[]} serversLoading />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /^create suite$/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /^try sample suite$/i }),
+    ).toBeNull();
+  });
+});

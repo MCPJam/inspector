@@ -379,3 +379,45 @@ describe("bridgeHarnessRpcLogsToCollector", () => {
     expect(collector.hasLogs()).toBe(false);
   });
 });
+
+// INS-3: a trace frame for a plugin-contributed server must name the exact
+// revision that served it, so "which plugin version made this call" is
+// answerable from the trace alone.
+describe("HostedRpcLogCollector — plugin origin", () => {
+  const ORIGIN = {
+    pluginId: "pl_1",
+    pluginVersionId: "pv_1",
+    name: "linear",
+    bundleHash: "abc123",
+  };
+
+  it("stamps frames from a plugin server and leaves ordinary servers alone", () => {
+    const collector = createHostedRpcLogCollector({
+      serverIds: ["srv_host", "srv_plugin"],
+      serverNames: ["Host", "Plugin"],
+    });
+    collector.setPluginOriginByServerId({ srv_plugin: ORIGIN });
+
+    collector.rpcLogger({
+      direction: "send",
+      message: {},
+      serverId: "srv_plugin",
+    });
+    collector.rpcLogger({
+      direction: "send",
+      message: {},
+      serverId: "srv_host",
+    });
+
+    const [pluginFrame, hostFrame] = collector.getLogs();
+    expect(pluginFrame.pluginOrigin).toEqual(ORIGIN);
+    // Absence is semantic — an ordinary server carries no origin key at all.
+    expect("pluginOrigin" in hostFrame).toBe(false);
+  });
+
+  it("carries no origin at all when attribution never arrived", () => {
+    const collector = createHostedRpcLogCollector({ serverIds: ["srv"] });
+    collector.rpcLogger({ direction: "send", message: {}, serverId: "srv" });
+    expect("pluginOrigin" in collector.getLogs()[0]).toBe(false);
+  });
+});

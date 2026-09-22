@@ -103,9 +103,9 @@ describe("claimHarnessSessionState", () => {
       owner: {
         projectId: "p1",
         harnessId: "claude-code",
-        ownerType: "chatbox-chat",
+        ownerType: "scenario-chat",
         chatSessionId: "c1",
-        chatboxId: "cb_1",
+        scenarioId: "cb_1",
         executionScope: scope,
       },
       runtimeFingerprint: "fp",
@@ -115,7 +115,7 @@ describe("claimHarnessSessionState", () => {
       bearer: "tok",
     });
     expect(body.executionScope).toEqual(scope);
-    expect(body.chatboxId).toBe("cb_1");
+    expect(body.scenarioId).toBe("cb_1");
   });
 
   it("surfaces a 409 (turn in progress) as ok:false with status", async () => {

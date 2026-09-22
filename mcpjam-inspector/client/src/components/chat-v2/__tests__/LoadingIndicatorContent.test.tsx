@@ -6,7 +6,7 @@ import {
   usesMcpjamInlineStreamingFooter,
 } from "../shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
 
@@ -27,9 +27,9 @@ describe("LoadingIndicatorContent", () => {
     mockUseReducedMotion.mockReturnValue(true);
 
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
@@ -78,11 +78,11 @@ describe("LoadingIndicatorContent", () => {
     ).toHaveAttribute("hidden");
   });
 
-  it("renders the Claude mascot for Claude-style chatbox hosts", () => {
+  it("renders the Claude mascot for Claude-style scenario hosts", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
@@ -90,9 +90,9 @@ describe("LoadingIndicatorContent", () => {
 
   it("renders the CLI spinner (not the Claude mascot) for Claude Code hosts", () => {
     render(
-      <ChatboxHostStyleProvider value="claude-code">
+      <ScenarioHostStyleProvider value="claude-code">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(
@@ -103,17 +103,17 @@ describe("LoadingIndicatorContent", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the GPT pulse for ChatGPT-style chatbox hosts", () => {
+  it("renders the GPT pulse for ChatGPT-style scenario hosts", () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
   });
 
-  it("falls back to the model provider when no chatbox host context is set", () => {
+  it("falls back to the model provider when no scenario host context is set", () => {
     render(<LoadingIndicatorContent modelProvider="openai" />);
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
   });
@@ -128,11 +128,11 @@ describe("LoadingIndicatorContent", () => {
     expect(screen.getByText("Thinking")).toBeInTheDocument();
   });
 
-  it("renders the MCPJam dot indicator for MCPJam-style chatbox hosts", () => {
+  it("renders the MCPJam dot indicator for MCPJam-style scenario hosts", () => {
     render(
-      <ChatboxHostStyleProvider value="mcpjam">
+      <ScenarioHostStyleProvider value="mcpjam">
         <LoadingIndicatorContent />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     expect(screen.getByTestId("loading-indicator-mcpjam")).toBeInTheDocument();
@@ -141,11 +141,11 @@ describe("LoadingIndicatorContent", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("prefers the chatbox host context over the model provider", () => {
+  it("prefers the scenario host context over the model provider", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <LoadingIndicatorContent modelProvider="openai" />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
     expect(

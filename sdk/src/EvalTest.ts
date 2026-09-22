@@ -1,17 +1,317 @@
+import {
+  assertEvalCaptureWithinLimit,
+  DEFAULT_MAX_CAPTURED_BYTES,
+  EvalCaptureLimitError,
+} from "./eval-capture-limit.js";
+import { formatRunSummaryTable } from "./eval-summary.js";
+import {
+  evaluateCaseRun,
+  RunEvaluatorContextError,
+  unavailableCaseRunEvaluation,
+  runEvaluatorContextFromIterations,
+  type RunEvaluator,
+  type CaseRunEvaluation,
+} from "./run-evaluators.js";
+import { prepareReportingConfig } from "./eval-reporting-config.js";
+import {
+  captureReportedMeasurements,
+  evaluateReportedMeasurements,
+  reportedDefinitions,
+  type EvalExecutionContext,
+  type ReportedMeasurement,
+  type ReportedEvidence,
+} from "./eval-reported.js";
 import type { HostExecutor } from "./HostExecutor.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
+  EvalReportingReceipt,
   EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
+import type { Predicate, PredicateResult } from "./predicates/types.js";
+import { requiresRenderObservations } from "./predicates/types.js";
+import {
+  assertValidMatchOptions,
+  evaluateToolCalls,
+  resolveMatchOptions,
+  type EvalMatchOptions,
+  type EvalToolCallMatchResult,
+} from "./matchers.js";
+import { evaluatePredicates } from "./predicates/evaluate.js";
+import { buildIterationTranscript } from "./predicates/transcript.js";
+import {
+  buildEvaluationConfigSnapshot,
+  errorScoreResult,
+  notApplicableScoreResult,
+} from "./contract/derive.js";
+import {
+  fromLegacyTestOutcome,
+  fromToolMatchResult,
+  legacyTestScoreDefinition,
+  predicateScoreDefinition,
+  scoreResultFromPredicateResult,
+  toolMatchScoreDefinition,
+} from "./contract/adapters.js";
+import type {
+  EvaluationConfigSnapshot,
+  ResolvedScoreDefinition,
+  ScoreResult,
+  ScorerContextV1,
+} from "./contract/types.js";
+import {
+  CASE_ID_PREFIX,
+  mintCaseId,
+  opaqueIdSchema,
+} from "./contract/identity.js";
+import {
+  caseIntentSchema,
+  normalizeIntent,
+  type CaseIntent,
+} from "./contract/stage-intent.js";
+import type { IterationStatus } from "./contract/chain.js";
+import { scoresPassed } from "./scorers/run.js";
+import { runEvaluators } from "./evaluators/run.js";
+import type { AnyEvaluator, AssertionEvaluator } from "./evaluators/types.js";
+import { toEvaluatorResult } from "./contract/evaluator-derive.js";
+import type { EvaluatorResult } from "./contract/evaluator-types.js";
+import { definitionHash, resolveScoreDefinition } from "./contract/derive.js";
+import type { Scorer } from "./scorers/types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
-import { reportEvalResultsSafely } from "./report-eval-results.js";
-import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
+import {
+  captureEvalReporting,
+  notRequestedReceipt,
+} from "./eval-reporting-receipt.js";
+import {
+  actualToolCallsFromPrompts,
+  iterationsToEvalResultInputs,
+  iterationTraceFromPrompts,
+  traceMessagesFromPrompts,
+  variantFromExecutor,
+} from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import { canonicalizeCheckRole } from "./predicates/policy.js";
+
+function snapshotEvaluator<T extends AnyEvaluator>(evaluator: T): T {
+  return {
+    ...evaluator,
+    definition: structuredClone(evaluator.definition),
+    ...("evaluate" in evaluator
+      ? { evaluate: evaluator.evaluate.bind(evaluator) }
+      : { score: evaluator.score.bind(evaluator) }),
+    ...((evaluator as AssertionEvaluator).kind === "assertion"
+      ? { rule: structuredClone((evaluator as AssertionEvaluator).rule) }
+      : {}),
+  };
+}
+
+function snapshotTestConfig(config: EvalTestConfig): EvalTestConfig {
+  return {
+    ...config,
+    expectedToolCalls: structuredClone(config.expectedToolCalls),
+    matchOptions: structuredClone(config.matchOptions),
+    predicates: structuredClone(config.predicates),
+    reported: structuredClone(config.reported),
+    scorers: config.scorers?.map(snapshotEvaluator),
+    ...(config.evaluators && Array.isArray(config.evaluators.list)
+      ? {
+          evaluators: {
+            ...config.evaluators,
+            list: config.evaluators.list.map(snapshotEvaluator),
+          },
+        }
+      : {}),
+    runEvaluators: config.runEvaluators?.map((evaluator) => ({
+      ...evaluator,
+      evaluate: evaluator.evaluate.bind(evaluator),
+      definition: structuredClone(evaluator.definition),
+    })),
+  };
+}
+
+/**
+ * Reject predicates a local run can never satisfy.
+ *
+ * The widget predicates read `renderObservations`, which only the hosted
+ * headless-browser runner produces, and they fail CLOSED — so accepting one
+ * here would mean every iteration fails with "no render observations" and the
+ * author has no way to tell a real regression from an unsupported check.
+ * Failing at construction says exactly what is wrong, once.
+ */
+function assertLocallyEvaluablePredicates(
+  predicates: Predicate[] | undefined
+): void {
+  const unsupported = (predicates ?? [])
+    .map((predicate) => String(predicate?.type ?? ""))
+    .filter((type) => requiresRenderObservations(type));
+  if (unsupported.length === 0) return;
+  throw new Error(
+    `Predicate(s) ${[...new Set(unsupported)].join(", ")} need widget render ` +
+      `observations, which only a hosted run captures. Remove them from this ` +
+      `code-first test, or move the case to a hosted eval suite.`
+  );
+}
+
+/**
+ * An id to SUGGEST in the missing-`id` error.
+ *
+ * **A config that already carries `externalCaseId` is suggested THAT value**,
+ * not a fresh mint. `externalCaseId` is the hosted join key: the backend keys
+ * such a case as `external:<id>`, and the declared id is required to agree with
+ * it (a `caseId` that differs from `externalCaseId` is a hard error at ingest,
+ * because two identity claims on one result is not something to pick a winner
+ * between). So `id := externalCaseId` is THE migration rule for existing
+ * external-id users — it lands the declared id in the same join the case
+ * already lives under, and its hosted history continues. Suggesting a fresh
+ * mint here would walk people straight into that conflict error.
+ *
+ * Minting is still the suggestion when there is no `externalCaseId`, and
+ * minting can fail in a runtime with no CSPRNG — an error about a missing id
+ * must never be replaced by a secondary error about generating an example.
+ */
+function suggestedCaseId(config: EvalTestConfig): string {
+  // Already normalized by the constructor, so what is suggested is exactly
+  // what goes on the wire and exactly what the hosted key is derived from —
+  // there is no second spelling for the suggestion to disagree with.
+  const external = config.externalCaseId;
+  // Suggested only when it can BE an id at all: `externalCaseId` was never
+  // charset-bound, and suggesting a value the very next line rejects is worse
+  // than suggesting a fresh one.
+  if (external && opaqueIdSchema.safeParse(external).success) {
+    return external;
+  }
+  try {
+    return mintCaseId();
+  } catch {
+    return `${CASE_ID_PREFIX}<paste a unique id here>`;
+  }
+}
+
+/**
+ * The fix sentence for a config with no `id`. Three situations, three fixes —
+ * and getting this wrong is not cosmetic.
+ *
+ * A pre-6 config carrying an `externalCaseId` that CANNOT be an id used to be
+ * told "mint one and commit it", which is a complete instruction only until
+ * `assertSingleCaseIdentity` exists. Followed verbatim it produces a minted id
+ * beside an unchanged external id — a differing pair — so the very next run
+ * throws again, and the whole migration is only revealed one error at a time.
+ * An error that prescribes a change which cannot construct is worse than one
+ * that says nothing, so that case states BOTH halves at once.
+ */
+function missingCaseIdFix(
+  external: string | undefined,
+  suggestion: string
+): string {
+  if (external === undefined) {
+    return `Mint one once and commit it: id: "${suggestion}"`;
+  }
+  if (external === suggestion) {
+    return (
+      `This test already declares \`externalCaseId\`, which is the key its ` +
+      `hosted history is joined on, so reuse it verbatim: id: "${suggestion}"`
+    );
+  }
+  // `suggestedCaseId` only reuses an `externalCaseId` that can BE an id, so
+  // reaching here means it cannot — and `id := externalCaseId`, the migration
+  // every other external-id user gets, is simply unavailable.
+  return (
+    `Its \`externalCaseId\` (${JSON.stringify(
+      external
+    )}) cannot itself be an ` +
+    `id — ids are 1-128 characters of letters, digits, '-' and '_' — so no id ` +
+    `can agree with it, and a differing pair is refused here and at ingest. ` +
+    `Rename the external id to a conforming value and declare that same value ` +
+    `in BOTH fields: id: "${suggestion}", externalCaseId: "${suggestion}". An ` +
+    `external id that was never charset-valid has no hosted history for the ` +
+    `rename to strand.`
+  );
+}
+
+/**
+ * A case's identity must be DECLARED, and it must be usable in a URL, a file
+ * path and a CLI argument.
+ *
+ * Deliberately NOT derived from `name` when absent: deriving it would recreate
+ * exactly the bug the field exists to retire — rename the test, fork its
+ * history — while looking like it worked. Failing at construction says what is
+ * wrong once, at the line that is wrong, with the fix in the message.
+ */
+function assertDeclaredCaseId(config: EvalTestConfig): void {
+  const label = config.name ? `"${config.name}"` : "(unnamed)";
+  if (config.id === undefined || config.id === null || config.id === "") {
+    const suggestion = suggestedCaseId(config);
+    // `""` is absent here for the same reason it is in `assertSingleCaseIdentity`.
+    const external =
+      config.externalCaseId === "" ? undefined : config.externalCaseId;
+    throw new Error(
+      `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
+        `derived from its name — otherwise renaming the test forks its hosted ` +
+        `history. ` +
+        missingCaseIdFix(external, suggestion)
+    );
+  }
+  const parsed = opaqueIdSchema.safeParse(config.id);
+  if (!parsed.success) {
+    throw new Error(
+      `EvalTest ${label} has an invalid \`id\` (${JSON.stringify(
+        config.id
+      )}): ` +
+        `${parsed.error.issues.map((issue) => issue.message).join("; ")}. ` +
+        `Ids travel in URLs, file paths and CLI arguments.`
+    );
+  }
+}
+
+/**
+ * One case, one identity.
+ *
+ * `id` and `externalCaseId` are two claims about WHICH case this is, and from
+ * this step on both ride the wire. Picking a winner between them silently is
+ * how one case's history gets cross-joined onto another's, so a differing pair
+ * is a hard error — here at construction, and again in the backend's ingest
+ * preflight for callers that never build an `EvalTest`. Failing here is the
+ * kinder half of the same rule: it costs a stack trace instead of a rejected
+ * upload at the end of a run.
+ *
+ * The migration is always `id := externalCaseId`, because `externalCaseId` is
+ * the key the hosted case already lives under (`external:<id>`). The one case
+ * where that is impossible is an `externalCaseId` outside the opaque-id charset
+ * — never charset-bound, so values exist that no `id` can equal — and the
+ * message says so rather than suggesting a fix that the next line rejects.
+ */
+function assertSingleCaseIdentity(config: EvalTestConfig): void {
+  const external = config.externalCaseId;
+  // `""` is absent, not present-and-conflicting. The constructor's
+  // normalization above drops a whitespace-only value but leaves a literal
+  // empty string, and `getCaseKey` reads both as "no external id" — so does
+  // the backend's equality rule (`external.length > 0 && external !== declared`).
+  // Throwing here would refuse a config the wire accepts.
+  if (external === undefined || external === "" || config.id === external) {
+    return;
+  }
+  const label = config.name ? `"${config.name}"` : "(unnamed)";
+  const externalCanBeAnId = opaqueIdSchema.safeParse(external).success;
+  throw new Error(
+    `EvalTest ${label} declares two different identities: id ` +
+      `${JSON.stringify(config.id)} and externalCaseId ` +
+      `${JSON.stringify(external)}. ` +
+      (externalCanBeAnId
+        ? `The hosted case is keyed as external:${external}, so the migration ` +
+          `is id: ${JSON.stringify(external)} — the declared id lands in the ` +
+          `join the case already lives under and its history continues.`
+        : `externalCaseId ${JSON.stringify(external)} cannot itself be an id ` +
+          `(1-128 characters of letters, digits, '-' and '_'), so no id can ` +
+          `agree with it. Rename the external id to a conforming value and ` +
+          `declare that same value as \`id\`: an external id that was never ` +
+          `charset-valid has no hosted history for the rename to strand.`) +
+      ` A differing pair is rejected at ingest too, so shipping it would fail ` +
+      `the upload rather than pick a winner.`
+  );
+}
 
 /**
  * Configuration for an EvalTest
@@ -20,10 +320,113 @@ import { buildHostSnapshotMetadata } from "./host-config/internal.js";
  * `HostExecutor` (implemented by `HostRunner`, `HostRuntime`, and any custom
  * executor that mirrors the interface).
  */
+export type EvaluatorOverride = {
+  mode: "inherit" | "extend" | "replace";
+  list: AnyEvaluator[];
+};
+
 export interface EvalTestConfig {
+  /**
+   * This case's DECLARED identity. Required.
+   *
+   * Identity is declared, never derived. It used to be the `name`, which meant
+   * renaming a test forked its hosted history — the bug this field retires.
+   * Mint one ONCE with `mintCaseId()` from `@mcpjam/sdk/contract` and commit
+   * the literal beside the test; an id regenerated on every run is not an
+   * identity. Any URL-safe string of 1..128 characters is accepted (see
+   * `opaqueIdSchema`) — our `c_` prefix is a grep convenience, not a rule.
+   *
+   * Distinct from {@link EvalTestConfig.externalCaseId}, which is the hosted
+   * JOIN key that predates the charset rule. Both ride the upload now, as
+   * `caseId` and `externalCaseId`, and they must AGREE when both are set — a
+   * differing pair throws at construction and is refused at ingest. The
+   * migration for an existing `externalCaseId` user is `id := externalCaseId`.
+   */
+  id: string;
   name: string;
-  test: (executor: HostExecutor) => boolean | Promise<boolean>;
+  test?: (
+    executor: HostExecutor,
+    ctx: EvalExecutionContext
+  ) => boolean | Promise<boolean>;
+  execute?: (
+    executor: HostExecutor,
+    ctx: EvalExecutionContext
+  ) => void | Promise<void>;
+  reported?: ReportedMeasurement[];
+  runEvaluators?: RunEvaluator[];
+  evaluators?: EvaluatorOverride;
   expectedToolCalls?: EvalExpectedToolCall[];
+  /** Matcher policy for locally enforcing expectedToolCalls. */
+  matchOptions?: EvalMatchOptions;
+  /** Deterministic transcript predicates that gate each iteration. */
+  predicates?: Predicate[];
+  /**
+   * Additional scorers run against each iteration.
+   *
+   * `test()`, `expectedToolCalls` and `predicates` are themselves projected
+   * into scores — scoring is the ONE verdict path, not a fifth system beside
+   * them — so these compose with the built-ins rather than replacing them.
+   */
+  scorers?: Scorer[];
+  /**
+   * Stable identity for a case that also exists somewhere else — today, a
+   * hosted eval case materialized by `loadCorpus`.
+   *
+   * The backend derives `caseKey = "external:" + id` when this is present
+   * (`convex/sdkEvals.ts`), which is what joins a local run to the hosted
+   * case's history on the run page. Identity rides HERE, never on `name`:
+   * display names collide and get renamed.
+   *
+   * Kept alongside the required {@link EvalTestConfig.id}: this one is the
+   * `external:` join key a deployed backend depends on, while `id` is the
+   * declared identity the contract requires. Both are uploaded, so a config
+   * that sets both must set them to the SAME value — see
+   * {@link EvalTestConfig.id}. Retiring this field is a later step; it has
+   * live wire semantics until one is written to converge them.
+   *
+   * **NORMALIZED at construction**: surrounding whitespace is trimmed, and a
+   * whitespace-only value is dropped as though it were absent. The value you
+   * read back from `getConfig()` and the value uploaded are therefore the
+   * trimmed one. This is not a wire change so much as the removal of a second
+   * spelling: the hosted key has always been derived from
+   * `externalCaseId.trim()`, so the trimmed form was already the identity —
+   * it just used to travel beside a padded copy of itself, which also showed
+   * up in the `[id]` suffix `@mcpjam/vitest` appends to a test name. An
+   * unpadded value, which is every value anybody actually writes, is
+   * byte-identical to before.
+   */
+  externalCaseId?: string;
+  /**
+   * Optional analytics grouping label for this case. It is forwarded with
+   * every result but never participates in scoring or the verdict.
+   */
+  intent?: CaseIntent;
+  /**
+   * Hosted "negative case" semantics: the test passes iff NO tool was called.
+   *
+   * Not a per-tool `toolNeverCalled` translation — the matcher already
+   * implements exactly this (`evaluateToolCalls(..., {isNegativeTest: true})`),
+   * and re-expressing it as predicates would be a second implementation of a
+   * rule that already exists.
+   *
+   * Three consequences, all deliberate: the empty-`expectedToolCalls` guard
+   * FLIPS (a negative case with no expectations still asserts "no tools
+   * fired", so tool-match becomes applicable and gating); `isNegativeTest`
+   * joins the tool-match definition's `implementationHash` (a negative and a
+   * positive tool-match are different scorers and must digest differently);
+   * and `ScorerContextV1.scenario.isNegativeTest` is populated so custom and
+   * judge scorers can see it.
+   */
+  isNegativeTest?: boolean;
+  /**
+   * Reference output for judge scorers (`ScorerContextV1.expectedOutput`).
+   *
+   * Threaded rather than dropped because `judge-scorer.ts` consumes it: a
+   * hosted case with an expected output judged locally without one is a
+   * different evaluation, and hosted↔local judge parity is the point of
+   * materializing the case at all.
+   */
+  expectedOutput?: string;
 }
 
 /**
@@ -31,6 +434,7 @@ export interface EvalTestConfig {
  */
 export interface EvalTestRunOptions {
   iterations: number;
+  summary?: "none" | "table";
   concurrency?: number; // default: 5
   retries?: number; // default: 0
   timeoutMs?: number; // default: 30000
@@ -38,6 +442,18 @@ export interface EvalTestRunOptions {
   /** Called with a failure report if any iterations fail */
   onFailure?: (report: string) => void;
   mcpjam?: MCPJamReportingConfig;
+  /** Max scorers in flight per iteration. Default 4. */
+  scorerConcurrency?: number;
+  /** Fallback per-scorer hard timeout. Default 60000. */
+  scorerTimeoutMs?: number;
+  evaluatorConcurrency?: number;
+  evaluatorTimeoutMs?: number;
+  /** Cooperative cancellation also bounds SDK queues and evaluator waits. */
+  signal?: AbortSignal;
+  /** Deadline for execution and evaluation across the whole run. */
+  runTimeoutMs?: number;
+  /** Maximum retained evidence bytes per iteration; default 16 MiB. Does not cap executor/custom-code allocation. */
+  maxCapturedBytes?: number;
   /** @internal used by EvalSuite to prevent duplicate per-test uploads */
   __suppressMcpjamAutoSave?: boolean;
 }
@@ -47,6 +463,20 @@ export interface EvalTestRunOptions {
  */
 export interface IterationResult {
   passed: boolean;
+  /**
+   * What happened to this iteration's EXECUTION, independent of `passed`.
+   *
+   * Always set on a terminal iteration: `completed` once the iteration ran and
+   * was graded (including when it graded FAILED — that is the server's verdict,
+   * not an execution failure), `timed_out` when the iteration budget expired,
+   * and `failed` when it threw and retries were exhausted.
+   *
+   * Optional only because `IterationResult` is also constructed by callers
+   * outside this file; consumers that need a status use
+   * `resolveIterationLifecycleStatus`, which keeps the legacy inference in one
+   * named place instead of re-deriving a status from a verdict.
+   */
+  status?: IterationStatus;
   latencies: LatencyBreakdown[];
   tokens: { total: number; input: number; output: number };
   error?: string;
@@ -64,12 +494,43 @@ export interface IterationResult {
    * require threading the snapshot into `PromptResult`.)
    */
   hostSnapshot?: import("./host-config/public-types.js").HostJson;
+  /**
+   * Deterministic predicate verdicts, in authored order.
+   *
+   * @deprecated as the verdict source — `passed` is now derived from
+   * {@link scores}. Still populated (from the same single evaluation that feeds
+   * the scores, so the two cannot disagree) and still on the wire at
+   * `metadata.predicates` for existing readers.
+   */
+  predicateResults?: PredicateResult[];
+  /**
+   * Local expected/actual tool-call verdict, when expectations were configured.
+   *
+   * @deprecated as the verdict source — see {@link predicateResults}.
+   */
+  toolMatch?: EvalToolCallMatchResult;
+  /**
+   * Every scorer's verdict for this iteration, in the contract's one shape.
+   * THE verdict source: `passed` is derived from the gating rows here.
+   */
+  scores?: ScoreResult[];
+  evaluatorResults?: EvaluatorResult[];
+  reportedEvidence?: readonly ReportedEvidence[];
+  captureError?: {
+    code: "SDK_CAPTURE_LIMIT_EXCEEDED";
+    maxCapturedBytes: number;
+  };
 }
 
 /**
  * Result of running an EvalTest
  */
 export interface EvalRunResult {
+  /** Partial means at least one iteration exceeded the SDK capture limit; aggregate usage is incomplete. */
+  captureCompleteness?: "partial";
+  runEvaluation?: CaseRunEvaluation;
+  /** Observer failures never rewrite measured iteration outcomes. */
+  observerErrors?: { callback: "onProgress" | "onFailure"; message: string }[];
   iterations: number;
   successes: number;
   failures: number;
@@ -87,35 +548,14 @@ export interface EvalRunResult {
     mcp: LatencyStats;
     perIteration: LatencyBreakdown[];
   };
-}
-
-/**
- * Semaphore for controlling concurrency
- */
-class Semaphore {
-  private permits: number;
-  private waiting: (() => void)[] = [];
-
-  constructor(permits: number) {
-    this.permits = permits;
-  }
-
-  async acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return;
-    }
-    await new Promise<void>((resolve) => this.waiting.push(resolve));
-  }
-
-  release(): void {
-    const next = this.waiting.shift();
-    if (next) {
-      next();
-    } else {
-      this.permits++;
-    }
-  }
+  /**
+   * The scorer definitions this run graded with, plus their hash.
+   *
+   * Carried locally (not only on the wire) so `evaluateGates` can join results
+   * to their definitions — role and error policies live here, and results alone
+   * cannot tell a gating failure from an advisory one.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot;
 }
 
 const ITERATION_ABORT_GRACE_MS = 1000;
@@ -123,9 +563,6 @@ const ITERATION_ABORT_GRACE_MS = 1000;
 /**
  * Sleep for a given number of milliseconds
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function mergeAbortSignals(
   first?: AbortSignal,
@@ -224,6 +661,7 @@ function wrapAgentWithAbortSignal(
  * @example
  * ```ts
  * const test = new EvalTest({
+ *   id: "c_addition",
  *   name: "addition",
  *   test: async (executor) => {
  *     const result = await executor.run("Add 2+3");
@@ -236,13 +674,177 @@ function wrapAgentWithAbortSignal(
  */
 export class EvalTest {
   private config: EvalTestConfig;
-  private lastRunResult: EvalRunResult | null = null;
+  private lastReportingReceipt: EvalReportingReceipt =
+    notRequestedReceipt("disabled");
 
-  constructor(config: EvalTestConfig) {
-    if (!config.test) {
-      throw new Error("Invalid config: must provide 'test' function");
+  getLastReport() {
+    return structuredClone(this.lastReportingReceipt.report ?? null);
+  }
+
+  getReportingReceipt(): EvalReportingReceipt {
+    return structuredClone(this.lastReportingReceipt);
+  }
+
+  private lastRunResult: EvalRunResult | null = null;
+  private lastEvaluationConfig: EvaluationConfigSnapshot | null = null;
+
+  private effectiveAssertions: {
+    rule: Predicate;
+    definition: ReturnType<typeof predicateScoreDefinition>;
+  }[] = [];
+  private effectiveEvaluators: AnyEvaluator[] = [];
+  private running = false;
+  private defaultEvaluators: readonly AnyEvaluator[] = [];
+
+  constructor(
+    config: EvalTestConfig,
+    defaults?: { evaluators?: readonly AnyEvaluator[] }
+  ) {
+    if (config.test !== undefined && config.execute !== undefined) {
+      throw new Error(
+        `EvalTest "${config.name}" sets both \`execute\` and its legacy \`test\` alias — set one. They are two spellings of the case's driver; \`execute\` may return nothing and lets the evaluators decide.`
+      );
     }
-    this.config = config;
+    if (
+      typeof config.test !== "function" &&
+      typeof config.execute !== "function"
+    ) {
+      throw new Error(
+        "Invalid config: must provide 'execute' (or the legacy 'test') function"
+      );
+    }
+    // Normalize `externalCaseId` ONCE, here, so exactly one value is in play
+    // for the rest of this object's life. The hosted key is derived from the
+    // trimmed value (`external:` + `externalCaseId.trim()`), so a padded
+    // config carried two spellings of one identity: the padded one on the
+    // wire and in the `[id]` grep suffix, the trimmed one as the actual join
+    // key. Whitespace-only is dropped rather than kept, matching the backend,
+    // which treats an empty trimmed value as no external id at all.
+    if (config.externalCaseId !== undefined) {
+      const trimmed = config.externalCaseId.trim();
+      if (trimmed !== config.externalCaseId) {
+        const rest = { ...config };
+        if (trimmed) {
+          rest.externalCaseId = trimmed;
+        } else {
+          delete rest.externalCaseId;
+        }
+        config = rest;
+      }
+    }
+    // Intent is authored metadata, normalized once at the authoring boundary
+    // just like the hosted external id above. Absence stays absent locally;
+    // the reporting identity sends an explicit null so the wire can preserve
+    // the unlabelled slice.
+    if (config.intent !== undefined) {
+      const intent = normalizeIntent(config.intent);
+      const rest = { ...config };
+      if (intent === undefined) {
+        delete rest.intent;
+      } else {
+        rest.intent = caseIntentSchema.parse(intent);
+      }
+      config = rest;
+    }
+    assertDeclaredCaseId(config);
+    // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
+    // no `id` gets the missing-id error that already names `id := externalCaseId`
+    // as the fix, rather than a conflict error about a field it never set.
+    assertSingleCaseIdentity(config);
+    assertValidMatchOptions(config.matchOptions ?? {});
+    assertLocallyEvaluablePredicates(config.predicates);
+    // A negative case asserts "no tool was called", so `evaluateToolCalls`
+    // returns before it ever reads `expected`. Declaring expectations here is
+    // therefore a config that grades NOTHING — caught at construction rather
+    // than left to look like it is being enforced.
+    if (config.isNegativeTest && (config.expectedToolCalls?.length ?? 0) > 0) {
+      throw new Error(
+        `Test "${config.name}" is a negative test (passes only when NO tool ` +
+          `is called) but also declares expectedToolCalls, which the matcher ` +
+          `never reads. Drop one of the two.`
+      );
+    }
+    if (
+      config.runEvaluators?.some(
+        (evaluator) => evaluator.definition.role !== "advisory"
+      )
+    )
+      throw new Error("Run evaluators must be advisory");
+    this.config = snapshotTestConfig(config);
+    this.setDefaultEvaluators(defaults?.evaluators ?? []);
+  }
+
+  /** A fresh case instance with the same authoring and inherited defaults, but no run state. */
+  clone(): EvalTest {
+    return new EvalTest(
+      { ...this.config },
+      { evaluators: this.defaultEvaluators }
+    );
+  }
+
+  /** Apply suite defaults without rewriting the authored case configuration. */
+  setDefaultEvaluators(defaults: readonly AnyEvaluator[]): void {
+    if (this.running)
+      throw new Error("Cannot change evaluator defaults during a run");
+    defaults = defaults.map(snapshotEvaluator);
+    this.defaultEvaluators = defaults;
+    const override = this.config.evaluators;
+    if (
+      override &&
+      (Array.isArray(override) ||
+        !["inherit", "extend", "replace"].includes(override.mode) ||
+        !Array.isArray(override.list))
+    ) {
+      throw new Error(
+        "evaluators must be { mode: inherit | extend | replace, list }"
+      );
+    }
+    const inherited = override?.mode === "replace" ? [] : defaults;
+    const own = override && override.mode !== "inherit" ? override.list : [];
+    const isAssertion = (value: AnyEvaluator): value is AssertionEvaluator =>
+      (value as AssertionEvaluator).kind === "assertion";
+    const assertions = [
+      ...inherited
+        .filter(isAssertion)
+        .map((value) => ({ rule: value.rule as Predicate, id: value.id })),
+      // `config.predicates` is raw author input — unlike an `assertion()`
+      // rule, which canonicalized at construction — and it is uploaded
+      // verbatim as `effectiveAssertions[].rule` on every iteration. So the
+      // storage spelling settles here, before anything reads or ships it.
+      ...(this.config.predicates ?? []).map((rule) => ({
+        rule: canonicalizeCheckRole(rule),
+        id: undefined,
+      })),
+      ...own
+        .filter(isAssertion)
+        .map((value) => ({ rule: value.rule as Predicate, id: value.id })),
+    ];
+    assertLocallyEvaluablePredicates(assertions.map((value) => value.rule));
+    this.effectiveAssertions = assertions.map((value, ordinal) => ({
+      rule: value.rule,
+      definition: predicateScoreDefinition(value.rule, {
+        ordinal,
+        ...(value.id ? { id: value.id } : {}),
+      }),
+    }));
+    this.effectiveEvaluators = [
+      ...(this.config.scorers ?? []),
+      ...inherited.filter((value) => !isAssertion(value)),
+      ...own.filter((value) => !isAssertion(value)),
+    ];
+    // Identity conflicts are rejected before executing user code.
+    this.buildEvaluationConfig();
+    const seen = new Set<string>();
+    this.effectiveAssertions = this.effectiveAssertions.filter((value) => {
+      if (seen.has(value.definition.scorerId)) return false;
+      seen.add(value.definition.scorerId);
+      return true;
+    });
+    this.effectiveEvaluators = this.effectiveEvaluators.filter((value) => {
+      if (seen.has(value.definition.scorerId)) return false;
+      seen.add(value.definition.scorerId);
+      return true;
+    });
   }
 
   /**
@@ -252,136 +854,508 @@ export class EvalTest {
     executor: HostExecutor,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
-    // Internal alias kept short so the iteration loop reads cleanly; the
-    // public-facing parameter name is `executor`.
-    const agent = executor;
-    posthog.capture({
-      distinctId: "anonymous",
-      event: "eval_test_run_triggered",
-      properties: {
-        iterations: options.iterations,
-        concurrency: options.concurrency ?? 5,
-      },
-    });
-    const concurrency = options.concurrency ?? 5;
-    const retries = options.retries ?? 0;
-    const timeoutMs = options.timeoutMs ?? 30000;
-    const onProgress = options.onProgress;
-
-    const semaphore = new Semaphore(concurrency);
-    let completedCount = 0;
-
-    const testFn = this.config.test;
-    const iterationResults: IterationResult[] = [];
-    const total = options.iterations;
-
-    const runSingleIteration = async (): Promise<IterationResult> => {
-      await semaphore.acquire();
-      try {
-        let lastError: string | undefined;
-        let iterationAgent: HostExecutor | undefined;
-
-        for (let attempt = 0; attempt <= retries; attempt++) {
-          const abortController = new AbortController();
-          const timeoutError = new Error(
-            `Operation timed out after ${timeoutMs}ms`
+    if (this.running)
+      throw new Error("This EvalTest already has a run in progress");
+    const integer = (name: string, value: number, min = 1) => {
+      if (!Number.isSafeInteger(value) || value < min)
+        throw new Error(`${name} must be a safe integer >= ${min}`);
+    };
+    integer("iterations", options.iterations);
+    integer("concurrency", options.concurrency ?? 5);
+    integer("retries", options.retries ?? 0, 0);
+    integer("timeoutMs", options.timeoutMs ?? 30000);
+    integer(
+      "maxCapturedBytes",
+      options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+    );
+    for (const [canonical, legacy] of [
+      ["evaluatorConcurrency", "scorerConcurrency"],
+      ["evaluatorTimeoutMs", "scorerTimeoutMs"],
+    ] as const) {
+      if (options[canonical] !== undefined && options[legacy] !== undefined)
+        throw new Error(
+          `Set ${canonical} or its legacy alias ${legacy}, not both.`
+        );
+      const value = options[canonical] ?? options[legacy];
+      if (value !== undefined) integer(canonical, value);
+    }
+    if (options.runTimeoutMs !== undefined)
+      integer("runTimeoutMs", options.runTimeoutMs);
+    for (const evaluator of this.effectiveEvaluators) {
+      if (evaluator.timeoutMs !== undefined)
+        integer("evaluator timeoutMs", evaluator.timeoutMs);
+    }
+    this.running = true;
+    try {
+      if (
+        !options.__suppressMcpjamAutoSave &&
+        options.mcpjam?.enabled !== false
+      ) {
+        if (
+          options.mcpjam?.expectedIterations !== undefined &&
+          options.mcpjam.expectedIterations !== options.iterations
+        ) {
+          throw new Error(
+            "Reporting expectedIterations must match the planned iteration count"
           );
-          let timeoutTriggered = false;
-          let timeoutId: ReturnType<typeof setTimeout> | undefined;
-          let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
-
-          try {
-            // Create a fresh agent clone for this iteration to avoid race conditions
-            // when multiple iterations run concurrently
-            iterationAgent = wrapAgentWithAbortSignal(
-              agent.withOptions({}),
-              abortController.signal
+        }
+        options = {
+          ...options,
+          mcpjam: await prepareReportingConfig({
+            ...options.mcpjam,
+            apiKey: options.mcpjam?.apiKey ?? process.env.MCPJAM_API_KEY ?? "",
+          }),
+        };
+      }
+      this.lastReportingReceipt = notRequestedReceipt("disabled");
+      const controller = new AbortController();
+      const cancel = () =>
+        controller.abort(
+          externalSignal?.reason ?? new Error("Eval run cancelled")
+        );
+      const externalSignal = options.signal;
+      if (externalSignal?.aborted) cancel();
+      else externalSignal?.addEventListener("abort", cancel, { once: true });
+      const deadline =
+        options.runTimeoutMs === undefined
+          ? undefined
+          : setTimeout(
+              () => controller.abort(new Error("Eval run deadline exceeded")),
+              options.runTimeoutMs
             );
-            const hardTimeoutPromise = new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => {
-                timeoutTriggered = true;
-                abortController.abort(timeoutError);
-                hardTimeoutId = setTimeout(
-                  () => reject(timeoutError),
-                  ITERATION_ABORT_GRACE_MS
+      options = { ...options, signal: controller.signal };
+      const observerErrors: NonNullable<EvalRunResult["observerErrors"]> = [];
+      const observe = (
+        callback: "onProgress" | "onFailure",
+        invoke: () => unknown
+      ) => {
+        const recordFailure = () =>
+          observerErrors.push({
+            callback,
+            message: `${callback} callback failed`,
+          });
+        try {
+          const observed = invoke();
+          if (
+            typeof (observed as { then?: unknown } | null)?.then === "function"
+          ) {
+            void Promise.resolve(observed).catch(recordFailure);
+          }
+        } catch {
+          recordFailure();
+        }
+      };
+      this.running = true;
+      try {
+        // Internal alias kept short so the iteration loop reads cleanly; the
+        // public-facing parameter name is `executor`.
+        const agent = executor;
+        posthog.capture({
+          distinctId: "anonymous",
+          event: "eval_test_run_triggered",
+          properties: {
+            iterations: options.iterations,
+            concurrency: options.concurrency ?? 5,
+          },
+        });
+        const concurrency = options.concurrency ?? 5;
+        const retries = options.retries ?? 0;
+        const timeoutMs = options.timeoutMs ?? 30000;
+        const onProgress = options.onProgress;
+
+        let completedCount = 0;
+
+        const testFn =
+          this.config.test ??
+          (async (executor: HostExecutor, ctx: EvalExecutionContext) => {
+            await this.config.execute!(executor, ctx);
+            return true;
+          });
+        const iterationResults: IterationResult[] = [];
+        const total = options.iterations;
+        // One snapshot per run: scorer definitions are configuration, not per-
+        // iteration state, and the hash must be stable across every iteration of
+        // the run so the backend can fold ONE value into the run fingerprint.
+        const evaluationConfig = this.buildEvaluationConfig();
+        this.lastEvaluationConfig = evaluationConfig;
+
+        const runSingleIteration = async (
+          iterationIndex: number
+        ): Promise<IterationResult> => {
+          let captureAttempt = 0;
+          try {
+            let lastError: string | undefined;
+            let lastAttemptTimedOut = false;
+            let iterationAgent: HostExecutor | undefined;
+            let attempts = 0;
+            let reportedEvidence: readonly ReportedEvidence[] = [];
+
+            for (let attempt = 0; attempt <= retries; attempt++) {
+              if (controller.signal.aborted) {
+                lastError = "Eval run cancelled";
+                break;
+              }
+              attempts = attempt;
+              captureAttempt = attempt;
+              const abortController = new AbortController();
+              const timeoutError = new Error(
+                `Operation timed out after ${timeoutMs}ms`
+              );
+              let timeoutTriggered = false;
+              let timeoutId: ReturnType<typeof setTimeout> | undefined;
+              let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
+              let cancelAttempt: (() => void) | undefined;
+              const capture = captureReportedMeasurements(
+                this.config.reported ?? [],
+                abortController.signal,
+                attempt
+              );
+
+              try {
+                // Create a fresh agent clone for this iteration to avoid race conditions
+                // when multiple iterations run concurrently
+                iterationAgent = wrapAgentWithAbortSignal(
+                  agent.withOptions({}),
+                  abortController.signal
                 );
-              }, timeoutMs);
+                const hardTimeoutPromise = new Promise<never>((_, reject) => {
+                  timeoutId = setTimeout(() => {
+                    timeoutTriggered = true;
+                    abortController.abort(timeoutError);
+                    hardTimeoutId = setTimeout(
+                      () => reject(timeoutError),
+                      ITERATION_ABORT_GRACE_MS
+                    );
+                  }, timeoutMs);
+                });
+                const cancelled = new Promise<never>((_, reject) => {
+                  cancelAttempt = () => {
+                    abortController.abort(controller.signal.reason);
+                    reject(new Error("Eval run cancelled"));
+                  };
+                  controller.signal.addEventListener("abort", cancelAttempt, {
+                    once: true,
+                  });
+                  if (controller.signal.aborted) cancelAttempt();
+                });
+                const passed = await Promise.race([
+                  Promise.resolve().then(() =>
+                    testFn(iterationAgent!, capture.context)
+                  ),
+                  hardTimeoutPromise,
+                  cancelled,
+                ]);
+                // Disarm BEFORE scoring. The iteration timeout bounds the agent
+                // run; scorers carry their own per-scorer bound. Leaving it armed
+                // meant a slow judge could trip it and stamp "Operation timed out"
+                // on a test that had already finished.
+                if (timeoutId) {
+                  clearTimeout(timeoutId);
+                  timeoutId = undefined;
+                }
+                reportedEvidence = capture.close();
+                const promptResults = iterationAgent.getPromptHistory();
+                assertEvalCaptureWithinLimit(
+                  {
+                    prompts: promptResults,
+                    reportedEvidence,
+                    hostSnapshot: iterationAgent.getHostSnapshot?.(),
+                  },
+                  options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+                );
+                const promptMetrics = collectPromptMetrics(promptResults);
+                const predicates = this.effectiveAssertions.map(
+                  (value) => value.rule
+                );
+                const graded = await this.scoreIteration({
+                  iterationIndex,
+                  promptResults,
+                  tokens: promptMetrics.tokens,
+                  legacy: { kind: "returned", passed },
+                  reportedEvidence,
+                  evaluationConfig,
+                  options,
+                });
+                // Per-iteration host snapshot: for HostRuntime this captures
+                // the live Host state at iteration end, so the metadata
+                // stamp reflects what THIS iteration ran with — not the
+                // global state at upload time, which can drift if the user
+                // mutates the bound Host between iterations.
+                const iterationHostSnapshot =
+                  iterationAgent.getHostSnapshot?.();
+                assertEvalCaptureWithinLimit(
+                  {
+                    prompts: promptResults,
+                    reportedEvidence,
+                    hostSnapshot: iterationHostSnapshot,
+                    tokens: promptMetrics.tokens,
+                    latencies: promptMetrics.latencies,
+                  },
+                  options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+                );
+
+                return {
+                  // Derived exclusively from the gating scores. The legacy
+                  // expression `passed && predicatePassed && toolMatch.passed` is
+                  // now one projection among several rather than the verdict — and
+                  // it is equivalent by construction for gating checks, because
+                  // `test()`, `expectedToolCalls` and each gating predicate each
+                  // contribute one gating score of exactly that value. Advisory
+                  // predicates contribute an advisory row and never fail the trial.
+                  passed: !controller.signal.aborted && graded.passed,
+                  // The iteration RAN. `graded.passed === false` is the server
+                  // under test failing its task, which is not an execution
+                  // failure — only the timeout stopped execution short. Bound to
+                  // the same condition that stamps the timeout error, so a test
+                  // that finished DESPITE a fired abort is not retroactively
+                  // reclassified as stopped.
+                  status: controller.signal.aborted
+                    ? "cancelled"
+                    : timeoutTriggered && !passed
+                      ? "timed_out"
+                      : "completed",
+                  ...promptMetrics,
+                  ...(timeoutTriggered && !passed
+                    ? { error: timeoutError.message }
+                    : {}),
+                  retryCount: attempt,
+                  ...(reportedEvidence.length ? { reportedEvidence } : {}),
+                  hostSnapshot: iterationHostSnapshot,
+                  ...(predicates.length > 0
+                    ? { predicateResults: graded.predicateResults }
+                    : {}),
+                  ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
+                  scores: graded.scores,
+                  evaluatorResults: graded.scores.map(toEvaluatorResult),
+                };
+              } catch (error) {
+                reportedEvidence = capture.close();
+                if (error instanceof EvalCaptureLimitError) throw error;
+                assertEvalCaptureWithinLimit(
+                  {
+                    prompts: iterationAgent?.getPromptHistory() ?? [],
+                    reportedEvidence,
+                    hostSnapshot: iterationAgent?.getHostSnapshot?.(),
+                  },
+                  options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+                );
+                lastError =
+                  error instanceof Error ? error.message : String(error);
+                lastAttemptTimedOut = timeoutTriggered;
+
+                if (controller.signal.aborted) break;
+                if (attempt < retries) {
+                  await new Promise<void>((resolve) => {
+                    const finish = () => {
+                      clearTimeout(timer);
+                      controller.signal.removeEventListener("abort", finish);
+                      resolve();
+                    };
+                    const timer = setTimeout(
+                      finish,
+                      Math.min(30000, 100 * Math.pow(2, attempt))
+                    );
+                    controller.signal.addEventListener("abort", finish, {
+                      once: true,
+                    });
+                    if (controller.signal.aborted) finish();
+                  });
+                }
+              } finally {
+                capture.close();
+                if (cancelAttempt)
+                  controller.signal.removeEventListener("abort", cancelAttempt);
+                if (timeoutId) {
+                  clearTimeout(timeoutId);
+                }
+                if (hardTimeoutId) {
+                  clearTimeout(hardTimeoutId);
+                }
+              }
+            }
+
+            const failedPromptResults =
+              iterationAgent?.getPromptHistory() ?? [];
+            assertEvalCaptureWithinLimit(
+              {
+                prompts: failedPromptResults,
+                reportedEvidence,
+                hostSnapshot: iterationAgent?.getHostSnapshot?.(),
+              },
+              options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+            );
+            const promptMetrics = collectPromptMetrics(failedPromptResults);
+            const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
+            assertEvalCaptureWithinLimit(
+              {
+                prompts: failedPromptResults,
+                reportedEvidence,
+                hostSnapshot: iterationHostSnapshot,
+                tokens: promptMetrics.tokens,
+                latencies: promptMetrics.latencies,
+              },
+              options.maxCapturedBytes ?? DEFAULT_MAX_CAPTURED_BYTES
+            );
+            // Evaluate against what the iteration ACTUALLY did before it failed,
+            // not an empty transcript. A retry-exhausted iteration may well have
+            // called tools, and reporting fabricated verdicts against zeroed
+            // signals would put wrong reasons on the dashboard's check chips.
+            //
+            // Deterministic scorers still say something true about that partial
+            // transcript; non-deterministic ones are SKIPPED, because a judge's
+            // number over a truncated run means nothing. A gating judge skipped
+            // here fails closed by default, which is the correct reading of "the
+            // gate never ran".
+            const graded = await this.scoreIteration({
+              iterationIndex,
+              promptResults: failedPromptResults,
+              tokens: promptMetrics.tokens,
+              legacy: { kind: "threw", error: lastError ?? "iteration failed" },
+              reportedEvidence,
+              evaluationConfig,
+              options,
+              skipNonDeterministic: "iteration errored before scoring",
             });
-            const passed = await Promise.race([
-              Promise.resolve().then(() => testFn(iterationAgent!)),
-              hardTimeoutPromise,
-            ]);
-            const promptResults = iterationAgent.getPromptHistory();
-            const promptMetrics = collectPromptMetrics(promptResults);
-            // Per-iteration host snapshot: for HostRuntime this captures
-            // the live Host state at iteration end, so the metadata
-            // stamp reflects what THIS iteration ran with — not the
-            // global state at upload time, which can drift if the user
-            // mutates the bound Host between iterations.
-            const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
-              passed,
+              passed: false,
+              // Retries are exhausted: the EXECUTION failed rather than the task
+              // being graded down. `timed_out` when the last attempt was stopped by
+              // the iteration budget — the same distinction the run-level verdict
+              // policy draws when it decides which trials it could measure.
+              status: controller.signal.aborted
+                ? "cancelled"
+                : lastAttemptTimedOut
+                  ? "timed_out"
+                  : "failed",
               ...promptMetrics,
-              ...(timeoutTriggered && !passed
-                ? { error: timeoutError.message }
-                : {}),
-              retryCount: attempt,
+              error: lastError,
+              retryCount: attempts,
+              ...(reportedEvidence.length ? { reportedEvidence } : {}),
               hostSnapshot: iterationHostSnapshot,
+              ...(graded.predicateResults.length > 0
+                ? { predicateResults: graded.predicateResults }
+                : {}),
+              ...(graded.toolMatch ? { toolMatch: graded.toolMatch } : {}),
+              scores: graded.scores,
+              evaluatorResults: graded.scores.map(toEvaluatorResult),
             };
           } catch (error) {
-            lastError = error instanceof Error ? error.message : String(error);
-
-            if (attempt < retries) {
-              await sleep(100 * Math.pow(2, attempt));
-            }
+            if (!(error instanceof EvalCaptureLimitError)) throw error;
+            const scores = evaluationConfig.definitions.map((definition) =>
+              errorScoreResult(definition, error)
+            );
+            return {
+              passed: false,
+              status: "failed",
+              error: error.message,
+              captureError: {
+                code: error.code,
+                maxCapturedBytes: error.maxCapturedBytes,
+              },
+              retryCount: captureAttempt,
+              prompts: [],
+              latencies: [],
+              tokens: { total: 0, input: 0, output: 0 },
+              scores,
+              evaluatorResults: scores.map(toEvaluatorResult),
+            };
           } finally {
-            if (timeoutId) {
-              clearTimeout(timeoutId);
+            const completed = ++completedCount;
+            if (onProgress) {
+              observe("onProgress", () => onProgress(completed, total));
             }
-            if (hardTimeoutId) {
-              clearTimeout(hardTimeoutId);
+          }
+        };
+
+        // Only active workers allocate promises; queued iterations never clone an executor.
+        const results = new Array<IterationResult>(total);
+        let next = 0;
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, total) }, async () => {
+            while (next < total) {
+              const index = next++;
+              results[index] = await runSingleIteration(index);
+            }
+          })
+        );
+        iterationResults.push(...results);
+
+        const runResult = this.aggregateResults(
+          iterationResults,
+          evaluationConfig
+        );
+        if (this.config.runEvaluators?.length) {
+          let context:
+            ReturnType<typeof runEvaluatorContextFromIterations> | undefined;
+          const identity = {
+            caseId: this.config.id,
+            externalRunId: options.mcpjam?.externalRunId,
+            sourceConfigHash: evaluationConfig.hash,
+          };
+          try {
+            context = runEvaluatorContextFromIterations({
+              ...identity,
+              iterations: iterationResults,
+            });
+          } catch (error) {
+            if (!(error instanceof RunEvaluatorContextError)) throw error;
+            runResult.runEvaluation = unavailableCaseRunEvaluation(
+              this.config.runEvaluators,
+              {
+                ...identity,
+                iterationIds: iterationResults.map(
+                  (_iteration, index) => `${this.config.id}:${index}`
+                ),
+              }
+            );
+          }
+          if (context)
+            runResult.runEvaluation = await evaluateCaseRun(
+              this.config.runEvaluators,
+              context,
+              {
+                signal: options.signal,
+                concurrency:
+                  options.evaluatorConcurrency ?? options.scorerConcurrency,
+                timeoutMs:
+                  options.evaluatorTimeoutMs ?? options.scorerTimeoutMs,
+              }
+            );
+        }
+
+        // Call onFailure callback if there are any failures
+        if (options.onFailure && runResult.failures > 0) {
+          observe("onFailure", () =>
+            options.onFailure!(this.getFailureReport())
+          );
+        }
+
+        if (options.onProgress || options.onFailure)
+          runResult.observerErrors = observerErrors;
+        try {
+          await this.autoSaveRunIfConfigured(runResult, options, agent);
+        } finally {
+          if (options.summary === "table") {
+            try {
+              console.log(
+                formatRunSummaryTable(runResult, this.lastReportingReceipt)
+              );
+            } catch {
+              /* Presentation cannot replace the result. */
             }
           }
         }
 
-        const promptMetrics = collectPromptMetrics(
-          iterationAgent?.getPromptHistory() ?? []
-        );
-        const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
-
-        return {
-          passed: false,
-          ...promptMetrics,
-          error: lastError,
-          retryCount: retries,
-          hostSnapshot: iterationHostSnapshot,
-        };
+        return runResult;
       } finally {
-        semaphore.release();
-        const completed = ++completedCount;
-        if (onProgress) {
-          onProgress(completed, total);
-        }
+        this.running = false;
+        if (deadline) clearTimeout(deadline);
+        externalSignal?.removeEventListener("abort", cancel);
       }
-    };
-
-    const promises = Array.from({ length: options.iterations }, () =>
-      runSingleIteration()
-    );
-    const results = await Promise.all(promises);
-    iterationResults.push(...results);
-
-    const runResult = this.aggregateResults(iterationResults);
-
-    // Call onFailure callback if there are any failures
-    if (options.onFailure && runResult.failures > 0) {
-      options.onFailure(this.getFailureReport());
+    } finally {
+      this.running = false;
     }
-
-    await this.autoSaveRunIfConfigured(runResult, options, agent);
-
-    return runResult;
   }
 
   private async autoSaveRunIfConfigured(
@@ -400,26 +1374,62 @@ export class EvalTest {
     }
 
     const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
-    if (!apiKey) {
+    if (!apiKey?.trim()) {
+      if (config?.strict) {
+        const error = new Error("Strict eval reporting requires an API key");
+        this.lastReportingReceipt = {
+          schemaVersion: 1,
+          state: "failed",
+          acceptedIterations: runResult.iterations,
+          acknowledgedIterations: 0,
+          pendingIterations: runResult.iterations,
+          error: { code: "MISSING_API_KEY", message: error.message },
+        };
+        throw error;
+      }
+      this.lastReportingReceipt = notRequestedReceipt("missing_api_key");
       return;
     }
 
     const hostSnapshot = executor.getHostSnapshot?.();
     const hostExtras = hostSnapshot
       ? buildHostSnapshotMetadata(
-          hostSnapshot as unknown as Record<string, unknown>,
+          hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
       hostExtras,
+      variantFromExecutor(executor)
     );
+    if (runResult.runEvaluation) {
+      results.forEach((result, index) => {
+        result.externalIterationId = `${this.config.id}:${index}`;
+      });
+    }
     if (results.length === 0) {
       return;
     }
 
-    await reportEvalResultsSafely({
+    this.lastReportingReceipt = {
+      schemaVersion: 1,
+      state: "pending",
+      acceptedIterations: results.length,
+      acknowledgedIterations: 0,
+      pendingIterations: results.length,
+    };
+    const reporting = await captureEvalReporting({
+      ...config,
+      executor,
+      runEvaluations: runResult.runEvaluation
+        ? [runResult.runEvaluation]
+        : undefined,
+      transport: {
+        ...config?.transport,
+        signal: config?.transport?.signal,
+      },
+      expectedIterations: config?.expectedIterations ?? options.iterations,
       suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
@@ -436,14 +1446,354 @@ export class EvalTest {
       apiKey,
       baseUrl: config?.baseUrl,
       strict: config?.strict,
+      // Joins the run fingerprint on the backend: same externalRunId with a
+      // different evaluation config is a conflict, not a duplicate upload.
+      ...(this.lastEvaluationConfig
+        ? { evaluationConfigHash: this.lastEvaluationConfig.hash }
+        : {}),
       results,
     });
+    this.lastReportingReceipt = reporting.receipt;
+    if (reporting.receipt.state === "failed" && config?.strict)
+      throw reporting.error;
+  }
+
+  /**
+   * The versioned input every scorer grades against, built ONCE per iteration.
+   *
+   * The transcript is built from the FULL trace — messages *and* spans — not a
+   * bare message list: `buildIterationTranscript` derives tool errors from the
+   * trace's spans, so a message-only trace leaves `noToolErrors` with nothing
+   * to inspect and it passes vacuously even when every tool call failed.
+   */
+  private buildScorerContext(
+    promptResults: PromptResult[],
+    tokens: { input: number; output: number; total: number }
+  ): ScorerContextV1 {
+    const traceMessages = traceMessagesFromPrompts(promptResults);
+    const trace = iterationTraceFromPrompts(promptResults, traceMessages);
+    const usage = {
+      inputTokens: tokens.input,
+      outputTokens: tokens.output,
+      totalTokens: tokens.total,
+    };
+    const recordedContext = promptResults
+      .map((result) => result.recordedContext)
+      .filter((record) => record !== undefined);
+    return {
+      recordedContext,
+      ...(recordedContext.length
+        ? {
+            toolDefinitions: recordedContext.map(
+              (record) => record.toolDefinitions
+            ),
+          }
+        : {}),
+      evidenceUnavailable: recordedContext.flatMap(
+        (record) => record.unavailable ?? []
+      ),
+      version: 1,
+      scenario: {
+        title: this.getName(),
+        // Populated so custom and judge scorers can see the case's polarity;
+        // without it a judge grades a negative case as though it were positive.
+        ...(this.config.isNegativeTest ? { isNegativeTest: true } : {}),
+      },
+      transcript: buildIterationTranscript({
+        trace,
+        toolCalls: actualToolCallsFromPrompts(promptResults),
+        usage,
+      }),
+      trace: {
+        widgetSnapshots: promptResults.flatMap((result) =>
+          result.getWidgetSnapshots()
+        ),
+        messages: traceMessages,
+        // `iterationTraceFromPrompts` returns the widest wire shape (a string
+        // and a bare message array are both legal traces); only the object form
+        // carries spans, and only spans are useful to a scorer.
+        ...(trace &&
+        typeof trace === "object" &&
+        !Array.isArray(trace) &&
+        trace.spans
+          ? { spans: trace.spans }
+          : {}),
+      },
+      ...(this.config.expectedOutput !== undefined
+        ? { expectedOutput: this.config.expectedOutput }
+        : {}),
+      ...(this.config.expectedToolCalls
+        ? { expectedToolCalls: this.config.expectedToolCalls }
+        : {}),
+      usage,
+    };
+  }
+
+  /**
+   * Deterministic predicate verdicts for one iteration, in authored order.
+   *
+   * Called EXACTLY ONCE per iteration. Its results feed both the compat
+   * `predicateResults` field and the predicate score rows — one evaluation,
+   * two projections — so the legacy view and the contract view are the same
+   * verdict rendered twice rather than two independent judgements that could
+   * drift.
+   */
+  private evaluateIterationPredicates(
+    context: ScorerContextV1
+  ): PredicateResult[] {
+    const predicates = this.effectiveAssertions.map((value) => value.rule);
+    if (predicates.length === 0) return [];
+    return evaluatePredicates(context.transcript, predicates);
+  }
+
+  /**
+   * The local expected/actual verdict, or undefined when the case configured no
+   * expectations.
+   *
+   * The emptiness guard is load-bearing: `evaluateToolCalls` reports
+   * `passed: false` when a POSITIVE test observed no calls — including the
+   * both-empty case — so running it unconditionally would fail every test that
+   * never declared `expectedToolCalls`.
+   */
+  private evaluateIterationToolCalls(
+    context: ScorerContextV1
+  ): EvalToolCallMatchResult | undefined {
+    const expected = this.config.expectedToolCalls ?? [];
+    // The guard FLIPS for a negative case. "No expectations" means "nothing to
+    // check" for a positive test, but a negative case with no expectations is
+    // still asserting something — that no tool fired — so skipping the matcher
+    // here would make the whole point of the case `not_applicable`.
+    if (expected.length === 0 && !this.config.isNegativeTest) return undefined;
+    return evaluateToolCalls(
+      expected.map((toolCall) => ({
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments ?? {},
+      })),
+      context.transcript.toolCalls,
+      {
+        ...resolveMatchOptions(this.config.matchOptions),
+        ...(this.config.isNegativeTest ? { isNegativeTest: true } : {}),
+      }
+    );
+  }
+
+  /**
+   * This test's resolved, hashed scorer definitions.
+   *
+   * Exposed so corpus tooling can record the SAME evaluation config the run
+   * will report, rather than re-deriving it. A second derivation is a drift
+   * factory: the lock would claim a hash the run never produces, and every
+   * `--frozen` check would report a config change that never happened.
+   */
+  getEvaluationConfigSnapshot(): EvaluationConfigSnapshot {
+    return this.buildEvaluationConfig();
+  }
+
+  /**
+   * The scorer definitions for this test, resolved and hashed once.
+   *
+   * `test()`, `expectedToolCalls` and each predicate are each projected into
+   * one definition here, which is what makes scoring the single verdict path
+   * rather than a fifth system running alongside them.
+   *
+   * The tool-match definition is emitted even when the test configured no
+   * expectations: its row is `not_applicable`, and a row with no definition to
+   * join to would be unrenderable and — per the gate engine's fail-closed join
+   * — indistinguishable from tampering.
+   */
+  private buildEvaluationConfig(): EvaluationConfigSnapshot {
+    // Built-in projections own these ids. A custom scorer that reuses one would
+    // shadow the built-in in the id→definition map, so the built-in's row would
+    // be minted against the WRONG definition — carrying a definitionHash that
+    // joins to nothing, which fails the gate closed with no explanation the
+    // author can act on. Naming the collision is the whole fix.
+    const reserved = new Set([
+      legacyTestScoreDefinition().scorerId,
+      toolMatchScoreDefinition({
+        expectedToolCalls: this.config.expectedToolCalls ?? [],
+        matchOptions: resolveMatchOptions(this.config.matchOptions),
+        isNegativeTest: this.config.isNegativeTest,
+      }).scorerId,
+      ...this.effectiveAssertions
+        .filter((value) => value.definition.idSource === "generated")
+        .map((value) => value.definition.scorerId),
+    ]);
+    for (const evaluator of [
+      ...this.effectiveEvaluators,
+      ...reportedDefinitions(this.config.reported ?? []).map((definition) => ({
+        definition,
+      })),
+    ]) {
+      if (reserved.has(evaluator.definition.scorerId)) {
+        throw new Error(
+          `Scorer id "${evaluator.definition.scorerId}" is already used by this test's built-in scorers; give the evaluator a different id.`
+        );
+      }
+    }
+    for (const assertion of this.effectiveAssertions) {
+      if (
+        assertion.definition.idSource === "explicit" &&
+        reserved.has(assertion.definition.scorerId)
+      ) {
+        throw new Error(
+          `Evaluator id "${assertion.definition.scorerId}" is already used by this test's built-in scorers.`
+        );
+      }
+    }
+    const definitions = [
+      legacyTestScoreDefinition(),
+      toolMatchScoreDefinition({
+        expectedToolCalls: this.config.expectedToolCalls ?? [],
+        matchOptions: resolveMatchOptions(this.config.matchOptions),
+        isNegativeTest: this.config.isNegativeTest,
+      }),
+      ...this.effectiveAssertions.map((value) => value.definition),
+      ...this.effectiveEvaluators.map((value) => value.definition),
+      ...reportedDefinitions(this.config.reported ?? []),
+    ];
+    const ids = new Map<string, string>();
+    for (const definition of definitions) {
+      const hash = definitionHash(resolveScoreDefinition(definition));
+      if (
+        ids.has(definition.scorerId) &&
+        ids.get(definition.scorerId) !== hash
+      ) {
+        throw new Error(
+          `EvalTest "${this.config.name}": duplicate evaluator id "${definition.scorerId}" on two different definitions. One id cannot mean two evaluations — rename one, or use mode "replace" to drop the suite's.`
+        );
+      }
+      ids.set(definition.scorerId, hash);
+    }
+    return buildEvaluationConfigSnapshot(definitions);
+  }
+
+  /**
+   * Grade one iteration and derive its verdict.
+   *
+   * Ordering mirrors the config: `test()`, then `expectedToolCalls`, then
+   * predicates in authored order, then custom scorers — so the dashboard list
+   * reads the way the test does.
+   */
+  private async scoreIteration(params: {
+    iterationIndex: number;
+    promptResults: PromptResult[];
+    tokens: { input: number; output: number; total: number };
+    legacy:
+      { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
+    evaluationConfig: EvaluationConfigSnapshot;
+    options: EvalTestRunOptions;
+    skipNonDeterministic?: string;
+    reportedEvidence?: readonly ReportedEvidence[];
+  }): Promise<{
+    scores: ScoreResult[];
+    predicateResults: PredicateResult[];
+    toolMatch: EvalToolCallMatchResult | undefined;
+    passed: boolean;
+  }> {
+    const context = this.buildScorerContext(
+      params.promptResults,
+      params.tokens
+    );
+    context.gradingKey = `${this.config.id}#${params.iterationIndex + 1}`;
+    context.scenario.scenarioKey = this.config.id;
+    const definitions = params.evaluationConfig.definitions;
+    const byId = new Map(
+      definitions.map((definition) => [definition.scorerId, definition])
+    );
+    const definitionFor = (scorerId: string): ResolvedScoreDefinition => {
+      const definition = byId.get(scorerId);
+      if (!definition) {
+        // Unreachable: `buildEvaluationConfig` emits one definition per source.
+        // Loud rather than silent — a missing definition would make its score
+        // unjoinable, and an unjoinable score fails the gate closed.
+        throw new Error(`No score definition registered for "${scorerId}"`);
+      }
+      return definition;
+    };
+
+    const scores: ScoreResult[] = [];
+
+    // 1. test()
+    const legacyDefinition = definitionFor(
+      legacyTestScoreDefinition().scorerId
+    );
+    scores.push(
+      params.legacy.kind === "returned"
+        ? fromLegacyTestOutcome(legacyDefinition, params.legacy.passed)
+        : // A thrown/timed-out test is an ERROR, not a `false`. It still fails
+          // the iteration (gating, onError "fail"), but the row says why.
+          errorScoreResult(legacyDefinition, params.legacy.error)
+    );
+
+    // 2. expectedToolCalls — ONE evaluation, two projections.
+    const toolMatchDefinition = definitionFor(
+      toolMatchScoreDefinition({
+        expectedToolCalls: this.config.expectedToolCalls ?? [],
+        matchOptions: resolveMatchOptions(this.config.matchOptions),
+        isNegativeTest: this.config.isNegativeTest,
+      }).scorerId
+    );
+    const toolMatch = this.evaluateIterationToolCalls(context);
+    scores.push(
+      toolMatch
+        ? fromToolMatchResult(toolMatchDefinition, toolMatch)
+        : notApplicableScoreResult(
+            toolMatchDefinition,
+            "no expected tool calls were configured"
+          )
+    );
+
+    // 3. predicates — ONE evaluation, two projections.
+    const predicateResults = this.evaluateIterationPredicates(context);
+    predicateResults.forEach((result, index) => {
+      const predicate = this.effectiveAssertions[index];
+      if (!predicate) return;
+      scores.push(
+        scoreResultFromPredicateResult(
+          definitionFor(predicate.definition.scorerId),
+          result
+        )
+      );
+    });
+
+    // 4. custom scorers, under the runner's bounds.
+    const custom = this.effectiveEvaluators;
+    if (custom.length > 0) {
+      scores.push(
+        ...(await runEvaluators(custom, context, {
+          concurrency:
+            params.options.evaluatorConcurrency ??
+            params.options.scorerConcurrency,
+          timeoutMs:
+            params.options.evaluatorTimeoutMs ?? params.options.scorerTimeoutMs,
+          signal: params.options.signal,
+          ...(params.skipNonDeterministic
+            ? { skipNonDeterministicReason: params.skipNonDeterministic }
+            : {}),
+        }))
+      );
+    }
+
+    scores.push(
+      ...evaluateReportedMeasurements(
+        reportedDefinitions(this.config.reported ?? []),
+        params.reportedEvidence ?? []
+      )
+    );
+
+    return {
+      scores,
+      predicateResults,
+      toolMatch,
+      passed: scoresPassed(scores, definitions),
+    };
   }
 
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
     hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -451,10 +1801,37 @@ export class EvalTest {
       this.config.expectedToolCalls,
       reporting?.failOnToolError,
       hostExtras,
+      this.config.predicates,
+      this.config.matchOptions,
+      this.lastEvaluationConfig ?? undefined,
+      {
+        // The standalone-run twin of `EvalSuite`'s identity object. A test run
+        // directly with reporting enabled uploads through HERE, not through the
+        // suite, so leaving `caseId` off this one would mean a renamed
+        // standalone test still forks its hosted history — the exact bug the
+        // declared id exists to retire, surviving on the path nobody looked at.
+        caseId: this.config.id,
+        // `null`, not omission, says this case is deliberately unlabelled on
+        // the result wire. Omission is reserved for pre-intent reporters.
+        intent: this.config.intent ?? null,
+        ...(this.config.externalCaseId !== undefined
+          ? { externalCaseId: this.config.externalCaseId }
+          : {}),
+        ...(this.config.isNegativeTest !== undefined
+          ? { isNegativeTest: this.config.isNegativeTest }
+          : {}),
+        ...(this.config.expectedOutput !== undefined
+          ? { expectedOutput: this.config.expectedOutput }
+          : {}),
+      },
+      variant
     );
   }
 
-  private aggregateResults(iterations: IterationResult[]): EvalRunResult {
+  private aggregateResults(
+    iterations: IterationResult[],
+    evaluationConfig?: EvaluationConfigSnapshot
+  ): EvalRunResult {
     const allLatencies = iterations.flatMap((r) => r.latencies);
 
     // Handle empty latencies array
@@ -475,6 +1852,9 @@ export class EvalTest {
     const failures = iterations.filter((r) => !r.passed).length;
 
     this.lastRunResult = {
+      ...(iterations.some((iteration) => iteration.captureError)
+        ? { captureCompleteness: "partial" as const }
+        : {}),
       iterations: iterations.length,
       successes,
       failures,
@@ -501,6 +1881,7 @@ export class EvalTest {
             : defaultStats,
         perIteration: allLatencies,
       },
+      ...(evaluationConfig ? { evaluationConfig } : {}),
     };
 
     return this.lastRunResult;
@@ -513,7 +1894,9 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.successes / this.lastRunResult.iterations;
+    return this.lastRunResult.iterations === 0
+      ? 0
+      : this.lastRunResult.successes / this.lastRunResult.iterations;
   }
 
   /**
@@ -523,8 +1906,8 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // In a basic eval context, recall equals accuracy
-    return this.accuracy();
+    const { tp, fn } = this.toolCounts();
+    return tp + fn === 0 ? 0 : tp / (tp + fn);
   }
 
   /**
@@ -534,8 +1917,8 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // In a basic eval context, precision equals accuracy
-    return this.accuracy();
+    const { tp, fp } = this.toolCounts();
+    return tp + fp === 0 ? 0 : tp / (tp + fp);
   }
 
   /**
@@ -548,14 +1931,71 @@ export class EvalTest {
     return this.recall();
   }
 
-  /**
-   * Get the false positive rate
-   */
+  /** @deprecated Use unexpectedToolCallRate(). */
   falsePositiveRate(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.failures / this.lastRunResult.iterations;
+    // Preserve the legacy failure-rate value for tests that never configured
+    // expectedToolCalls; expectation-bearing runs use the honest extra-call
+    // definition below.
+    if (!this.config.expectedToolCalls?.length) {
+      return this.lastRunResult.iterations === 0
+        ? 0
+        : this.lastRunResult.failures / this.lastRunResult.iterations;
+    }
+    return this.unexpectedToolCallRate();
+  }
+
+  /**
+   * Rate of iterations that violated a forbidden-tool predicate. This keeps
+   * false-positive semantics distinct from ordinary test failures; when no
+   * such predicate is configured the denominator is still the run size and
+   * the metric is zero.
+   */
+  unexpectedToolCallRate(): number {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    if (this.lastRunResult.iterations === 0) return 0;
+    const expectationIterations = this.lastRunResult.iterationDetails.filter(
+      (iteration) => iteration.toolMatch
+    );
+    if (expectationIterations.length === 0) return 0;
+    return (
+      expectationIterations.filter(
+        (iteration) => (iteration.toolMatch?.extra.length ?? 0) > 0
+      ).length / expectationIterations.length
+    );
+  }
+
+  private toolCounts(): { tp: number; fp: number; fn: number } {
+    if (!this.config.expectedToolCalls?.length) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    const matches = this.lastRunResult!.iterationDetails.map(
+      (iteration) => iteration.toolMatch
+    ).filter((match): match is EvalToolCallMatchResult => Boolean(match));
+    if (matches.length === 0) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    return matches.reduce(
+      (totals, match) => {
+        const mismatches = match.argumentMismatches.length;
+        const tp = Math.max(
+          0,
+          this.config.expectedToolCalls!.length -
+            match.missing.length -
+            mismatches
+        );
+        return {
+          tp: totals.tp + tp,
+          fp: totals.fp + match.extra.length + mismatches,
+          fn: totals.fn + match.missing.length + mismatches,
+        };
+      },
+      { tp: 0, fp: 0, fn: 0 }
+    );
   }
 
   /**
@@ -586,10 +2026,32 @@ export class EvalTest {
   }
 
   /**
+   * This case's declared identity.
+   *
+   * Read this — never `getName()` — when joining a case to anything that
+   * outlives one run.
+   */
+  getId(): string {
+    return this.config.id;
+  }
+
+  /**
    * Get the configuration of this test
    */
   getConfig(): EvalTestConfig {
-    return this.config;
+    return snapshotTestConfig(this.config);
+  }
+
+  /** @internal Apply a suite-level matcher default without overriding a case. */
+  setDefaultMatchOptions(matchOptions: EvalMatchOptions | undefined): void {
+    if (this.config.matchOptions !== undefined || matchOptions === undefined) {
+      return;
+    }
+    assertValidMatchOptions(matchOptions);
+    this.config = {
+      ...this.config,
+      matchOptions: structuredClone(matchOptions),
+    };
   }
 
   /**
@@ -639,7 +2101,9 @@ export class EvalTest {
     }
 
     const reports = failedIterations.map((iteration, index) => {
-      const header = `=== Failed Iteration ${index + 1}/${failedIterations.length} ===`;
+      const header = `=== Failed Iteration ${index + 1}/${
+        failedIterations.length
+      } ===`;
       const error = iteration.error ? `Error: ${iteration.error}` : "";
       const traces = (iteration.prompts ?? [])
         .map((p, i) => `--- Prompt ${i + 1} ---\n${p.formatTrace()}`)

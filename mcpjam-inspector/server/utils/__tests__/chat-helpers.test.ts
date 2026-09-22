@@ -25,7 +25,9 @@ vi.mock("@mcpjam/sdk", async () => {
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
+  scrubUnavailableToolHistoryForBackend,
 } from "../chat-helpers";
+import type { ModelMessage } from "ai";
 
 describe("isAnthropicCompatibleModel", () => {
   it("returns true for provider 'anthropic'", () => {
@@ -185,5 +187,58 @@ describe("getInvalidAnthropicToolNames", () => {
 
   it("returns empty array for empty input", () => {
     expect(getInvalidAnthropicToolNames([])).toEqual([]);
+  });
+});
+
+describe("scrubUnavailableToolHistoryForBackend — tools that come and go", () => {
+  function historyOf(toolName: string): ModelMessage[] {
+    return [
+      { role: "user", content: "add pepperoni" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName,
+            input: { topping: "pepperoni" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName,
+            output: { type: "json", value: { ok: true } },
+          },
+        ],
+      },
+    ] as ModelMessage[];
+  }
+
+  it("still scrubs a disconnected server's tool by default", () => {
+    const scrubbed = scrubUnavailableToolHistoryForBackend(
+      historyOf("gone_server_tool"),
+      ["other_tool"],
+    );
+    expect(scrubbed.some((m) => m.role === "tool")).toBe(false);
+  });
+
+  it("keeps the history of a name the caller says comes and goes", () => {
+    // A page's tools exist only while that page is open. The model called one
+    // on the pizza page and then navigated away; the record of having done so
+    // is how it knows the topping is there. An absent tool of any name is
+    // refused as "Tool not found" if called again, so keeping the history
+    // admits no ungated execution.
+    const scrubbed = scrubUnavailableToolHistoryForBackend(
+      historyOf("webmcp_add_topping"),
+      ["browser_navigate"],
+      (name) => name.startsWith("webmcp_"),
+    );
+    expect(scrubbed).toHaveLength(3);
+    expect(scrubbed.some((m) => m.role === "tool")).toBe(true);
   });
 });

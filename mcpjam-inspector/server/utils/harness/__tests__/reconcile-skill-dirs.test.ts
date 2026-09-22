@@ -55,6 +55,33 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
     expect(res.removed).toBe(1);
   });
 
+  it("reconciles the CODEX root when given one — manifest and rm both follow it", async () => {
+    // A Codex turn's dirs live under `~/.agents/skills`; reconciling the Claude
+    // root would leave every stale Codex dir discoverable forever, and would
+    // read a manifest describing a different runtime's dirs. The manifest is
+    // per-root for the same reason: a box that ran both keeps them separate.
+    const CODEX_MANIFEST = "/home/user/.agents/skills/.mcpjam-skills.json";
+    const { session, files, removed } = makeSession({
+      [MANIFEST]: manifest({ s1: "pdf", s2: "claude-only" }),
+      [CODEX_MANIFEST]: manifest({ s1: "pdf", s3: "codex-old" }),
+    });
+
+    await reconcileSkillDirs({
+      session,
+      skills: [{ skillId: "s1", name: "pdf" }],
+      skillsHash: "h2",
+      skillsBase: "/home/user/.agents/skills",
+    });
+
+    expect(removed).toEqual(["/home/user/.agents/skills/codex-old"]);
+    // The Claude manifest is untouched — reconciling one runtime must never
+    // rewrite the other's bookkeeping.
+    expect(files.get(MANIFEST)).toBe(manifest({ s1: "pdf", s2: "claude-only" }));
+    expect(JSON.parse(files.get(CODEX_MANIFEST)!).skills).toEqual({
+      s1: { skillId: "s1", name: "pdf" },
+    });
+  });
+
   it("removes the OLD dir on a rename", async () => {
     const { session, removed } = makeSession({
       [MANIFEST]: manifest({ s1: "pdf" }),

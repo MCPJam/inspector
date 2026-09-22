@@ -1,15 +1,59 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useMutation, useConvexAuth } from "convex/react";
+import { JudgeInstructionsEditor } from "./judge-instructions-editor";
+import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
+import { AssertionBacktestPanel } from "./assertion-backtest-panel";
+import { JudgeBacktestPanel } from "./judge-backtest-panel";
+import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
+import { SuiteClientsSettings } from "./suite-clients-settings";
+import {
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+  useReducer,
+  useRef,
+} from "react";
+import { useMutation, useConvexAuth, useQuery } from "convex/react";
+import {
+  EVAL_GRADING_VALIDITY_HINTS,
+  EVAL_GRADING_VALIDITY_LABELS,
+  EVAL_ITERATION_RULE_HINTS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_HINTS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+} from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
+import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useActorCanQuery } from "@/hooks/use-actor-can-query";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  useProjectServers,
+  useProjectServerAttachments,
+} from "@/hooks/useViews";
+import { disambiguateLabels, environmentLabel } from "@/lib/environment-label";
+import {
+  SuiteStageFactsList,
+  type StageFactsTarget,
+} from "./suite-stage-facts-panel";
+import {
+  CloudUnreachableNotice,
+  EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
+} from "@/components/computer/CloudUnreachableNotice";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
+import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
+  buildHostNamesById,
   compareRunsBySequence,
+  evalSuitePinsSandboxImage,
   getLatestRunMetricSource,
   getRunMetricSource,
+  runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
@@ -21,30 +65,50 @@ import { RunTestCaseDetailView } from "./run-test-case-detail-view";
 import type { RunCaseGroup } from "./run-case-groups";
 import { RunDiffView } from "./run-diff-view";
 import { TestTemplateEditor } from "./test-template-editor";
+import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
-import { ValidatorsSection } from "./validators-section";
-import { JudgesSection } from "./judges-section";
+import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
+import { isRubricValid } from "./judge-rubric-editor";
+import { JudgeGatePanel } from "./judge-gate-panel";
+import { useGroundedness } from "./use-groundedness";
 import {
-  AddCheckMenu,
-  ChecksSection,
-  areAllChecksValid,
-  blankPredicate,
-} from "./checks-section";
-import { GlobalGatesSectionInfoHint } from "./global-gates-info";
+  PerCaseIterationsControl,
+  PerCasePassThresholdControl,
+  VerdictValidityControls,
+} from "./suite-policy-controls";
+import { SuiteQualityGateSection } from "./suite-quality-gate-section";
+import { areAllChecksValid } from "./checks-section";
 import { splitPredicatesForMigration } from "@/shared/predicate-migration";
-import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
-import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
+import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
-import { ScheduleEditor } from "./schedule-editor";
+import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { launchRuns } from "../evaluate/run-results-matrix-model";
+import { RunComparisonPage } from "../evaluate/run-comparison-page";
+import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
+import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
+import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
+import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
+import { ShareDialog } from "@/components/sharing/ShareDialog";
+import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
+import { buildEvalSharePath } from "@/lib/app-navigation";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
 // removed render site). Import kept dropped to avoid an unused-symbol
 // lint and to make the removal obvious if someone reaches for it later.
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
+import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
+import {
+  CAPABILITY_REASON_COPY,
+  CI_OWNED_REASON_COPY,
+  featureDisabledReason,
+  PERMISSION_REASON_COPY,
+} from "./capability-reasons";
 import type {
   EvalCase,
   EvalIteration,
@@ -54,12 +118,35 @@ import type {
 } from "./types";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  canCommit,
+  committedSuiteSettingsValues,
+  describeDraft,
+  dirtyKeys,
+  initSuiteSettingsDraft,
+  readSuiteSettingsValues,
+  suiteSettingsReducer,
+  type SuiteSettingsKey,
+} from "./suite-settings-draft";
+import { SuiteSettingsRow } from "./suite-settings-row";
+import {
+  VISIBLE_SUITE_SETTINGS_GROUPS,
+  NESTED_SETTING_KEYS,
+  LEGACY_CLIENTS_ROW_LABEL,
+} from "./suite-settings-groups";
+import {
+  subsectionForSettingKey,
+  subsectionScrollTarget,
+} from "./suite-settings-subsections";
+import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
+import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
+import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
-import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { RemoteServer } from "@/hooks/useProjects";
+import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -78,84 +165,145 @@ export interface SuiteNavigation {
       insightsFocus?: boolean;
       replace?: boolean;
       compareToRunId?: string;
+      comparison?: boolean;
       testCaseId?: string;
-    }
+    },
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean; iteration?: string }
+    options?: {
+      openCompare?: boolean;
+      checks?: boolean;
+      replace?: boolean;
+      iteration?: string;
+      fromEvalServer?: string;
+    },
   ) => void;
-  toSuiteEdit: (suiteId: string) => void;
+  toSuiteEdit: (suiteId: string, fromCaseChecks?: string) => void;
+}
+
+const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
+  {
+    name: ["name"],
+    checks: ["defaultPredicates"],
+    // Partitioned by ROW, so a dirty badge names the row that is actually
+    // dirty. One `policy` entry used to carry all five keys, which meant
+    // editing the quality gate lit the criterion row's badge and editing the
+    // threshold lit the gate's — invisible while the three were one row, and
+    // wrong the moment they were not.
+    //
+    // `verdictPolicyDefaults` is the one key that genuinely belongs to more
+    // than one row: it is a single stored object holding the threshold, the
+    // count and the validity block. Splitting it here would need a deep diff of
+    // a stored shape, and a badge that under-reports is worse than one that
+    // over-reports — so both rows watch it and say so.
+    policy: ["defaultPassCriteria", "verdictPolicyDefaults"],
+    iterations: ["minIterations", "verdictPolicyDefaults"],
+    qualityGate: ["gatePolicy"],
+    validity: ["verdictPolicyDefaults"],
+    passOrFail: [
+      "defaultMatchOptions",
+      "defaultPredicates",
+      "judgeConfig",
+      "judgeRubric",
+    ],
+    computerEnvironment: ["computerEnvironmentId"],
+  };
+
+function LedgerRowChips({
+  dirty,
+  conflict,
+}: {
+  dirty: boolean;
+  conflict: boolean;
+}) {
+  if (!dirty && !conflict) return null;
+  return (
+    <>
+      {dirty ? (
+        <span className="rounded-md border border-border px-1.5 py-px text-[11px] text-muted-foreground">
+          Unsaved
+        </span>
+      ) : null}
+      {conflict ? (
+        <span className="rounded-md border border-warning/40 px-1.5 py-px text-[11px] text-warning-foreground">
+          Changed elsewhere
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 /**
- * Settings sheet primitives — used by the suite-edit branch below. Kept
- * file-local because they encode the eyebrow-label + hairline-divider
- * pattern that's specific to this surface; if a second consumer appears,
- * lift into a shared module then.
+ * The suite's runs NEWEST FIRST. `compareRunsBySequence` sorts ascending by
+ * run number, so a bare sort puts run #1 first — which is how a suite with
+ * fifty runs once backtested a draft rubric against its very first run.
  */
-function SettingsSection({
-  label,
-  hint,
-  labelAccessory,
-  layout = "stack",
-  children,
-  inlineSlot,
-}: {
-  label: string;
-  hint?: string;
-  labelAccessory?: React.ReactNode;
-  /**
-   * "stack" — eyebrow on top, hint right-aligned next to it, content
-   *           below in space-y-3 rows.
-   * "inline" — single row: eyebrow on the left, `inlineSlot` on the
-   *            right. `children` (if any) flow underneath. Used for
-   *            sections that resolve to one primary control.
-   */
-  layout?: "stack" | "inline";
-  inlineSlot?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  if (layout === "inline") {
-    return (
-      <section className="py-5 first:pt-2 last:pb-2">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-                {label}
-              </h2>
-              {labelAccessory}
-            </div>
-            {hint ? (
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
-            ) : null}
-          </div>
-          {inlineSlot}
-        </div>
-        {children ? <div className="mt-3 space-y-2">{children}</div> : null}
-      </section>
-    );
-  }
+export function sortRunsNewestFirst(runs: EvalSuiteRun[]): EvalSuiteRun[] {
+  return [...runs].sort((a, b) => compareRunsBySequence(b, a));
+}
+
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+/**
+ * S6 — the run a rubric edit can be backtested against.
+ *
+ * The newest TERMINAL run that was actually judged: a run whose
+ * `goalCompletion` is absent or `null` has no stored verdict to compare a
+ * draft against, and a run still going has nothing to re-grade at all.
+ * `null` means the panel is not offered rather than offered and refused.
+ */
+export function pickBacktestableRun(runs: EvalSuiteRun[]): EvalSuiteRun | null {
   return (
-    <section className="py-6 first:pt-2 last:pb-2">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-          {label}
-        </h2>
-        {hint ? (
-          <p className="text-[11px] text-muted-foreground/60">{hint}</p>
-        ) : null}
-      </div>
-      <div className="space-y-3">{children}</div>
-    </section>
+    sortRunsNewestFirst(runs).find(
+      (run) =>
+        TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
+        run.goalCompletion != null,
+    ) ?? null
+  );
+}
+
+/**
+ * Why the settings below cannot be changed here, and the way forward.
+ *
+ * At the TOP of the sheet, not on the control that refuses: someone opens
+ * Settings to change something specific, and a reason discoverable only by
+ * clicking the thing that does not work is a reason most people never read.
+ */
+function SuiteCiOwnedNotice({ onDuplicate }: { onDuplicate?: () => void }) {
+  return (
+    <div
+      data-testid="suite-settings-ci-owned"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/40 px-4 py-3"
+    >
+      <p className="text-xs text-muted-foreground">{CI_OWNED_REASON_COPY}</p>
+      {onDuplicate ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 shrink-0"
+          onClick={onDuplicate}
+          data-testid="suite-settings-duplicate-to-edit"
+        >
+          Duplicate to edit
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
 export function SuiteIterationsView({
   suite,
+  runReviewRequested = false,
+  onRunReviewClose,
   cases,
   iterations,
   allIterations,
@@ -180,43 +328,67 @@ export function SuiteIterationsView({
   projectId = null,
   navigation,
   onSetupCi,
-  onCreateTestCase,
-  onGenerateTestCases,
+  onCreateTestCase: onCreateTestCaseProp,
+  onRecordTestCase: onRecordTestCaseProp,
+  onGenerateTestCases: onGenerateTestCasesProp,
+  onDescribeTestCase,
   canGenerateTestCases = false,
   isGeneratingTestCases = false,
   caseListInSidebar = false,
   runDetailSortByOverride,
   onRunDetailSortByChange,
   omitRunIterationList = false,
-  canDeleteSuite,
+  canDeleteSuite: canDeleteSuiteProp,
   canDeleteRuns = true,
+  canDeleteRun,
   readOnlyConfig = false,
+  configLocked: configLockedProp = false,
+  onDuplicateSuite,
   hideRunActions = false,
   casesSidebarHidden,
   onShowCasesSidebar,
   omitSuiteHeader = false,
+  suiteDetailOverview = false,
+  evaluateDecisionSummary = false,
+  evaluateCaseEditor = false,
+  evaluateObserveFirst = false,
+  onGeneratingChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
-  onDeleteTestCasesBatch,
+  onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
   onRunTestCase,
   runningTestCaseId = null,
   onContinueInChat,
   projectServers,
   generateTestCasesDisabledReason,
-  evalRunsDisabledReason,
+  evalRunsDisabledReason: evalRunsDisabledReasonProp,
   isDirectGuest = false,
   ensureServersReady,
 }: {
   suite: EvalSuite;
+  runReviewRequested?: boolean;
+  onRunReviewClose?: () => void;
   cases: EvalCase[];
   iterations: EvalIteration[];
   allIterations: EvalIteration[];
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
-  onRerun: (suite: EvalSuite) => void;
+  onRerun: (
+    suite: EvalSuite,
+    opts?: {
+      matchOptionsOverride?: EvalMatchOptions;
+      iterationOverride?: number;
+      caseIds?: string[];
+      skipJudge?: boolean;
+    },
+  ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
-  onCancelRun: (runId: string) => void;
+  /**
+   * One id, or every in-progress id of a launch — the run page and the suite
+   * page cancel a whole client-model fan-out in one click.
+   */
+  onCancelRun: (runId: string | readonly string[]) => void;
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
@@ -230,10 +402,14 @@ export function SuiteIterationsView({
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
+  /** Active org, for the backend-gated GitHub Checks section. Absent ⇒ hidden. */
+  organizationId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
-  onGenerateTestCases?: () => void;
+  onDescribeTestCase?: () => void;
+  onRecordTestCase?: () => void;
+  onGenerateTestCases?: (refinement?: string) => Promise<void> | void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
   evalRunsDisabledReason?: string | null;
@@ -245,18 +421,93 @@ export function SuiteIterationsView({
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
   omitRunIterationList?: boolean;
-  /** When true, show suite delete affordances. */
+  /**
+   * Whether this caller's ROLE may delete the suite. Ownership is a separate
+   * question and is answered inside — `suite.delete` is a CI-locked action, so
+   * the affordance is withheld on a CI-owned suite whatever the role says.
+   */
   canDeleteSuite: boolean;
-  /** Project admins only: run list batch delete and selection. */
+  /** Whether the run selection + batch delete surface is shown at all. */
   canDeleteRuns?: boolean;
+  /**
+   * Per ROW, because deleting a run takes the project manage tier OR
+   * authorship of that run. Omitted means every listed run may be deleted.
+   */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
+  /**
+   * Lock this suite's configuration for a reason of the CALLER's own.
+   *
+   * NOT the way CI ownership gets in — that is read from the `suite` row here,
+   * so no caller has to remember it (`CiEvalsTab` did not, and the CI Runs tab
+   * went unlocked until the capability query resolved). This is OR-ed on top,
+   * for a caller that knows something this component cannot see.
+   *
+   * The suite's configuration lives in a repository (a committed suite file, or
+   * SDK ingest), so the app refuses to edit it — see `isCiOwnedSuite`.
+   *
+   * DELIBERATELY NOT `readOnlyConfig`. That prop also hides Run, because it
+   * means "this surface does not offer suite controls" (desktop CI). This one
+   * means "this suite refuses edits", and running it is exactly what stays —
+   * merging the two would take Run away from every CI-owned suite, which is the
+   * thing the lock exists to keep working.
+   *
+   * The backend refuses these writes itself; this only decides whether a
+   * control is offered, so a client that races an ownership change still meets
+   * a clean refusal at the mutation.
+   */
+  configLocked?: boolean;
+  /**
+   * Take an editable copy of this suite. Rendered only when
+   * {@link configLocked} — a suite the app refuses to edit needs a way
+   * forward, and `duplicateTestSuite` produces one that is app-owned
+   * (`source: 'ui'`, no declared id).
+   */
+  onDuplicateSuite?: () => void;
   /** When true, suppress suite-level run/replay entry points in shared chrome. */
   hideRunActions?: boolean;
   casesSidebarHidden?: boolean;
   onShowCasesSidebar?: () => void;
   /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
   omitSuiteHeader?: boolean;
+  /**
+   * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
+   * history, cases — instead of the unified dashboard on suite overview, and
+   * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
+   * detail.
+   *
+   * OFF by default on purpose. This is a shared component: the shipped
+   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
+   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   */
+  suiteDetailOverview?: boolean;
+  /**
+   * Evaluate (New) only: read and render D9's canonical run decision summary
+   * on run detail and on the suite's run history.
+   *
+   * OFF by default, and the default is what keeps `/evals` byte-identical:
+   * with this false nothing here subscribes, so a non-Evaluate mount issues
+   * exactly zero decision-summary requests. Only `EvaluateTab` passes it.
+   */
+  evaluateDecisionSummary?: boolean;
+  /**
+   * Evaluate (New) only: author cases with the simple case editor
+   * (`components/evaluate/simple-case/`) — the three-question form, the
+   * per-trial chain and route rollup on quick runs, and the
+   * Generate / Record / Write empty state.
+   *
+   * OFF by default, which is what keeps `/evals` byte-identical: with this
+   * false the case editor renders the flat step list exactly as it does
+   * today. Only `EvaluateTab` passes it.
+   */
+  evaluateCaseEditor?: boolean;
+  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
+  evaluateObserveFirst?: boolean;
+  /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
+  onGeneratingChange?: (
+    state: { exit: () => void; label?: string } | null,
+  ) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -266,7 +517,7 @@ export function SuiteIterationsView({
   /** Per-case run from the cases overview table (Explore / CI). */
   onRunTestCase?: (
     testCase: EvalCase,
-    opts?: { iterationOverride?: number }
+    opts?: { iterationOverride?: number },
   ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -275,12 +526,141 @@ export function SuiteIterationsView({
   isDirectGuest?: boolean;
   /** Playground: connect suite MCP servers before compare run (same as per-case run). */
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
+  //
+  // `isEditMode` is whether the settings SHEET renders, and it deliberately
+  // does NOT include the CI lock — see the long note further down. It is
+  // computed here, ahead of the lock, because the capabilities query below is
+  // scoped to it and the lock reads that query's answer.
   const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
+
+  // WHAT THE SUITE IS, asked twice, and both answers count.
+  //
+  // Re-asked on the suite's revision number: a save that changes what someone
+  // may do next (upgrading the verdict policy) should change the rows, not
+  // leave them describing the suite as it was when the page loaded.
+  // ALWAYS the suite, never `isEditMode ? … : null`.
+  //
+  // Scoping this to edit mode is what the settings sheet needed when it was the
+  // only reader. It is not what the LOCK needs. `configLocked` below is meant to
+  // be two sources OR-ed, and on every surface but the settings sheet the second
+  // one answered `unavailable` — so the case-authoring callbacks fell back to
+  // the suite row alone, on exactly the surface where Add case and Generate
+  // render. A capability that cannot be read where it is needed is not a second
+  // source; it is a comment claiming there is one.
+  //
+  // The cost is one `getSuiteCapabilities` read per suite view. It is a
+  // one-shot query keyed on the suite and its revision, not a subscription.
+  // Bumped by a judge-gate acknowledgement, which changes what the gate switch
+  // may do WITHOUT changing the suite's revision — the acknowledgement is
+  // stored on the suite but is not a settings edit, so nothing else re-asks.
+  const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
+  const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
+    suite._id,
+    `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
+  );
+  // The ONE rule every row below shares: when capabilities could not be read,
+  // behave exactly as the page did before they existed. Capabilities make a
+  // page more honest; they must never make it less usable than the page that
+  // had none.
+  const capabilitiesReady = capabilitiesState === "ready" && capabilities;
+
+  // IS THIS SUITE CI'S? — asked of two sources, and answered once.
+  //
+  // OR-ed, because they fail in opposite directions. The SUITE ROW is complete
+  // — `declaredSuiteId` and `source` both live on it — and answers before any
+  // query resolves, which is why it cannot simply be replaced.
+  // `getSuiteCapabilities.ownership` is the backend's own answer, from the same
+  // predicate that will refuse the write, and it is the one that stays right if
+  // the cached row is stale. Neither alone; a lock that disagrees with the
+  // server is the bug this whole change exists to remove.
+  //
+  // THE ROW IS READ HERE, not taken from the caller. It used to arrive only as
+  // `configLocked`, and `CiEvalsTab` never passed it — so on the CI Runs tab,
+  // the surface most likely to be SHOWING a CI-owned suite, the row half was
+  // simply absent and the lock was whatever the capability query had gotten
+  // around to answering. Until it resolved, the suite was fully editable.
+  //
+  // Deriving it from the `suite` this component already holds is the same
+  // instrument as the withheld callbacks below, applied one level up: a caller
+  // cannot forget to pass what it never had to pass. `configLockedProp` stays
+  // as a way to lock a suite for reasons of the CALLER's own, which is a
+  // different question from whether CI owns it.
+  //
+  // It SHADOWS the prop rather than sitting beside it, so there is exactly one
+  // answer in this component. Beside it, the two disagreed in a way nobody
+  // would have predicted from reading either line: the settings column locked
+  // on the combined answer while the case callbacks, the pass-downs and the
+  // CI-owned notice all still read the row — a suite the backend calls CI's
+  // would grey out its settings, offer Add case anyway, and explain nothing.
+  //
+  // No cycle: `isEditMode` above is derived from the route and `readOnlyConfig`
+  // only, so it never reads this.
+  const configLocked =
+    configLockedProp ||
+    isCiOwnedSuite(suite) ||
+    (capabilitiesReady && capabilities.ownership?.ciOwned === true);
+
+  // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
+  // read-only in exactly the same way, but keeps its Run controls.
+  const editingDisabled = readOnlyConfig || configLocked;
+  const [importOpen, setImportOpen] = useState(false);
+
+  // ── CASE AUTHORING, WITHHELD RATHER THAN GATED ────────────────────────────
+  //
+  // `case.create`, `case.edit` and `case.delete` are all in the platform's
+  // locked set, so on a CI-owned suite every one of these ends in a `409`
+  // after the click. The affordance is the bug, not the refusal.
+  //
+  // Withheld at the top rather than gated at each render site, for the same
+  // reason the settings column is one `fieldset[disabled]` rather than thirty
+  // `disabled` props: these callbacks reach the header, the dashboard, the
+  // folded dashboard, the sidebar case list and the run page — five call sites
+  // today, and the sixth is the one somebody forgets. Every consumer already
+  // hides its control when the prop is absent, because a surface that cannot
+  // author cases is not a new state for any of them.
+  //
+  // `onDuplicateSuite` is deliberately NOT in here: duplicating is the way out
+  // of the lock, and it writes a new suite rather than this one.
+  //
+  // DELETE IS NOT ONE OF THEM, and the asymmetry is the point. Case authoring
+  // is withheld above because it would edit what the CI-owned suite IS, and
+  // the next sync would undo it. Deleting edits nothing: it says what this
+  // workspace keeps, and the next sync or SDK report creates the suite again.
+  //
+  // It was gated on `configLocked` here, and the backend refused it to match.
+  // Together they left the one case with no way out: `onDuplicateSuite` gives
+  // an editable copy but leaves the original, so a suite orphaned by a renamed
+  // `suiteName` could not be removed from any surface at all (issue #5381).
+  // `suite.delete` is no longer in the backend's CI-locked set, so the prop's
+  // ROLE answer (`canDeleteArtifact` over the suite's author) is the whole
+  // answer again.
+  const canDeleteSuite = canDeleteSuiteProp;
+  const onCreateTestCase = configLocked ? undefined : onCreateTestCaseProp;
+  const onRecordTestCase = configLocked ? undefined : onRecordTestCaseProp;
+  const onGenerateTestCases = configLocked
+    ? undefined
+    : onGenerateTestCasesProp;
+  const onDeleteTestCasesBatch = configLocked
+    ? undefined
+    : onDeleteTestCasesBatchProp;
+  // WHY `isEditMode` ABOVE DOES NOT INCLUDE THE LOCK.
+  //
+  // A CI-owned suite's settings are its documentation: they are exactly what a
+  // person needs to read to understand what CI is running, and the sheet is the
+  // only surface that shows them. Folding the lock in here made the whole sheet
+  // unreachable while the Settings control still navigated to `suite-edit` — the
+  // URL changed and nothing appeared. `readOnlyConfig` is different: it means
+  // this surface offers no suite settings at all (desktop CI), so it still
+  // closes the sheet.
+  //
+  // What the lock does instead is make the sheet a VIEWER: `editingDisabled`
+  // hides the commit bar and `settingsLockedReason` disables every control
+  // inside, so nothing there can be typed into and then silently dropped.
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -290,18 +670,20 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-      ? "test-detail"
-      : route.type === "test-edit" && !readOnlyConfig
-      ? "test-edit"
-      : route.type === "test-edit"
-      ? "test-detail"
-      : "overview";
+        ? evaluateCaseEditor
+          ? "test-edit"
+          : "test-detail"
+        : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
+          ? "test-edit"
+          : route.type === "test-edit"
+            ? "test-detail"
+            : "overview";
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
-      ? "cross-host"
-      : "runs";
+        ? "cross-host"
+        : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -324,18 +706,30 @@ export function SuiteIterationsView({
       opts?: {
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
-      }
-    ) =>
-      (
-        onRerun as (
-          suite: EvalSuite,
-          opts?: {
-            matchOptionsOverride?: EvalMatchOptions;
-            iterationOverride?: number;
-          }
-        ) => void
-      )(s, opts),
-    [onRerun]
+        ephemeralEnvironment?: boolean;
+        caseIds?: string[];
+        skipJudge?: boolean;
+      },
+    ) => onRerun(s, opts),
+    [onRerun],
+  );
+
+  /**
+   * "Run test" on one case: a SUITE run narrowed to it.
+   *
+   * Not a quick run, and the difference is the whole point. Every judge
+   * surface is keyed by `suiteRunId` — the request mutation, the `autoRun`
+   * trigger, the verdict store and the client reader — and a quick run has
+   * none, so a quick run can never answer "did it accomplish the goal?".
+   */
+  const onRunCase = useCallback(
+    async (
+      caseId: string,
+      opts?: { iterationOverride?: number; skipJudge?: boolean },
+    ) => {
+      await onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
+    },
+    [onRerunWithOverride, suite],
   );
 
   const onRunTestCaseWithOverride = useMemo<
@@ -345,26 +739,193 @@ export function SuiteIterationsView({
       onRunTestCase
         ? (testCase: EvalCase) => onRunTestCase(testCase, { iterationOverride })
         : undefined,
-    [onRunTestCase, iterationOverride]
+    [onRunTestCase, iterationOverride],
   );
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
-  const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
-  // Local in-progress state for the suite-default checks editor. Mirrors the
-  // case editor's `editForm.predicates.list` mediation: `ChecksSection` fires
-  // onChange on every keystroke (including the blank-template insertion from
-  // `Add check`), so we keep edits local and only persist when every check
-  // is valid. See `areAllChecksValid` and `test-template-editor.tsx`.
-  const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
-    Predicate[]
-  >(suite.defaultPredicates ?? []);
+  // ── The settings draft (S1) ─────────────────────────────────────────────
+  //
+  // One piece of state for every drafted setting, replacing the per-control
+  // local state each writer used to keep. The controls still fire on every
+  // keystroke — `ChecksSection` inserts a blank template on `Add check` — but
+  // now those keystrokes land in a draft that is saved deliberately rather
+  // than in a debounce racing its own previous write.
+  const [draft, dispatchDraft] = useReducer(
+    suiteSettingsReducer,
+    suite,
+    // Lazy: this ran on every render and threw the result away, and it is not
+    // free — it rebuilds the whole settings envelope for a suite document that
+    // changes identity on every run-progress tick.
+    (initial) =>
+      initSuiteSettingsDraft({
+        suiteId: initial._id,
+        values: readSuiteSettingsValues(initial),
+      }),
+  );
+  const { commit, isCommitting } = useSuiteSettingsCommit();
+  const draftDefaultPredicates = draft.current.defaultPredicates;
+  const setDraftDefaultPredicates = useCallback(
+    // Both forms, matching the `useState` setter this replaced — `AddCheckMenu`
+    // passes an updater, and the reducer resolves it against the authoritative
+    // draft rather than whatever this render closed over.
+    (next: Predicate[] | ((previous: Predicate[]) => Predicate[])) =>
+      dispatchDraft({ type: "edit", key: "defaultPredicates", value: next }),
+    [],
+  );
   const suiteScenarioMigrationCount = useMemo(
     () =>
       splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
         .length,
-    [draftDefaultPredicates]
+    [draftDefaultPredicates],
   );
+  const defaultMinimumPassRate =
+    draft.current.defaultPassCriteria?.minimumPassRate ?? 100;
+  const draftChanges = useMemo(() => describeDraft(draft), [draft]);
+  // Memoized with the changes: `canCommit` re-runs `dirtyKeys` (a stringify per
+  // key) and a zod parse over every default check, and this component re-renders
+  // on every run-progress tick of every suite in the project.
+  const draftCanCommit = useMemo(
+    // A half-written rubric is refused HERE rather than by the backend, for the
+    // same reason a half-written check is: the save is one batched mutation, so
+    // a rubric the platform rejects takes the settings beside it down with it.
+    () =>
+      canCommit(draft, areAllChecksValid) &&
+      isRubricValid(draft.current.judgeRubric),
+    [draft],
+  );
+  const hasUnsavedSettings = draftChanges.length > 0;
+  const dirtySettingKeys = useMemo(() => new Set(dirtyKeys(draft)), [draft]);
+  const rowIsDirty = useCallback(
+    (key: EvalSuiteSettingKey) =>
+      (ROW_DRAFT_KEYS[key] ?? []).some((draftKey) =>
+        dirtySettingKeys.has(draftKey),
+      ),
+    [dirtySettingKeys],
+  );
+  const rowIsConflict = useCallback(
+    (key: EvalSuiteSettingKey) =>
+      (ROW_DRAFT_KEYS[key] ?? []).some((draftKey) =>
+        draft.conflicts.includes(draftKey),
+      ),
+    [draft.conflicts],
+  );
+  const nameRowError =
+    draft.current.name.trim().length === 0
+      ? {
+          message: "Name is required",
+          focusSelector: 'input[aria-label="Suite name"]',
+        }
+      : undefined;
+  const passOrFailRowError = !isRubricValid(draft.current.judgeRubric)
+    ? { message: "A criterion is missing a label" }
+    : !areAllChecksValid(draftDefaultPredicates)
+      ? { message: "An assertion is incomplete" }
+      : undefined;
+  // Which criterion SCOPE the sheet is editing, and therefore which field and
+  // which units each grading row shows. Read from the DRAFT rather than the
+  // suite so the rows follow a scope change the moment it is drafted; this
+  // sheet no longer offers one, but a scope arriving from the API
+  // still has to be reflected rather than leaving the page
+  // describing a suite nobody has.
+  const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
+  const scheduledEvalsEnabled = useScheduledEvalsEnabled();
+  const { capable: composeCapable } = useEvalComposeCapable(projectId);
+  const settingsScrollRef = useRef<HTMLDivElement>(null);
+  // Discarding is what the person just agreed to when they confirmed the
+  // prompt. Without it the draft outlives the sheet: the guard re-prompts on
+  // every later navigation, ⌘S saves from the run list, and
+  // the edits they were told they were leaving behind are still there.
+  useUnsavedChangesGuard(hasUnsavedSettings, () =>
+    dispatchDraft({ type: "discard" }),
+  );
+
+  // The suite moved under us. An untouched row simply refreshes; a row the
+  // person has edited AND someone else changed is marked rather than merged,
+  // because that is the one case an automatic answer would get wrong for one
+  // of the two people involved. A different suite id resets the draft outright
+  // — see the reducer.
+  const liveSettingsKey = useMemo(
+    () => `${suite._id}:${JSON.stringify(readSuiteSettingsValues(suite))}`,
+    [suite],
+  );
+  useEffect(() => {
+    dispatchDraft({
+      type: "rebase",
+      suiteId: suite._id,
+      live: readSuiteSettingsValues(suite),
+    });
+    // Keyed on the serialized live values so this fires when the SUITE moves,
+    // not on every render that produces a new object identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSettingsKey]);
+
+  const handleCommitSettings = useCallback(async () => {
+    if (!draftCanCommit || isCommitting || editingDisabled) return;
+    const outcome = await commit({
+      draft,
+      suiteId: suite._id,
+      // Keep the required gate-policy audit note without a blocking prompt.
+      note: dirtySettingKeys.has("gatePolicy")
+        ? `Updated suite settings: ${draftChanges
+            .map((change) => change.label)
+            .join(", ")}.`
+        : undefined,
+      expectedRevisionNumber: suite.revisionNumber,
+      liveEnvironment: suite.environment,
+    });
+    if (outcome.status === "saved") {
+      // What the save actually WROTE: the normalized form of the keys it
+      // carried, and the untouched keys exactly as they were. `toUpdateArgs`
+      // trims a dirty name, so rebasing onto the raw draft would leave the
+      // person looking at their own whitespace — and normalizing a name this
+      // save never sent would make the draft disagree with the database.
+      //
+      // `retained` keeps the keys a legacy deployment could not carry dirty,
+      // so the toast's promise that they are still there to save holds.
+      // `suiteId` is the save's OWN suite, so a mutation that resolves after
+      // the person navigated cannot land on the suite they moved to.
+      dispatchDraft({
+        type: "commitSucceeded",
+        suiteId: suite._id,
+        live: committedSuiteSettingsValues(draft),
+        retained: outcome.droppedKeys,
+      });
+    } else if (outcome.status === "conflict") {
+      // The draft SURVIVES. Throwing away someone's edits because a
+      // colleague saved first is the outcome the precondition exists to
+      // prevent, not one to implement on its refusal.
+      toast.error(
+        "This suite changed since you opened it. Your edits are still here — review them against the new values and save again.",
+      );
+      // No rebase here on purpose. `suite` is still the document we already
+      // had — the one the server just told us is stale — so rebasing onto it
+      // would compare the draft against the same values and mark nothing.
+      // The subscription delivers the newer document a moment later, and the
+      // rebase effect above does the real comparison then.
+    }
+  }, [
+    commit,
+    draft,
+    suite,
+    draftCanCommit,
+    isCommitting,
+    dirtySettingKeys,
+    draftChanges,
+  ]);
+
+  // Save the same validated draft from the button or keyboard shortcut.
+  useEffect(() => {
+    if (!hasUnsavedSettings) return;
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== "s") return;
+      event.preventDefault();
+      void handleCommitSettings();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [hasUnsavedSettings, handleCommitSettings]);
+
   // Description editor is hidden in the current pass — handlers and draft
   // state were removed; re-add together when the About section returns.
   const [exportState, setExportState] = useState<{
@@ -372,32 +933,80 @@ export function SuiteIterationsView({
     cases: EvalExportCaseInput[];
   } | null>(null);
   const [tracesExportOpen, setTracesExportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const unifiedShareEvals =
+    useFeatureFlagEnabled("unified-share-evals") === true;
   // chatSessionIds for the currently-selected run (unified-trace iterations
   // only; legacy `blob`-only iterations have no chatSessions row to export).
-  const runChatSessionIds = useMemo(
-    () =>
-      selectedRunId
-        ? allIterations
-            .filter((it) => it.suiteRunId === selectedRunId && it.chatSessionId)
-            .map((it) => it.chatSessionId as string)
-        : [],
-    [allIterations, selectedRunId]
-  );
+  const runChatSessionIds = useMemo(() => {
+    const selected = runs.find((run) => run._id === selectedRunId);
+    const ids = new Set(
+      selected && suiteDetailOverview
+        ? launchRuns(selected, runs).map((run) => run._id)
+        : [selectedRunId],
+    );
+    return allIterations
+      .filter((it) => ids.has(it.suiteRunId ?? null) && it.chatSessionId)
+      .map((it) => it.chatSessionId as string);
+  }, [allIterations, selectedRunId, runs, suiteDetailOverview]);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const { isAuthenticated } = useConvexAuth();
-  // Reproducible-evals env picker (gated by the computers feature flag). Only
-  // fetch the project's environments when the flag is on and we have a project.
+  // Reproducible-evals image picker.
+  //
+  // The row keeps its ORIGINAL flag gate as an additional condition, so a
+  // deployment whose capabilities read fails behaves exactly as it did before.
+  // What changes is what happens when capabilities ARE readable and say no: the
+  // row renders disabled with the reason instead of disappearing.
+  //
+  // ONE condition decides both whether the row renders and whether its images
+  // are fetched. They used to be written separately — visibility here, the
+  // fetch gated on the client flag alone — so a deployment whose capabilities
+  // say computers ARE available, seen by a client whose flag is off, rendered
+  // an ENABLED select whose only option was "None (default image)". A control
+  // that offers nothing is the failure this file is being repaired for.
   const computersEnabled = useComputersEnabled();
-  const computerEnvironments = useEnvironments(
-    computersEnabled && projectId ? projectId : null
+  const computerEnvironmentRowVisible = capabilitiesReady
+    ? Boolean(projectId)
+    : computersEnabled && Boolean(projectId);
+  const computerEnvironments = useSandboxImages(
+    computerEnvironmentRowVisible ? projectId : null,
   );
-  // Hosts available to attach in the header's "+ Attach host" picker. The
-  // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
-  // pure-props and renderable in test environments without a Convex provider.
-  const { hosts: projectHosts } = useHostList({
+  const ephemeralCloudAvailable = useEphemeralCloudAvailable();
+  // Cloud-sandbox preflight, derived ONCE here — the parent owns every run
+  // control (header Run all, run-detail rerun/replay, per-case play buttons
+  // in both dashboards), so deriving any lower down leaves some of them
+  // ungated. Folded into the same disabled-reason channel billing uses.
+  // Ad-hoc rows INCLUDED, and not gated on the suite having attachments —
+  // both because of what a model matrix is. Every cell it mints is an ad-hoc
+  // row, and a compose-and-run launches without attaching at all, so the
+  // narrower read returned a list with none of the environments the runs below
+  // actually reference: the matrix could not tell two models on one client
+  // apart, and the collision split never had two rows to compare.
+  //
+  // Widening is safe for `evalSuitePinsSandboxImage`, which looks up only the
+  // ids the suite itself lists — a superset cannot make it read true.
+  const projectEnvironments = useProjectEnvironments(projectId ?? null, {
+    includeAdhoc: true,
+  });
+  const suitePinsSandboxImage = evalSuitePinsSandboxImage(
+    suite,
+    projectEnvironments ?? undefined,
+  );
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
+      : null);
+  // A LOOKUP feeding `hostNamesById` below — nothing here offers a client to
+  // pick, so it opts into private scenario-backing clients. Naming and
+  // offering are different questions: a run that already resolved against a
+  // backing client should print that client's name rather than "unknown", and
+  // withholding the name hides history instead of preventing anything.
+  const { hosts: namableHosts } = useHostList({
     isAuthenticated,
     projectId: projectId ?? null,
+    includePrivateBacking: true,
   });
 
   // Use custom hooks for data calculations
@@ -407,13 +1016,13 @@ export function SuiteIterationsView({
     iterations,
     allIterations,
     runs,
-    aggregate
+    aggregate,
   );
 
   const { caseGroupsForSelectedRun } = useRunDetailData(
     selectedRunId,
     allIterations,
-    effectiveRunDetailSortBy
+    effectiveRunDetailSortBy,
   );
 
   // Selected run details
@@ -423,8 +1032,30 @@ export function SuiteIterationsView({
     return run ?? null;
   }, [selectedRunId, runs]);
 
+  const latestCompletedRun = useMemo(
+    () =>
+      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
+      null,
+    [runs],
+  );
+  const groundedness = useGroundedness(latestCompletedRun);
+
+  /**
+   * Every trial's chain for the run currently open, keyed by iteration.
+   *
+   * ONE read for the whole run, shared by the rows beneath it — which is what
+   * the run-scoped case table needs and what a cross-run table could not have
+   * without a read per run. Gated on the same Evaluate opt-in and project id
+   * as the decision card, so with either missing it issues no request.
+   */
+  const runTrialChains = useEvalRunIterationChains({
+    projectId,
+    run: selectedRunDetails,
+    enabled: Boolean(evaluateDecisionSummary && projectId),
+  });
+
   const selectedCompareBaseRunId =
-    route.type === "run-detail" ? route.compareToRunId ?? null : null;
+    route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -435,21 +1066,147 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
-          compareRunsBySequence(run, selectedRunDetails) < 0
+          (!suiteDetailOverview ||
+            (run.namedHostId === selectedRunDetails.namedHostId &&
+              run.effectiveModelId === selectedRunDetails.effectiveModelId &&
+              (!selectedRunDetails.runGroupId ||
+                run.runGroupId !== selectedRunDetails.runGroupId))) &&
+          compareRunsBySequence(run, selectedRunDetails) < 0,
       )
       .sort((a, b) => compareRunsBySequence(b, a));
     return earlierCompletedRuns[0] ?? null;
-  }, [runs, selectedRunDetails]);
+  }, [runs, selectedRunDetails, suiteDetailOverview]);
 
   // Resolve namedHostId → display name for any run-detail / list views
-  // that want to surface which host a run was triggered against.
-  const hostNamesById = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const attachment of suite.hostAttachments ?? []) {
-      map.set(attachment.namedHostId, attachment.hostName);
+  // that want to surface which host a run was triggered against. The project
+  // host list backs hosts the suite has no attachment for — an environment-
+  // backed suite has none at all, yet its runs still stamp the environment's
+  // resolved host.
+  const hostNamesById = useMemo(
+    () => buildHostNamesById(suite.hostAttachments, namableHosts),
+    [suite.hostAttachments, namableHosts],
+  );
+
+  // The suite's OWN host config — what an attachment-less suite runs under.
+  const canQuerySuiteHostConfig = useActorCanQuery();
+  const suiteOwnHostConfig = useQuery(
+    "hostConfigsV2:getSuiteConfig" as never,
+    canQuerySuiteHostConfig && suite._id
+      ? ({ suiteId: suite._id } as never)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+
+  const { servers: factsProjectServers } = useProjectServers({
+    isAuthenticated,
+    projectId: projectId ?? null,
+  });
+  const { serverAttachments } = useProjectServerAttachments({
+    isAuthenticated,
+    projectId: projectId ?? null,
+  });
+
+  /**
+   * The same two modes the environments row renders: attached environments when
+   * this deployment composes cells, else the legacy host attachments. A target
+   * that names a server GROUP knows its ids here; one that uses the client's
+   * own servers cannot know them until the host config loads, so the panel
+   * finishes that half.
+   */
+  const stageFactTargets = useMemo<StageFactsTarget[]>(() => {
+    const attachmentById = new Map(
+      (serverAttachments ?? []).map((row) => [row._id, row]),
+    );
+    // NOT gated on `composeCapable`: that capability decides whether this
+    // deployment can EDIT client x model cells, not what a run fans out over.
+    // A suite with attached environments runs one per environment either way —
+    // `summarizeEnvironments` reads them the same way — so gating here reported
+    // "no run target" for a suite that has several.
+    if ((suite.environmentIds?.length ?? 0) > 0) {
+      const rows = (suite.environmentIds ?? []).map((environmentId) => {
+        const environment = projectEnvironments?.find(
+          (row) => row.environmentId === environmentId,
+        );
+        return { environmentId, environment };
+      });
+      const labeled = disambiguateLabels(
+        rows.map(({ environmentId, environment }) => ({
+          environmentId,
+          label: environment
+            ? environmentLabel(environment, {
+                hostName: (id) => hostNamesById.get(id) ?? undefined,
+              })
+            : environmentId,
+        })),
+      );
+      return rows.map(({ environmentId, environment }, index) => {
+        const attachment = environment?.serverAttachmentId
+          ? attachmentById.get(environment.serverAttachmentId)
+          : undefined;
+        return {
+          key: environmentId,
+          label: labeled[index].label,
+          hostId: environment?.hostId ?? "",
+          environmentId,
+          attachment: attachment
+            ? { id: attachment._id, name: attachment.name }
+            : null,
+          servers: attachment
+            ? { kind: "attachment" as const, ids: attachment.serverIds }
+            : { kind: "host" as const, extraIds: [] },
+        };
+      });
     }
-    return map;
-  }, [suite.hostAttachments]);
+    // Legacy: a suite-level server attachment replaces every host's own picks
+    // (see `EvalSuite.serverAttachmentId`), so it wins for all of them.
+    const suiteAttachment = suite.serverAttachmentId
+      ? attachmentById.get(suite.serverAttachmentId)
+      : undefined;
+    if ((suite.hostAttachments ?? []).length === 0) {
+      // No environment and no attached client is still a RUN TARGET: the suite
+      // executes under its own saved host config, falling back to the default
+      // MCPJam client when it never wrote one (`loadSuiteHostConfig`). Saying
+      // "no run target yet" here sent a reader to attach something the run does
+      // not need. No `hostId`, because this config belongs to the suite rather
+      // than to a client row there would be a page for.
+      return suiteOwnHostConfig
+        ? [
+            {
+              key: "suite-host",
+              label: "This suite's own client",
+              hostId: "",
+              hostConfig: suiteOwnHostConfig,
+              attachment: null,
+              servers: { kind: "host" as const, extraIds: [] },
+            },
+          ]
+        : [];
+    }
+    return (suite.hostAttachments ?? []).map((attachmentRow) => ({
+      key: attachmentRow.namedHostId,
+      label:
+        hostNamesById.get(attachmentRow.namedHostId) ??
+        attachmentRow.hostName ??
+        attachmentRow.namedHostId,
+      hostId: attachmentRow.namedHostId,
+      attachment: suiteAttachment
+        ? { id: suiteAttachment._id, name: suiteAttachment.name }
+        : null,
+      servers: suiteAttachment
+        ? { kind: "attachment" as const, ids: suiteAttachment.serverIds }
+        : {
+            kind: "host" as const,
+            extraIds: attachmentRow.enabledOptionalServerIds ?? [],
+          },
+    }));
+  }, [
+    suiteOwnHostConfig,
+    suite.environmentIds,
+    suite.hostAttachments,
+    suite.serverAttachmentId,
+    projectEnvironments,
+    serverAttachments,
+    hostNamesById,
+  ]);
 
   const omitRunDetailIdentity = useMemo(() => {
     if (viewMode !== "run-detail" || !selectedRunDetails) {
@@ -464,13 +1221,17 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? route.iteration ?? null : null;
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
 
   const selectedRunTestCaseId =
-    route.type === "run-detail" ? route.testCaseId ?? null : null;
+    route.type === "run-detail" ? (route.testCaseId ?? null) : null;
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
+      return;
+    }
+    if (evaluateCaseEditor) {
+      navigation.toTestEdit(route.suiteId, group.testCaseId);
       return;
     }
     navigation.toRunDetail(route.suiteId, route.runId, undefined, {
@@ -488,7 +1249,7 @@ export function SuiteIterationsView({
   const iterationsForSelectedRunTestCase = useMemo(() => {
     if (!selectedRunId || !selectedRunTestCaseId) return [];
     return caseGroupsForSelectedRun.filter(
-      (iteration) => iteration.testCaseId === selectedRunTestCaseId
+      (iteration) => iteration.testCaseId === selectedRunTestCaseId,
     );
   }, [selectedRunId, selectedRunTestCaseId, caseGroupsForSelectedRun]);
 
@@ -504,7 +1265,7 @@ export function SuiteIterationsView({
       return;
     }
     const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
-    if (readOnlyConfig) {
+    if (editingDisabled && !evaluateCaseEditor) {
       navigation.toRunDetail(route.suiteId, route.runId, iterationId, {
         testCaseId: selectedRunTestCaseId ?? iter?.testCaseId ?? undefined,
       });
@@ -520,119 +1281,19 @@ export function SuiteIterationsView({
     }
   };
 
-  // Sync local draft of default checks when the suite identity or its
-  // persisted value changes. `suite._id` is included so navigating to a
-  // different suite with the same persisted value (commonly
-  // `undefined → undefined`) still resets the draft — otherwise the old
-  // suite's in-progress edits would be saved into the new one on the next
-  // valid keystroke.
-  useEffect(() => {
-    setDraftDefaultPredicates(suite.defaultPredicates ?? []);
-  }, [suite._id, suite.defaultPredicates]);
-
-  // Debounced commit of the default-checks draft. Earlier this was fired
-  // directly inside ChecksSection's onChange, which kicked off one
-  // unsynchronized `updateSuite` per keystroke — out-of-order responses
-  // could land in the wrong order and persist stale predicate text, and
-  // the toast spammed once per character.
-  //
-  // The debounce alone is not enough: if a user pauses (timer fires →
-  // updateSuite A starts) and then keeps editing (timer fires again →
-  // updateSuite B starts before A resolves), Convex's "last write wins"
-  // means whichever request lands second persists, which can roll the
-  // draft back to A's stale snapshot. We serialize: the next save waits
-  // for any in-flight one to settle, then reads the latest draft and
-  // fires exactly one write.
-  const persistedDefaultPredicatesKey = useMemo(
-    () => JSON.stringify(suite.defaultPredicates ?? []),
-    [suite.defaultPredicates]
-  );
-  const draftDefaultPredicatesKey = useMemo(
-    () => JSON.stringify(draftDefaultPredicates),
-    [draftDefaultPredicates]
-  );
-  const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
-  useEffect(() => {
-    if (draftDefaultPredicatesKey === persistedDefaultPredicatesKey) return;
-    if (!areAllChecksValid(draftDefaultPredicates)) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        // Wait for any in-flight save to settle before starting the next
-        // one. The pending one captured an earlier draft; if we raced it
-        // and lost, Convex would persist the stale snapshot.
-        while (defaultChecksInFlightRef.current) {
-          try {
-            await defaultChecksInFlightRef.current;
-          } catch {
-            // Errors are surfaced by the call site that started the
-            // in-flight promise; we just need it to settle.
-          }
-        }
-        if (cancelled) return;
-        const snapshot = draftDefaultPredicates;
-        const promise = updateSuite({
-          suiteId: suite._id,
-          defaultPredicates: snapshot.length === 0 ? null : snapshot,
-        });
-        defaultChecksInFlightRef.current = promise as Promise<unknown>;
-        try {
-          await promise;
-          toast.success("Default checks updated");
-        } catch (error) {
-          toast.error(getBillingErrorMessage(error, "Failed to update suite"));
-          console.error("Failed to update default checks:", error);
-        } finally {
-          if (defaultChecksInFlightRef.current === promise) {
-            defaultChecksInFlightRef.current = null;
-          }
-        }
-      })();
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    draftDefaultPredicatesKey,
-    persistedDefaultPredicatesKey,
-    draftDefaultPredicates,
-    suite._id,
-    updateSuite,
-  ]);
-
-  // Load default pass criteria from suite
-  useEffect(() => {
-    if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
-      setDefaultMinimumPassRate(suite.defaultPassCriteria.minimumPassRate);
-      if (typeof window !== "undefined") {
-        try {
-          localStorage.setItem(
-            `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate)
-          );
-        } catch (error) {
-          console.warn(
-            "Failed to sync default pass criteria to localStorage",
-            error
-          );
-        }
-      }
-    } else if (typeof window !== "undefined") {
-      try {
-        const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
-        if (rate) setDefaultMinimumPassRate(Number(rate));
-      } catch (error) {
-        console.warn("Failed to load default pass criteria", error);
-      }
-    }
-  }, [suite._id, suite.defaultPassCriteria]);
+  // The debounced default-checks committer, the localStorage pass-criteria
+  // mirror and the per-suite draft-reset effect all lived here. All three
+  // were machinery for saving on every keystroke: a debounce that serialized
+  // its own writes so an out-of-order response could not persist stale text,
+  // and a local mirror so a value the server had not accepted yet survived a
+  // reload. The draft makes them unnecessary — nothing is written until the
+  // person says so, and `rebase` handles a suite that moves underneath.
 
   const handleUpdateHostAttachments = async (
     attachments: Array<{
       namedHostId: string;
       enabledOptionalServerIds: string[];
-    }>
+    }>,
   ) => {
     try {
       await updateSuite({
@@ -640,12 +1301,28 @@ export function SuiteIterationsView({
         hostAttachments: attachments,
       });
       toast.success(
-        attachments.length === 0 ? "Clients cleared" : "Clients updated"
+        attachments.length === 0 ? "Clients cleared" : "Clients updated",
       );
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to update clients"));
       console.error("Failed to update host attachments:", error);
       throw error;
+    }
+  };
+
+  const handleServerAttachmentUpdate = async (serverAttachmentId: string) => {
+    // Picker calls this synchronously inside onClick — don't rethrow,
+    // or the unawaited promise becomes an unhandled rejection.
+    try {
+      await updateSuite({
+        suiteId: suite._id,
+        serverAttachmentId,
+      });
+      toast.success("Server group updated");
+    } catch (error) {
+      toast.error(
+        getBillingErrorMessage(error, "Failed to update server group"),
+      );
     }
   };
 
@@ -655,22 +1332,93 @@ export function SuiteIterationsView({
     });
   };
 
+  // The suite's newest run, for the history panel's "Compare with run", and
+  // the one before it as the compare base. Absent on a suite that has never
+  // run, in which case the footer action is not offered rather than being
+  // offered and doing nothing; a suite with a single run opens it uncompared.
   const handleCompareRuns = useCallback(
     (baseRunId: string, compareRunId: string) => {
       navigation.toRunDetail(suite._id, compareRunId, undefined, {
         compareToRunId: baseRunId,
       });
     },
-    [navigation, suite._id]
+    [navigation, suite._id],
   );
 
   const handleBackToOverview = () => {
     navigation.toSuiteOverview(suite._id);
   };
 
-  const ciEnabled = useFeatureFlagEnabled("evaluate-ci") === true;
-  const syntheticMonitorsEnabled =
-    useFeatureFlagEnabled("synthetic-monitors") === true;
+  // ── The three rows that used to vanish ─────────────────────────────────
+  //
+  // Each keeps its ORIGINAL gate as an additional condition, so a deployment
+  // whose capabilities read fails behaves exactly as it did before this. What
+  // changes is what happens when capabilities ARE readable and say no: the row
+  // renders disabled with the reason instead of disappearing.
+  //
+  // CI OWNERSHIP IS CHECKED FIRST, ahead of every feature flag and every
+  // permission. A role change cannot unlock these rows, so "you don't have
+  // permission" would send the reader to ask for access they already hold.
+  const ciOwnedReason = configLocked
+    ? CI_OWNED_REASON_COPY
+    : capabilitiesReady && capabilities.ownership?.ciOwned
+      ? CI_OWNED_REASON_COPY
+      : undefined;
+  // `computerEnvironmentRowVisible` is declared beside the images it gates —
+  // see the comment there for why the two share one condition.
+  const computerEnvironmentDisabledReason =
+    ciOwnedReason ??
+    (!capabilitiesReady
+      ? undefined
+      : (featureDisabledReason(capabilities.features?.computers) ??
+        (capabilities.permissions?.["suite.configure"] === false
+          ? PERMISSION_REASON_COPY
+          : undefined)));
+  const subsectionOptions = useMemo(
+    () => ({
+      isVerdictPolicyV2,
+      showComputerEnvironment: computerEnvironmentRowVisible,
+      showSchedule: scheduledEvalsEnabled,
+      showDelete: canDeleteSuite,
+    }),
+    [
+      isVerdictPolicyV2,
+      computerEnvironmentRowVisible,
+      scheduledEvalsEnabled,
+      canDeleteSuite,
+    ],
+  );
+  // Scope changes are API-only until an explicit operation ships in a follow-up.
+  const openSetting = useCallback(
+    (key: EvalSuiteSettingKey) => {
+      if (key === "name") {
+        settingsScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      const group = VISIBLE_SUITE_SETTINGS_GROUPS.find((candidate) => {
+        if ((candidate.rows as readonly string[]).includes(key)) return true;
+        return candidate.rows.some((row) =>
+          NESTED_SETTING_KEYS[row]?.includes(key),
+        );
+      });
+      if (group) {
+        const subsection = subsectionForSettingKey(
+          key,
+          group.id,
+          subsectionOptions,
+        );
+        if (subsection) {
+          requestAnimationFrame(() => {
+            const root = settingsScrollRef.current;
+            root
+              ?.querySelector(subsectionScrollTarget(subsection))
+              ?.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        }
+      }
+    },
+    [subsectionOptions],
+  );
 
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
@@ -697,7 +1445,7 @@ export function SuiteIterationsView({
     () =>
       replayingRunId != null &&
       runs.some(
-        (run) => run._id === replayingRunId && run.hasServerReplayConfig
+        (run) => run._id === replayingRunId && run.hasServerReplayConfig,
       ) &&
       runs
         .filter((run) => run.hasServerReplayConfig)
@@ -706,7 +1454,7 @@ export function SuiteIterationsView({
           const bTime = b.completedAt ?? b.createdAt ?? 0;
           return bTime - aTime;
         })[0]?._id === replayingRunId,
-    [replayingRunId, runs]
+    [replayingRunId, runs],
   );
 
   const shouldReduceMotion = useReducedMotion();
@@ -731,14 +1479,42 @@ export function SuiteIterationsView({
     runsViewMode,
   ]);
 
+  // Evaluate (New) suite overview uses the checkout-flow identity + run
+  // history + cases layout. Run detail uses EvaluateRunPage (this run +
+  // Compare), not the SuiteResultsSplit rail.
+  //
+  // `viewMode` falls through to "overview" for the suite-edit route, so edit
+  // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
+  // edit-mode chrome lives (the name editor and Done). The environment
+  // composer lives on the settings sheet, not the overview header.
+  const showEvaluateSuiteDetail =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "overview";
+
+  const showEvaluateRunPage =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "run-detail" &&
+    Boolean(selectedRunDetails) &&
+    !selectedCompareBaseRunId &&
+    !selectedRunTestCaseId;
+
   const showSuiteHeader =
-    !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
+    !showEvaluateSuiteDetail &&
+    !showEvaluateRunPage &&
+    (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
   // wherever the dashboard renders (same guard as the overview SuiteDashboard
   // branch so the two surfaces switch together).
-  const foldRunDetail = hideRunActions && !caseListInSidebar;
+  const foldRunDetail =
+    hideRunActions && !caseListInSidebar && !suiteDetailOverview;
 
   // Keep suite chrome (name, Run all, Generate) visible in run detail — run
   // identity belongs in the body. CI opts out via omitSuiteHeader.
@@ -750,18 +1526,20 @@ export function SuiteIterationsView({
   // identical across the three rail selections — only the column set + the
   // surrounding run chrome (KPIs, AI insights, judge) change. Legacy suites with
   // no host attachments fall through (`undefined`) to RunDetailView's built-in
-  // per-iteration table.
+  // per-iteration table — except an environment-backed run, which names its
+  // resolved host on the run itself and so still yields a one-column matrix.
   const runMatrixPane =
     foldRunDetail &&
     selectedRunDetails &&
-    (suite.hostAttachments?.length ?? 0) >= 1 ? (
+    ((suite.hostAttachments?.length ?? 0) >= 1 ||
+      runEnvironmentRef(selectedRunDetails) !== null) ? (
       <CrossHostDashboard
         suite={
           selectedRunDetails.namedHostId
             ? {
                 ...suite,
                 hostAttachments: (suite.hostAttachments ?? []).filter(
-                  (a) => a.namedHostId === selectedRunDetails.namedHostId
+                  (a) => a.namedHostId === selectedRunDetails.namedHostId,
                 ),
               }
             : suite
@@ -780,9 +1558,11 @@ export function SuiteIterationsView({
           navigation.toTestEdit(
             suite._id,
             caseId,
-            iteration ? { iteration: iteration._id } : undefined
+            iteration ? { iteration: iteration._id } : undefined,
           );
         }}
+        hostNamesById={hostNamesById}
+        environments={projectEnvironments}
       />
     ) : undefined;
 
@@ -793,7 +1573,7 @@ export function SuiteIterationsView({
       selectedRunId?: string | null;
       runDetailPane?: React.ReactNode;
       onExitRun?: () => void;
-    } = {}
+    } = {},
   ) => (
     <SuiteDashboard
       suite={suite}
@@ -822,9 +1602,10 @@ export function SuiteIterationsView({
       onRunClick={handleRunClick}
       onDirectDeleteRun={onDirectDeleteRun}
       onRunTestCase={onRunTestCaseWithOverride}
+      quickRunIterationOverride={iterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={Boolean(
-        rerunningSuiteId || replayingRunId || evalRunsDisabledReason
+        rerunningSuiteId || replayingRunId || evalRunsDisabledReason,
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
       connectedServerNames={connectedServerNames}
@@ -836,15 +1617,33 @@ export function SuiteIterationsView({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      onRecordTestCase={onRecordTestCase}
+      simpleCaseEditor={evaluateCaseEditor}
+      hostNamesById={hostNamesById}
+      environments={projectEnvironments}
       {...extra}
     />
   );
 
+  // The folded layout drops the SuiteHeader action row, so the run body is the
+  // only place a stop control can live there. Every other surface already has
+  // one — RunDetailPlaygroundActions in the header, or EvaluateRunPage.
   const runDetailView = selectedRunDetails ? (
     <RunDetailView
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      onCancelRun={foldRunDetail ? onCancelRun : undefined}
+      cancellingRunId={cancellingRunId}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
+      onShare={
+        unifiedShareEvals &&
+        selectedRunDetails &&
+        (selectedRunDetails.status === "completed" ||
+          selectedRunDetails.status === "failed" ||
+          selectedRunDetails.status === "timed_out")
+          ? () => setShareOpen(true)
+          : undefined
+      }
       currentSuiteJudgeConfig={suite.judgeConfig ?? null}
       source={getRunMetricSource(selectedRunDetails, suite.source)}
       runDetailSortBy={effectiveRunDetailSortBy}
@@ -866,7 +1665,7 @@ export function SuiteIterationsView({
           : "body"
       }
       hideReplayLineage
-      hideRecentRuns={foldRunDetail}
+      hideRecentRuns={foldRunDetail || showEvaluateRunPage}
       hideKpiStrip={foldRunDetail}
       hideAccuracyHero={foldRunDetail}
       caseTableSlot={runMatrixPane}
@@ -887,6 +1686,45 @@ export function SuiteIterationsView({
       onEditTestCase={onEditTestCase}
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       runTrendData={runTrendData}
+      // The stage findings ride the SAME opt-in as the decision card beside
+      // them, and the same project gate: the read is per-project and the
+      // browser never resolves or guesses one. With this false the underlying
+      // read issues no request at all.
+      stageFindingsEnabled={Boolean(evaluateDecisionSummary && projectId)}
+      onViewStageTrace={({ iterationId, testCaseId }) =>
+        // Identical routing to the decision card's own trace link, and for the
+        // reason its comment gives: `tracePath` is an API path rather than an
+        // app route, and the CASE editor is the one path that actually
+        // consumes an iteration id.
+        navigation.toTestEdit(suite._id, testCaseId, {
+          iteration: iterationId,
+        })
+      }
+      decisionSummarySlot={
+        // Only Evaluate opts in, and only with a project id in hand: the read
+        // is per-project and the browser never resolves or guesses one.
+        evaluateDecisionSummary && projectId ? (
+          <RunDecisionSummarySection
+            projectId={projectId}
+            run={selectedRunDetails}
+            enabled
+            onViewTrace={({ iterationId, testCaseId }) =>
+              // `tracePath` is an API path, not an app route, so this goes
+              // through the app's own routing. It goes to the CASE editor
+              // rather than run detail because that is the one path that
+              // actually consumes an iteration id: the route's `iteration`
+              // becomes `openCompareIterationId` and the editor opens on it.
+              // Run detail takes a `selectedIterationId` that
+              // `RunIterationsSidebar` marks deprecated and never forwards, so
+              // sending the reader there would land them on the page they are
+              // already looking at with nothing opened.
+              navigation.toTestEdit(suite._id, testCaseId, {
+                iteration: iterationId,
+              })
+            }
+          />
+        ) : undefined
+      }
     />
   ) : null;
 
@@ -901,12 +1739,66 @@ export function SuiteIterationsView({
         !selectedCompareBaseRunId &&
         !selectedRunTestCaseId));
 
-  return (
+  const content = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {projectId && !editingDisabled && (
+        <ImportDatasetDialog
+          key={suite._id}
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          projectId={projectId}
+          suiteId={suite._id}
+        />
+      )}
       {/* Header */}
       {showSuiteHeader ? (
         <div className="shrink-0">
           <SuiteHeader
+            settingsActions={
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigation.toSuiteOverview(suite._id)}
+                >
+                  Back to suite
+                </Button>
+                {editingDisabled ? null : draftChanges.length > 0 ? (
+                  <SuiteSettingsCommitBar
+                    layout="inline"
+                    changeCount={draftChanges.length}
+                    conflictCount={draft.conflicts.length}
+                    canCommit={draftCanCommit}
+                    isCommitting={isCommitting}
+                    onDiscard={() => dispatchDraft({ type: "discard" })}
+                    onSave={() => void handleCommitSettings()}
+                    revisionNumber={suite.revisionNumber}
+                    blockingErrors={[
+                      ...(nameRowError
+                        ? [
+                            {
+                              message: nameRowError.message,
+                              onFix: () => openSetting("name"),
+                            },
+                          ]
+                        : []),
+                      ...(passOrFailRowError
+                        ? [
+                            {
+                              message: passOrFailRowError.message,
+                              onFix: () => openSetting("passOrFail"),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                ) : (
+                  <Button size="sm" disabled>
+                    Save settings
+                  </Button>
+                )}
+              </div>
+            }
             suite={suite}
             viewMode={headerViewMode}
             selectedRunDetails={selectedRunDetails}
@@ -927,8 +1819,9 @@ export function SuiteIterationsView({
             aggregate={aggregate}
             testCases={cases}
             onSetupCi={onSetupCi}
-            onOpenExportSuite={ciEnabled ? handleOpenSuiteExport : undefined}
+            onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
+            configLocked={configLocked}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
             casesSidebarHidden={casesSidebarHidden}
@@ -942,11 +1835,17 @@ export function SuiteIterationsView({
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
-            onSuiteHostAttachmentsUpdate={
-              readOnlyConfig ? undefined : handleUpdateHostAttachments
-            }
-            projectHosts={projectHosts}
             omitRunDetailIdentity={omitRunDetailIdentity}
+            settingsDraftName={
+              isEditMode
+                ? {
+                    value: draft.current.name,
+                    onChange: (value) =>
+                      dispatchDraft({ type: "edit", key: "name", value }),
+                    error: nameRowError?.message,
+                  }
+                : undefined
+            }
           />
         </div>
       ) : null}
@@ -969,20 +1868,42 @@ export function SuiteIterationsView({
                 <TestTemplateEditor
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
+                  readOnly={editingDisabled}
+                  onDeleteCase={
+                    onDeleteTestCasesBatch
+                      ? async (testCaseId) => {
+                          await onDeleteTestCasesBatch([testCaseId]);
+                          navigation.toSuiteOverview(suite._id);
+                        }
+                      : undefined
+                  }
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
                   suiteIterations={allIterations}
                   suiteRuns={runs}
+                  // The same opt-in and project gate the decision card beside
+                  // it rides. With this false the trace pane issues no chain
+                  // request at all.
+                  trialChainEnabled={Boolean(
+                    evaluateDecisionSummary && projectId,
+                  )}
+                  simpleCaseEditor={evaluateCaseEditor}
+                  observeFirst={evaluateObserveFirst}
+                  onRunCase={onRunCase}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
-                  onExportDraft={ciEnabled ? handleOpenDraftExport : undefined}
+                  onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
-                    route.type === "test-edit" && Boolean(route.openCompare)
+                    (route.type === "test-edit" &&
+                      Boolean(route.openCompare)) ||
+                    (route.type === "test-detail" && Boolean(route.iteration))
                   }
                   openCompareIterationId={
-                    route.type === "test-edit" ? route.iteration ?? null : null
+                    route.type === "test-edit" || route.type === "test-detail"
+                      ? (route.iteration ?? null)
+                      : null
                   }
                   onContinueInChat={onContinueInChat}
                   onSelectTab={(tab) =>
@@ -996,17 +1917,38 @@ export function SuiteIterationsView({
                       replace: true,
                     })
                   }
+                  checksPage={
+                    !editingDisabled &&
+                    route.type === "test-edit" &&
+                    Boolean(route.checks)
+                  }
+                  onOpenCaseChecks={() =>
+                    navigation.toTestEdit(suite._id, selectedTestId, {
+                      checks: true,
+                    })
+                  }
+                  onCloseCaseChecks={() =>
+                    navigation.toTestEdit(suite._id, selectedTestId)
+                  }
+                  onOpenSuiteSettings={() =>
+                    navigation.toSuiteEdit(
+                      suite._id,
+                      route.type === "test-edit" && route.checks
+                        ? selectedTestId
+                        : undefined,
+                    )
+                  }
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (
               (() => {
                 const selectedCase = cases.find(
-                  (c) => c._id === selectedTestId
+                  (c) => c._id === selectedTestId,
                 );
                 if (!selectedCase) return null;
 
                 const caseIterations = allIterations.filter(
-                  (iter) => iter.testCaseId === selectedTestId
+                  (iter) => iter.testCaseId === selectedTestId,
                 );
 
                 return (
@@ -1044,6 +1986,182 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateRunPage &&
+              selectedRunDetails &&
+              route.type === "run-detail" &&
+              route.comparison ? (
+              <RunComparisonPage
+                key={selectedRunDetails._id}
+                currentRun={selectedRunDetails}
+                runs={runs}
+                iterations={allIterations}
+                suiteName={suite.name}
+                hostNamesById={hostNamesById}
+                passThreshold={resolveSuitePassThreshold(suite)}
+                onBack={() =>
+                  navigation.toRunDetail(suite._id, selectedRunDetails._id)
+                }
+                onOpenRun={(runId) => navigation.toRunDetail(suite._id, runId)}
+              />
+            ) : showEvaluateRunPage && selectedRunDetails ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <EvaluateRunPage
+                  suiteName={suite.name}
+                  onOpenComparison={() =>
+                    navigation.toRunDetail(
+                      suite._id,
+                      selectedRunDetails._id,
+                      undefined,
+                      { comparison: true },
+                    )
+                  }
+                  relatedRuns={runs}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    cases,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    onStart: onRerunWithOverride,
+                    onEditSettings: readOnlyConfig
+                      ? undefined
+                      : () => navigation.toSuiteEdit(suite._id),
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
+                  run={selectedRunDetails}
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
+                  hostNamesById={hostNamesById}
+                  iterations={allIterations}
+                  otherRuns={runs.filter(
+                    (candidate) =>
+                      candidate._id !== selectedRunDetails._id &&
+                      (!selectedRunDetails.runGroupId ||
+                        candidate.runGroupId !==
+                          selectedRunDetails.runGroupId) &&
+                      candidate.result !== "inconclusive",
+                  )}
+                  defaultCompareRunId={
+                    previousCompletedRunForSelectedRun?._id ?? null
+                  }
+                  onCompareWithRun={(baseRunId) =>
+                    handleCompareRuns(baseRunId, selectedRunDetails._id)
+                  }
+                  onExport={
+                    projectId ? () => setTracesExportOpen(true) : undefined
+                  }
+                >
+                  {projectId ? (
+                    <EvaluateRunContent
+                      projectId={projectId}
+                      suiteName={suite.name}
+                      run={selectedRunDetails}
+                      iterations={caseGroupsForSelectedRun}
+                      allIterations={allIterations}
+                      siblingRuns={runs}
+                      hostNamesById={hostNamesById}
+                      previousRunId={
+                        previousCompletedRunForSelectedRun?._id ?? null
+                      }
+                      decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                      onOpenIteration={({ testCaseId, iterationId }) =>
+                        // Same routing rule the decision card follows: an
+                        // iteration id is only consumed by the case editor, so
+                        // sending a reader to run detail would land them on the
+                        // page they are already looking at with nothing opened.
+                        navigation.toTestEdit(suite._id, testCaseId, {
+                          iteration: iterationId,
+                        })
+                      }
+                      // Opening a saved case is navigation, not a configuration
+                      // edit. CI-owned cases still open their read-only definition.
+                      onEditCase={(testCaseId) =>
+                        onEditTestCase
+                          ? onEditTestCase(testCaseId)
+                          : navigation.toTestEdit(suite._id, testCaseId)
+                      }
+                      {...(!editingDisabled
+                        ? {
+                            onEditEvaluator: (testCaseId: string) =>
+                              navigation.toTestEdit(suite._id, testCaseId, {
+                                checks: true,
+                              }),
+                          }
+                        : {})}
+                      fallbackBody={runDetailView}
+                    />
+                  ) : (
+                    runDetailView
+                  )}
+                </EvaluateRunPage>
+              </motion.div>
+            ) : showEvaluateSuiteDetail ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+              >
+                <SuiteDetailOverview
+                  onSetupSdk={handleOpenSuiteExport}
+                  runReviewRequested={runReviewRequested}
+                  onRunReviewClose={onRunReviewClose}
+                  environments={projectEnvironments ?? undefined}
+                  suite={suite}
+                  cases={cases}
+                  runs={runs}
+                  runsLoading={runsLoading}
+                  allIterations={allIterations}
+                  hostNamesById={hostNamesById}
+                  onRerun={onRerunWithOverride}
+                  onEditSuite={() => navigation.toSuiteEdit(suite._id)}
+                  onEditCases={onCreateTestCase}
+                  onDescribeCases={onDescribeTestCase}
+                  onImportCases={
+                    projectId && !editingDisabled
+                      ? () => setImportOpen(true)
+                      : undefined
+                  }
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  onGenerateTestCases={onGenerateTestCases}
+                  canGenerateTestCases={canGenerateTestCases}
+                  generateTestCasesDisabledReason={
+                    generateTestCasesDisabledReason
+                  }
+                  isGeneratingTestCases={isGeneratingTestCases}
+                  onRunClick={handleRunClick}
+                  onTestCaseClick={(testCaseId) =>
+                    navigation.toTestEdit(suite._id, testCaseId)
+                  }
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
+                  rerunningSuiteId={rerunningSuiteId}
+                  replayingRunId={replayingRunId}
+                  runningTestCaseId={runningTestCaseId}
+                  evalRunsDisabledReason={evalRunsDisabledReason}
+                  readOnlyConfig={readOnlyConfig}
+                  configLocked={configLocked}
+                  onDuplicateSuite={onDuplicateSuite}
+                  projectId={projectId}
+                  decisionSummaryEnabled={evaluateDecisionSummary}
+                  onGeneratingChange={onGeneratingChange}
+                />
+              </motion.div>
             ) : showFoldedUnifiedDashboard ? (
               <div
                 key="unified-results-split"
@@ -1056,7 +2174,7 @@ export function SuiteIterationsView({
                         runDetailPane: runDetailView,
                         onExitRun: handleBackToOverview,
                       }
-                    : {}
+                    : {},
                 )}
               </div>
             ) : viewMode === "overview" ? (
@@ -1100,6 +2218,7 @@ export function SuiteIterationsView({
                     }
                     userMap={userMap}
                     canDeleteRuns={canDeleteRuns && !hideRunActions}
+                    canDeleteRun={canDeleteRun}
                     canDeleteSuite={canDeleteSuite && !hideRunActions}
                     onDeleteSuite={() => onDelete(suite)}
                     deletingSuiteId={deletingSuiteId}
@@ -1203,11 +2322,12 @@ export function SuiteIterationsView({
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                       onRunTestCase={onRunTestCaseWithOverride}
+                      quickRunIterationOverride={iterationOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
-                          replayingRunId ||
-                          evalRunsDisabledReason
+                        replayingRunId ||
+                        evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
@@ -1218,6 +2338,10 @@ export function SuiteIterationsView({
                       }
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
+                      onRecordTestCase={onRecordTestCase}
+                      simpleCaseEditor={evaluateCaseEditor}
+                      hostNamesById={hostNamesById}
+                      environments={projectEnvironments}
                     />
                   )}
                 </motion.div>
@@ -1242,7 +2366,7 @@ export function SuiteIterationsView({
                         suite._id,
                         selectedRunDetails._id,
                         undefined,
-                        { insightsFocus: true }
+                        { insightsFocus: true },
                       )
                     }
                     onOpenIteration={(runId, iterationId) =>
@@ -1256,6 +2380,9 @@ export function SuiteIterationsView({
                     iterations={iterationsForSelectedRunTestCase}
                     onBack={handleBackToRunOverview}
                     serverNames={suite.environment?.servers || []}
+                    chainFor={(iterationId) =>
+                      runTrialChains.chains.get(iterationId)
+                    }
                   />
                 ) : (
                   runDetailView
@@ -1267,311 +2394,430 @@ export function SuiteIterationsView({
       )}
 
       {isEditMode && (
-        <div className="flex-1 min-h-0 overflow-auto">
-          <div className="px-6 py-8 max-w-2xl mx-auto">
-            {/* Settings sheet — a single quiet surface with hairline-divided
-                sections. Each row follows the [label · helper] / [control]
-                definition-list pattern, so the sheet reads top-to-bottom as
-                a preference list rather than a stack of feature cards.
-                Section labels are eyebrow-style (uppercase, tracking-wider,
-                muted) — visual hierarchy without visual weight. */}
-            <dl className="divide-y divide-border/60">
-              {/* About / Description is intentionally hidden in the current
-                  pass — surface lives elsewhere when the user wants context
-                  on the suite. */}
+        <div ref={settingsScrollRef} className="flex-1 min-h-0 overflow-auto">
+          <div className="mx-auto w-full max-w-5xl space-y-6 px-6 py-8">
+            {configLocked ? (
+              <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
+            ) : null}
+            <fieldset
+              disabled={editingDisabled}
+              className="m-0 min-w-0 space-y-8 border-0 p-0"
+              data-testid={
+                editingDisabled ? "suite-settings-locked" : undefined
+              }
+            >
+              {/*
+                THREE SECTIONS, in the order a reader asks the questions: what
+                must pass, how many times, and does it regress against a
+                baseline. They were one section titled "Quality gate" holding
+                all three — so the criterion, the count and the gate shared one
+                Edit affordance and one dirty badge, and somebody looking for
+                the threshold their runs are decided against had to open a
+                heading about regressions to find it.
 
-              {/* ── Minimum accuracy (one row) ───────────────────────── */}
-              <SettingsSection
-                label="Minimum accuracy"
-                layout="inline"
-                inlineSlot={
-                  <PassCriteriaSelector
-                    hideLabel
-                    minimumPassRate={defaultMinimumPassRate}
-                    onMinimumPassRateChange={async (rate) => {
-                      setDefaultMinimumPassRate(rate);
-                      localStorage.setItem(
-                        `suite-${suite._id}-criteria-rate`,
-                        String(rate)
-                      );
-                      try {
-                        await updateSuite({
-                          suiteId: suite._id,
-                          defaultPassCriteria: { minimumPassRate: rate },
-                        });
-                        toast.success("Suite updated successfully");
-                      } catch (error) {
-                        toast.error(
-                          getBillingErrorMessage(
-                            error,
-                            "Failed to update suite"
-                          )
-                        );
-                        console.error("Failed to update suite:", error);
-                        setDefaultMinimumPassRate(
-                          suite.defaultPassCriteria?.minimumPassRate ?? 100
-                        );
-                      }
-                    }}
+                Within each section the SCOPE picks the control, and the scope's
+                own words come from the shared grading vocabulary. No section
+                offers a switch between the two: the criteria differ in scope as
+                well as units, so converting one into the other re-decides every
+                multi-case suite and is not an edit a threshold field can make.
+              */}
+              <SuiteSettingsRow
+                settingKey="policy"
+                className="pr-6"
+                chained={false}
+                data-subsection-id="policy"
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("policy")}
+                    conflict={rowIsConflict("policy")}
                   />
                 }
-              />
-
-              {/* ── Minimum iterations ───────────────────────────────── */}
-              <SettingsSection
-                label="Minimum iterations"
-                layout="inline"
-                inlineSlot={
-                  <select
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                    value={suite.minIterations ?? ""}
-                    aria-label="Minimum iterations per case for every run"
-                    onChange={async (e) => {
-                      const raw = e.target.value;
-                      const next = raw === "" ? null : Number(raw);
-                      try {
-                        await updateSuite({
-                          suiteId: suite._id,
-                          minIterations: next,
-                        });
-                        toast.success(
-                          next == null
-                            ? "Minimum iterations cleared"
-                            : "Minimum iterations updated"
-                        );
-                      } catch (error) {
-                        toast.error(
-                          getBillingErrorMessage(
-                            error,
-                            "Failed to update suite"
-                          )
-                        );
-                        console.error(
-                          "Failed to update minimum iterations:",
-                          error
-                        );
-                      }
-                    }}
-                  >
-                    <option value="">Off</option>
-                    {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
+                hint={
+                  isVerdictPolicyV2
+                    ? EVAL_PASS_CRITERION_SCOPE_HINTS.perCase
+                    : EVAL_PASS_CRITERION_SCOPE_HINTS.suiteWide
                 }
               >
-                <p className="text-[11px] text-muted-foreground/60">
-                  Every case runs at least this many times per run. A case set
-                  higher keeps its count; a per-run override still wins.
-                </p>
-              </SettingsSection>
+                {isVerdictPolicyV2 ? (
+                  <PerCasePassThresholdControl
+                    aligned
+                    defaults={draft.current.verdictPolicyDefaults}
+                    onChange={(next) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "verdictPolicyDefaults",
+                        value: next,
+                      })
+                    }
+                  />
+                ) : (
+                  /* Stamped by hand, nested inside the criterion section: the
+                     suite-wide threshold stays reachable from the API on its
+                     own. The parity ratchet reads the attribute, not the
+                     component. */
+                  <div
+                    className="flex items-center justify-between gap-4"
+                    data-setting-key="minimumAccuracy"
+                  >
+                    <span className="text-xs text-muted-foreground">
+                      {EVAL_PASS_CRITERION_SCOPE_LABELS.suiteWide}
+                    </span>
+                    <PassCriteriaSelector
+                      aligned
+                      hideLabel
+                      minimumPassRate={defaultMinimumPassRate}
+                      onMinimumPassRateChange={(rate) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "defaultPassCriteria",
+                          value: { minimumPassRate: rate },
+                        })
+                      }
+                    />
+                  </div>
+                )}
+                {isVerdictPolicyV2 ? (
+                  <div data-setting-key="validity" className="space-y-2">
+                    <p className="text-xs font-medium text-foreground">
+                      {EVAL_GRADING_VALIDITY_LABELS.enforced}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground/60">
+                      {EVAL_GRADING_VALIDITY_HINTS.enforced}
+                    </p>
+                    <VerdictValidityControls
+                      defaults={draft.current.verdictPolicyDefaults}
+                      onChange={(next) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "verdictPolicyDefaults",
+                          value: next,
+                        })
+                      }
+                    />
+                  </div>
+                ) : (
+                  /* NOT an inactive control, and not a blank space: a
+                     suite-wide suite has no validity phase at all, so
+                     `inconclusive` is not among the verdicts its runs can
+                     reach. Showing it a greyed-out 80% completion floor would
+                     describe a rule that has never been applied to it. */
+                  <p className="text-[11px] text-muted-foreground/60">
+                    {EVAL_GRADING_VALIDITY_HINTS.notEnforced}
+                  </p>
+                )}
+              </SuiteSettingsRow>
 
-              {/* ── Computer environment (reproducible evals) ──────────
-                  Gated behind the computers feature flag. Pins a built Docker
-                  environment so each eval iteration boots a fresh sandbox from
-                  the same image — comparable results across runs/edits. */}
-              {computersEnabled && projectId ? (
-                <SettingsSection
-                  label="Computer environment"
-                  layout="inline"
-                  inlineSlot={
+              <SuiteSettingsRow
+                settingKey="iterations"
+                className="pr-6"
+                chained={false}
+                data-subsection-id="iterations"
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("iterations")}
+                    conflict={rowIsConflict("iterations")}
+                  />
+                }
+                hint={
+                  isVerdictPolicyV2
+                    ? EVAL_ITERATION_RULE_HINTS.defaultCount
+                    : EVAL_ITERATION_RULE_HINTS.caseCountWithFloor
+                }
+              >
+                {isVerdictPolicyV2 ? (
+                  <PerCaseIterationsControl
+                    aligned
+                    defaults={draft.current.verdictPolicyDefaults}
+                    onChange={(next) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "verdictPolicyDefaults",
+                        value: next,
+                      })
+                    }
+                  />
+                ) : (
+                  <div
+                    className="flex items-center justify-between gap-4"
+                    data-setting-key="minimumIterations"
+                  >
+                    <span className="text-xs text-muted-foreground">
+                      {EVAL_ITERATION_RULE_LABELS.caseCountWithFloor}
+                    </span>
                     <select
-                      className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                      value={suite.environment?.computerEnvironmentId ?? ""}
-                      aria-label="Reproducible computer environment for eval runs"
-                      onChange={async (e) => {
-                        const next = e.target.value || undefined;
-                        try {
-                          await updateSuite({
-                            suiteId: suite._id,
-                            environment: {
-                              servers: suite.environment?.servers ?? [],
-                              serverBindings: suite.environment?.serverBindings,
-                              ...(next ? { computerEnvironmentId: next } : {}),
-                            },
-                          });
-                          toast.success(
-                            next
-                              ? "Computer environment set"
-                              : "Computer environment cleared"
-                          );
-                        } catch (error) {
-                          toast.error(
-                            getBillingErrorMessage(
-                              error,
-                              "Failed to update suite"
-                            )
-                          );
-                          console.error(
-                            "Failed to update computer environment:",
-                            error
-                          );
-                        }
+                      className="h-8 w-40 shrink-0 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      value={draft.current.minIterations ?? ""}
+                      aria-label="Minimum iterations per case for every run"
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        dispatchDraft({
+                          type: "edit",
+                          key: "minIterations",
+                          value: raw === "" ? undefined : Number(raw),
+                        });
                       }}
                     >
-                      <option value="">None (default image)</option>
-                      {(computerEnvironments ?? []).map((env) => {
-                        const ready = env.currentBuild?.status === "ready";
-                        return (
-                          <option
-                            key={env.environmentId}
-                            value={env.environmentId}
-                          >
-                            {env.name}
-                            {ready ? "" : " (not built)"}
-                          </option>
-                        );
-                      })}
+                      {/* "Off" is the suite's real state — no floor — and not a
+                          stand-in for 1. */}
+                      <option value="">Off</option>
+                      {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
                     </select>
-                  }
-                >
-                  <p className="text-[11px] text-muted-foreground/60">
-                    Each eval iteration boots a fresh sandbox from this image
-                    and the agent gets a <span className="font-mono">bash</span>{" "}
-                    tool in it. Build the environment before running, or the run
-                    fails fast.
-                  </p>
-                </SettingsSection>
-              ) : null}
+                  </div>
+                )}
+              </SuiteSettingsRow>
 
-              {/* ── Tool calls ───────────────────────────────────────── */}
-              <SettingsSection
-                label="Tool calls"
-                hint="Cases and run overrides can change these."
-              >
-                <ValidatorsSection
-                  title=""
-                  value={suite.defaultMatchOptions}
-                  inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                  onChange={async (next: EvalMatchOptions | undefined) => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        defaultMatchOptions: next ?? null,
-                      });
-                      toast.success("Default validators updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite")
-                      );
-                      console.error(
-                        "Failed to update default validators:",
-                        error
-                      );
-                    }
-                  }}
-                />
-              </SettingsSection>
-
-              {/* ── Checks ───────────────────────────────────────────── */}
-              <SettingsSection
-                label="Default global gates"
-                labelAccessory={<GlobalGatesSectionInfoHint />}
-                layout="inline"
-                inlineSlot={
-                  <AddCheckMenu
-                    globalGatesMenu
-                    onAdd={(kind) =>
-                      setDraftDefaultPredicates((prev) => [
-                        ...prev,
-                        blankPredicate(kind),
-                      ])
-                    }
+              <SuiteSettingsRow
+                settingKey="qualityGate"
+                className="pr-6"
+                chained={false}
+                data-subsection-id="qualityGate"
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("qualityGate")}
+                    conflict={rowIsConflict("qualityGate")}
                   />
                 }
+                hint="Fail a run when it regresses against a baseline run, whatever the pass criteria said."
               >
-                {suiteScenarioMigrationCount > 0 ? (
-                  <p className="mb-2 text-[11px] text-amber-700 dark:text-amber-400">
-                    {suiteScenarioMigrationCount} scenario check
-                    {suiteScenarioMigrationCount === 1 ? "" : "s"} in defaults —
-                    migrate per case in Steps.
-                  </p>
-                ) : null}
-                {/* The list (when non-empty) renders under the eyebrow row.
-                    Empty state copy + the inner AddCheckMenu are both
-                    suppressed — the eyebrow row's AddCheckMenu is the only
-                    affordance, so "no checks" reads as a clean section
-                    with just the eyebrow + add button. */}
-                <ChecksSection
-                  title=""
-                  hideAddButton
-                  hideEmptyState
-                  globalGatesMenu
-                  value={draftDefaultPredicates}
-                  onChange={setDraftDefaultPredicates}
+                <SuiteQualityGateSection
+                  simplified
+                  policy={draft.current.gatePolicy}
+                  onChange={(next) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "gatePolicy",
+                      value: next,
+                    })
+                  }
+                  capabilities={capabilitiesReady ? capabilities : null}
+                  capabilitiesState={capabilitiesState}
                 />
-              </SettingsSection>
+              </SuiteSettingsRow>
 
-              {/* ── Schedule (synthetic monitors, flag-gated) ────────── */}
-              {syntheticMonitorsEnabled ? (
-                <SettingsSection
-                  label="Schedule"
-                  hint="Run this suite automatically on a fixed interval."
-                >
-                  <ScheduleEditor
-                    suiteId={suite._id}
-                    schedule={suite.schedule}
-                  />
-                </SettingsSection>
-              ) : null}
-
-              {/* ── LLM as Judge ─────────────────────────────────────── */}
-              <SettingsSection
-                label="LLM as Judge"
-                hint="Advisory scorer — grades each run automatically against its objective, inline next to pass/fail. Never changes pass/fail."
+              <SuiteSettingsRow
+                settingKey="environments"
+                chained={false}
+                data-subsection-id="environments"
+                label={composeCapable ? undefined : LEGACY_CLIENTS_ROW_LABEL}
+                hint="One run per client and model combination. Changes here save right away."
               >
-                <JudgesSection
-                  chrome="bare"
-                  value={suite.judgeConfig}
-                  availableModels={availableModels}
-                  onChange={async (next) => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        judgeConfig: next ?? null,
-                      });
-                      toast.success("Judges updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite")
-                      );
-                      console.error("Failed to update judges:", error);
+                {projectId ? (
+                  <SuiteClientsSettings
+                    suite={suite}
+                    projectId={projectId}
+                    readOnly={
+                      readOnlyConfig ||
+                      (capabilitiesReady &&
+                        capabilities.permissions?.["suite.configure"] === false)
                     }
-                  }}
-                />
-              </SettingsSection>
-
-              {/* ── Delete ───────────────────────────────────────────── */}
-              {canDeleteSuite ? (
-                <div className="flex items-center justify-between gap-4 py-5">
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-                      Delete suite
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground/70">
-                      Runs and cases can&apos;t be recovered.
-                    </p>
+                  />
+                ) : null}
+                {/*
+                        The legacy axes, and the ONLY editor for them.
+                        `SuiteClientsSettings` needs `modelMatrix`; where the
+                        deployment does not offer it the matrix renders disabled,
+                        and a project suite was left with no way to change its
+                        clients OR its server group at all. The composer decides
+                        for itself which mode it is in, so it is safe to render
+                        beside the matrix rather than instead of it: with compose
+                        capable it shows the environment strip, without it the
+                        legacy client and server pickers.
+                      */}
+                {projectId && !composeCapable ? (
+                  <div className="mt-3">
+                    <SuiteEnvironmentComposerBar
+                      containerVariant="inline"
+                      suite={suite}
+                      onUpdate={handleUpdateHostAttachments}
+                      onUpdateServerAttachment={handleServerAttachmentUpdate}
+                      omitComputers
+                    />
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => onDelete(suite)}
-                    disabled={deletingSuiteId === suite._id}
+                ) : null}
+                {projectId ? null : (
+                  <SuiteEnvironmentComposerBar
+                    suite={suite}
+                    onUpdate={handleUpdateHostAttachments}
+                    onUpdateServerAttachment={handleServerAttachmentUpdate}
+                    omitComputers
+                  />
+                )}
+              </SuiteSettingsRow>
+
+              {computerEnvironmentRowVisible ? (
+                <SuiteSettingsRow
+                  settingKey="computerEnvironment"
+                  chained={false}
+                  data-subsection-id="computerEnvironment"
+                  disabledReason={computerEnvironmentDisabledReason}
+                  hint="Each iteration boots a fresh MCPJam cloud sandbox from this image, never on this machine. Build the image first, or the run fails fast."
+                >
+                  <select
+                    className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                    value={draft.current.computerEnvironmentId ?? ""}
+                    aria-label="Reproducible computer environment for eval runs"
+                    onChange={(e) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "computerEnvironmentId",
+                        value: e.target.value || undefined,
+                      })
+                    }
                   >
-                    {deletingSuiteId === suite._id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                    Delete
-                  </Button>
-                </div>
+                    <option value="">None (default image)</option>
+                    {(computerEnvironments ?? []).map((env) => {
+                      const ready = env.currentBuild?.status === "ready";
+                      return (
+                        <option
+                          key={env.environmentId}
+                          value={env.environmentId}
+                        >
+                          {env.name}
+                          {ready ? "" : " (not built)"}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {suitePinsSandboxImage &&
+                  ephemeralCloudAvailable === false ? (
+                    <div className="mt-2">
+                      <CloudUnreachableNotice
+                        data-testid="suite-eval-cloud-unreachable"
+                        message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
+                        detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                      />
+                    </div>
+                  ) : null}
+                </SuiteSettingsRow>
               ) : null}
-            </dl>
+              <div data-setting-key="passOrFail" className="space-y-4">
+                <SuitePassOrFailSection
+                  capabilities={capabilitiesReady ? capabilities : null}
+                  unavailableReason={
+                    capabilitiesState === "unavailable"
+                      ? CAPABILITY_REASON_COPY.flag_unavailable
+                      : undefined
+                  }
+                  stageFacts={{
+                    connection: (
+                      <SuiteStageFactsList
+                        stage="connection"
+                        targets={stageFactTargets}
+                        projectServers={factsProjectServers}
+                        isAuthenticated={isAuthenticated}
+                        composeCapable={composeCapable}
+                        onGoToWhereItRuns={() => openSetting("environments")}
+                      />
+                    ),
+                    discovery: (
+                      <SuiteStageFactsList
+                        stage="discovery"
+                        targets={stageFactTargets}
+                        projectServers={factsProjectServers}
+                        isAuthenticated={isAuthenticated}
+                        composeCapable={composeCapable}
+                        onGoToWhereItRuns={() => openSetting("environments")}
+                      />
+                    ),
+                  }}
+                  matchOptions={draft.current.defaultMatchOptions}
+                  onMatchOptionsChange={(next: EvalMatchOptions | undefined) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "defaultMatchOptions",
+                      value: next,
+                    })
+                  }
+                  predicates={draftDefaultPredicates}
+                  onPredicatesChange={setDraftDefaultPredicates}
+                  judgeConfig={draft.current.judgeConfig}
+                  onJudgeConfigChange={(next) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "judgeConfig",
+                      value: next,
+                    })
+                  }
+                  availableModels={availableModels}
+                  judgeAccessory={
+                    <JudgeGatePanel
+                      suiteId={suite._id}
+                      judge={capabilitiesReady ? capabilities.judge : undefined}
+                      unavailableReason={
+                        capabilitiesState === "unavailable"
+                          ? CAPABILITY_REASON_COPY.flag_unavailable
+                          : undefined
+                      }
+                      judgeConfig={draft.current.judgeConfig}
+                      onJudgeConfigChange={(next) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "judgeConfig",
+                          value: next,
+                        })
+                      }
+                      onAcknowledged={() =>
+                        setCapabilitiesRefresh((n) => n + 1)
+                      }
+                    />
+                  }
+                  rubricEditor={
+                    <JudgeInstructionsEditor
+                      value={draft.current.judgeRubric}
+                      onChange={(next) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "judgeRubric",
+                          value: next,
+                        })
+                      }
+                    />
+                  }
+                  groundednessEvidence={{
+                    result: groundedness.result ?? null,
+                    pending: groundedness.pending,
+                  }}
+                  scenarioMigrationNotice={
+                    suiteScenarioMigrationCount > 0 ? (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                        {suiteScenarioMigrationCount} scenario assertion
+                        {suiteScenarioMigrationCount === 1 ? "" : "s"} in
+                        defaults — migrate per case in Steps.
+                      </p>
+                    ) : null
+                  }
+                />
+                <details className="space-y-4">
+                  <summary className="cursor-pointer text-sm text-muted-foreground">
+                    Preview against the latest run
+                  </summary>
+                  <AssertionBacktestPanel
+                    projectId={projectId ?? undefined}
+                    runId={
+                      sortRunsNewestFirst(runs).find((run) =>
+                        TERMINAL_RUN_STATUSES.has(run.status ?? ""),
+                      )?._id
+                    }
+                    assertions={draftDefaultPredicates}
+                  />
+                  {pickBacktestableRun(runs) && draft.current.judgeRubric ? (
+                    <JudgeBacktestPanel
+                      key={`${suite._id}:${JSON.stringify(
+                        draft.current.judgeRubric,
+                      )}`}
+                      suiteId={suite._id}
+                      runId={pickBacktestableRun(runs)!._id}
+                      runNumber={pickBacktestableRun(runs)!.runNumber}
+                      draftRubric={draft.current.judgeRubric}
+                    />
+                  ) : null}
+                </details>
+              </div>
+            </fieldset>
           </div>
         </div>
       )}
@@ -1590,12 +2836,47 @@ export function SuiteIterationsView({
       />
       {tracesExportOpen ? (
         <ExportTracesModal
-          open
+          open={tracesExportOpen}
           onOpenChange={setTracesExportOpen}
           projectId={projectId}
           runChatSessionIds={runChatSessionIds}
         />
       ) : null}
+      {unifiedShareEvals && selectedRunDetails ? (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share eval run"
+          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+        >
+          <ResourceSharePanel
+            resourceType="evalRun"
+            resourceId={selectedRunDetails._id}
+            footerSlot={
+              <p className="text-xs text-muted-foreground">
+                Transcripts, tool arguments, credentials, and full server URLs
+                are never included.
+              </p>
+            }
+            linkLabel="Share link"
+            buildShareUrl={(token) =>
+              `${window.location.origin}${buildEvalSharePath(token)}`
+            }
+            testIdPrefix="eval-share"
+          />
+        </ShareDialog>
+      ) : null}
     </div>
+  );
+  return isEditMode ? (
+    <SharedSettingsGate
+      projectId={projectId}
+      creatorId={suite.createdBy}
+      resource="eval suite"
+    >
+      {content}
+    </SharedSettingsGate>
+  ) : (
+    content
   );
 }

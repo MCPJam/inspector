@@ -1,3 +1,4 @@
+import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
@@ -5,14 +6,32 @@
  * UI through the client-fulfilled `ui_*` tools, so every action is visible
  * to the user in their own app. It KNOWS things via read-only sources:
  *   - the hosted docs server (`https://docs.mcpjam.com/mcp`, Mintlify) for
- *     documentation search, and
+ *     how MCPJam itself behaves,
+ *   - the MCP project's own docs server (`https://modelcontextprotocol.io/mcp`,
+ *     also Mintlify) for what the PROTOCOL says, and
  *   - the `web_search` built-in.
+ *
+ * Why a second docs server rather than protocol knowledge in the prompt (or
+ * a pinned skill): the spec is published per version — `/specification/`
+ * holds `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`, `2026-07-28`
+ * and `draft`, the exact range this debugger targets — and its server
+ * exposes a read-only filesystem (`ls`/`cat`/`rg` over the `.mdx` sources)
+ * alongside search. That makes retrieval ADDRESSED: the model must name a
+ * version to read one, so it cannot silently answer a 2026-07-28 question
+ * out of the 2025-03-26 text. Model priors degrade across exactly that range,
+ * which is where the wrong answers were coming from.
+ *
+ * Both docs servers also offer a `submit_feedback` WRITE tool, which this
+ * route declines — see `DECLINED_MCP_TOOL_NAMES`.
  *
  * It deliberately does NOT connect the MCPJam platform MCP worker for chat
  * turns any more: those tools mutate the user's workspace (projects,
- * servers, evals, chatboxes) server-side and invisibly, which is exactly
+ * servers, evals, scenarios) server-side and invisibly, which is exactly
  * what this surface is meant not to do. `MCPJAM_AGENT_PLATFORM_TOOLS=1`
- * restores the old behavior wholesale (see `agentPlatformToolsEnabled`).
+ * restores the old ACTION contract wholesale (see
+ * `agentPlatformToolsEnabled`). It does not gate the knowledge sources: the
+ * kill-switch governs how the agent acts, not what it may read, so the docs
+ * servers are connected identically in both modes.
  *
  * The platform CONFIG and the `/widget-content` sub-route below stay: chat
  * sessions from before the cutover still contain platform widget parts, and
@@ -36,16 +55,15 @@
  * degrades the agent to docs + web_search.
  *
  * Differences vs `/api/web/chat-v2`:
- *   - The agent owns its own `MCPClientManager` hardcoded to the two
- *     servers. It does NOT go through `createAuthorizedManager`'s
- *     project-server resolution and does NOT register either server into
- *     any user's project.
+ *   - The agent owns its own `MCPClientManager` hardcoded to these servers.
+ *     It does NOT go through `createAuthorizedManager`'s project-server
+ *     resolution and does NOT register any of them into any user's project.
  *   - Persists as `sourceType: "direct"` with `hostConfig: null` — the
- *     synthetic `"mcpjam-docs"` / `"mcpjam-platform"` ids would fail
- *     backend `selectedServerIds` validation against the project's
- *     `servers` rows. The chat appears in the user's history alongside
+ *     synthetic `"mcpjam-docs"` / `"mcp-spec"` / `"mcpjam-platform"` ids
+ *     would fail backend `selectedServerIds` validation against the
+ *     project's `servers` rows. The chat appears in the user's history alongside
  *     other direct sessions; per-surface differentiation is client-side.
- *   - Ignores chatbox / appTools / selectedServerIds fields up front — this
+ *   - Ignores scenario / appTools / selectedServerIds fields up front — this
  *     surface owns its MCP tool set. The one client-supplied tool snapshot it
  *     DOES accept is `uiTools` (WebMCP UI tools, validated at the boundary):
  *     the agent panel is the primary surface for driving the inspector UI.
@@ -60,10 +78,6 @@ import {
 } from "@mcpjam/sdk";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  McpUiResourceCsp,
-  McpUiResourcePermissions,
-} from "@modelcontextprotocol/ext-apps";
 import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
@@ -74,6 +88,8 @@ import {
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
+import { resolveUiResourceMeta } from "../../utils/ui-resource-meta.js";
+import { viewOriginLabel } from "../../utils/view-origin-label.js";
 import { logger } from "../../utils/logger.js";
 import { resolvePlatformMcpUrl } from "../../utils/platform-mcp-url.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets";
@@ -87,10 +103,31 @@ import {
   mapRuntimeError,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
+const SPEC_SERVER_ID = "mcp-spec";
+const DEFAULT_SPEC_URL = "https://modelcontextprotocol.io/mcp";
+
+/**
+ * Both Mintlify docs servers ship a `submit_feedback` write tool alongside
+ * their read tools. This surface declines it for two independent reasons,
+ * either of which is sufficient:
+ *
+ *  1. It posts model-authored free text to a docs team — an outward-facing
+ *     action, taken unattended (the agent's approval preference defaults off)
+ *     and invisible in the app the user is watching. That is precisely the
+ *     class of tool this route dropped the platform worker to avoid.
+ *  2. Both servers expose the SAME unqualified name, and
+ *     `getToolsForAiSdk` flattens selected servers last-in-wins — so
+ *     advertising it would silently route MCPJam docs feedback to the MCP
+ *     project instead, with nothing at the call site to reveal it.
+ *
+ * Deleting it by name resolves both: neither server's copy survives.
+ */
+const DECLINED_MCP_TOOL_NAMES = ["submit_feedback"] as const;
 const PLATFORM_SERVER_ID = MCPJAM_PLATFORM_SERVER_ID;
 
 /**
@@ -118,8 +155,17 @@ function agentPlatformToolsEnabled(): boolean {
 const AGENT_IDENTITY_PROMPT = [
   "## You are the MCPJam in-app assistant",
   "You are embedded in the MCPJam inspector, sitting next to the user's own screen. You act by DRIVING THAT UI with the `ui_*` tools: every action you take lands in the app the user is looking at, and they watch it happen.",
-  "Prefer navigating and showing over describing. If the user asks where something is or how to do it, take them there instead of narrating the click path.",
-  "Use the documentation and web search tools to answer knowledge questions; use the `ui_*` tools to actually do things. You have no other way to act — when something isn't reachable through a `ui_*` tool, say so plainly rather than inventing a tool or claiming you did it.",
+  "When the user asks you to DO something (or where something is), drive the UI and take them there — prefer showing over describing.",
+  "When the user asks a QUESTION about the product — how something works, how to do something, what a feature can do — search the MCPJam documentation first and answer from what it says; the screen atlas below tells you where things live, not how they behave, so don't answer product behavior from it alone. Then, if you can carry the answer out in the app, offer to — and wait for a yes before acting.",
+  "Use web search for questions beyond MCPJam and the protocol. You have no other way to act — when something isn't reachable through a `ui_*` tool, say so plainly rather than inventing a tool or claiming you did it.",
+  "When the user wants to add or try an MCP server but hasn't named one, ask which server they'd like to connect — never invent a placeholder server (there is no default \"weather\" server). If they just want a quick example to try, offer these real ones: `https://mcp.excalidraw.com/mcp` (streamable HTTP, no auth) or `https://mcp.mcpjam.com/mcp` (an OAuth example). Only add a server once you have a concrete name and URL from the user or from one of these examples.",
+  // Clarification policy. The `ui_ask_user` tool's own description carries
+  // the mechanics; this is the behavioural threshold, which belongs with the
+  // identity because over-asking is what makes an assistant feel worse, not
+  // better. Deliberately biased AGAINST asking: acting on the dominant
+  // reading and naming the assumption is recoverable, an interruption isn't.
+  "Prefer acting on the most likely reading over asking. Use `ui_ask_user` only when a request is genuinely ambiguous AND the readings would lead you to do materially different things — otherwise pick the strongest reading, do it, and say in one clause what you assumed. Never ask for something the UI context on the user's message or `ui_snapshot_app` already tells you (which screen they're on, which server is selected). Search the docs and read the app first, so that if you do ask, the choices are informed. Never change anything before asking.",
+  "Keep replies short: lead with the answer in a few sentences, no filler, no restating the question. If the docs don't settle it, say you're not sure rather than guessing.",
   "",
   // The atlas: what screens exist and what they're for. Derived from the
   // surface manifests, so a new screen joins the agent's map by existing
@@ -133,6 +179,28 @@ const AGENT_IDENTITY_PROMPT = [
   buildAppAtlas({ hosted: HOSTED_MODE }),
 ].join("\n");
 
+/**
+ * How to use the spec docs server. Emitted separately from
+ * `AGENT_IDENTITY_PROMPT` for two reasons that pull the same way:
+ *
+ *  - The identity prompt is dropped under `MCPJAM_AGENT_PLATFORM_TOOLS=1`,
+ *    because its "the `ui_*` tools are your only way to act" claim is false
+ *    there. That is an ACTION statement. This is a READ statement, and the
+ *    kill-switch governs acting rather than reading — so if the spec server
+ *    is connected in that mode (it is), the guidance to actually use it has
+ *    to survive alongside it. Connecting the authoritative protocol source
+ *    and then deleting the instruction to read it is the worst of both.
+ *  - It is conditional on the server surviving preflight, matching the
+ *    existing rule that instructions must never reference tools a degraded
+ *    turn doesn't advertise (see `ambientContextPrompt`).
+ *
+ * Static text, so it costs the cacheable prefix nothing beyond its presence.
+ */
+const SPEC_DOCS_PROMPT = [
+  "## Answering MCP protocol questions",
+  "When the question is about the MCP SPECIFICATION rather than about MCPJam — what the protocol requires, what a message or field means, what changed between versions — read the MCP docs server instead of answering from memory. Your training data is unreliable across the versions this app targets. The spec is published per version under `/specification/<version>` (`2024-11-05` through `2026-07-28`, plus `draft`), and you can list and read those files directly, so ALWAYS establish which version you're answering for — ask the user if they haven't said — and read that version's page. Never generalize one version's behavior to another; where they differ, say so and name the versions.",
+].join("\n");
+
 // Advertise the MCP UI extension so the platform worker registers its
 // widget-backed tools (the worker's session registrar swaps widget vs
 // plain registrations on this capability).
@@ -144,12 +212,30 @@ const MCP_APPS_CLIENT_CAPABILITIES = {
   },
 };
 
-function buildDocsConfig(): HttpServerConfig {
+/**
+ * Both knowledge servers are the same shape — an unauthenticated hosted
+ * Mintlify docs server — so they share one builder rather than drifting into
+ * two near-identical literals. No `accessToken`: neither is authenticated,
+ * and adding one would send the caller's bearer to a third party.
+ */
+function buildDocsServerConfig(url: string): HttpServerConfig {
   return {
-    url: process.env.MCPJAM_DOCS_MCP_URL ?? DEFAULT_DOCS_URL,
+    url,
     timeout: 30_000,
     clientCapabilities: MCP_APPS_CLIENT_CAPABILITIES,
   };
+}
+
+function buildDocsConfig(): HttpServerConfig {
+  return buildDocsServerConfig(
+    process.env.MCPJAM_DOCS_MCP_URL ?? DEFAULT_DOCS_URL
+  );
+}
+
+function buildSpecConfig(): HttpServerConfig {
+  return buildDocsServerConfig(
+    process.env.MCPJAM_SPEC_MCP_URL ?? DEFAULT_SPEC_URL
+  );
 }
 
 function buildPlatformConfig(bearerToken: string): HttpServerConfig {
@@ -174,7 +260,7 @@ function buildPlatformConfig(bearerToken: string): HttpServerConfig {
 // validation errors. Server-side use of the parsed body still only reads
 // the explicitly-declared fields below plus `uiTools` (validated by
 // `validateUiToolEntries` before use) — there's no path here that routes
-// a tampered selectedServerIds / appTools / chatbox field into the
+// a tampered selectedServerIds / appTools / scenario field into the
 // streamWebChatTurn call because we don't read them at all.
 const mcpjamAgentSchema = z
   .object({
@@ -188,6 +274,7 @@ const mcpjamAgentSchema = z
       .passthrough(),
     chatSessionId: z.string().min(1),
     projectId: z.string().min(1),
+    evalScope: evalAgentScopeSchema.optional(),
     systemPrompt: z.string().optional(),
     temperature: z.number().optional(),
     requireToolApproval: z.boolean().optional(),
@@ -221,35 +308,55 @@ mcpjamAgent.post("/", async (c) => {
       throw error;
     }
 
-    const platformToolsEnabled = agentPlatformToolsEnabled();
+    if (EVAL_DESCRIBE_ONLY_AGENT && body.evalScope && !body.evalScope.caseId) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Ask MCPJam is available only from Describe.");
+    }
+    if (body.evalScope && body.evalScope.projectId !== body.projectId) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval scope does not match the active project.");
+    }
+    if (body.chatSessionId.startsWith("eval-") && !body.evalScope) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
+    }
+    if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+    const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(
       {
         [DOCS_SERVER_ID]: buildDocsConfig(),
+        [SPEC_SERVER_ID]: buildSpecConfig(),
         ...(platformToolsEnabled
           ? { [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken) }
           : {}),
       },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        // These three URLs are ours, not a caller's, so this is uniformity
+        // rather than a fix: after MJ-001 no hosted manager is constructed
+        // without the guard, which is what lets the static check forbid a bare
+        // `new MCPClientManager` in hosted route files. `MCPJAM_*_MCP_URL`
+        // overrides are classified at boot so a private one fails there
+        // (`assertHostedFirstPartyMcpUrls`) instead of mid-turn.
+        baseFetch: hostedMcpBaseFetch(),
         rpcLogger: rpcCollector.rpcLogger,
+        httpLogger: rpcCollector.httpLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );
 
     try {
-      // Preflight both servers in parallel: `getToolsForAiSdk` (inside
+      // Preflight every server in parallel: `getToolsForAiSdk` (inside
       // `prepareChatV2`) fails the WHOLE turn when any selected server
-      // errors at connect/list time, so either server's outage (or the
+      // errors at connect/list time, so ANY one server's outage (or the
       // platform worker rejecting local dev's untrusted issuer) would
-      // otherwise take down the entire agent. Select only the servers that
-      // responded; connections and tool metadata are cached on the manager,
-      // so the later prepare doesn't repeat the round trips. With both
-      // down, the turn still runs on web_search + the bare model.
+      // otherwise take down the entire agent. This matters more now that one
+      // of them is a third party we don't operate. Select only the servers
+      // that responded; connections and tool metadata are cached on the
+      // manager, so the later prepare doesn't repeat the round trips. With
+      // all down, the turn still runs on web_search + the bare model.
       const mcp = manager;
-      const candidateServerIds = platformToolsEnabled
-        ? [DOCS_SERVER_ID, PLATFORM_SERVER_ID]
-        : [DOCS_SERVER_ID];
+      const candidateServerIds = body.evalScope ? [] : platformToolsEnabled
+        ? [DOCS_SERVER_ID, SPEC_SERVER_ID, PLATFORM_SERVER_ID]
+        : [DOCS_SERVER_ID, SPEC_SERVER_ID];
       const preflights = await Promise.allSettled(
         candidateServerIds.map((serverId) => mcp.listTools(serverId))
       );
@@ -299,6 +406,14 @@ mcpjamAgent.post("/", async (c) => {
               "explicitly asks about a different project.",
           ].join("\n")
         : undefined;
+      // Spec-docs guidance tracks the SERVER, not the kill-switch: it is a
+      // read instruction, and the switch governs acting. Gating it on the
+      // identity prompt instead would connect the authoritative protocol
+      // source in rollback mode and simultaneously delete the instruction to
+      // read it — the feature present, its whole purpose removed. Gated on
+      // preflight for the same reason `ambientContextPrompt` is: never
+      // describe a tool the degraded turn doesn't advertise.
+      const specToolsAvailable = selectedServerIds.includes(SPEC_SERVER_ID);
       // The identity prompt says the `ui_*` tools are the only way to act.
       // Under the kill-switch that becomes false — the platform tools are
       // back — and shipping both sections would hand the model directly
@@ -306,15 +421,16 @@ mcpjamAgent.post("/", async (c) => {
       // job is to behave exactly like the old one. A rollback that leaves
       // the new prompt in place is not a rollback.
       const effectiveSystemPrompt = [
-        body.systemPrompt,
-        platformToolsEnabled ? undefined : AGENT_IDENTITY_PROMPT,
+        body.evalScope ? evalAgentSystemPrompt(body.evalScope) : body.systemPrompt,
+        platformToolsEnabled || body.evalScope ? undefined : AGENT_IDENTITY_PROMPT,
+        specToolsAvailable ? SPEC_DOCS_PROMPT : undefined,
         ambientContextPrompt,
       ]
         .filter((section): section is string => Boolean(section?.trim()))
         .join("\n\n");
 
       const authHeader = c.req.header("authorization");
-      const builtInTools = authHeader
+      const builtInTools = authHeader && !body.evalScope
         ? resolveHostTools(
             { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
             {
@@ -334,9 +450,16 @@ mcpjamAgent.post("/", async (c) => {
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,
           respectToolVisibility: body.respectToolVisibility,
+          excludeMcpToolNames: DECLINED_MCP_TOOL_NAMES,
           uiMessages: body.messages,
           uiTools: validatedUiTools,
           builtInTools,
+          // No `tasks`: the agent has no host config (see `hostConfig: null`
+          // below), so its policy is `unset`, which the matrix resolves to
+          // `off` for the `agent` surface. Passing a resolved seam here would
+          // be a call that can only ever return undefined. If the agent ever
+          // gains a host config, resolve it with surface `"agent"` — not
+          // `"chat"` — even though both arrive through `prepareChatV2`.
         },
         persist: {
           chatSessionId: body.chatSessionId,
@@ -366,7 +489,7 @@ mcpjamAgent.post("/", async (c) => {
         },
         runtime: {
           authHeader,
-          clientIp: getClientIp(c),
+          clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           c,
@@ -461,6 +584,7 @@ mcpjamAgent.post("/widget-content", async (c) => {
       { [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken) },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );
@@ -507,13 +631,12 @@ mcpjamAgent.post("/widget-content", async (c) => {
       }
 
       const resourceMeta = record._meta as Record<string, unknown> | undefined;
-      const uiMeta = (resourceMeta as { ui?: unknown } | undefined)?.ui as
-        | {
-            csp?: McpUiResourceCsp;
-            permissions?: McpUiResourcePermissions;
-            prefersBorder?: boolean;
-          }
-        | undefined;
+      // The shared resolver rather than a local cast, so this route reports
+      // the same normalized fields (and the same `domain`) as the other two
+      // widget-content routes. No listing lookup: these resources come from
+      // MCPJam's own MCP server and a fixed table, so there is no second
+      // source a lower-precedence declaration could arrive from.
+      const uiMeta = resolveUiResourceMeta({ contentMeta: resourceMeta });
       const effectiveCspMode = body.cspMode ?? "permissive";
 
       if (body.injectOpenAiCompat === true) {
@@ -535,11 +658,16 @@ mcpjamAgent.post("/widget-content", async (c) => {
 
       return c.json({
         html,
-        csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
-        permissions: uiMeta?.permissions,
+        csp: effectiveCspMode === "permissive" ? undefined : uiMeta.csp,
+        permissions: uiMeta.permissions,
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
-        prefersBorder: uiMeta?.prefersBorder,
+        prefersBorder: uiMeta.prefersBorder,
+        declaredDomain: uiMeta.domain,
+        // A fixed label of its own rather than none: with per-app origins on,
+        // "no label" means the bare sandbox origin, and MCPJam's own widgets
+        // should not be the one thing still rendering there.
+        viewOriginLabel: viewOriginLabel("mcpjam:platform"),
         injectedOpenAiCompat: body.injectOpenAiCompat === true,
         injectedOpenAiCompatCapabilities:
           body.injectOpenAiCompat === true &&

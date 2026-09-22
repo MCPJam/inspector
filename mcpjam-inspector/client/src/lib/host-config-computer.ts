@@ -31,7 +31,7 @@ const KNOWN_COMPUTER_BACKED_TOOL_IDS: readonly string[] = ["bash"];
  * what the deployment has actually enabled.
  */
 export function catalogHasComputerBackedTool(
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): boolean {
   return (catalog ?? []).some((t) => t.requiresComputer);
 }
@@ -43,7 +43,7 @@ export function catalogHasComputerBackedTool(
  * disabled row.
  */
 export function computerBackedToolIds(
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): Set<string> {
   const ids = new Set<string>(KNOWN_COMPUTER_BACKED_TOOL_IDS);
   for (const tool of catalog ?? []) {
@@ -66,17 +66,80 @@ export function visibleBuiltInToolCatalog(
   catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
   opts: {
     computersEnabled: boolean;
+    browsersEnabled: boolean;
     selectedIds: ReadonlyArray<string>;
-  }
+  },
 ): ReadonlyArray<BuiltInToolCatalogEntry> | undefined {
-  if (catalog === undefined || opts.computersEnabled) return catalog;
+  if (catalog === undefined) return catalog;
   const selected = new Set(opts.selectedIds);
-  return catalog.filter((t) => !t.requiresComputer || selected.has(t.id));
+  return catalog.filter(
+    (t) =>
+      selected.has(t.id) ||
+      (t.id === "browser"
+        ? opts.browsersEnabled
+        : !t.requiresComputer || opts.computersEnabled),
+  );
 }
 
 /** Patch that attaches a personal computer (the only MVP resource shape). */
 export function attachComputerPatch(): Partial<HostConfigInputV2> {
   return { computer: { kind: "personal" } };
+}
+
+/**
+ * The box home — the default working directory when `computer.workdir` is unset.
+ * Chosen so COMP-14 chat attachments (which land in `/home/user/attachments`)
+ * are reachable by a plain relative path from the default cwd. Mirrors the
+ * server's `HOME_ROOT` (`server/utils/computers/path-confine.ts`).
+ */
+export const DEFAULT_COMPUTER_WORKDIR = "/home/user";
+
+/**
+ * Client-side mirror of the server's `resolveWorkingDirectory` confinement
+ * (COMP-16), for inline field validation only — the server check is
+ * authoritative. Returns an error string, or `null` when acceptable (a blank
+ * value is acceptable and means "use the default"). Keep in lockstep with
+ * `server/utils/computers/path-confine.ts`.
+ */
+export function validateComputerWorkdir(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null; // blank ⇒ default /home/user
+  if (!trimmed.startsWith("/")) {
+    return "Use an absolute path under /home/user.";
+  }
+  const normalized = trimmed.replace(/\/+$/, "");
+  if (
+    normalized !== DEFAULT_COMPUTER_WORKDIR &&
+    !normalized.startsWith(`${DEFAULT_COMPUTER_WORKDIR}/`)
+  ) {
+    return "Must resolve under /home/user.";
+  }
+  if (normalized.split("/").includes("..")) {
+    return 'No ".." segments.';
+  }
+  return null;
+}
+
+/**
+ * Patch that sets (or clears) the computer's working directory (COMP-16). A
+ * blank value OR the default `/home/user` CLEARS `workdir`, so the default
+ * hashes identically to "never set" (content-addressed host configs: the box
+ * default is `/home/user` either way, so storing it would only fork the row).
+ * No-op when no computer is attached.
+ */
+export function setComputerWorkdirPatch(
+  value: HostConfigInputV2,
+  workdir: string,
+): Partial<HostConfigInputV2> {
+  if (value.computer === undefined) return {};
+  const trimmed = workdir.trim().replace(/\/+$/, "");
+  const keep = trimmed !== "" && trimmed !== DEFAULT_COMPUTER_WORKDIR;
+  return {
+    computer: {
+      ...value.computer,
+      workdir: keep ? trimmed : undefined,
+    },
+  };
 }
 
 /**
@@ -106,7 +169,7 @@ export function shouldShowComputerToggle(opts: {
  */
 export function detachComputerPatch(
   value: HostConfigInputV2,
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): Partial<HostConfigInputV2> {
   const backed = computerBackedToolIds(catalog);
   return {
@@ -130,7 +193,7 @@ export function detachComputerPatch(
  */
 export function sanitizeHostConfigForEvalSuite(
   value: HostConfigInputV2,
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): HostConfigInputV2 {
   const backed = computerBackedToolIds(catalog);
   const cleanedIds = value.builtInToolIds.filter((id) => !backed.has(id));

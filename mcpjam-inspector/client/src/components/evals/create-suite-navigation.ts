@@ -1,6 +1,6 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
 import {
-  buildCiEvalsPath,
+  buildEvalsRunsPath,
   buildEvalsPath,
   navigateApp,
 } from "@/lib/app-navigation";
@@ -14,7 +14,7 @@ function applyPlaygroundEvalsPath(
 }
 
 function applyCiEvalsPath(route: EvalRoute, options?: { replace?: boolean }) {
-  navigateApp(buildCiEvalsPath(route), { replace: options?.replace });
+  navigateApp(buildEvalsRunsPath(route), { replace: options?.replace });
 }
 
 /** Playground Explore: same path shape as `buildEvalsPath`. */
@@ -60,6 +60,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           suiteId,
           testId,
           ...(options?.openCompare ? { openCompare: true } : {}),
+          ...(options?.checks ? { checks: true } : {}),
           ...(options?.iteration ? { iteration: options.iteration } : {}),
         },
         { replace: options?.replace }
@@ -107,6 +108,7 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
           suiteId,
           testId,
           ...(options?.openCompare ? { openCompare: true } : {}),
+          ...(options?.checks ? { checks: true } : {}),
           ...(options?.iteration ? { iteration: options.iteration } : {}),
         },
         { replace: options?.replace }

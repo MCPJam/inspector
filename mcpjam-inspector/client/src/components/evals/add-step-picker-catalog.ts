@@ -6,7 +6,7 @@
  * see add-step-picker-catalog.test.ts for the load-bearing integrity check.
  */
 
-import type { WidgetAssertion } from "@/shared/steps";
+import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
 import {
   PREDICATE_KIND_LABELS,
   labelForInlineAssert,
@@ -34,7 +34,15 @@ export type PickerCatalogEntry = {
   group: PickerGroupId;
   tier: PickerTier;
   label: string;
-  /** Optional one-line hint shown under the label (essentials only). */
+  /**
+   * Optional one-line hint shown under the label.
+   *
+   * Two jobs: disambiguating the essentials, and marking every `widget-check`
+   * item as evaluated against the LIVE view rather than the transcript. That
+   * distinction is invisible from the label alone — "Text visible" and "View
+   * rendered" read alike — but it decides whether the check can ever be
+   * re-evaluated from stored data. See the union comment in `shared/steps.ts`.
+   */
   hint?: string;
   keywords: string[];
   choice: AddStepPickerChoice;
@@ -51,8 +59,8 @@ export const PICKER_GROUP_ORDER: readonly PickerGroupId[] = [
 
 export const PICKER_GROUP_LABELS: Record<PickerGroupId, string> = {
   drive: "Actions",
-  transcriptEssentials: "Checks",
-  transcriptMore: "More conversation checks",
+  transcriptEssentials: "Assertions",
+  transcriptMore: "More conversation assertions",
   viewLifecycle: "Did the view load",
   viewContent: "What's on screen",
   health: "Run health",
@@ -112,6 +120,14 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
       "structuredContent",
     ],
     choice: { kind: "check", predicateKind: "toolCalledWith" },
+  },
+  {
+    key: "check:responseCloseTo",
+    group: "transcriptEssentials",
+    tier: "secondary",
+    label: PREDICATE_KIND_LABELS.responseCloseTo,
+    keywords: ["distance", "reference", "levenshtein"],
+    choice: { kind: "check", predicateKind: "responseCloseTo" },
   },
   {
     key: "check:responseContains",
@@ -193,7 +209,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:textVisible",
     group: "viewContent",
     tier: "secondary",
-    label: "Text visible",
+    label: WIDGET_ASSERTION_LABELS.textVisible,
+    hint: "Checked in the live view",
     keywords: ["text", "visible", "dom"],
     choice: { kind: "widget-check", widgetKind: "textVisible" },
   },
@@ -201,7 +218,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:elementVisible",
     group: "viewContent",
     tier: "secondary",
-    label: "Element visible",
+    label: WIDGET_ASSERTION_LABELS.elementVisible,
+    hint: "Checked in the live view",
     keywords: ["element", "visible", "selector"],
     choice: { kind: "widget-check", widgetKind: "elementVisible" },
   },
@@ -209,7 +227,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:elementHidden",
     group: "viewContent",
     tier: "secondary",
-    label: "Element hidden",
+    label: WIDGET_ASSERTION_LABELS.elementHidden,
+    hint: "Checked in the live view",
     keywords: ["element", "hidden"],
     choice: { kind: "widget-check", widgetKind: "elementHidden" },
   },
@@ -217,7 +236,8 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     key: "widget:inputValue",
     group: "viewContent",
     tier: "secondary",
-    label: "Input value equals",
+    label: WIDGET_ASSERTION_LABELS.inputValue,
+    hint: "Checked in the live view",
     keywords: ["input", "value", "form"],
     choice: { kind: "widget-check", widgetKind: "inputValue" },
   },
@@ -229,6 +249,41 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     label: labelForInlineAssert("noToolErrors"),
     keywords: ["tool", "error", "mcp", "transport"],
     choice: { kind: "check", predicateKind: "noToolErrors" },
+  },
+  {
+    key: "check:noEndingQuestion",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("noEndingQuestion"),
+    hint: "Reports; never fails an iteration",
+    keywords: ["question", "clarify", "ask", "answer", "ending"],
+    choice: { kind: "check", predicateKind: "noEndingQuestion" },
+  },
+  {
+    key: "check:noRepeatedIdenticalCall",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("noRepeatedIdenticalCall"),
+    hint: "Reports; a poll loop looks the same",
+    keywords: ["repeat", "identical", "retry", "loop", "duplicate"],
+    choice: { kind: "check", predicateKind: "noRepeatedIdenticalCall" },
+  },
+  {
+    key: "check:toolCallCountUnder",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("toolCallCountUnder"),
+    keywords: ["calls", "count", "budget", "hops"],
+    choice: { kind: "check", predicateKind: "toolCallCountUnder" },
+  },
+  {
+    key: "check:toolCalledBefore",
+    group: "transcriptMore",
+    tier: "secondary",
+    label: labelForInlineAssert("toolCalledBefore"),
+    hint: "Ordering: the lookup before the write",
+    keywords: ["order", "before", "prerequisite", "sequence"],
+    choice: { kind: "check", predicateKind: "toolCalledBefore" },
   },
 ];
 

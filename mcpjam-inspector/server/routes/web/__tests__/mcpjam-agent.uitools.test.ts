@@ -120,6 +120,6 @@ describe("web routes — mcpjam-agent uiTools boundary", () => {
     expect(args.prepare.appTools).toBeUndefined();
     // The docs server passes the preflight under the mock; the
     // client-supplied ids are still ignored.
-    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
+    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs", "mcp-spec"]);
   });
 });

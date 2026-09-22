@@ -1,6 +1,6 @@
 # @mcpjam/cli
 
-Test, debug, and validate MCP servers. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
+Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via `mcpjam cloud`. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
 
 ## Install
 
@@ -16,12 +16,14 @@ npx -y @mcpjam/cli@latest --help
 
 ## Commands
 
+Local MCP testing stays at the top level. Most account-bound commands live under `mcpjam cloud`; hosted readiness is the root-level exception. See the [4.0 migration guide](https://docs.mcpjam.com/cli/migration).
+
 ```
 $ mcpjam --help
 
 Usage: mcpjam [options] [command]
 
-Test, debug, and validate MCP servers. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
+Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via `mcpjam cloud`. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
 
 Options:
   -v, --version      output the CLI version
@@ -32,18 +34,30 @@ Options:
   --format <format>  Output format
   -h, --help         display help for command
 
-Commands:
+Local MCP testing:
   server             Inspect MCP server connectivity and capabilities
   tools              List and invoke MCP server tools
   resources          List and read MCP resources
+  subscriptions      Open a long-lived MCP subscription and stream its notifications
+  compat             Check whether an MCP server's tools and widgets work on each AI host
   prompts            List and fetch MCP prompts
-  apps               MCP Apps utilities, widget extraction, and conformance checks
+  apps               Validate MCP Apps metadata and resource wiring
+  tasks              Create, inspect and drive MCP Tasks
   oauth              Run MCP OAuth login, proxy, and conformance flows
+  xaa                Run the Cross-App Access (ID-JAG) debugger against an MCP server
   protocol           MCP protocol inspection and conformance checks
+  readiness          Grade a server or plugin against a publisher's directory
+
+MCPJam Cloud:
+  cloud              MCPJam Cloud account commands (login, projects, evals, tunnels)
+
+CLI:
   inspector          Start or attach to the local MCPJam Inspector
   mcp                Run MCPJam as an MCP server over stdio
   telemetry          Inspect and configure anonymous CLI telemetry
 ```
+
+`mcpjam oauth login` authenticates against an MCP server. `mcpjam cloud login` authenticates your MCPJam account. Run `mcpjam cloud --help` for the Cloud groups.
 
 ## Quick start
 
@@ -69,6 +83,11 @@ mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --form
 
 # Run MCPJam itself as a stdio MCP server (for Claude Desktop, Claude Code, Cursor, ...)
 mcpjam mcp
+
+# MCPJam Cloud (account-bound)
+mcpjam cloud login
+mcpjam cloud projects list
+mcpjam cloud eval run --suite smoke
 ```
 
 ## Why

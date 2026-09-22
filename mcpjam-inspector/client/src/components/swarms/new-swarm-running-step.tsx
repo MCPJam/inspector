@@ -1,0 +1,1551 @@
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+/**
+ * Running step of the New swarm create flow.
+ *
+ * One row per launched goal, one column per client. Each cell is the persona
+ * avatar plus a status line (`Running: {goal}` / `Run completed: …`). Cell
+ * state prefers the live SSE stream so the grid updates before Convex session
+ * rows land.
+ *
+ * Click a session chip to watch its live stream in the right pane
+ * (`SwarmLiveStreamPane` — same Trace / Chat / Raw surface as Personas).
+ *
+ * "Open findings" and Leave both exit this watch surface for the swarm's
+ * Findings page; the run keeps going. "Stop run" is the control that actually
+ * cancels it. A finished (or stopped) run goes to Findings on its own — see
+ * `COMPLETION_TOAST_DWELL_MS`.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePaginatedQuery, useQuery } from "convex/react";
+import { Button } from "@mcpjam/design-system/button";
+import { toast } from "@/lib/toast";
+import { isCreditExhaustion } from "@/shared/credit-exhaustion";
+import {
+  StopSwarmRunButton,
+  useStopSwarmRun,
+} from "@/components/swarms/swarm-stop-run";
+import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { SwarmRunningHero } from "@/components/swarms/swarm-running-hero";
+import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
+import {
+  resolveSwarmCellOutcome,
+  SwarmLiveStreamPane,
+  type SwarmAttemptOutcome,
+  type SwarmMatrixCellOutcome,
+  type SwarmMatrixSelection,
+} from "@/components/swarms/journey-run-results";
+import {
+  liveSessionTrace,
+  swarmCellKey,
+  useJourneyRunStream,
+  type JourneyRunStreamState,
+  type SwarmCellLiveStatus,
+} from "@/components/swarms/use-journey-run-stream";
+import {
+  attemptTargetKey,
+  buildSwarmRunTargets,
+  findAttemptForSelection,
+  findTargetCellForChatSessionId,
+  summaryTargetKey,
+  type SwarmTargetColumn,
+} from "@/components/swarms/swarm-targets";
+import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import { providerLabelForModelId } from "./session-rate-limit";
+import {
+  DEFAULT_PAGE_SIZE,
+  SWARM_QUERIES,
+  type JourneyRun,
+  type JourneyRunAttempt,
+  type JourneySessionRow,
+} from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import { cn } from "@/lib/utils";
+import { clientDisplayName } from "@/lib/client-display-name";
+
+export type SwarmLaunchedRun = {
+  runId: string;
+  journeyId: string;
+  personaId: string;
+  personaName: string;
+  personaRole: string;
+  avatarShape?: number;
+  avatarPalette?: number;
+  label: string;
+  /** Goal name shown on each cell (`Running: {goal}`). Falls back to `label`. */
+  goalLabel?: string;
+};
+
+export type SwarmRunningColumn = {
+  key: string;
+  hostId?: string;
+  label: string;
+};
+
+type AttributedSession = JourneySessionRow & { columnKey: string };
+
+type RunLiveSnapshot = {
+  status: string;
+  sessions: AttributedSession[];
+  stream: JourneyRunStreamState;
+  summaryTotal: number;
+  summaryDone: number;
+  /** Attempts that reached a non-succeeded terminal, for the run banner. */
+  summarySucceeded: number;
+  summaryRateLimited: number;
+  summaryFailed: number;
+  columns: SwarmRunningColumn[];
+  /** Full target columns — needed to mint chatSessionIds for click → stream. */
+  targets: SwarmTargetColumn[];
+  sessionsPerTarget: number;
+  /** Per-attempt outcomes from `journeyRunAttempts` — the authority on how a
+   * cell actually went (see `resolveSwarmCellOutcome`). */
+  attempts: JourneyRunAttempt[];
+};
+
+type RunningSelection = SwarmMatrixSelection & {
+  runId: string;
+  personaId: string;
+};
+
+type CellView = {
+  outcome: SwarmMatrixCellOutcome | "queued";
+  headline: string;
+  verdict?: JourneySessionRow["verdict"];
+};
+
+type SessionSlot = {
+  runId: string;
+  personaId: string;
+  personaName: string;
+  avatarShape?: number;
+  avatarPalette?: number;
+  targetKey: string;
+  hostId: string;
+  sessionIndex: number;
+  chatSessionId: string;
+  view: CellView;
+};
+
+/** Goal text for a cell. `label` is "Persona · Goal" at launch; prefer the
+ * dedicated field when present so a name that itself contains " · " stays intact. */
+export function swarmRunGoalLabel(
+  run: Pick<SwarmLaunchedRun, "label" | "goalLabel">,
+): string {
+  const dedicated = run.goalLabel?.trim();
+  if (dedicated) return dedicated;
+  const sep = " · ";
+  const index = run.label.indexOf(sep);
+  if (index >= 0) {
+    const rest = run.label.slice(index + sep.length).trim();
+    if (rest) return rest;
+  }
+  return run.label.trim() || "session";
+}
+
+export function swarmRunningTitle(args: {
+  allTerminal: boolean;
+  succeeded: number;
+  rateLimited: number;
+  done: number;
+  total: number;
+  /** This viewer pressed Stop run and the wave has settled. */
+  stopped?: boolean;
+}): string {
+  // Progress count while anything ran; succeeded-count when the wave produced
+  // no session — "failed 15 of 15" would count refusals as sessions.
+  const shown =
+    !args.allTerminal || args.succeeded > 0 ? args.done : args.succeeded;
+  const count = args.total > 0 ? ` ${shown} of ${args.total} sessions` : "";
+  if (!args.allTerminal) return `Swarm running${count}`;
+  if (args.stopped) return `Swarm stopped${count}`;
+  if (args.succeeded > 0) return `Swarm finished${count}`;
+  if (args.rateLimited > 0) return `Swarm could not run${count}`;
+  return `Swarm failed${count}`;
+}
+
+export function swarmCellHeadline(args: {
+  outcome: CellView["outcome"];
+  primary: string;
+  goal: string;
+}): string {
+  const goal = args.goal.trim() || "session";
+  if (args.outcome === "queued" || args.outcome === "pending") {
+    return `Pending: ${goal}`;
+  }
+  if (args.outcome === "running") {
+    return `Running: ${goal}`;
+  }
+  if (args.outcome === "succeeded") {
+    const checks = args.primary.match(/^(\d+)\/(\d+) pass$/);
+    return checks && Number(checks[1]) > 0 && checks[1] === checks[2]
+      ? "Run completed: All evaluators passed"
+      : `Run completed: ${goal}`;
+  }
+  if (args.outcome === "rate_limited") {
+    return /\d+\/\d+ pass/.test(args.primary)
+      ? "Run completed: Goal completion had mixed results"
+      : "Execution limited";
+  }
+  if (args.outcome === "failed") {
+    return `Broke: ${goal}`;
+  }
+  return goal;
+}
+
+function avatarState(
+  outcome: CellView["outcome"],
+): "idle" | "running" | "error" {
+  if (outcome === "running" || outcome === "queued") return "running";
+  if (outcome === "failed") return "error";
+  return "idle";
+}
+
+function columnsFromRun(
+  run: JourneyRun,
+  hostName: (hostId: string) => string | undefined,
+): SwarmRunningColumn[] {
+  // snapshot.hosts is the fan-out the runner actually uses — prefer it over
+  // hostSummaries, which can lag or key oddly while attempts are in flight.
+  const snapshotHosts = run.snapshot?.hosts ?? [];
+  if (snapshotHosts.length > 0) {
+    return snapshotHosts.map((host) => {
+      const key = summaryTargetKey({
+        hostId: host.hostId,
+        targetId: host.targetId,
+      });
+      return {
+        key,
+        hostId: host.hostId,
+        label:
+          hostName(host.hostId) ??
+          host.environmentRef?.name ??
+          host.hostName ??
+          key.slice(0, 8),
+      };
+    });
+  }
+  return buildSwarmRunTargets({
+    hostSummaries: run.hostSummaries ?? [],
+    snapshotHosts: run.snapshot?.hosts,
+    hostName,
+  }).map((target) => ({
+    key: target.key,
+    hostId: target.hostId,
+    label: target.label,
+  }));
+}
+
+function attributeSessions(
+  run: JourneyRun,
+  sessions: JourneySessionRow[],
+  hostName: (hostId: string) => string | undefined,
+): {
+  columns: SwarmRunningColumn[];
+  targets: SwarmTargetColumn[];
+  sessions: AttributedSession[];
+  sessionsPerTarget: number;
+} {
+  const sessionsPerTarget = Math.max(1, run.snapshot?.sessionsPerTarget ?? 1);
+  const columns = columnsFromRun(run, hostName);
+  const targets = buildSwarmRunTargets({
+    hostSummaries:
+      (run.hostSummaries?.length ?? 0) > 0
+        ? run.hostSummaries
+        : (run.snapshot?.hosts ?? []).map((host) => ({
+            hostId: host.hostId,
+            targetId: host.targetId,
+          })),
+    snapshotHosts: run.snapshot?.hosts,
+    hostName,
+  });
+
+  if (columns.length === 0) {
+    const byHost = new Map<string, string>();
+    for (const session of sessions) {
+      if (!byHost.has(session.hostId)) {
+        byHost.set(
+          session.hostId,
+          hostName(session.hostId) ?? session.hostId.slice(0, 8),
+        );
+      }
+    }
+    const fallbackTargets: SwarmTargetColumn[] = Array.from(
+      byHost.entries(),
+    ).map(([key, label]) => ({
+      key,
+      hostId: key,
+      label,
+      identity: { hostId: key },
+    }));
+    return {
+      columns: fallbackTargets.map((target) => ({
+        key: target.key,
+        hostId: target.hostId,
+        label: target.label,
+      })),
+      targets: fallbackTargets,
+      sessions: sessions.map((session) => ({
+        ...session,
+        columnKey: session.hostId,
+      })),
+      sessionsPerTarget,
+    };
+  }
+
+  return {
+    columns,
+    targets,
+    sessionsPerTarget,
+    sessions: sessions.map((session) => {
+      const hit = findTargetCellForChatSessionId({
+        runId: run._id,
+        targets,
+        sessionsPerTarget,
+        chatSessionId: session.chatSessionId,
+      });
+      return {
+        ...session,
+        columnKey: hit?.target.key ?? session.hostId,
+      };
+    }),
+  };
+}
+
+function streamMatchesColumn(
+  envelope: { hostId: string; targetId?: string },
+  columnKey: string,
+): boolean {
+  if (summaryTargetKey(envelope) === columnKey) return true;
+  if (envelope.targetId === columnKey) return true;
+  if (envelope.hostId === columnKey) return true;
+  return false;
+}
+
+function RunLiveBridge({
+  runId,
+  organizationId,
+  streamEnabled,
+  hostName,
+  onSnapshot,
+}: {
+  runId: string;
+  organizationId?: string;
+  streamEnabled: boolean;
+  hostName: (hostId: string) => string | undefined;
+  onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
+}) {
+  const run = useQuery(
+    SWARM_QUERIES.getJourneyRun as any,
+    {
+      runId,
+    } as any,
+  ) as JourneyRun | null | undefined;
+  const { results: sessionResults } = usePaginatedQuery(
+    SWARM_QUERIES.listSessionsByJourneyRun as any,
+    { journeyRunId: runId } as any,
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
+  );
+  useEffect(() => {
+    for (const attempt of run?.attempts ?? []) {
+      notifyMCPJamLimitError({
+        runId,
+        organizationId,
+        code: attempt.errorCode ?? undefined,
+        message: attempt.errorMessage,
+        surface: "swarm",
+      });
+    }
+  }, [runId, organizationId, run?.attempts]);
+  const runStatus = run?.status ?? "running";
+  // Convex supplies the whole matrix's progress over its shared connection.
+  // Only the selected trace needs SSE: one stream per row exhausts the
+  // browser's HTTP/1.1 connection pool and queues later rows indefinitely.
+  const stream = useJourneyRunStream(
+    runId,
+    streamEnabled && runStatus === "running",
+  );
+
+  useEffect(() => {
+    if (run === undefined) return;
+    if (run === null) {
+      onSnapshot(runId, null);
+      return;
+    }
+    const sessions = (sessionResults ?? []) as JourneySessionRow[];
+    const attributed = attributeSessions(run, sessions, hostName);
+    const summary = run.summary ?? {
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      rateLimited: 0,
+    };
+    onSnapshot(runId, {
+      status: run.status,
+      sessions: attributed.sessions,
+      stream,
+      summaryTotal: summary.total,
+      summaryDone: summary.succeeded + summary.failed + summary.rateLimited,
+      summarySucceeded: summary.succeeded,
+      summaryRateLimited: summary.rateLimited,
+      summaryFailed: summary.failed,
+      columns: attributed.columns,
+      targets: attributed.targets,
+      sessionsPerTarget: attributed.sessionsPerTarget,
+      attempts: run.attempts ?? [],
+    });
+  }, [hostName, onSnapshot, run, runId, sessionResults, stream]);
+
+  return null;
+}
+
+/**
+ * Goal result owns the chip fill. Execution stays on the headline
+ * (`Running:` / `Broke:`) so a broken-but-passed session reads green and a
+ * completed-but-failed one reads red — without a second "Goal result:" label.
+ */
+export function sessionChipTone(args: {
+  outcome: CellView["outcome"];
+  verdict?: JourneySessionRow["verdict"];
+}): string {
+  const goal = args.verdict?.verdict;
+  if (goal === "passed") return "border-success/40 bg-success/10";
+  if (goal === "failed") return "border-destructive/40 bg-destructive/10";
+  if (goal === "inconclusive") return "border-warning/40 bg-warning/10";
+  if (
+    args.verdict &&
+    (args.verdict.grading.state === "queued" ||
+      args.verdict.grading.state === "running")
+  ) {
+    return "border-pending/40 bg-pending/10";
+  }
+  switch (args.outcome) {
+    case "running":
+    case "queued":
+      return "border-primary/40 bg-primary/5";
+    case "rate_limited":
+      return "border-warning/40 bg-warning/10";
+    case "failed":
+      return "border-destructive/40 bg-destructive/10";
+    default:
+      return "border-border/50 bg-muted/15";
+  }
+}
+
+export function sessionGoalResultAttr(
+  verdict?: JourneySessionRow["verdict"],
+): string {
+  return verdict?.verdict ?? "unknown";
+}
+
+export function slotView(args: {
+  liveStatus?: SwarmCellLiveStatus;
+  session: JourneySessionRow | null;
+  attempt?: SwarmAttemptOutcome | null;
+  runStatus: string;
+  goal: string;
+}): CellView {
+  const { liveStatus, session, attempt, runStatus, goal } = args;
+  const outcome = resolveSwarmCellOutcome({
+    liveStatus,
+    session,
+    attempt,
+    runStatus,
+  });
+
+  if (session?.verdict) {
+    const verdict = session.verdict;
+    const execution = {
+      pending: "pending",
+      running: "running",
+      ran: "succeeded",
+      broke: "failed",
+      limited: "rate_limited",
+      withdrawn: "failed",
+    } as const;
+    const mapped = execution[verdict.lifecycle];
+    return {
+      outcome: mapped,
+      headline: swarmCellHeadline({
+        outcome: mapped,
+        primary: mapped,
+        goal,
+      }),
+      verdict,
+    };
+  }
+
+  if (outcome === "running") {
+    return {
+      outcome: "running",
+      headline: swarmCellHeadline({
+        outcome: "running",
+        primary: "running",
+        goal,
+      }),
+    };
+  }
+  if (outcome === "pending" && runStatus === "running") {
+    return {
+      outcome: "queued",
+      headline: swarmCellHeadline({
+        outcome: "queued",
+        primary: "queued",
+        goal,
+      }),
+    };
+  }
+  if (outcome === "pending") {
+    return {
+      outcome: "pending",
+      headline: swarmCellHeadline({
+        outcome: "pending",
+        primary: "…",
+        goal,
+      }),
+    };
+  }
+
+  // Execution refusal remains distinct from a measured goal result.
+  if (outcome === "rate_limited") {
+    return {
+      outcome: "rate_limited",
+      headline: swarmCellHeadline({
+        outcome: "rate_limited",
+        primary: "limited",
+        goal,
+      }),
+    };
+  }
+  if (outcome === "failed" && (session?.messageCount ?? 0) === 0) {
+    return {
+      outcome: "failed",
+      headline: swarmCellHeadline({
+        outcome: "failed",
+        primary: "failed",
+        goal,
+      }),
+    };
+  }
+
+  if (outcome === "failed") {
+    return {
+      outcome: "failed",
+      headline: swarmCellHeadline({
+        outcome: "failed",
+        primary: "failed",
+        goal,
+      }),
+    };
+  }
+  return {
+    outcome: "succeeded",
+    headline: swarmCellHeadline({
+      outcome: "succeeded",
+      primary: "done",
+      goal,
+    }),
+  };
+}
+
+/**
+ * One clickable chip per (run, target, sessionIndex) under a persona × client
+ * cell. Prefers minted ids from snapshot targets so a click works before the
+ * Convex session row lands.
+ */
+function collectSessionSlots(args: {
+  columnKey: string;
+  run: SwarmLaunchedRun;
+  snap: RunLiveSnapshot;
+}): SessionSlot[] {
+  const { columnKey, run, snap } = args;
+  const target = snap.targets.find((entry) => entry.key === columnKey);
+  if (!target) return [];
+
+  const goal = swarmRunGoalLabel(run);
+  const slots: SessionSlot[] = [];
+
+  // Attempts are claimed with the SAME id the client mints below, so the
+  // chatSessionId join is exact. The target slot is the fallback for an attempt
+  // that failed before it could claim one — keyed by target rather than host,
+  // or two environments sharing a host would read each other's outcome.
+  const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
+  const attemptByTargetSlot = new Map<string, JourneyRunAttempt>();
+  for (const attempt of snap.attempts) {
+    if (attempt.chatSessionId) {
+      attemptByChatSessionId.set(attempt.chatSessionId, attempt);
+    }
+    attemptByTargetSlot.set(
+      `${attemptTargetKey(attempt)}#${attempt.sessionIdx}`,
+      attempt,
+    );
+  }
+
+  for (let index = 0; index < snap.sessionsPerTarget; index++) {
+    const chatSessionId = swarmAttemptChatSessionId(
+      run.runId,
+      target.identity,
+      index,
+    );
+    const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
+      | SwarmCellLiveStatus
+      | undefined;
+    const fromEnvelope = Object.values(snap.stream.sessions).find(
+      (entry) =>
+        entry.envelope.sessionIndex === index &&
+        streamMatchesColumn(entry.envelope, columnKey),
+    );
+    const live = direct ?? fromEnvelope?.attemptStatus;
+    const session =
+      snap.sessions.find(
+        (row) =>
+          row.chatSessionId === chatSessionId ||
+          row.chatSessionId === fromEnvelope?.envelope.chatSessionId,
+      ) ?? null;
+
+    const attempt =
+      attemptByChatSessionId.get(chatSessionId) ??
+      (fromEnvelope?.envelope.chatSessionId
+        ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
+        : undefined) ??
+      attemptByTargetSlot.get(`${columnKey}#${index}`) ??
+      null;
+
+    slots.push({
+      runId: run.runId,
+      personaId: run.personaId,
+      personaName: run.personaName,
+      avatarShape: run.avatarShape,
+      avatarPalette: run.avatarPalette,
+      targetKey: columnKey,
+      hostId: target.hostId,
+      sessionIndex: index,
+      chatSessionId: fromEnvelope?.envelope.chatSessionId ?? chatSessionId,
+      view: slotView({
+        liveStatus: live,
+        session,
+        attempt,
+        runStatus: snap.status,
+        goal,
+      }),
+    });
+  }
+
+  return slots;
+}
+
+function mergeStreams(
+  snapshots: Record<string, RunLiveSnapshot>,
+): JourneyRunStreamState {
+  let stream: JourneyRunStreamState = {
+    sessions: {},
+    cellStatus: {},
+    runComplete: true,
+    connected: false,
+    error: null,
+  };
+  for (const snap of Object.values(snapshots)) {
+    stream = {
+      sessions: { ...stream.sessions, ...snap.stream.sessions },
+      cellStatus: { ...stream.cellStatus, ...snap.stream.cellStatus },
+      runComplete: stream.runComplete && snap.stream.runComplete,
+      connected: stream.connected || snap.stream.connected,
+      error: stream.error ?? snap.stream.error,
+    };
+  }
+  return stream;
+}
+
+/**
+ * How long the finished screen stays up before Findings takes over.
+ *
+ * BB-161 wants both halves: the step checkmark, 100%, and the per-goal
+ * completion lines, AND an automatic trip to Findings. Navigating on the same
+ * tick the run finishes would make the first half unobservable.
+ */
+const COMPLETION_TOAST_DWELL_MS = 1800;
+
+export function NewSwarmRunningStep({
+  organizationId,
+  runs,
+  fallbackColumns,
+  environments = [],
+  hosts = [],
+  chrome = "wizard",
+  onLeave,
+  onOpenSession,
+  onRunsComplete,
+}: {
+  projectId: string;
+  organizationId?: string;
+  runs: SwarmLaunchedRun[];
+  /** Columns from the Describe-step environments — always shown. */
+  fallbackColumns: SwarmRunningColumn[];
+  /** Used to label columns by client (host) instead of env nickname. */
+  environments?: ProjectEnvironmentView[];
+  hosts?: ReadonlyArray<{
+    hostId: string;
+    name: string;
+    displayName?: string;
+  }>;
+  /**
+   * `wizard` is the create-flow Running step (title, Open findings, hero,
+   * progress). `page` is the same matrix + stream on `/swarms/:id`, where
+   * the detail header and live strip already own that chrome.
+   */
+  chrome?: "wizard" | "page";
+  /**
+   * Leave the watch surface for the swarm's Findings page. Does not cancel
+   * the run — that is "Stop run", a separate, confirmed control.
+   */
+  onLeave: () => void;
+  /**
+   * Follow one session's transcript out of the wizard (the live pane's
+   * completed-session control). Findings is a different exit — `onLeave`.
+   */
+  onOpenSession: (sessionId: string) => void;
+  /**
+   * Fired once, when every launched run has reached a terminal state. The
+   * wizard owns the step rail, so this is how the last step gets its
+   * checkmark before the automatic trip to Findings.
+   */
+  onRunsComplete?: () => void;
+}) {
+  const hostById = useMemo(() => {
+    return new Map(hosts.map((host) => [host.hostId, host] as const));
+  }, [hosts]);
+  const hostName = useMemo(
+    () => (hostId: string) => {
+      const host = hostById.get(hostId);
+      return host ? clientDisplayName(host) : undefined;
+    },
+    [hostById],
+  );
+
+  const clientLabel = useMemo(() => {
+    const envById = new Map(
+      environments.map((env) => [env.environmentId, env] as const),
+    );
+    return (key: string, fallback: string) => {
+      if (key.startsWith("environment:")) {
+        const env = envById.get(key.slice("environment:".length));
+        if (env) {
+          const host = hostById.get(env.hostId);
+          return (
+            (host ? clientDisplayName(host) : null) ?? env.name ?? fallback
+          );
+        }
+      }
+      return hostName(key) ?? fallback;
+    };
+  }, [environments, hostById, hostName]);
+
+  const [snapshots, setSnapshots] = useState<Record<string, RunLiveSnapshot>>(
+    {},
+  );
+  const [selection, setSelection] = useState<RunningSelection | null>(null);
+
+  const onSnapshot = useMemo(
+    () => (runId: string, snapshot: RunLiveSnapshot | null) => {
+      setSnapshots((current) => {
+        if (!snapshot) {
+          if (!(runId in current)) return current;
+          const next = { ...current };
+          delete next[runId];
+          return next;
+        }
+        const prev = current[runId];
+        // RunLiveBridge rebuilds array fields every effect tick; compare the
+        // live bits by value so an unchanged tick does not loop setState.
+        if (
+          prev &&
+          prev.status === snapshot.status &&
+          prev.summaryDone === snapshot.summaryDone &&
+          prev.summaryTotal === snapshot.summaryTotal &&
+          prev.summarySucceeded === snapshot.summarySucceeded &&
+          prev.summaryFailed === snapshot.summaryFailed &&
+          prev.summaryRateLimited === snapshot.summaryRateLimited &&
+          prev.attempts.length === snapshot.attempts.length &&
+          prev.attempts.every((attempt, index) => {
+            const next = snapshot.attempts[index];
+            return (
+              attempt.status === next?.status &&
+              attempt.errorCode === next?.errorCode &&
+              attempt.errorMessage === next?.errorMessage &&
+              attempt.chatSessionId === next?.chatSessionId
+            );
+          }) &&
+          prev.sessionsPerTarget === snapshot.sessionsPerTarget &&
+          prev.stream === snapshot.stream &&
+          prev.columns.length === snapshot.columns.length &&
+          prev.columns.every(
+            (column, index) =>
+              column.key === snapshot.columns[index]?.key &&
+              column.hostId === snapshot.columns[index]?.hostId &&
+              column.label === snapshot.columns[index]?.label,
+          ) &&
+          prev.targets.length === snapshot.targets.length &&
+          prev.targets.every(
+            (target, index) => target.key === snapshot.targets[index]?.key,
+          ) &&
+          prev.sessions.length === snapshot.sessions.length &&
+          prev.sessions.every(
+            (session, index) =>
+              session.chatSessionId ===
+                snapshot.sessions[index]?.chatSessionId &&
+              session.status === snapshot.sessions[index]?.status &&
+              session.messageCount === snapshot.sessions[index]?.messageCount &&
+              JSON.stringify(session.verdict) ===
+                JSON.stringify(snapshot.sessions[index]?.verdict) &&
+              JSON.stringify(session.observations) ===
+                JSON.stringify(snapshot.sessions[index]?.observations) &&
+              session.criteria?.status ===
+                snapshot.sessions[index]?.criteria?.status,
+          )
+        ) {
+          return current;
+        }
+        return { ...current, [runId]: snapshot };
+      });
+    },
+    [],
+  );
+
+  // Once any run snapshot has landed, columns come ONLY from those snapshots
+  // (what the runner actually fans out). Fallback env columns are a pre-load
+  // placeholder — keeping them after load made Cursor look "queued" when the
+  // journeys were still single-client.
+  const columns = useMemo((): SwarmRunningColumn[] => {
+    const seen = new Map<string, SwarmRunningColumn>();
+    const addColumn = (column: SwarmRunningColumn) => {
+      seen.set(column.key, {
+        ...column,
+        label: clientLabel(column.key, column.label),
+      });
+    };
+    const snapList = Object.values(snapshots);
+    if (snapList.length === 0) {
+      for (const column of fallbackColumns) {
+        addColumn(column);
+      }
+    } else {
+      for (const snap of snapList) {
+        for (const column of snap.columns) {
+          addColumn(column);
+        }
+      }
+    }
+    return Array.from(seen.values());
+  }, [clientLabel, fallbackColumns, snapshots]);
+
+  const missingPlannedClients = useMemo(() => {
+    const snapList = Object.values(snapshots);
+    if (snapList.length === 0 || fallbackColumns.length === 0) return [];
+    const onRuns = new Set(
+      snapList.flatMap((snap) => snap.columns.map((column) => column.key)),
+    );
+    return fallbackColumns.filter((column) => !onRuns.has(column.key));
+  }, [fallbackColumns, snapshots]);
+
+  const { done, total, allTerminal, succeeded, rateLimited, failed } =
+    useMemo(() => {
+      let doneCount = 0;
+      let totalCount = 0;
+      let succeededCount = 0;
+      let rateLimitedCount = 0;
+      let failedCount = 0;
+      let terminal = runs.length > 0;
+      for (const run of runs) {
+        const snap = snapshots[run.runId];
+        if (!snap) {
+          terminal = false;
+          continue;
+        }
+        doneCount += snap.summaryDone;
+        totalCount += snap.summaryTotal;
+        succeededCount += snap.summarySucceeded;
+        rateLimitedCount += snap.summaryRateLimited;
+        failedCount += snap.summaryFailed;
+        if (snap.status === "running" || snap.status === "pending") {
+          terminal = false;
+        }
+      }
+      return {
+        done: doneCount,
+        total: totalCount,
+        allTerminal: terminal,
+        succeeded: succeededCount,
+        rateLimited: rateLimitedCount,
+        failed: failedCount,
+      };
+    }, [runs, snapshots]);
+
+  // A launched run with no snapshot yet has not reported a status, so it is
+  // treated as still running — the stop must reach it.
+  const runningRunIds = useMemo(
+    () =>
+      runs
+        .filter((run) => {
+          const status = snapshots[run.runId]?.status;
+          return (
+            status === undefined || status === "running" || status === "pending"
+          );
+        })
+        .map((run) => run.runId),
+    [runs, snapshots],
+  );
+  const {
+    stop: stopRun,
+    busy: stopBusy,
+    stoppedHere,
+  } = useStopSwarmRun(runningRunIds);
+  /**
+   * Set on confirm, before the cancel resolves. Convex can deliver the
+   * now-terminal run rows ahead of the mutation's own result, so waiting for
+   * `stoppedHere` would let "Swarm complete!" fire for a run the viewer
+   * just stopped.
+   */
+  const stopRequestedRef = useRef(false);
+
+  // Read through a ref so the effect below depends on `allTerminal` alone:
+  // re-running it because a callback's identity changed would clear the
+  // pending timer and strand the viewer on a finished run.
+  const callbacksRef = useRef({ onLeave, onRunsComplete });
+  useEffect(() => {
+    callbacksRef.current = { onLeave, onRunsComplete };
+  }, [onLeave, onRunsComplete]);
+
+  /**
+   * Announce the finish, then hand the viewer to Findings (BB-161).
+   *
+   * Only the announcement is ref-guarded. The trip is scheduled on every
+   * terminal setup, because a wave that settles, blips off terminal, and
+   * settles again replays this effect: the cleanup cancels the pending trip,
+   * and a setup that skipped rescheduling would strand the viewer on a
+   * finished run. That cleanup is also what keeps an unmounted wizard from
+   * navigating out from under whatever replaced it.
+   */
+  const completionAnnouncedRef = useRef(false);
+  useEffect(() => {
+    if (!allTerminal) return;
+    // The run-detail page owns this surface as a real tab. Auto-leaving
+    // would bounce a finished wave off `?tab=run` the moment the snapshots
+    // land.
+    if (chrome === "page") return;
+    if (!completionAnnouncedRef.current) {
+      completionAnnouncedRef.current = true;
+      callbacksRef.current.onRunsComplete?.();
+      // A stopped wave already said so ("Run stopped"); calling it complete
+      // would contradict the viewer's own action.
+      if (!stopRequestedRef.current) toast.success("Swarm complete!");
+    }
+    const timer = window.setTimeout(() => {
+      callbacksRef.current.onLeave();
+    }, COMPLETION_TOAST_DWELL_MS);
+    return () => window.clearTimeout(timer);
+  }, [allTerminal, chrome]);
+
+  /** Every terminal failure cause, including limits alongside other failures. */
+  const runFailure = useMemo(() => {
+    // This banner summarizes waves without a successful attempt. Failed
+    // attempts may still have recorded conversations and executed tools.
+    // A wave this viewer stopped reads as failed attempts, but nothing broke.
+    if (
+      !allTerminal ||
+      stoppedHere ||
+      succeeded > 0 ||
+      rateLimited + failed === 0
+    ) {
+      return null;
+    }
+    const groups = new Map<
+      string,
+      {
+        kind: string;
+        code: string | null | undefined;
+        info: ReturnType<typeof humanizeSwarmAttemptError>;
+        count: number;
+      }
+    >();
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
+          continue;
+        }
+        if (!attempt.errorMessage && !attempt.errorCode) continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        const key = attempt.errorCode || `${attempt.status}:${info.message}`;
+        const group = groups.get(key);
+        if (group) group.count++;
+        else
+          groups.set(key, {
+            kind: attempt.status,
+            code: attempt.errorCode,
+            info,
+            count: 1,
+          });
+      }
+    }
+    const causes = [...groups.values()];
+    if (!causes.length) return null;
+    const severe = causes.find(
+      (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+    );
+    return { ...(severe ?? causes[0]), causes };
+  }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
+
+  const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
+
+  const mergedStream = useMemo(() => mergeStreams(snapshots), [snapshots]);
+
+  const selectedConvex = useMemo(() => {
+    if (!selection) return null;
+    const snap = snapshots[selection.runId];
+    return (
+      snap?.sessions.find(
+        (session) => session.chatSessionId === selection.chatSessionId,
+      ) ?? null
+    );
+  }, [selection, snapshots]);
+
+  // The pane resolves its own outcome, so it needs the attempt row for the same
+  // reason the chip does: the chat-session lifecycle can complete while the
+  // attempt holds a refusal. Same join order as the cells.
+  const selectedAttempt = useMemo(() => {
+    if (!selection) return null;
+    const snap = snapshots[selection.runId];
+    if (!snap) return null;
+    return findAttemptForSelection(snap.attempts, selection);
+  }, [selection, snapshots]);
+
+  // Three of twelve sessions can be throttled while the swarm keeps working.
+  // The chips go amber, but nobody finds the reason by clicking each one, and
+  // the run banner below only speaks when NO session ran at all.
+  const providerRateLimit = useMemo(() => {
+    let count = 0;
+    const labels = new Set<string>();
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited") continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        // The code comes off the attempt, not the humanized info: that only
+        // carries a code through for the codes it words itself, so the
+        // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
+        if (isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        // "The host's configured provider", per the ticket — joined on the
+        // attempt's own chatSessionId. Two environments can share a host and
+        // pin different models, so matching on hostId would let the banner name
+        // a provider that throttled nothing. An attempt we cannot tie to a
+        // session row has no model we can trust, and falls back to the generic
+        // label rather than a guess.
+        const session = attempt.chatSessionId
+          ? snap.sessions.find(
+              (row) => row.chatSessionId === attempt.chatSessionId,
+            )
+          : undefined;
+        labels.add(providerLabelForModelId(session?.modelId));
+      }
+    }
+    if (count === 0) return null;
+    // Two providers throttling in the same run name neither: the banner would
+    // otherwise blame whichever attempt was read first for both.
+    const [only] = labels;
+    return { count, label: labels.size === 1 ? only ?? null : null };
+  }, [snapshots]);
+
+  // The other half of that split: sessions MCPJam's own account limit stopped.
+  // Skipping them above is right — no provider throttled anything — but on a
+  // run where other sessions succeeded, the run banner stays silent too, and
+  // the amber chips would be left unexplained.
+  const accountLimit = useMemo(() => {
+    let count = 0;
+    let message: string | null = null;
+    let exhausted = 0;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed")
+          continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        const code = attempt.errorCode ?? info.code;
+        if (
+          isCreditExhaustion({ code, message: attempt.errorMessage }) &&
+          ![
+            "holds_committed",
+            "wallet_locked",
+            "budget_reached",
+            "admission_invalid",
+          ].includes(info.refusalReason ?? "") &&
+          !/in-flight|hold the remaining credits/i.test(info.message)
+        )
+          exhausted += 1;
+        // The whole-run finalize writes a code and no message; any sibling
+        // that stored the backend's sentence says it better.
+        if (!message && attempt.errorMessage) message = info.message;
+      }
+    }
+    return count === 0 ? null : { count, message, exhausted };
+  }, [snapshots]);
+
+  // The account-limit callout owns its cause — count, breakdown and the top-up
+  // links — so the grouped banner states every OTHER cause, once. A run whose
+  // only cause is the limit shows the callout alone.
+  const bannerFailure = useMemo(() => {
+    if (!runFailure) return null;
+    const causes = accountLimit
+      ? runFailure.causes.filter(
+          (cause) =>
+            !isAccountLimit(cause.info.message, cause.code ?? cause.info.code),
+        )
+      : runFailure.causes;
+    if (!causes.length) return null;
+    const lead =
+      causes.find(
+        (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+      ) ?? causes[0];
+    return { ...lead, causes };
+  }, [accountLimit, runFailure]);
+
+  const selectedRunStatus = selection
+    ? snapshots[selection.runId]?.status ?? "running"
+    : "running";
+
+  const fallbackTrace = useMemo(
+    () =>
+      selection
+        ? liveSessionTrace(mergedStream.sessions[selection.chatSessionId])
+        : null,
+    [mergedStream.sessions, selection],
+  );
+
+  const showIntro =
+    chrome === "wizard" ||
+    missingPlannedClients.length > 0 ||
+    providerRateLimit !== null ||
+    accountLimit !== null ||
+    runFailure !== null;
+
+  return (
+    <div
+      className="flex h-full min-h-0 w-full"
+      data-testid="new-swarm-running-step"
+    >
+      {runs.map((run) => (
+        <RunLiveBridge
+          key={run.runId}
+          runId={run.runId}
+          organizationId={organizationId}
+          streamEnabled={selection?.runId === run.runId}
+          hostName={hostName}
+          onSnapshot={onSnapshot}
+        />
+      ))}
+
+      <div
+        className={
+          chrome === "page"
+            ? "flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-4 sm:px-8"
+            : "flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8"
+        }
+      >
+        {showIntro ? (
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1 space-y-2">
+              {chrome === "wizard" ? (
+                <div className="flex items-start gap-2">
+                  <h2
+                    className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
+                    data-testid="new-swarm-running-title"
+                  >
+                    {swarmRunningTitle({
+                      allTerminal,
+                      succeeded,
+                      rateLimited,
+                      done,
+                      total,
+                      stopped: stoppedHere,
+                    })}
+                  </h2>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {allTerminal ? null : (
+                      <StopSwarmRunButton
+                        runningCount={runningRunIds.length}
+                        busy={stopBusy}
+                        onConfirm={() => {
+                          stopRequestedRef.current = true;
+                          void stopRun().then((outcome) => {
+                            // Nothing stopped: a wave that later finishes on
+                            // its own should still say so.
+                            if (outcome === "refused") {
+                              stopRequestedRef.current = false;
+                            }
+                          });
+                        }}
+                        testIdPrefix="new-swarm-running"
+                      />
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="shrink-0"
+                      data-testid="new-swarm-running-open-findings"
+                      onClick={onLeave}
+                    >
+                      Open findings
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              {missingPlannedClients.length > 0 ? (
+                <p
+                  className="text-sm text-amber-700 dark:text-amber-300"
+                  data-testid="new-swarm-running-missing-clients"
+                  role="status"
+                >
+                  Selected at Describe but not on these runs:{" "}
+                  {missingPlannedClients
+                    .map((column) => clientLabel(column.key, column.label))
+                    .join(" · ")}
+                  . These runs launched without that environment — leave and
+                  launch the swarm again to include it.
+                </p>
+              ) : null}
+              {providerRateLimit ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-rate-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {providerRateLimit.label
+                      ? `${providerRateLimit.label} rate-limited this key.`
+                      : "Your providers rate-limited these keys."}
+                  </p>
+                  <p className="mt-0.5">
+                    {providerRateLimit.count === 1
+                      ? "1 session stopped."
+                      : `${providerRateLimit.count} sessions stopped.`}{" "}
+                    Retry again later or switch models.
+                  </p>
+                </div>
+              ) : null}
+              {/* Account limits remain visible even when another cause failed. */}
+              {accountLimit ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-account-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {accountLimit.exhausted > 0 && allTerminal
+                      ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
+                      : "Sessions stopped at an organization usage limit."}
+                  </p>
+                  <p className="mt-0.5">
+                    {`${succeeded} completed, ${Math.max(
+                      0,
+                      failed +
+                        rateLimited -
+                        accountLimit.count -
+                        (providerRateLimit?.count ?? 0),
+                    )} failed, ${
+                      accountLimit.count
+                    } stopped at an organization usage limit${
+                      providerRateLimit
+                        ? `, ${providerRateLimit.count} stopped at a provider limit`
+                        : ""
+                    }.`}
+                  </p>
+                  <p className="mt-0.5">
+                    {accountLimit.exhausted > 0
+                      ? "Out of MCPJam credits. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
+                      : accountLimit.message ?? "Review your organization's usage limits before retrying."}
+                  </p>
+                  {accountLimit.exhausted > 0 && (
+                    <p className="mt-0.5">
+                      Completed results are saved. Buying credits does not
+                      automatically restart this run.
+                    </p>
+                  )}
+                  {accountLimit.exhausted > 0 && (
+                    <Button
+                      variant="link"
+                      onClick={() =>
+                        notifyMCPJamLimitError({
+                          code: "mcpjam_rate_limit",
+                          organizationId,
+                          surface: "swarm",
+                        })
+                      }
+                    >
+                      View credit options
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+
+              {bannerFailure ? (
+                <div
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-sm",
+                    // Calm (amber) for the two outcomes whose fix is "do it
+                    // again": a provider refusal, and an authorization handshake
+                    // that needs re-running. Destructive red stays for failures
+                    // the user has to go and repair — an expired sign-in in front
+                    // of an XAA-protected server is not an incident.
+                    bannerFailure.kind === "rate_limited" ||
+                      bannerFailure.info.rerunnable
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
+                      : "border-destructive/40 bg-destructive/10 text-destructive",
+                  )}
+                  data-testid="new-swarm-running-failure"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {bannerFailure.kind === "rate_limited"
+                      ? "No sessions completed successfully — requests were rate-limited."
+                      : bannerFailure.info.rerunnable
+                      ? "This run's authorization needs re-running."
+                      : "No sessions completed successfully."}
+                  </p>
+                  {bannerFailure.causes.map((cause, index) => (
+                    <p className="mt-0.5" key={index}>
+                      {cause.count} {cause.count === 1 ? "session" : "sessions"}
+                      : {cause.info.message}
+                    </p>
+                  ))}
+                  {bannerFailure.causes.some((cause) => cause.info.canTopUp) ? (
+                    <p className="mt-0.5 text-[13px] opacity-90">
+                      View your credit options to continue testing. Your own API
+                      key does not cover Swarm generation.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {chrome === "wizard" ? (
+                <>
+                  <SwarmRunningHero
+                    className={allTerminal ? "justify-end" : "justify-start"}
+                  />
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+                      role="progressbar"
+                      aria-valuenow={Math.round(progress * 100)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      data-testid="new-swarm-running-progress"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-500"
+                        style={{ width: `${Math.round(progress * 100)}%` }}
+                      />
+                    </div>
+                    <span className="shrink-0 text-xs text-foreground">
+                      {`${Math.round(progress * 100)}%`}
+                    </span>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {columns.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Waiting for client targets from the launched runs…
+          </p>
+        ) : (
+          <div
+            className="overflow-x-auto rounded-xl border border-border/50"
+            data-testid="new-swarm-running-matrix"
+          >
+            <table className="w-full min-w-[28rem] border-collapse text-left">
+              <thead>
+                <tr className="border-b border-border/40">
+                  {columns.map((column) => (
+                    <th
+                      key={column.key}
+                      className="min-w-[7.5rem] px-2 py-2.5 text-center text-xs font-medium text-muted-foreground"
+                    >
+                      <span className="inline-flex items-center justify-center gap-1.5">
+                        <JourneyHostLogoMark
+                          label={
+                            (column.hostId
+                              ? hostById.get(column.hostId)?.name
+                              : undefined) ?? column.label
+                          }
+                        />
+                        <span className="truncate">{column.label}</span>
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => {
+                  const snap = snapshots[run.runId];
+                  const goal = swarmRunGoalLabel(run);
+
+                  return (
+                    <tr
+                      key={run.runId}
+                      className="border-b border-border/30 last:border-0"
+                      data-testid="new-swarm-running-persona-row"
+                    >
+                      {columns.map((column) => {
+                        const slots = snap
+                          ? collectSessionSlots({
+                              columnKey: column.key,
+                              run,
+                              snap,
+                            })
+                          : [];
+
+                        return (
+                          <td
+                            key={column.key}
+                            className="min-w-[7.5rem] px-2 py-2 align-middle"
+                            data-testid="new-swarm-running-cell"
+                          >
+                            {slots.length === 0 ? (
+                              <div
+                                data-outcome="queued"
+                                aria-label={`Watch ${run.personaName} on ${column.label} session 1`}
+                                className={cn(
+                                  "flex items-center gap-1 rounded-lg border px-2.5 py-2",
+                                  sessionChipTone({ outcome: "queued" }),
+                                )}
+                              >
+                                <PersonaPixelAvatar
+                                  seed={run.personaId}
+                                  shapeIndex={run.avatarShape}
+                                  paletteIndex={run.avatarPalette}
+                                  size="sm"
+                                  state="running"
+                                />
+                                <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
+                                  {swarmCellHeadline({
+                                    outcome: "queued",
+                                    primary: "queued",
+                                    goal,
+                                  })}
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                {slots.map((slot) => {
+                                  const selected =
+                                    selection?.chatSessionId ===
+                                    slot.chatSessionId;
+                                  return (
+                                    <button
+                                      key={slot.chatSessionId}
+                                      type="button"
+                                      data-testid="new-swarm-running-session"
+                                      data-outcome={slot.view.outcome}
+                                      data-goal-result={sessionGoalResultAttr(
+                                        slot.view.verdict,
+                                      )}
+                                      aria-pressed={selected}
+                                      aria-label={`Watch ${
+                                        run.personaName
+                                      } on ${column.label} session ${
+                                        slot.sessionIndex + 1
+                                      }`}
+                                      onClick={() =>
+                                        setSelection({
+                                          runId: slot.runId,
+                                          personaId: run.personaId,
+                                          targetKey: slot.targetKey,
+                                          hostId: slot.hostId,
+                                          sessionIndex: slot.sessionIndex,
+                                          chatSessionId: slot.chatSessionId,
+                                        })
+                                      }
+                                      className={cn(
+                                        "flex items-center gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
+                                        "hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                        sessionChipTone({
+                                          outcome: slot.view.outcome,
+                                          verdict: slot.view.verdict,
+                                        }),
+                                        selected &&
+                                          "ring-2 ring-primary ring-offset-1 ring-offset-background",
+                                      )}
+                                    >
+                                      <PersonaPixelAvatar
+                                        seed={slot.personaId}
+                                        shapeIndex={slot.avatarShape}
+                                        paletteIndex={slot.avatarPalette}
+                                        size="sm"
+                                        state={avatarState(slot.view.outcome)}
+                                      />
+                                      <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
+                                        {slot.view.headline}
+                                      </p>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* main reworded the "Click a session…" hint and added a finding
+            banner here; this branch removed both from the footer — the banner
+            moved to the top as `FirstFindingPing` (same test ids, so keeping
+            main's copy would render it twice). */}
+      </div>
+
+      <aside
+        className="flex w-[min(32rem,44%)] shrink-0 flex-col border-l border-border/50 bg-muted/10 p-3 sm:p-4"
+        data-testid="new-swarm-running-stream"
+      >
+        <SwarmLiveStreamPane
+          selection={selection}
+          stream={
+            (selection ? snapshots[selection.runId]?.stream : undefined) ??
+            mergedStream
+          }
+          convexSession={selectedConvex}
+          attempt={selectedAttempt}
+          fallbackTrace={fallbackTrace}
+          runStatus={selectedRunStatus}
+          // The session, not just "somewhere else". This used to hand the pane
+          // `onLeave`, which threw away the session it was called with and left
+          // the viewer on the flat Sessions list hunting for the transcript
+          // they had been watching a moment earlier.
+          onOpenCompleted={(session) => onOpenSession(session.id)}
+          fillHeight
+        />
+      </aside>
+    </div>
+  );
+}

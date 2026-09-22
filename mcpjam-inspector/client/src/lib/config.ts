@@ -51,28 +51,78 @@ export const SANDBOX_ORIGIN: string | null = (() => {
   }
 })();
 
-export const NON_PROD_LOCKDOWN =
-  import.meta.env.VITE_MCPJAM_NONPROD_LOCKDOWN === "true";
+/**
+ * How the sandbox proxy mounts an MCP App view.
+ *
+ * `"write"` (the default) writes the widget HTML into a blank same-origin
+ * iframe, so the view runs at the proxy's URL and a third party that keys on
+ * the page URL — a referrer-restricted API key, an OAuth redirect URI — sees a
+ * real origin. `"srcdoc"` restores the legacy `iframe.srcdoc` mount, where the
+ * view's URL is `about:srcdoc` and no such allowlist can match.
+ *
+ * Set via `VITE_MCPJAM_VIEW_MOUNT` at build time. It exists to exercise the
+ * srcdoc branch (the e2e fallback case); being a build-time constant it is not
+ * an incident switch, since flipping it costs the same redeploy as a revert.
+ */
+export const VIEW_MOUNT_MODE: "write" | "srcdoc" =
+  import.meta.env.VITE_MCPJAM_VIEW_MOUNT === "srcdoc" ? "srcdoc" : "write";
 
-export const EMPLOYEE_EMAIL_DOMAINS = (
-  import.meta.env.VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
-)
-  .split(",")
-  .map((domain) => domain.trim().toLowerCase())
-  .filter((domain) => domain.length > 0);
+/**
+ * Whether each MCP server's views get their own origin
+ * (`<label>.sandbox.mcpjam.com`) instead of sharing the sandbox origin.
+ *
+ * What it buys: cookie and storage isolation BETWEEN apps, and a stable
+ * per-server origin for an OAuth redirect URI or a third-party API-key
+ * allowlist — the same shape Claude and ChatGPT use.
+ *
+ * Off by default because it is an infrastructure commitment, not a code one:
+ * it needs wildcard DNS and a certificate covering `*.sandbox.mcpjam.com`,
+ * and with those absent every widget would fail to load rather than degrade.
+ * Set via `VITE_MCPJAM_VIEW_SUBDOMAINS` at build time (see the Dockerfile ARG
+ * — a service variable alone never reaches the bundle).
+ */
+export const VIEW_SUBDOMAINS_ENABLED =
+  import.meta.env.VITE_MCPJAM_VIEW_SUBDOMAINS === "true";
 
-export function isAllowedEmployeeEmail(
-  email: string | null | undefined,
-): boolean {
-  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
-    return false;
-  }
+/**
+ * The Discord application the agent bot runs as, used to build the "add to
+ * server" URL on the Integrations page.
+ *
+ * A Discord client id is a public identifier — it travels in every install
+ * URL — but it is deployment-specific, so it is configured rather than
+ * hardcoded. When unset the Discord card does not render: an install link
+ * built from a missing id sends people to a Discord error page, which reads
+ * as our bug rather than as missing configuration.
+ *
+ * Set via `VITE_MCPJAM_DISCORD_CLIENT_ID` at build time.
+ */
+export const DISCORD_CLIENT_ID: string | null = (() => {
+  const raw = import.meta.env.VITE_MCPJAM_DISCORD_CLIENT_ID;
+  return typeof raw === "string" && /^\d+$/.test(raw.trim())
+    ? raw.trim()
+    : null;
+})();
 
-  const normalizedEmail = email.trim().toLowerCase();
-  const atIndex = normalizedEmail.lastIndexOf("@");
-  if (atIndex === -1) {
-    return false;
-  }
+/**
+ * Permissions the bot actually uses, and nothing else: View Channels (without
+ * it a mention never arrives), Send Messages, Attach Files (run evidence), and
+ * Read Message History (thread context).
+ */
+const DISCORD_BOT_PERMISSIONS = String(
+  (1 << 10) | (1 << 11) | (1 << 15) | (1 << 16),
+);
 
-  return EMPLOYEE_EMAIL_DOMAINS.includes(normalizedEmail.slice(atIndex + 1));
+/**
+ * Where "Add to Discord" goes. `bot` puts the bot user in the server;
+ * `applications.commands` is what lets `/mcpjam connect` register — without
+ * it the app installs but the command never appears.
+ */
+export function discordInstallUrl(): string | null {
+  if (!DISCORD_CLIENT_ID) return null;
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    scope: "bot applications.commands",
+    permissions: DISCORD_BOT_PERMISSIONS,
+  });
+  return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }

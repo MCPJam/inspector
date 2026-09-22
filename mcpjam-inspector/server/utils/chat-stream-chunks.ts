@@ -81,6 +81,7 @@ export const toolInputChunk = (a: {
   });
 
 export const toolOutputChunk = (a: {
+  providerMetadata?: unknown;
   toolCallId: string;
   output: unknown;
   providerExecuted?: boolean;
@@ -89,6 +90,7 @@ export const toolOutputChunk = (a: {
     type: "tool-output-available",
     toolCallId: a.toolCallId,
     output: a.output,
+    ...(a.providerMetadata ? { providerMetadata: a.providerMetadata } : {}),
     ...(a.providerExecuted ? { providerExecuted: true } : {}),
   });
 

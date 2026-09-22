@@ -40,6 +40,8 @@ import { McpToolsArticle } from "@/components/mcp-tools/McpToolsArticle";
 import { McpResourcesArticle } from "@/components/mcp-resources/McpResourcesArticle";
 import { McpPromptsArticle } from "@/components/mcp-prompts/McpPromptsArticle";
 import { useLearningProgress } from "@/hooks/use-learning-progress";
+import { getGuidedTour } from "@/components/lifecycle/learning-concepts";
+import { launchLessonSession } from "@/lib/mcpjam-agent/launch-lesson";
 
 /**
  * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
@@ -335,12 +337,31 @@ function AppsSdkWalkthrough({
 // LearningTab — routes to the selected concept
 // ---------------------------------------------------------------------------
 
-export function LearningTab() {
+export function LearningTab({
+  projectId,
+}: {
+  projectId: string | null;
+}) {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
   const { isCompleted, markComplete, toggleComplete, completionCount } =
     useLearningProgress();
 
   const goBack = useCallback(() => setSelectedConcept(null), []);
+
+  // Guided-tour rows don't open an in-tab article — they launch the agent side
+  // panel seeded with the tour prompt and leave the landing page in place.
+  // Everything else selects a concept and swaps in its shell/walkthrough.
+  const handleSelect = useCallback(
+    (id: string) => {
+      const tour = getGuidedTour(id);
+      if (tour) {
+        launchLessonSession({ tour, projectId });
+        return;
+      }
+      setSelectedConcept(id);
+    },
+    [projectId],
+  );
 
   if (selectedConcept === "why-mcp") {
     return (
@@ -471,7 +492,7 @@ export function LearningTab() {
 
   return (
     <LearningLandingPage
-      onSelect={setSelectedConcept}
+      onSelect={handleSelect}
       isCompleted={isCompleted}
       onToggleComplete={toggleComplete}
       completionCount={completionCount}

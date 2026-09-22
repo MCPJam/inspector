@@ -47,10 +47,18 @@ describe("buildUiToolsCatalog", () => {
     // the always-on playground catalog rather than forming a mount-scoped group
     // because the playground manifest is kind:"global" — update this exact list
     // consciously, never as a silent side effect.
+    //
+    // 16 → 17: `ui_ask_user` joins the CORE group. Global rather than
+    // surface-scoped because a clarifying question has to be available
+    // wherever the agent is, like navigation.
     expect(catalog.map((t) => t.name).sort()).toEqual([
       "ui_add_server",
+      "ui_ask_user",
       "ui_connect_server",
       "ui_disconnect_server",
+      "ui_eval_context",
+      "ui_eval_propose_cases",
+      "ui_eval_question",
       "ui_execute_tool",
       "ui_navigate",
       "ui_open_playground",
@@ -72,6 +80,9 @@ describe("buildUiToolsCatalog", () => {
       expect(typeof tool.execute).toBe("function");
     }
     expect(getTool("ui_snapshot_app").readOnly).toBe(true);
+    // Asking a question changes nothing, so it must never gate — a
+    // confirmation click to permit a click.
+    expect(getTool("ui_ask_user").readOnly).toBe(true);
   });
 
   it("every tool annotates readOnly/destructive/openWorld explicitly", () => {
@@ -233,16 +244,6 @@ describe("buildUiToolsCatalog", () => {
         payload: { serverName: "everything" },
       });
     }
-  });
-
-  it("flags only ui_execute_tool's output as untrusted for native agents", () => {
-    // Its result comes from a third-party MCP server. `openWorldHint` (MCP)
-    // doesn't convey that to a WebMCP agent; `nativeUntrustedContentHint`
-    // (projected to WebMCP's untrustedContentHint) does.
-    const untrusted = buildUiToolsCatalog()
-      .filter((t) => t.nativeUntrustedContentHint === true)
-      .map((t) => t.name);
-    expect(untrusted).toEqual(["ui_execute_tool"]);
   });
 
   it("does not advertise ui_navigate as idempotent (navigation adds history)", () => {

@@ -104,6 +104,21 @@ Agents with shell access can already run `mcpjam` commands directly, and for one
 | `server_doctor` | One-shot diagnostic sweep (HTTP or stdio target) — same checks as [`mcpjam server doctor`](/cli/server-inspection) |
 | `probe_server` | HTTP-only probe: transport selection, auth requirements, OAuth metadata discovery — same as `mcpjam server probe` |
 
+## Skills over MCP
+
+Alongside its tools, `mcpjam mcp` serves two of MCPJam's Agent Skills over the [`io.modelcontextprotocol/skills` extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) (SEP-2640):
+
+| Skill | What it is for |
+|---|---|
+| `mcp-inspector` | Interpreting probe, doctor, OAuth, and conformance output conservatively — the tools this server exposes |
+| `mcpjam-eval-import` | Converting an existing test corpus into an MCPJam eval suite |
+
+A client that advertises the extension sees them in `skills/list` and can load them with no install step — you do not need `npx skills add` for these two when you are connected this way. Each skill's files are also readable as ordinary resources under `skill://mcpjam/<name>/…`, which is why `resources/list` now returns rows for a server that previously exposed none.
+
+Every file carries a SHA-256 digest and a byte size, and a conforming host verifies both before loading. The listing deliberately carries **no** `ttlMs`: because the documented launch command is `npx -y @mcpjam/cli@latest mcp`, the bytes behind an identical command change whenever a release lands, so this server issues no cache-freshness directive it could not honour.
+
+`mcpjam-eval-import` is served by the [hosted MCP server](/cli/mcp-server#relationship-to-the-hosted-mcp-server) too, under the same URI. If you are connected to both at once, address it by server (`<server>/mcpjam-eval-import`) rather than by bare URI.
+
 ## Example session
 
 A typical agent flow while developing a stdio server:
@@ -119,7 +134,7 @@ Tool results are JSON payloads describing the target server. Errors come back as
 
 ## Relationship to the hosted MCP server
 
-MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — projects, saved servers, eval suites and runs — behind OAuth. The two are complementary:
+MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — projects, saved servers, eval suites and runs — behind OAuth. The two are complementary. `mcpjam mcp` protocol `serverInfo.name` is `mcpjam`; its title is `MCPJam CLI`. The hosted server identifies as `MCPJam MCP`.
 
 | | `mcpjam mcp` (this page) | `mcp.mcpjam.com` |
 |---|---|---|
@@ -127,9 +142,11 @@ MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes yo
 | Auth | None | MCPJam account (OAuth) |
 | Scope | Test any server reachable from your machine, including local stdio | Servers and evals saved in your projects |
 | Transport to MCPJam | stdio | Streamable HTTP |
+| Protocol name | `mcpjam` | `MCPJam MCP` |
+| Title | `MCPJam CLI` | `MCPJam MCP` |
 
 ## Troubleshooting
 
-- **Client says the server failed to start** — run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
+- **Client says the server failed to start** — run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam CLI MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
 - **`connect_server` fails with `SERVER_UNREACHABLE`** — the target URL or command is wrong, or the target crashed on startup. Try `server_doctor` against the same target for a structured diagnosis.
 - **A connection name is already taken** — `connect_server` refuses to overwrite an existing name; `disconnect_server` it first or pass a different `name`.

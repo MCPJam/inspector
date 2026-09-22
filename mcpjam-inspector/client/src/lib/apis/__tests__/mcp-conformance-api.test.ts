@@ -148,7 +148,6 @@ describe("startOAuthConformance (local)", () => {
         serverUrl: "https://oauth-server.com",
         protocolVersion: "2025-11-25",
       },
-      runNegativeChecks: true,
       callbackOrigin: "http://localhost:5173",
     });
 
@@ -157,7 +156,6 @@ describe("startOAuthConformance (local)", () => {
 
     const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(sentBody.serverId).toBe("oauth-server");
-    expect(sentBody.runNegativeChecks).toBe(true);
     expect(sentBody.callbackOrigin).toBe("http://localhost:5173");
   });
 });

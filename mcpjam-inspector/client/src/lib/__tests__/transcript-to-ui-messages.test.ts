@@ -72,7 +72,7 @@ describe("transcriptToUIMessages", () => {
     expect((merged[1] as { role?: string }).role).toBe("assistant");
     const assistantContent = (merged[1] as { content: unknown[] }).content;
     const toolCallPart = assistantContent.find(
-      (p) => (p as { type?: string }).type === "tool-call"
+      (p) => (p as { type?: string }).type === "tool-call",
     ) as { result?: unknown };
     expect(toolCallPart.result).toEqual({ results: [] });
 
@@ -85,7 +85,7 @@ describe("transcriptToUIMessages", () => {
     ]);
 
     const toolPart = messages[1].parts.find(
-      (p) => p.type === "dynamic-tool"
+      (p) => p.type === "dynamic-tool",
     ) as
       | { type: "dynamic-tool"; toolCallId: string; output: unknown }
       | undefined;
@@ -125,7 +125,7 @@ describe("transcriptToUIMessages", () => {
 
     const messages = transcriptToUIMessages(transcript);
     const invocations = messages[1].parts.filter(
-      (p) => p.type === "dynamic-tool"
+      (p) => p.type === "dynamic-tool",
     ) as Array<{
       toolCallId: string;
       output: unknown;
@@ -326,6 +326,77 @@ describe("transcriptToUIMessages", () => {
     expect(modelMessages.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("hydrates a tool-call with no tool-result as unresolved (input-available)", async () => {
+    // SEP-2350: a turn suspended for scope step-up persists the assistant
+    // tool-call WITHOUT a tool row. Hydrating it as "output-available" with a
+    // synthetic `{}` output made the resent history look resolved server-side,
+    // so the post-authorization resume found no unresolved tool-call and
+    // silently no-oped (the chat appeared stuck after authorizing).
+    const transcript = [
+      { role: "user", content: "call the protected tool" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-suspended-1",
+            toolName: "get_data",
+            args: { q: "x" },
+          },
+        ],
+      },
+    ];
+
+    const messages = transcriptToUIMessages(transcript);
+    const toolPart = messages[1].parts[0] as any;
+    expect(toolPart.state).toBe("input-available");
+    expect(toolPart).not.toHaveProperty("output");
+
+    // The server-side resume gate keys on the converted model history holding
+    // a tool-call with NO tool-result for this id.
+    const modelMessages = await convertToModelMessages(messages);
+    const hasToolResult = modelMessages.some(
+      (message) =>
+        message.role === "tool" &&
+        (message.content as any[]).some(
+          (part) => part?.toolCallId === "call-suspended-1",
+        ),
+    );
+    expect(hasToolResult).toBe(false);
+    const assistantToolCall = modelMessages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.content as any[])
+      .find((part) => part?.type === "tool-call");
+    expect(assistantToolCall?.toolCallId).toBe("call-suspended-1");
+  });
+
+  it("keeps a resolved tool-call output-available even when its output is empty", () => {
+    const transcript = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-empty-1",
+            toolName: "noop",
+            args: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "call-empty-1", output: {} },
+        ],
+      },
+    ];
+
+    const messages = transcriptToUIMessages(transcript);
+    const toolPart = messages[0].parts[0] as any;
+    expect(toolPart.state).toBe("output-available");
+    expect(toolPart.output).toEqual({});
+  });
+
   it("preserves MCP tool origin metadata through transcript hydration", async () => {
     const transcript = [
       {
@@ -374,7 +445,7 @@ describe("transcriptToUIMessages", () => {
     });
 
     const toolMessage = modelMessages.find(
-      (message) => message.role === "tool"
+      (message) => message.role === "tool",
     ) as any;
     expect(toolMessage.content[0].providerOptions).toEqual({
       mcpjam: { serverId: "srv-1" },
@@ -407,7 +478,7 @@ describe("transcriptToUIMessages", () => {
     const second = transcriptToUIMessages(transcript);
 
     expect(first.map((message) => message.id)).toEqual(
-      second.map((message) => message.id)
+      second.map((message) => message.id),
     );
     expect(first[1].parts[0]).toMatchObject(second[1].parts[0]);
   });
@@ -424,10 +495,12 @@ describe("transcriptToUIMessages", () => {
         id: "live-user-start-game",
         role: "user",
         parts: [{ type: "text", text: "Execute `start_game`" }],
+        metadata: { timestampMs: 100 },
       },
       {
         id: "live-assistant-start-game",
         role: "assistant",
+        metadata: { timestampMs: 200 },
         parts: [
           { type: "text", text: "Invoked `start_game`" },
           {
@@ -463,11 +536,13 @@ describe("transcriptToUIMessages", () => {
 
     const stabilized = preserveHydratedMessageIds(
       currentMessages,
-      hydratedMessages
+      hydratedMessages,
     );
 
     expect(stabilized[0].id).toBe("live-user-start-game");
     expect(stabilized[1].id).toBe("live-assistant-start-game");
+    expect(stabilized[0].metadata).toMatchObject({ timestampMs: 100 });
+    expect(stabilized[1].metadata).toMatchObject({ timestampMs: 200 });
     expect((stabilized[1].parts[1] as any).output).toEqual({
       board: ["_", "X", "_", "_", "_", "_", "_", "_", "_"],
     });

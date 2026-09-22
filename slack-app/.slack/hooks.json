@@ -1,0 +1,5 @@
+{
+  "hooks": {
+    "get-hooks": "npx -q --no-install -p @slack/cli-hooks slack-cli-get-hooks"
+  }
+}

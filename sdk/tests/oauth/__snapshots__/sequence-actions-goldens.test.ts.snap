@@ -1,0 +1,4859 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`sequence actions (2025-03-26 / cimd / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET /.well-known/oauth-authorization-server from MCP base URL",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-03-26)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-03-26 / cimd / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-03-26",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET /.well-known/oauth-authorization-server from MCP base URL",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-03-26)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-03-26",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-03-26 / dcr / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET /.well-known/oauth-authorization-server from MCP base URL",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-03-26)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-03-26 / dcr / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-03-26",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET /.well-known/oauth-authorization-server from MCP base URL",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-03-26)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-03-26",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-03-26 / preregistered / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET /.well-known/oauth-authorization-server from MCP base URL",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Pre-registered client credentials",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2025-03-26)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-03-26 / preregistered / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-03-26",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET /.well-known/oauth-authorization-server from MCP base URL",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+      {
+        "label": "Note",
+        "value": "Pre-registered (no DCR needed)",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2025-03-26)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-03-26",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-06-18 / cimd / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-06-18)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-06-18 / cimd / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "initialize",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-06-18",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-06-18)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-06-18",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-06-18 / dcr / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-06-18)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-06-18 / dcr / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "initialize",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-06-18",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-06-18)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-06-18",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-06-18 / preregistered / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Pre-registered client credentials",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2025-06-18)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-06-18 / preregistered / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "initialize",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-06-18",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+      {
+        "label": "Note",
+        "value": "Pre-registered (no DCR needed)",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2025-06-18)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (recommended), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-06-18",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE parameters",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-11-25 / cimd / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client prepares to use URL-based client identification",
+    "details": [
+      {
+        "label": "Note",
+        "value": "HTTPS URL points to metadata document",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_prepare",
+    "label": "Client uses HTTPS URL as client_id",
+    "to": "client",
+  },
+  {
+    "description": "Authorization Server fetches client metadata from the URL",
+    "details": [
+      {
+        "label": "Action",
+        "value": "GET client_id URL",
+      },
+      {
+        "label": "Note",
+        "value": "Server initiates metadata fetch during authorization",
+      },
+    ],
+    "from": "authServer",
+    "id": "cimd_fetch_request",
+    "label": "Fetch metadata from client_id URL",
+    "to": "client",
+  },
+  {
+    "description": "Client hosting returns metadata with redirect_uris and client info",
+    "details": [
+      {
+        "label": "Content-Type",
+        "value": "application/json",
+      },
+      {
+        "label": "Contains",
+        "value": "client_id, client_name, redirect_uris, etc.",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_metadata_response",
+    "label": "JSON metadata document",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server validates fetched metadata",
+    "details": [
+      {
+        "label": "Validates",
+        "value": "client_id matches URL, redirect_uris are valid",
+      },
+      {
+        "label": "Security",
+        "value": "SSRF protection, domain trust policies",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Validate metadata and redirect_uris",
+    "to": "authServer",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-11-25 / cimd / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "initialize",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-11-25",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client prepares to use URL-based client identification",
+    "details": [
+      {
+        "label": "client_id (URL)",
+        "value": "https://www.mcpjam.com/.well-known/oauth/client-metadata.json",
+      },
+      {
+        "label": "Method",
+        "value": "Client ID Metadata Document (CIMD)",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_prepare",
+    "label": "Client uses HTTPS URL as client_id",
+    "to": "client",
+  },
+  {
+    "description": "Authorization Server fetches client metadata from the URL",
+    "details": [
+      {
+        "label": "Action",
+        "value": "GET client_id URL",
+      },
+      {
+        "label": "Note",
+        "value": "Server initiates metadata fetch during authorization",
+      },
+    ],
+    "from": "authServer",
+    "id": "cimd_fetch_request",
+    "label": "Fetch metadata from client_id URL",
+    "to": "client",
+  },
+  {
+    "description": "Client hosting returns metadata with redirect_uris and client info",
+    "details": [
+      {
+        "label": "Content-Type",
+        "value": "application/json",
+      },
+      {
+        "label": "Contains",
+        "value": "client_id, client_name, redirect_uris, etc.",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_metadata_response",
+    "label": "JSON metadata document",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server validates fetched metadata",
+    "details": [
+      {
+        "label": "Validates",
+        "value": "client_id matches URL, redirect_uris are valid",
+      },
+      {
+        "label": "Security",
+        "value": "SSRF protection, domain trust policies",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Validate metadata and redirect_uris",
+    "to": "authServer",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-11-25",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-11-25 / dcr / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-11-25)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-11-25 / dcr / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "initialize",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-11-25",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2025-11-25)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-11-25",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-11-25 / preregistered / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Pre-registered client credentials",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2025-11-25)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2025-11-25 / preregistered / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "initialize",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-11-25",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+      {
+        "label": "Note",
+        "value": "Pre-registered (no DCR needed)",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2025-11-25)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2025-11-25",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2026-07-28 / cimd / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client prepares to use URL-based client identification",
+    "details": [
+      {
+        "label": "Note",
+        "value": "HTTPS URL points to metadata document",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_prepare",
+    "label": "Client uses HTTPS URL as client_id",
+    "to": "client",
+  },
+  {
+    "description": "Authorization Server fetches client metadata from the URL",
+    "details": [
+      {
+        "label": "Action",
+        "value": "GET client_id URL",
+      },
+      {
+        "label": "Note",
+        "value": "Server initiates metadata fetch during authorization",
+      },
+    ],
+    "from": "authServer",
+    "id": "cimd_fetch_request",
+    "label": "Fetch metadata from client_id URL",
+    "to": "client",
+  },
+  {
+    "description": "Client hosting returns metadata with redirect_uris and client info",
+    "details": [
+      {
+        "label": "Content-Type",
+        "value": "application/json",
+      },
+      {
+        "label": "Contains",
+        "value": "client_id, client_name, redirect_uris, etc.",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_metadata_response",
+    "label": "JSON metadata document",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server validates fetched metadata",
+    "details": [
+      {
+        "label": "Validates",
+        "value": "client_id matches URL, redirect_uris are valid",
+      },
+      {
+        "label": "Security",
+        "value": "SSRF protection, domain trust policies",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Validate metadata and redirect_uris",
+    "to": "authServer",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2026-07-28 / cimd / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "tools/list",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2026-07-28",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client prepares to use URL-based client identification",
+    "details": [
+      {
+        "label": "client_id (URL)",
+        "value": "https://www.mcpjam.com/.well-known/oauth/client-metadata.json",
+      },
+      {
+        "label": "Method",
+        "value": "Client ID Metadata Document (CIMD)",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_prepare",
+    "label": "Client uses HTTPS URL as client_id",
+    "to": "client",
+  },
+  {
+    "description": "Authorization Server fetches client metadata from the URL",
+    "details": [
+      {
+        "label": "Action",
+        "value": "GET client_id URL",
+      },
+      {
+        "label": "Note",
+        "value": "Server initiates metadata fetch during authorization",
+      },
+    ],
+    "from": "authServer",
+    "id": "cimd_fetch_request",
+    "label": "Fetch metadata from client_id URL",
+    "to": "client",
+  },
+  {
+    "description": "Client hosting returns metadata with redirect_uris and client info",
+    "details": [
+      {
+        "label": "Content-Type",
+        "value": "application/json",
+      },
+      {
+        "label": "Contains",
+        "value": "client_id, client_name, redirect_uris, etc.",
+      },
+    ],
+    "from": "client",
+    "id": "cimd_metadata_response",
+    "label": "JSON metadata document",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server validates fetched metadata",
+    "details": [
+      {
+        "label": "Validates",
+        "value": "client_id matches URL, redirect_uris are valid",
+      },
+      {
+        "label": "Security",
+        "value": "SSRF protection, domain trust policies",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Validate metadata and redirect_uris",
+    "to": "authServer",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2026-07-28",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2026-07-28 / dcr / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+      {
+        "label": "Deprecated",
+        "value": "DCR is deprecated in 2026-07-28 (PR #2858). Prefer CIMD or a pre-registered client; DCR remains a compatibility fallback for authorization servers without CIMD support.",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2026-07-28)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2026-07-28 / dcr / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "tools/list",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2026-07-28",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client registers dynamically with Authorization Server",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Dynamic client registration (DCR)",
+      },
+      {
+        "label": "Deprecated",
+        "value": "DCR is deprecated in 2026-07-28 (PR #2858). Prefer CIMD or a pre-registered client; DCR remains a compatibility fallback for authorization servers without CIMD support.",
+      },
+    ],
+    "from": "client",
+    "id": "request_client_registration",
+    "label": "POST /register (2026-07-28)",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns client ID and credentials",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+      {
+        "label": "bound to issuer",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_client_credentials",
+    "label": "Client Credentials",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2026-07-28",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2026-07-28 / preregistered / empty state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": undefined,
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": undefined,
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": undefined,
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Pre-registered client credentials",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2026-07-28)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": undefined,
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": undefined,
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": undefined,
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": undefined,
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": undefined,
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": undefined,
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": undefined,
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": undefined,
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": undefined,
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;
+
+exports[`sequence actions (2026-07-28 / preregistered / populated state) > renders the same diagram actions 1`] = `
+[
+  {
+    "description": "Client makes initial request without authorization",
+    "details": [
+      {
+        "label": "POST",
+        "value": "https://mcp-server.example.com/mcp",
+      },
+      {
+        "label": "method",
+        "value": "tools/list",
+      },
+    ],
+    "from": "client",
+    "id": "request_without_token",
+    "label": "MCP request without token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns 401 with WWW-Authenticate header",
+    "details": [
+      {
+        "label": "Note",
+        "value": "Extract resource_metadata URL",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_401_unauthorized",
+    "label": "HTTP 401 Unauthorized with WWW-Authenticate header",
+    "to": "client",
+  },
+  {
+    "description": "Client requests metadata from well-known URI",
+    "details": [
+      {
+        "label": "GET",
+        "value": "/.well-known/oauth-protected-resource/mcp",
+      },
+    ],
+    "from": "client",
+    "id": "request_resource_metadata",
+    "label": "Request Protected Resource Metadata",
+    "to": "mcpServer",
+  },
+  {
+    "description": "Server returns OAuth protected resource metadata",
+    "details": [
+      {
+        "label": "Auth Server",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "received_resource_metadata",
+    "label": "Return metadata",
+    "to": "client",
+  },
+  {
+    "description": "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+    "details": [
+      {
+        "label": "URL",
+        "value": "https://auth-server.example.com",
+      },
+      {
+        "label": "Protocol",
+        "value": "2026-07-28",
+      },
+    ],
+    "from": "client",
+    "id": "request_authorization_server_metadata",
+    "label": "GET Authorization server metadata endpoint",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns metadata",
+    "details": [
+      {
+        "label": "Token",
+        "value": "/token",
+      },
+      {
+        "label": "Auth",
+        "value": "/authorize",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_authorization_server_metadata",
+    "label": "Authorization server metadata response",
+    "to": "client",
+  },
+  {
+    "description": "Client uses pre-configured credentials (skipped DCR)",
+    "details": [
+      {
+        "label": "client_id",
+        "value": "https://www.mcpjam.c...",
+      },
+      {
+        "label": "Note",
+        "value": "Pre-registered (no DCR needed)",
+      },
+      {
+        "label": "bound to issuer",
+        "value": "https://auth-server.example.com",
+      },
+    ],
+    "from": "client",
+    "id": "received_client_credentials",
+    "label": "Use Pre-registered Client (2026-07-28)",
+    "to": "client",
+  },
+  {
+    "description": "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-cha...",
+      },
+      {
+        "label": "method",
+        "value": "S256",
+      },
+      {
+        "label": "resource",
+        "value": "—",
+      },
+      {
+        "label": "Protocol",
+        "value": "2026-07-28",
+      },
+    ],
+    "from": "client",
+    "id": "generate_pkce_parameters",
+    "label": "Generate PKCE (REQUIRED)
+Include resource parameter",
+    "to": "client",
+  },
+  {
+    "description": "Client opens browser with authorization URL + code_challenge + resource",
+    "details": [
+      {
+        "label": "code_challenge",
+        "value": "golden-code-...",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "authorization_request",
+    "label": "Open browser with authorization URL",
+    "to": "browser",
+  },
+  {
+    "description": "Browser navigates to authorization endpoint",
+    "details": [
+      {
+        "label": "Note",
+        "value": "User authorizes in browser",
+      },
+    ],
+    "from": "browser",
+    "id": "browser_to_auth_server",
+    "label": "Authorization request with resource parameter",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server redirects browser back to callback URL",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "authServer",
+    "id": "auth_redirect_to_browser",
+    "label": "Redirect to callback with authorization code",
+    "to": "browser",
+  },
+  {
+    "description": "Browser redirects back to client with authorization code",
+    "details": [
+      {
+        "label": "code",
+        "value": "golden-authorization...",
+      },
+    ],
+    "from": "browser",
+    "id": "received_authorization_code",
+    "label": "Authorization code callback",
+    "to": "client",
+  },
+  {
+    "description": "Client exchanges authorization code for access token",
+    "details": [
+      {
+        "label": "grant_type",
+        "value": "authorization_code",
+      },
+      {
+        "label": "resource",
+        "value": "",
+      },
+    ],
+    "from": "client",
+    "id": "token_request",
+    "label": "Token request + code_verifier + resource",
+    "to": "authServer",
+  },
+  {
+    "description": "Authorization Server returns access token",
+    "details": [
+      {
+        "label": "token_type",
+        "value": "Bearer",
+      },
+      {
+        "label": "expires_in",
+        "value": "3600",
+      },
+    ],
+    "from": "authServer",
+    "id": "received_access_token",
+    "label": "Access token (+ refresh token)",
+    "to": "client",
+  },
+  {
+    "description": "Client makes authenticated request to MCP server",
+    "details": [
+      {
+        "label": "POST",
+        "value": "tools/list",
+      },
+      {
+        "label": "Authorization",
+        "value": "Bearer golden-access-t...",
+      },
+    ],
+    "from": "client",
+    "id": "authenticated_mcp_request",
+    "label": "MCP request with access token",
+    "to": "mcpServer",
+  },
+  {
+    "description": "MCP Server returns successful response",
+    "details": [
+      {
+        "label": "Status",
+        "value": "200 OK",
+      },
+      {
+        "label": "Content",
+        "value": "tools, resources, prompts",
+      },
+    ],
+    "from": "mcpServer",
+    "id": "complete",
+    "label": "MCP response",
+    "to": "client",
+  },
+]
+`;

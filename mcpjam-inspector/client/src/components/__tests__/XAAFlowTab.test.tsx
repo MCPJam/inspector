@@ -353,6 +353,145 @@ describe("XAAFlowTab", () => {
     );
   });
 
+  it("pins an existing hosted modal edit to the selected server row", async () => {
+    runtimeConfig.hostedMode = true;
+    currentTarget = makeTarget({
+      barServerId: "srv_staging",
+      barServerProjectId: "project_staging",
+    });
+    const onSaveServerConfig = vi.fn().mockResolvedValue(true);
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{
+          staging: {
+            name: "staging",
+            config: { url: "https://staging.mcp.example.com" },
+            useXaa: true,
+          } as any,
+        }}
+        selectedServerName="staging"
+        organizationId="org_staging"
+        onSaveServerConfig={onSaveServerConfig}
+      />
+    );
+
+    await act(async () => {
+      await capturedServerModalProps.onSave({
+        formData: {
+          name: "staging",
+          type: "http",
+          url: "https://staging.mcp.example.com",
+          useXaa: true,
+          registrationMode: "cimd",
+          xaaClientAuth: "private_key_jwt",
+        },
+      });
+    });
+
+    expect(onSaveServerConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "staging",
+        registrationMode: "cimd",
+        xaaClientAuth: "private_key_jwt",
+      }),
+      {
+        originalServerName: "staging",
+        hostedWriteTarget: {
+          projectId: "project_staging",
+          serverId: "srv_staging",
+        },
+      }
+    );
+  });
+
+  it("pins a hosted server rename to the selected server row", async () => {
+    runtimeConfig.hostedMode = true;
+    currentTarget = makeTarget({
+      barServerId: "srv_staging",
+      barServerProjectId: "project_staging",
+    });
+    const onSaveServerConfig = vi.fn().mockResolvedValue(true);
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{
+          staging: {
+            name: "staging",
+            config: { url: "https://staging.mcp.example.com" },
+            useXaa: true,
+          } as any,
+        }}
+        selectedServerName="staging"
+        organizationId="org_staging"
+        onSaveServerConfig={onSaveServerConfig}
+      />
+    );
+
+    await act(async () => {
+      await capturedServerModalProps.onSave({
+        formData: {
+          name: "renamed-staging",
+          type: "http",
+          url: "https://staging.mcp.example.com",
+          useXaa: true,
+        },
+      });
+    });
+
+    expect(onSaveServerConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "renamed-staging" }),
+      {
+        originalServerName: "staging",
+        hostedWriteTarget: {
+          projectId: "project_staging",
+          serverId: "srv_staging",
+        },
+      }
+    );
+  });
+
+  it("does not pin a new hosted server save to the selected existing row", async () => {
+    runtimeConfig.hostedMode = true;
+    currentTarget = makeTarget({
+      barServerId: "srv_staging",
+      barServerProjectId: "project_staging",
+    });
+    const onSaveServerConfig = vi.fn().mockResolvedValue(true);
+    const props = {
+      serverConfigs: {
+        staging: {
+          name: "staging",
+          config: { url: "https://staging.mcp.example.com" },
+          useXaa: true,
+        } as any,
+      },
+      selectedServerName: "staging",
+      organizationId: "org_staging",
+      onSaveServerConfig,
+    };
+    const { rerender } = render(
+      <XAAFlowTab {...props} openServerModalSignal={0} />
+    );
+    rerender(<XAAFlowTab {...props} openServerModalSignal={1} />);
+
+    await act(async () => {
+      await capturedServerModalProps.onSave({
+        formData: {
+          name: "new-server",
+          type: "http",
+          url: "https://new.example.com/mcp",
+          useXaa: true,
+        },
+      });
+    });
+
+    expect(onSaveServerConfig).toHaveBeenCalledTimes(1);
+    expect(onSaveServerConfig.mock.calls[0][1]).toEqual({
+      originalServerName: undefined,
+    });
+  });
+
   const CONFIDENTIAL_SERVER = {
     staging: { registrationMode: "cimd", xaaClientAuth: "private_key_jwt" },
   } as any;
@@ -1342,11 +1481,17 @@ describe("XAAFlowTab", () => {
     });
 
     it("persists a flip to SAML through the modal's save path, preserving stored fields by omission", async () => {
+      runtimeConfig.hostedMode = true;
+      currentTarget = makeTarget({
+        barServerId: "srv_staging",
+        barServerProjectId: "project_staging",
+      });
       const onSaveServerConfig = vi.fn();
       render(
         <XAAFlowTab
           serverConfigs={storedServer()}
           selectedServerName="staging"
+          organizationId="org_staging"
           onSaveServerConfig={onSaveServerConfig}
         />
       );
@@ -1375,6 +1520,13 @@ describe("XAAFlowTab", () => {
       expect(formData).not.toHaveProperty("registrationMode");
       expect(formData).not.toHaveProperty("clientSecret");
       expect(formData).not.toHaveProperty("clearClientSecret");
+      expect(onSaveServerConfig.mock.calls[0][1]).toEqual({
+        originalServerName: "staging",
+        hostedWriteTarget: {
+          projectId: "project_staging",
+          serverId: "srv_staging",
+        },
+      });
     });
 
     it("does not save when the selected format is already active", async () => {

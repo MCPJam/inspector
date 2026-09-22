@@ -157,6 +157,60 @@ describe("usePersistedHost", () => {
     expect(loadPreviewedHostId(PROJECT)).toBe("a");
   });
 
+  // Removing the LEAD from the compare line-up is a legal picker gesture
+  // ("uncheck Claude"). The stored array no longer contains the lead, so
+  // the defensive derivation would otherwise resurrect it at slot 0 —
+  // destroying the host that legitimately moved up. Dropping the lead
+  // must instead promote the new slot 0.
+  it("promotes the new slot 0 when setSelectedHostIds drops the lead", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
+    savePreviewedHostId(PROJECT, "a");
+
+    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    expect(result.current.selectedHostIds).toEqual(["a", "b", "c"]);
+
+    act(() => {
+      result.current.setSelectedHostIds(["b", "c"]);
+    });
+
+    expect(result.current.selectedHostIds).toEqual(["b", "c"]);
+    expect(loadSelectedHostIds(PROJECT)).toEqual(["b", "c"]);
+    expect(loadPreviewedHostId(PROJECT)).toBe("b");
+  });
+
+  // Same gesture, down to a single remaining host: dropping the lead from
+  // a two-host line-up leaves exactly the other host, still as the lead.
+  it("promotes the survivor when the lead is dropped from a two-host line-up", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+
+    const { result } = renderHook(() => usePersistedHost(PROJECT));
+
+    act(() => {
+      result.current.setSelectedHostIds(["b"]);
+    });
+
+    expect(result.current.selectedHostIds).toEqual(["b"]);
+    expect(loadPreviewedHostId(PROJECT)).toBe("b");
+  });
+
+  // Collapsing the array to empty (mutual-exclusion path in
+  // `PlaygroundMain.handleMultiModelEnabledChange`) is NOT a lead change —
+  // the lead has to survive so the single-host view still has a host.
+  it("leaves the lead alone when the array is cleared", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+
+    const { result } = renderHook(() => usePersistedHost(PROJECT));
+
+    act(() => {
+      result.current.setSelectedHostIds([]);
+    });
+
+    expect(loadPreviewedHostId(PROJECT)).toBe("a");
+    expect(result.current.selectedHostIds).toEqual(["a"]);
+  });
+
   it("preserves column count across a host switch via replaceLeadHostId", () => {
     saveSelectedHostIds(PROJECT, ["host-a", "extra"]);
     savePreviewedHostId(PROJECT, "host-a");

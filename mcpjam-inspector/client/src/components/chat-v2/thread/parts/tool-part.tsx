@@ -26,14 +26,17 @@ import {
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
 import { track } from "@/lib/analytics";
+import { useLocalComputerEnabled } from "@/hooks/useComputersEnabled";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
+import { resolvePageToolAttribution } from "@/lib/webmcp-page-tools/attribution";
 import {
   getToolNameFromType,
   getToolStateMeta,
+  readTraceDisplayText,
   type ToolState,
   isDynamicTool,
 } from "../thread-helpers";
@@ -47,7 +50,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
-import { CspWorkbench } from "../csp-workbench";
+import { CspWorkbench, type RecordedWidgetPolicy } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import {
@@ -57,13 +60,13 @@ import {
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
+import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
-import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
-type TraceDisplayMode = "markdown" | "json-markdown";
 
 export function ToolPart({
   part,
@@ -100,6 +103,7 @@ export function ToolPart({
   serverId,
   mcpToolResultImageRendering,
   rawOutput,
+  recordedWidgetDiagnostics,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -151,6 +155,7 @@ export function ToolPart({
   serverId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
+  recordedWidgetDiagnostics?: RecordedWidgetPolicy;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -162,10 +167,27 @@ export function ToolPart({
   // through the shared app-tool registry/log helper so UI never leaks the
   // model-facing alias when a human-readable tool name is available.
   const appToolAttribution = useAppToolAttribution(label, chatSessionId);
-  const displayLabel = appToolAttribution?.rawName ?? label;
+  // Page-tool names belong to the recorded call/result, not the live page.
+  // Call metadata also labels inspector aliases while approval is pending.
+  const pageToolAttribution = resolvePageToolAttribution({
+    toolName: label,
+    output: (part as any).output,
+    callProviderMetadata: (part as any).callProviderMetadata,
+  });
+  const displayLabel =
+    pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
+  // The agent started browsing, so the browser gets its panel. Here because
+  // this card is the one place in the client that already knows a browser tool
+  // is running; it fires only while the call is LIVE, so scrolling back
+  // through a transcript full of them does not reopen anything.
+  useOpenBrowserOnBrowsing({
+    toolName: label,
+    state,
+    conversationId: chatSessionId,
+  });
 
   useEffect(() => {
     const isUserInjected = toolCallId?.startsWith("skill-load-");
@@ -185,8 +207,8 @@ export function ToolPart({
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const chatboxHostTheme = useChatboxHostTheme();
-  const resolvedThemeMode = chatboxHostTheme ?? themeMode;
+  const scenarioHostTheme = useScenarioHostTheme();
+  const resolvedThemeMode = scenarioHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const needsApproval = state === "approval-requested" && !!approvalId;
@@ -203,17 +225,28 @@ export function ToolPart({
     "data" | "state" | "sandbox" | "context" | null
   >("data");
   const [resultImageMode, setResultImageMode] = useState<"images" | "raw">(
-    "images"
+    "images",
   );
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const rawResultData = rawOutput ?? outputData;
+  // Where this bash call actually ran. Read from the RAW output (the frozen
+  // server value) rather than `resultDisplayData` — the latter is the editable
+  // Raw-tab value, which a user can rewrite, and provenance must not be
+  // editable. Absent on old transcripts, hosted turns, and the ephemeral
+  // sandbox-bash tool, which is why nothing renders in that case. The pill is
+  // part of the local-engine dark launch: users outside the
+  // `local-computer-enabled` rollout see no run-location UI at all.
+  const localComputerEnabled = useLocalComputerEnabled();
+  const runLocation = localComputerEnabled
+    ? readToolRunLocation(label, rawResultData)
+    : null;
   const resultDisplayData =
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
-    mcpToolResultImageRendering
+    mcpToolResultImageRendering,
   );
   const showInlineImagePreview = imageRenderPlacement === "inline";
   const showPanelImagePreview = imageRenderPlacement === "collapsed";
@@ -221,7 +254,7 @@ export function ToolPart({
     showInlineImagePreview || (showPanelImagePreview && isExpanded);
   const resultImageState = useMcpToolResultImagePreviews(
     canRenderToolImages ? imagePreviewData : undefined,
-    { serverId, renderingPolicy: mcpToolResultImageRendering }
+    { serverId, renderingPolicy: mcpToolResultImageRendering },
   );
   // Editors render the effective values (what the widget sees) when the parent
   // supplies them; fall back to the raw part data otherwise (non-widget branch).
@@ -229,17 +262,14 @@ export function ToolPart({
   const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
-  const traceDisplayText =
-    typeof (part as unknown as { traceDisplayText?: unknown })
-      .traceDisplayText === "string"
-      ? (part as unknown as { traceDisplayText: string }).traceDisplayText
-      : undefined;
-  const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
-    .traceDisplayMode;
-  const hasAttachedTraceDisplay = Boolean(
-    traceDisplayText &&
-      (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown")
-  );
+  // Through the package's shared reader rather than a local copy of the same
+  // field test. This channel had three hand-rolled readers with three
+  // different gates — this one required a recognised mode, `PartSwitch`
+  // ignored the mode and accepted whitespace, `ToolCallPart` rejected it —
+  // which is how BB-198 stayed open on one surface while this one rendered
+  // the same field fine.
+  const traceDisplayText = readTraceDisplayText(part);
+  const hasAttachedTraceDisplay = traceDisplayText !== undefined;
   const hasInput = inputData !== undefined && inputData !== null;
   const paramCount = useMemo(() => {
     if (!hasInput) return 0;
@@ -254,16 +284,34 @@ export function ToolPart({
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
-  const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined
+  const storedWidgetDebugInfo = useWidgetDebugStore((s) =>
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
+  // A completed eval can retain live store data from the streaming phase.
+  // Once its widget becomes a frozen screenshot, the recorded snapshot is the
+  // source of truth and stale live diagnostics must not leak into the card.
+  const widgetDebugInfo = recordedWidgetDiagnostics
+    ? undefined
+    : storedWidgetDebugInfo;
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
-    [hostContext]
+    [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
-  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
+  const hasRecordedWidgetDebug = !!recordedWidgetDiagnostics;
+  const hasWidgetDebugData = hasWidgetDebug || hasRecordedWidgetDebug;
+  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebugData;
+
+  useEffect(() => {
+    if (
+      hasRecordedWidgetDebug &&
+      activeDebugTab !== "data" &&
+      activeDebugTab !== "sandbox"
+    ) {
+      setActiveDebugTab("data");
+    }
+  }, [activeDebugTab, hasRecordedWidgetDebug]);
 
   const showDisplayModeControls =
     displayMode !== undefined &&
@@ -293,12 +341,16 @@ export function ToolPart({
       badge?: number;
     }[] = [{ tab: "data", icon: Database, label: "Data" }];
 
-    if (uiType === UIType.OPENAI_SDK) {
+    if (hasWidgetDebug && uiType === UIType.OPENAI_SDK) {
       options.push({ tab: "state", icon: Box, label: "Widget State" });
     }
 
     // Add model context tab for MCP Apps
-    if (uiType === UIType.MCP_APPS && widgetDebugInfo?.modelContext) {
+    if (
+      hasWidgetDebug &&
+      uiType === UIType.MCP_APPS &&
+      widgetDebugInfo?.modelContext
+    ) {
       options.push({
         tab: "context",
         icon: MessageCircle,
@@ -316,6 +368,7 @@ export function ToolPart({
     return options;
   }, [
     uiType,
+    hasWidgetDebug,
     widgetDebugInfo?.csp?.violations?.length,
     widgetDebugInfo?.modelContext,
   ]);
@@ -743,7 +796,7 @@ export function ToolPart({
   // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
     const urls = filterSafeExternalLinkUrls(
-      (resultDisplayData as { authUrls?: unknown })?.authUrls
+      (resultDisplayData as { authUrls?: unknown })?.authUrls,
     );
     if (urls.length === 0) return null;
     return (
@@ -812,7 +865,7 @@ export function ToolPart({
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
                 ? "border-destructive/40 bg-destructive/10"
-                : "border-border/60 bg-muted/30"
+                : "border-border/60 bg-muted/30",
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
@@ -825,6 +878,11 @@ export function ToolPart({
             {appToolAttribution && (
               <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
                 from {appToolAttribution.appName}
+              </span>
+            )}
+            {pageToolAttribution?.origin && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                from {pageToolAttribution.origin.replace(/^https?:\/\//, "")}
               </span>
             )}
 
@@ -841,7 +899,7 @@ export function ToolPart({
                     <ChevronDown
                       className={cn(
                         "h-3 w-3 transition-transform",
-                        paramsExpanded && "rotate-180"
+                        paramsExpanded && "rotate-180",
                       )}
                     />
                   </button>
@@ -935,6 +993,28 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            {pageToolAttribution?.origin && (
+              <span
+                data-testid="page-tool-origin"
+                title="This tool was declared by the page the browser had open."
+                className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0"
+              >
+                from {pageToolAttribution.origin.replace(/^https?:\/\//, "")}
+              </span>
+            )}
+            {runLocation && (
+              <span
+                data-testid="tool-run-location"
+                title={
+                  runLocation === "local"
+                    ? "This command ran on the computer running the inspector."
+                    : "This command ran in your cloud computer."
+                }
+                className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0"
+              >
+                {runLocation === "local" ? "this machine" : "cloud"}
+              </span>
+            )}
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">
@@ -995,7 +1075,16 @@ export function ToolPart({
         <div className="border-t border-border/40 px-3 py-3">
           {!hideDiagnosticsUI && (
             <>
-              {hasWidgetDebug && activeDebugTab === "data" && renderToolData()}
+              {hasWidgetDebugData && activeDebugTab === "data" && (
+                <div className="space-y-2">
+                  {hasRecordedWidgetDebug && !hasWidgetDebug && (
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Recorded tool data
+                    </div>
+                  )}
+                  {renderToolData()}
+                </div>
+              )}
               {hasWidgetDebug && activeDebugTab === "state" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1045,6 +1134,14 @@ export function ToolPart({
                   protocol={widgetDebugInfo.protocol}
                 />
               )}
+              {!hasWidgetDebug &&
+                hasRecordedWidgetDebug &&
+                activeDebugTab === "sandbox" && (
+                  <CspWorkbench
+                    protocol="mcp-apps"
+                    recordedPolicy={recordedWidgetDiagnostics}
+                  />
+                )}
               {hasWidgetDebug && activeDebugTab === "context" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1055,7 +1152,7 @@ export function ToolPart({
                       <div className="text-[9px] text-muted-foreground/50">
                         Updated:{" "}
                         {new Date(
-                          widgetDebugInfo.modelContext.updatedAt
+                          widgetDebugInfo.modelContext.updatedAt,
                         ).toLocaleTimeString()}
                       </div>
                     )}
@@ -1114,11 +1211,36 @@ export function ToolPart({
                   )}
                 </div>
               )}
-              {!hasWidgetDebug && renderToolData()}
+              {!hasWidgetDebugData && renderToolData()}
             </>
           )}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Run-location provenance for the computer `bash` tool.
+ *
+ * Non-hosted bash turns stamp `engine: "local" | "cloud"` onto the tool result
+ * (success AND error) so the transcript can say which machine the command
+ * actually ran on — the one thing a user cannot infer from the output. The
+ * field is absent everywhere else (old transcripts, hosted servers, the
+ * ephemeral sandbox-bash tool), and an absent/unknown value renders nothing
+ * rather than guessing.
+ *
+ * Kept local to this file on purpose: `thread-helpers` is a pure re-export of
+ * `@mcpjam/chat-ui` and is not a home for inspector-specific display logic.
+ */
+export function readToolRunLocation(
+  toolName: string | undefined,
+  rawResult: unknown,
+): "local" | "cloud" | null {
+  if (toolName !== "bash") return null;
+  if (!rawResult || typeof rawResult !== "object") return null;
+  const engine = (rawResult as { engine?: unknown }).engine;
+  if (engine === "local") return "local";
+  if (engine === "cloud") return "cloud";
+  return null;
 }

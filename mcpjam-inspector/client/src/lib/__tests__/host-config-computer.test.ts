@@ -5,8 +5,11 @@ import {
   computerBackedToolIds,
   detachComputerPatch,
   sanitizeHostConfigForEvalSuite,
+  setComputerWorkdirPatch,
   shouldShowComputerToggle,
+  validateComputerWorkdir,
   visibleBuiltInToolCatalog,
+  DEFAULT_COMPUTER_WORKDIR,
 } from "../host-config-computer";
 import { emptyHostConfigInputV2 } from "../client-config-v2";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -42,6 +45,46 @@ describe("host-config-computer helpers", () => {
 
   it("attachComputerPatch attaches the resource shape", () => {
     expect(attachComputerPatch()).toEqual({ computer: { kind: "personal" } });
+  });
+
+  describe("working directory (COMP-16)", () => {
+    it("accepts blank and paths under /home/user; rejects escapes", () => {
+      expect(validateComputerWorkdir("")).toBeNull();
+      expect(validateComputerWorkdir("/home/user")).toBeNull();
+      expect(validateComputerWorkdir("/home/user/myproject")).toBeNull();
+      expect(validateComputerWorkdir("relative")).toBeTruthy();
+      expect(validateComputerWorkdir("/etc")).toBeTruthy();
+      expect(validateComputerWorkdir("/home/user/../etc")).toBeTruthy();
+      expect(validateComputerWorkdir("/home/user2")).toBeTruthy();
+    });
+
+    it("sets a non-default workdir on the attached computer", () => {
+      const value = emptyHostConfigInputV2({ computer: { kind: "personal" } });
+      expect(setComputerWorkdirPatch(value, "/home/user/myproject")).toEqual({
+        computer: { kind: "personal", workdir: "/home/user/myproject" },
+      });
+    });
+
+    it("clears workdir at the default or blank (hashes identically to unset)", () => {
+      const value = emptyHostConfigInputV2({
+        computer: { kind: "personal", workdir: "/home/user/old" },
+      });
+      expect(setComputerWorkdirPatch(value, DEFAULT_COMPUTER_WORKDIR)).toEqual({
+        computer: { kind: "personal", workdir: undefined },
+      });
+      expect(setComputerWorkdirPatch(value, "   ")).toEqual({
+        computer: { kind: "personal", workdir: undefined },
+      });
+      // Trailing slash normalizes to the default → cleared.
+      expect(setComputerWorkdirPatch(value, "/home/user/")).toEqual({
+        computer: { kind: "personal", workdir: undefined },
+      });
+    });
+
+    it("is a no-op when no computer is attached", () => {
+      const value = emptyHostConfigInputV2({});
+      expect(setComputerWorkdirPatch(value, "/home/user/x")).toEqual({});
+    });
   });
 
   it("detachComputerPatch clears the computer AND strips computer-backed ids", () => {
@@ -102,7 +145,7 @@ describe("shouldShowComputerToggle", () => {
       shouldShowComputerToggle({
         catalogHasComputerBackedTool: true,
         computerAttached: false,
-      })
+      }),
     ).toBe(true);
   });
 
@@ -111,7 +154,7 @@ describe("shouldShowComputerToggle", () => {
       shouldShowComputerToggle({
         catalogHasComputerBackedTool: false,
         computerAttached: true,
-      })
+      }),
     ).toBe(true);
   });
 
@@ -120,7 +163,7 @@ describe("shouldShowComputerToggle", () => {
       shouldShowComputerToggle({
         catalogHasComputerBackedTool: false,
         computerAttached: false,
-      })
+      }),
     ).toBe(false);
   });
 
@@ -130,27 +173,63 @@ describe("shouldShowComputerToggle", () => {
         catalogHasComputerBackedTool: true,
         computerAttached: true,
         disallowed: true,
-      })
+      }),
     ).toBe(false);
   });
 });
 
 describe("visibleBuiltInToolCatalog", () => {
+  it("shows Browser with Computers off, while preserving removability", () => {
+    const browser = { ...CATALOG[1], id: "browser", requiresComputer: false };
+    expect(
+      visibleBuiltInToolCatalog([browser], {
+        computersEnabled: false,
+        browsersEnabled: false,
+        selectedIds: [],
+      }),
+    ).toEqual([]);
+    expect(
+      visibleBuiltInToolCatalog([browser], {
+        computersEnabled: false,
+        browsersEnabled: true,
+        selectedIds: [],
+      }),
+    ).toEqual([browser]);
+    expect(
+      visibleBuiltInToolCatalog([browser], {
+        computersEnabled: false,
+        browsersEnabled: false,
+        selectedIds: ["browser"],
+      }),
+    ).toEqual([browser]);
+    const draft = emptyHostConfigInputV2({
+      computer: { kind: "personal" },
+      builtInToolIds: ["browser"],
+    });
+    expect(detachComputerPatch(draft, [browser]).builtInToolIds).toEqual([
+      "browser",
+    ]);
+    expect(
+      sanitizeHostConfigForEvalSuite(draft, [browser]).builtInToolIds,
+    ).toEqual(["browser"]);
+  });
   it("returns the catalog unchanged when the computers flag is on", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: true,
+        browsersEnabled: false,
         selectedIds: [],
-      })
-    ).toBe(CATALOG);
+      }),
+    ).toEqual(CATALOG);
   });
 
   it("hides computer-backed rows when the flag is off (enabled bash row stays invisible pre-rollout)", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
-      })
+      }),
     ).toEqual([CATALOG[0]]);
   });
 
@@ -158,8 +237,9 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: ["bash"],
-      })
+      }),
     ).toEqual(CATALOG);
   });
 
@@ -167,8 +247,9 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(undefined, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
-      })
+      }),
     ).toBeUndefined();
   });
 });

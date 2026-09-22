@@ -70,7 +70,10 @@ export function RevealOnceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
+        <div
+          className="ph-no-capture rr-block flex items-center gap-2 rounded-md border bg-muted/40 p-2"
+          data-ph-no-capture
+        >
           <code className="flex-1 select-all overflow-x-auto whitespace-nowrap font-mono text-xs text-foreground">
             {value ?? ""}
           </code>

@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronRight, Clock } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, Play } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Progress } from "@mcpjam/design-system/progress";
 import {
@@ -9,8 +10,9 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import {
   LEARNING_GROUPS,
+  isGuidedTour,
   type LearningGroup,
-  type LearningConcept,
+  type LearningModule,
 } from "@/components/lifecycle/learning-concepts";
 
 interface LearningLandingPageProps {
@@ -56,12 +58,13 @@ function ModuleRow({
   onSelect,
   onToggleComplete,
 }: {
-  concept: LearningConcept;
+  concept: LearningModule;
   number: number;
   completed: boolean;
   onSelect: (id: string) => void;
   onToggleComplete: (id: string) => void;
 }) {
+  const guided = isGuidedTour(concept);
   return (
     <button
       type="button"
@@ -87,10 +90,22 @@ function ModuleRow({
       >
         {concept.title}
       </span>
+      {guided ? (
+        <Badge
+          variant="outline"
+          className="shrink-0 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+        >
+          Guided
+        </Badge>
+      ) : null}
       <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
         <Clock className="h-3 w-3" />~{concept.estimatedMinutes} min
       </span>
-      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+      {guided ? (
+        <Play className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+      ) : (
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+      )}
     </button>
   );
 }
@@ -110,7 +125,7 @@ function GroupSection({
   onSelect: (id: string) => void;
   onToggleComplete: (id: string) => void;
 }) {
-  const completedInGroup = group.modules.filter((m: LearningConcept) =>
+  const completedInGroup = group.modules.filter((m: LearningModule) =>
     isCompleted(m.id),
   ).length;
   const total = group.modules.length;
@@ -143,7 +158,7 @@ function GroupSection({
       {/* Module rows */}
       <CollapsibleContent>
         <div className="flex flex-col">
-          {group.modules.map((concept: LearningConcept, mi: number) => (
+          {group.modules.map((concept: LearningModule, mi: number) => (
             <ModuleRow
               key={concept.id}
               concept={concept}

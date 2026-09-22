@@ -127,15 +127,6 @@ guestToken.post("/", async (c) => {
     return webError(c, 401, ErrorCode.UNAUTHORIZED, "Invalid service token");
   }
 
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return webError(
-      c,
-      403,
-      ErrorCode.FORBIDDEN,
-      "Guest access is disabled in this environment."
-    );
-  }
-
   const ip = c.req.header("x-mcpjam-client-ip")?.trim() || "unknown";
   if (!allowMint(ip)) {
     return webError(

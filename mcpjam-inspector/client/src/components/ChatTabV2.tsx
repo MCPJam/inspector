@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import {
   FormEvent,
   useMemo,
@@ -15,6 +16,7 @@ import {
   canManageOrgCredits,
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
@@ -25,6 +27,8 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
@@ -41,12 +45,15 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { track } from "@/lib/analytics";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
@@ -60,6 +67,7 @@ import {
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
   STARTER_PROMPTS,
+  shouldShowStarterPrompts,
   formatErrorMessage,
   buildMcpPromptMessages,
   buildSkillToolMessages,
@@ -67,16 +75,27 @@ import {
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
   extractUserMessageText,
+  UPSTREAM_ERROR_PAGE_CODE,
+  PROTOCOL_VERSION_PIN_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
-import type { ChatSessionResetReason } from "@/hooks/use-chat-session";
+import {
+  DETACH_FORK_FAILED_MESSAGE,
+  type ChatSessionResetReason,
+} from "@/hooks/use-chat-session";
+import {
+  RESUMED_THREAD_CONFLICT_MESSAGE,
+  RESUMED_THREAD_UNSAVED_MESSAGE,
+  useResumedThreadPersistence,
+} from "@/hooks/use-resumed-thread-persistence";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
+import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
@@ -117,9 +136,10 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -143,25 +163,42 @@ interface ChatTabProps {
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
   showHostStyleSelector?: boolean;
-  hostStyle?: ChatboxHostStyle;
-  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
+  hostStyle?: ScenarioHostStyle;
+  onHostStyleChange?: (hostStyle: ScenarioHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
-  /** When true, blocks sending until chatbox onboarding/OAuth completes. */
-  chatboxComposerBlocked?: boolean;
-  chatboxComposerBlockedReason?: string;
+  /** When true, blocks sending until scenario onboarding/OAuth completes. */
+  scenarioComposerBlocked?: boolean;
+  scenarioComposerBlockedReason?: string;
   /** Optional (off-by-default) servers the tester can attach from minimal chat. */
-  chatboxOptionalInventory?: Array<{
+  scenarioOptionalInventory?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onEnableChatboxOptionalServer?: (serverId: string) => void;
+  onEnableScenarioOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /**
+   * Slot under each assistant message — the per-turn rating widget on the
+   * hosted User Testing page.
+   *
+   * The host gets the turn's identity resolved for it. `turnId` is minted
+   * SERVER-side (`generateLiveTraceTurnId`) and reaches the client through
+   * `turn_start` trace events (live) or the persisted `turnTraces` (rehydrated
+   * sessions), so it is the same id the backend recorded — which is what lets
+   * `sessionScores:submitScore` validate the anchor instead of trusting an
+   * ordinal. It is `null` until that event lands; the host renders nothing in
+   * that window rather than offering a rating that cannot be saved.
+   */
+  renderAssistantTurnActions?: (ctx: {
+    message: UIMessage;
+    chatSessionId: string;
+    promptIndex: number;
+    turnId: string | null;
+  }) => React.ReactNode;
 }
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
-const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
@@ -183,12 +220,13 @@ export function ChatTabV2({
   hostStyle,
   onHostStyleChange,
   onOAuthRequired,
-  chatboxComposerBlocked = false,
-  chatboxComposerBlockedReason,
-  chatboxOptionalInventory,
-  onEnableChatboxOptionalServer,
+  scenarioComposerBlocked = false,
+  scenarioComposerBlockedReason,
+  scenarioOptionalInventory,
+  onEnableScenarioOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
+  renderAssistantTurnActions,
 }: ChatTabProps) {
   const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -319,16 +357,25 @@ export function ChatTabV2({
       ? sortedOrganizations.find((org) => org._id === organizationId)
       : null
   );
-  const hostedChatboxId = hostedContext?.chatboxId;
+  const navigate = useAppNavigate();
+  const hostedScenarioId = hostedContext?.scenarioId;
   const hostedAccessVersion = hostedContext?.accessVersion;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const hostedScenarioSurface = hostedContext?.scenarioSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
     ? null
     : organizationId;
+  // The model picker's "Your providers" footer points at the org whose keys back
+  // this chat, so hosted surfaces (no org page to reach) get no footer.
+  const manageOrgProviders = useOrgModelsHandoff(modelConfigOrganizationId);
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
+    // Scenario surfaces resolve their model from the scenario row
+    // (executionConfig.modelId), and share-link guests aren't members of the
+    // host's project — so the project-scoped config query would throw and crash
+    // the page. Skip it whenever we're inside a scenario.
+    disabled: Boolean(hostedScenarioId),
   });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
@@ -352,14 +399,14 @@ export function ChatTabV2({
   );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedChatboxId
+  const effectiveHostedOAuthTokens = hostedScenarioId
     ? undefined
     : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedChatboxId;
+    !hostedScenarioId;
 
   // Use shared chat session hook
   const {
@@ -372,6 +419,7 @@ export function ChatTabV2({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -394,7 +442,11 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
     startChatWithMessages,
+    detachToLocalFork,
+    consumePersistReceipt,
+    consumeTurnAborted,
     loadChatSession,
+    rewindToMessage,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -427,8 +479,8 @@ export function ChatTabV2({
     // Phase 3: forward the resolved chat-tab host style so direct
     // chat traces persist with `claude`/`chatgpt` rather than
     // defaulting to `'claude'` regardless of user choice. Backend
-    // ingestion ignores it for chatbox flows (those resolve from the
-    // chatbox row), so it's safe to forward unconditionally.
+    // ingestion ignores it for scenario flows (those resolve from the
+    // scenario row), so it's safe to forward unconditionally.
     hostStyle:
       hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
@@ -449,10 +501,15 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
     },
   });
+  useEffect(() => {
+    if (chatSessionId) {
+      useActiveChatSessionStore.getState().setApprovalSetting(chatSessionId, requireToolApproval);
+    }
+  }, [chatSessionId, requireToolApproval]);
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE && !minimalMode && !hostedChatboxId
+    HOSTED_MODE && !minimalMode && !hostedScenarioId
   );
   const {
     session: reactiveHistorySession,
@@ -538,6 +595,25 @@ export function ChatTabV2({
     }
     return map;
   }, [messages]);
+
+  // The same ordinal addressed from the ASSISTANT side — see
+  // `buildAssistantPromptIndex` for why the counting rule is the server's, not
+  // the renderer's.
+  const assistantPromptIndexById = useMemo(
+    () => buildAssistantPromptIndex(messages),
+    [messages]
+  );
+
+  // promptIndex → server-minted turnId. Live turns arrive via `turn_start`
+  // trace events; rehydrated sessions get theirs from the persisted
+  // `turnTraces`. Either way the id is the backend's, never the client's.
+  const turnIdByPromptIndex = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const turn of liveTraceEnvelope?.turns ?? []) {
+      map.set(turn.promptIndex, turn.turnId);
+    }
+    return map;
+  }, [liveTraceEnvelope]);
 
   const hasUnsavedDraft =
     !!input.trim() ||
@@ -643,19 +719,40 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
-      syncResumedVersion(null);
-      if (hasConversationMessages) {
-        startChatWithMessages(cloneUiMessages(messages), {
-          toolRenderOverrides: restoredToolRenderOverrides,
-        });
+
+      if (!hasConversationMessages) {
+        // Nothing to fork — with no transcript there is no snapshot that could
+        // be written back over the old row, so dropping the guard is enough.
+        syncResumedVersion(null);
+        toast.error(toastMessage);
+        return;
       }
-      toast.error(toastMessage);
+
+      // Verified rather than fire-and-forget: the reassuring toast may only be
+      // shown once the fork is confirmed live. `resumedVersion` is cleared by
+      // the fork's own hydration, so it survives a fork that never commits.
+      void detachToLocalFork(cloneUiMessages(messages), {
+        toolRenderOverrides: restoredToolRenderOverrides,
+      })
+        .then((fork) => {
+          toast.error(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+        })
+        .catch((error) => {
+          // `void` silences the linter, not the rejection. The guard teardown
+          // above has already run, so swallowing this would leave the user on a
+          // thread they must not write to with no notice at all.
+          console.error(
+            "[ChatTabV2] Failed to fork the detached thread",
+            error
+          );
+          toast.error(DETACH_FORK_FAILED_MESSAGE);
+        });
     },
     [
       hasConversationMessages,
       messages,
       restoredToolRenderOverrides,
-      startChatWithMessages,
+      detachToLocalFork,
       syncResumedVersion,
       cancelPendingHistorySelection,
     ]
@@ -776,47 +873,6 @@ export function ChatTabV2({
       showHistoryRail,
       syncResumedVersion,
     ]
-  );
-
-  const refreshHistorySessionAfterStream = useCallback(
-    async (
-      resumedThreadSendBaseline: {
-        sessionId: string;
-        version: number;
-      } | null
-    ) => {
-      const maxAttempts = resumedThreadSendBaseline
-        ? RESUMED_THREAD_REFRESH_RETRIES + 1
-        : 2;
-
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        try {
-          const detail = await refreshCurrentHistorySession({
-            markRead: true,
-          });
-
-          if (
-            !resumedThreadSendBaseline ||
-            (detail &&
-              detail._id === resumedThreadSendBaseline.sessionId &&
-              detail.version > resumedThreadSendBaseline.version)
-          ) {
-            return detail;
-          }
-        } catch (error) {
-          if (attempt >= maxAttempts - 1) {
-            throw error;
-          }
-        }
-
-        if (attempt < maxAttempts - 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-        }
-      }
-
-      return null;
-    },
-    [refreshCurrentHistorySession]
   );
 
   useEffect(() => {
@@ -1117,78 +1173,31 @@ export function ChatTabV2({
     }
   }, [selectedServerNames]);
 
-  const previousStatusRef = useRef(status);
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = status;
-    const wasStreaming =
-      previousStatus === "submitted" || previousStatus === "streaming";
-    const isNowStreaming = status === "submitted" || status === "streaming";
-    const hasStartedStream = !wasStreaming && isNowStreaming;
-
-    if (hasStartedStream) {
-      resumedThreadSendBaselineRef.current =
-        showHistoryRail && activeHistorySessionId && resumedVersion !== null
-          ? {
-              sessionId: activeHistorySessionId,
-              version: resumedVersion,
-            }
-          : null;
-      return;
-    }
-
-    if (!wasStreaming) {
-      return;
-    }
-
-    if (status === "error") {
-      resumedThreadSendBaselineRef.current = null;
-      return;
-    }
-
-    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
-    resumedThreadSendBaselineRef.current = null;
-    const hasCompletedStream = status === "ready";
-
-    if (!hasCompletedStream || !showHistoryRail) {
-      return;
-    }
-
-    if (activeHistorySessionId) {
-      void markHistorySessionRead(activeHistorySessionId);
-    }
-
-    const timerId = window.setTimeout(() => {
-      void (async () => {
-        const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline
-        );
-
-        if (
-          resumedThreadSendBaseline &&
-          (!detail ||
-            detail._id !== resumedThreadSendBaseline.sessionId ||
-            detail.version <= resumedThreadSendBaseline.version)
-        ) {
-          detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
-          );
-        }
-      })().catch((error) => {
+  useResumedThreadPersistence({
+    sendBaselineRef: resumedThreadSendBaselineRef,
+    enabled: showHistoryRail,
+    status,
+    activeHistorySessionId,
+    resumedVersion,
+    consumePersistReceipt,
+    consumeTurnAborted,
+    reactiveSessionVersion: reactiveHistorySession?.version,
+    syncResumedVersion,
+    markHistorySessionRead: (sessionId) => {
+      void markHistorySessionRead(sessionId);
+    },
+    refreshAfterStream: () => {
+      void refreshCurrentHistorySession({ markRead: true }).catch((error) => {
         console.error("[ChatTabV2] Failed to refresh chat history", error);
       });
-    }, 250);
-
-    return () => window.clearTimeout(timerId);
-  }, [
-    activeHistorySessionId,
-    detachHistorySession,
-    markHistorySessionRead,
-    refreshHistorySessionAfterStream,
-    resumedVersion,
-    showHistoryRail,
-    status,
-  ]);
+    },
+    onConflict: () => {
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE);
+    },
+    onUnsaved: () => {
+      toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
+    },
+  });
 
   // Check if thread is empty
   const isThreadEmpty = !hasConversationMessages;
@@ -1219,8 +1228,8 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedChatboxId &&
-    !hostedChatboxSurface &&
+    !hostedScenarioId &&
+    !hostedScenarioSurface &&
     pendingDirectVisibility !== "project" &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
@@ -1319,6 +1328,26 @@ export function ChatTabV2({
   }, [traceViewsSupported]);
 
   useEffect(() => {
+    // `selectedModel` is a derived fallback until the persisted id resolves
+    // against `availableModels` — which it can't while an org-managed
+    // provider config is still loading. Mirroring the fallback into storage
+    // here is what wiped the user's own-provider model on every load, so
+    // they landed back on the free tier (and, out of credits, back in the
+    // BYOK hand-off) chat after chat. See BACK2-628.
+    //
+    // This has to gate the multi-model reset below too, not just the
+    // sanitize: that branch also ends in `setSelectedModelIds`, which
+    // persists the lead id (`use-persisted-model.ts:150-159`). And it is the
+    // branch that actually fires here — `multiModelEnabled` is stored under
+    // one global key, so a user who turned compare on in the Playground
+    // arrives on every other surface with it already true while
+    // `canEnableMultiModel` is false. Deferring is safe: the reset is
+    // idempotent and `isSelectedModelResolved` is in the deps, so it runs on
+    // the render after the selection lands.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
@@ -1344,6 +1373,7 @@ export function ChatTabV2({
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,
@@ -1640,6 +1670,9 @@ export function ChatTabV2({
                 message: data.message,
                 schema: data.schema,
                 timestamp: data.timestamp || new Date().toISOString(),
+                // Legacy server→client `elicitation/create`; modern
+                // `input_required` input is handled by `MrtrElicitationHost`.
+                origin: "legacy-request" as const,
                 // Spec: make it clear WHICH server is asking. Local chat can
                 // have many servers connected at once, so an anonymous dialog
                 // is a real ambiguity. No display name exists on this path —
@@ -1710,14 +1743,14 @@ export function ChatTabV2({
   const historyRailStreaming = isStreamingActive;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || chatboxComposerBlocked,
+    composerDisabled: submitBlocked || scenarioComposerBlocked,
   });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
     : DEFAULT_CHAT_COMPOSER_PLACEHOLDER;
-  if (chatboxComposerBlocked && chatboxComposerBlockedReason) {
-    placeholder = chatboxComposerBlockedReason;
+  if (scenarioComposerBlocked && scenarioComposerBlockedReason) {
+    placeholder = scenarioComposerBlockedReason;
   } else if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -1742,6 +1775,11 @@ export function ChatTabV2({
   const canShowTopupCta =
     isConvexAuthenticated &&
     errorMessage?.canTopUp === true &&
+    // Explicit even though the positive test below already excludes it: a
+    // spend-budget refusal must never offer credits, because buying them
+    // does not raise the cap. Stated here so loosening the code check
+    // cannot silently reintroduce a "buy credits" button for it.
+    !isSpendBudgetReachedCode(errorMessage?.code) &&
     errorMessage?.code === "user_rate_limit";
 
   const handleOpenTopupDialog = useCallback(() => {
@@ -1768,19 +1806,167 @@ export function ChatTabV2({
     }
   }, []);
 
-  // Concurrency-throttle retry: re-submit the user's last typed message via
-  // the same source-tracking ref the topup CTA uses. The retry button only
-  // ever surfaces on the concurrency banner (see `onRetry` gate below), so
-  // we don't risk firing this on unrelated retryable errors.
-  const handleRetryConcurrencyMessage = useCallback(() => {
+  // Transient-failure retry: re-submit the user's last typed message via the
+  // same source-tracking ref the topup CTA uses. The retry button only ever
+  // surfaces on failures where resending is the whole fix (see the
+  // `canRetryLastMessage` gate below), so we don't risk firing this on
+  // unrelated retryable errors.
+  const handleRetryLastMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
     sendMessage({ text, metadata: outgoingSenderMetadata });
   }, [sendMessage, outgoingSenderMetadata]);
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
+  // so the original transcript survives in history.
+  //
+  // Readiness is checked BEFORE the branch is minted: a branch that never
+  // sends would leave an empty orphan thread behind.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return false;
+      // A rewind ends in `onReset("fork")`, which wipes the composer: input,
+      // attachments, prompt/skill results, both queues. `handleNewChat` and
+      // `handleSelectThread` ask before doing that; editing has to ask too, or
+      // a typed-but-unsent draft disappears the moment the user clicks the
+      // pencil on an older message.
+      //
+      // Asked BEFORE `ensureThreadReadyForSend` so a declined discard costs no
+      // network round trip. Deliberately no `clearComposerDraft()` here: the
+      // rewind can still be refused below, and `onReset` only fires when one
+      // actually happens — clearing eagerly would wipe the draft for an edit
+      // that never sent.
+      if (!(await ensureDiscardDraftConfirmed())) return false;
+      // Snapshot what this edit is aimed at. Both awaits above yield — the
+      // discard dialog waits on a human, `ensureThreadReadyForSend` on a
+      // network round trip — and the user can pick a different history thread
+      // in either gap. The three detach lines below are unconditional, so
+      // without this they would detach the NEWLY selected thread, which this
+      // edit has nothing to do with.
+      //
+      // Keyed on the SELECTION counter, not on `activeHistorySessionId`:
+      // `refreshCurrentHistorySession` legitimately calls
+      // `setActiveHistorySessionId` as part of the preflight, so comparing the
+      // id would abort every edit on a resumed thread. The counter moves only
+      // on deliberate selection changes (`handleSelectThread`,
+      // `cancelPendingHistorySelection`, and so New Chat through it).
+      const editSelectionId = historySelectionRequestIdRef.current;
+      const threadReady = await ensureThreadReadyForSend();
+      if (!threadReady) return false;
+      if (historySelectionRequestIdRef.current !== editSelectionId)
+        return false;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      // Same exposure as the Playground handler: the branch mint inside
+      // `rewindToMessage` can reject, and `UserMessageRow.submitEdit` calls
+      // this fire-and-forget, so the rejection would go unhandled with the
+      // editor already closed.
+      let outcome: Awaited<ReturnType<typeof rewindToMessage>>;
+      try {
+        outcome = await rewindToMessage({
+          messageId: message.id,
+          text,
+          files: files.length > 0 ? files : undefined,
+          metadata: outgoingSenderMetadata,
+          // Detach from the resumed thread as the branch is minted, not before
+          // the rewind. The teardown has to precede the branch's turn — the
+          // post-stream conflict check captures its baseline the instant that
+          // turn starts, and still attached it would name the ORIGINAL thread,
+          // surfacing the deliberate branch as a phantom "this chat changed
+          // elsewhere" and re-forking into a third session. But running it up
+          // front meant a refusal left the original session stripped of its
+          // concurrency guard, so the next ordinary send overwrote its row
+          // blind. `onBeforeBranch` fires only once the rewind is past every
+          // refusal that leaves the thread untouched.
+          //
+          // These are the same three lines every other deliberate session
+          // change runs (`handleNewChat`, and `detachHistorySession` itself).
+          onBeforeBranch: () => {
+            resumedThreadSendBaselineRef.current = null;
+            cancelPendingHistorySelection();
+            syncResumedVersion(null);
+          },
+        });
+      } catch (error) {
+        console.error("[ChatTabV2] Failed to rewind to message", error);
+        toast.error("Couldn't apply that edit. Try again.");
+        return false;
+      }
+      // `null` means the rewind was refused — a turn started under the editor
+      // in the gap after `ensureThreadReadyForSend`'s network round trip, or
+      // the message is gone. Nothing branched, so say nothing — and don't
+      // touch bookkeeping either: `lastSentUserMessageRef` is shared with
+      // `handleRetryLastMessage` and `handleOpenTopupDialog`, both of
+      // which resend whatever text currently sits in it, and `edit_message`
+      // has no server twin to reconcile a phantom count against. Stomping
+      // either one here for an edit that never sent would corrupt state for
+      // an unrelated later action.
+      if (!outcome) return false;
+      track("edit_message", {
+        location: "chat_tab",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
+      lastSentUserMessageRef.current = text;
+      // Nothing is announced. A rewind forks the session so the original
+      // transcript survives in the database, but that is deliberately invisible
+      // — same as Claude Code and Codex, where editing a message just edits it.
+      // This used to raise a "New branch created" toast with an "Open original"
+      // action; both were removed on the task author's call.
+      return true;
+    },
+    [
+      sendBlocked,
+      ensureDiscardDraftConfirmed,
+      ensureThreadReadyForSend,
+      cancelPendingHistorySelection,
+      syncResumedVersion,
+      rewindToMessage,
+      outgoingSenderMetadata,
+      selectedModel,
+    ]
+  );
+
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
     errorMessage?.limitKind === "concurrency";
+
+  // An upstream hop returning an error page (a gateway 502 in front of
+  // MCPJam) is transient, and resending is the entire fix. Without this the
+  // banner offered `Reset chat` alone, which on the scenario surfaces throws
+  // away the session the tester's whole run exists to collect.
+  //
+  // Gated on the formatter's own code, not on `isRetryable`: the server sets
+  // that flag on failures a blind resend cannot help with.
+  const canRetryLastMessage =
+    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+  const errorRetryHandler = canRetryLastMessage
+    ? handleRetryLastMessage
+    : undefined;
+
+  // A pinned protocol version the server doesn't offer is the opposite of the
+  // case above: nothing about resending changes the outcome, and the fix is one
+  // dropdown away. Send the user there instead of leaving them to find it.
+  //
+  // The host id comes from the turn's own hosted context, so the link lands on
+  // the client that actually holds the pin. It is absent on scenario and
+  // environment surfaces, where `buildHostFocusTabPath` degrades to the clients
+  // list rather than building a path the `:hostId` route would reject.
+  const changeProtocolVersionHandler =
+    errorMessage?.code === PROTOCOL_VERSION_PIN_CODE
+      ? () => {
+          track("change_protocol_version_clicked", {
+            location: "chat_tab",
+            has_host_id: Boolean(hostedContext?.hostId),
+          });
+          navigate(buildHostFocusTabPath(hostedContext?.hostId, "protocol"));
+        }
+      : undefined;
 
   useCreditTopupReturnFlow({ chatSessionId, sendMessage });
 
@@ -1795,8 +1981,8 @@ export function ChatTabV2({
   }, [baseResetChat, resetMultiModelSessions]);
 
   const handleSingleModelChange = useCallback(
-    (model: ModelDefinition) => {
-      setSelectedModel(model);
+    (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
+      setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
@@ -1809,7 +1995,8 @@ export function ChatTabV2({
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
-        setSelectedModel(leadModel);
+        // Straight from the multi-model menu, so the lead counts as a pick.
+        setSelectedModel(leadModel, { userInitiated: true });
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
@@ -2002,7 +2189,7 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { location: "chat_tab" });
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
@@ -2041,9 +2228,20 @@ export function ChatTabV2({
     setFileAttachments([]);
   };
 
+  /**
+   * What Up/Down walk through in the composer (BB-183): this thread's own user
+   * messages, newest first. Derived from what is already on screen — no store,
+   * no query, and it follows a session restored from the history rail for free.
+   */
+  const chatInputHistory = useMemo(
+    () => collectInputHistory(messages),
+    [messages],
+  );
+
   const sharedChatInputProps = {
     value: input,
     onChange: setInput,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
@@ -2063,7 +2261,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || chatboxComposerBlocked,
+    submitDisabled: submitBlocked || scenarioComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -2096,22 +2294,28 @@ export function ChatTabV2({
           ...(effectiveHostedSelectedServerIds.length > 0
             ? { selectedServerIds: effectiveHostedSelectedServerIds }
             : {}),
-          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
           ...(hostedAccessVersion !== undefined
             ? { accessVersion: hostedAccessVersion }
             : {}),
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
-    chatboxAttachableServers:
-      chatboxOptionalInventory && chatboxOptionalInventory.length > 0
-        ? chatboxOptionalInventory
+    scenarioAttachableServers:
+      scenarioOptionalInventory && scenarioOptionalInventory.length > 0
+        ? scenarioOptionalInventory
         : undefined,
-    onAttachChatboxServer: onEnableChatboxOptionalServer,
+    onAttachScenarioServer: onEnableScenarioOptionalServer,
+    onManageOrgProviders: manageOrgProviders,
   };
 
-  const showStarterPrompts =
-    !showDisabledCallout && !effectiveHasMessages && !isAuthLoading;
+  // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
+  const showStarterPrompts = shouldShowStarterPrompts({
+    hasMessages: effectiveHasMessages,
+    isAuthLoading,
+    showDisabledCallout,
+    hostedScenarioId,
+  });
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -2237,14 +2441,14 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
-                            onRetry={
-                              isConcurrencyThrottle
-                                ? handleRetryConcurrencyMessage
-                                : undefined
+                            onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
                             }
                             onResetChat={handleResetAllChats}
                           />
@@ -2507,14 +2711,14 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                               onTopUp={handleOpenTopupDialog}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
-                              onRetry={
-                                isConcurrencyThrottle
-                                  ? handleRetryConcurrencyMessage
-                                  : undefined
+                              onRetry={errorRetryHandler}
+                              onChangeProtocolVersion={
+                                changeProtocolVersionHandler
                               }
                               onResetChat={baseResetChat}
                             />
@@ -2594,6 +2798,46 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          renderAssistantTurnFooter={
+                            renderAssistantTurnActions && chatSessionId
+                              ? (message) => {
+                                  const promptIndex =
+                                    assistantPromptIndexById.get(message.id);
+                                  if (promptIndex === undefined) return null;
+                                  return renderAssistantTurnActions({
+                                    message,
+                                    chatSessionId,
+                                    promptIndex,
+                                    turnId:
+                                      turnIdByPromptIndex.get(promptIndex) ??
+                                      null,
+                                  });
+                                }
+                              : undefined
+                          }
+                          // Also gated on `showHistoryRail`, not just compare
+                          // mode. `ChatTabV2` is the published scenario runtime
+                          // too (`ScenarioChatPage` renders it with `minimalMode`
+                          // and a `hostedContext.scenarioId`), and it ships in
+                          // non-hosted builds (desktop / `npx` inspector) —
+                          // surfaces where `showHistoryRail` is false because
+                          // there is no history UI at all.
+                          //
+                          // Editing BRANCHES: it seeds a fresh session with the
+                          // prefix and leaves the original behind. Without
+                          // persistence and a history surface to reach it
+                          // through, branching simply DISCARDS the original
+                          // thread with no way back — worse than the in-place
+                          // truncation this feature replaced.
+                          //
+                          // Do not re-enable this for those surfaces without
+                          // first solving the way back.
+                          onEditUserMessage={
+                            isMultiModelMode || !showHistoryRail
+                              ? undefined
+                              : handleEditUserMessage
+                          }
+                          editDisabled={sendBlocked}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                         />
@@ -2615,14 +2859,14 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
-                            onRetry={
-                              isConcurrencyThrottle
-                                ? handleRetryConcurrencyMessage
-                                : undefined
+                            onRetry={errorRetryHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
                             }
                             onResetChat={baseResetChat}
                           />
@@ -2796,6 +3040,14 @@ export function ChatTabV2({
               event={urlElicitationRequired[0] ?? null}
               onDismiss={dismissUrlElicitationRequired}
             />
+            {/* Modern MRTR (`input_required`) input rail for local chat: a tool
+                the agent calls can return `input_required`; the SDK driver
+                collects rounds through this shared dialog and retries. */}
+            <MrtrElicitationHost />
+            {/* Hosted MRTR (§12.5): the durable-continuation rail. Distinct
+                from the local host above — different transport, same dialogs;
+                only one of the two can ever have a round in a given mode. */}
+            <HostedMrtrHost />
           </div>
         </ResizablePanel>
 
@@ -2869,6 +3121,7 @@ export function ChatTabV2({
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
           organizationId={organizationId}
+          organizationName={sortedOrganizations.find((org) => org._id === organizationId)?.name}
           source="chat_banner"
         />
       )}

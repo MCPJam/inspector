@@ -29,10 +29,17 @@
  *                           misconfigured remote URL can't forward in a loop.
  */
 import { Hono } from "hono";
+import {
+  HOSTED_MODE,
+  LOCAL_BROWSER_ENABLED,
+  LOCAL_HARNESS_ENABLED,
+} from "../../config.js";
 import { z } from "zod";
 import { executionScopeSchema } from "../../utils/execution-scope.js";
 import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
 import { resolveComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
+import { isLocalComputerEngineAvailable } from "../../utils/computers/local-machine.js";
+import { getLocalTerminalAvailability } from "../../utils/computers/local-pty.js";
 import {
   MAX_COMMAND_TIMEOUT_S,
   e2bRunner,
@@ -66,7 +73,76 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
       resolveComputersLocalConfigured(),
       resolveComputersRemoteDataPlaneUrl(),
     ]);
-    return c.json({ localConfigured, remoteDataPlaneUrl });
+    const localEngine = isLocalComputerEngineAvailable();
+    // Probed once per process (node-pty is an optional native dep — see
+    // local-pty.ts). False here is a clean degrade: chat bash still works, the
+    // client just renders the terminal-off state.
+    const localTerminal = await getLocalTerminalAvailability();
+    // The capability SPLIT is the point of this shape: `remoteDataPlaneUrl`
+    // delegates only PERSONAL-computer exec/terminal, so a remote-only
+    // inspector can drive a personal Computer yet cannot execute one
+    // disposable-sandbox command. Cloud-only surfaces (swarms/evals/user
+    // testing) preflight on `ephemeralCloudAvailable`; a single "cloud
+    // available" bit would lie to exactly those surfaces.
+    const personalCloudAvailable = localConfigured || remoteDataPlaneUrl !== null;
+    return c.json({
+      // Legacy pair, verbatim — older clients read only these.
+      localConfigured,
+      remoteDataPlaneUrl,
+      engines: {
+        local: {
+          available: localEngine.available,
+          terminalAvailable: localTerminal.available,
+          // This endpoint is OPEN (no bearer), so only the tilde display
+          // root ever leaves the server — never an absolute home path or OS
+          // username. The client renders `${workspaceDisplayRoot}/<projectId>`;
+          // the server independently validates and resolves the real path at
+          // exec time.
+          workspaceDisplayRoot: localEngine.available
+            ? "~/.mcpjam/computer"
+            : null,
+          // Whether this server would let the agent drive a browser here. A
+          // capability bit, deliberately NOT whether Chromium is downloaded —
+          // that is machine state and lives behind the authenticated
+          // `/api/mcp/computers/local-browser/status`, alongside the install
+          // that acts on it.
+          browserAvailable: LOCAL_BROWSER_ENABLED,
+          ...(localEngine.available ? {} : { reason: localEngine.reason }),
+        },
+        cloud: { available: personalCloudAvailable },
+      },
+      capabilities: {
+        browserConsent: true,
+        personalCloudAvailable,
+        ephemeralCloudAvailable: localConfigured,
+      },
+      // Harness EXECUTION targets, which are a different axis from the
+      // computer engines above: an engine decides where a bash tool call runs,
+      // a target decides where the whole vendor agent runs. Reported here so a
+      // client can render the selector without a second round trip.
+      //
+      // This endpoint is OPEN (no bearer), so the answer is deliberately
+      // coarse: whether the capability exists on this server at all, and
+      // nothing about this machine. The runtime's digest, the machine id, the
+      // key fingerprint and the workspace display root all live behind the
+      // authenticated `/api/mcp/local-harness/availability`.
+      harnessTargets: {
+        localNative: {
+          // The server-side capability only. A flag-gated client still hides
+          // everything, and the authenticated route is what decides whether a
+          // pack is installed and a turn can actually run.
+          serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+        },
+      },
+      // Honest tri-state: `null` when NO engine can serve this inspector —
+      // a "cloud" default with every availability flag false would tell the
+      // client to prefer an engine that does not exist.
+      defaultEngine: localEngine.available
+        ? "local"
+        : personalCloudAvailable
+          ? "cloud"
+          : null,
+    });
   });
 
   computers.post("/exec", async (c) =>

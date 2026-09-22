@@ -13,8 +13,8 @@ import {
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 import {
-  getHostedChatboxAccessVersion,
-  getHostedChatboxId,
+  getHostedScenarioAccessVersion,
+  getHostedScenarioId,
   getHostedOAuthToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
@@ -66,14 +66,14 @@ function buildHostedValidationContext(
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
 
-  const chatboxId = getHostedChatboxId();
+  const scenarioId = getHostedScenarioId();
   return {
     projectId: options.projectId,
     serverId,
     ...(options.serverName ? { serverName: options.serverName } : {}),
-    ...(chatboxId ? { accessScope: "chat_v2" } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId ? { accessVersion: getHostedChatboxAccessVersion() } : {}),
+    ...(scenarioId ? { accessScope: "chat_v2" } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId ? { accessVersion: getHostedScenarioAccessVersion() } : {}),
     // Surface the resolver-path `mcpProfile.initialize.*` pins to the
     // hosted validate request. Without this the hosted branch dropped
     // them silently: `connectionDefaults` was computed by
@@ -99,6 +99,27 @@ function buildHostedValidationContext(
     // and always initialized via the legacy upstream Client.
     ...(options.connectionDefaults?.mcpProtocolVersion
       ? { mcpProtocolVersion: options.connectionDefaults.mcpProtocolVersion }
+      : {}),
+    // SEP-2243 mirroring knob — same plumb-or-drop-silently hazard as the
+    // three above. Only `false` is ever set (see `ConnectionDefaults`).
+    ...(options.connectionDefaults?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
+    // Sibling conformance knobs — same plumb-or-drop-silently hazard.
+    ...(options.connectionDefaults?.firstPageOnly === true
+      ? { firstPageOnly: true }
+      : {}),
+    ...(options.connectionDefaults?.supportsMrtr === false
+      ? { supportsMrtr: false }
+      : {}),
+    ...(options.connectionDefaults?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(options.connectionDefaults?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
+    ...(options.connectionDefaults?.toolCallCancellation
+      ? { toolCallCancellation: options.connectionDefaults.toolCallCancellation }
       : {}),
   };
 }
@@ -388,7 +409,10 @@ export async function getInitializationInfo(serverId: string) {
 
 export async function setServerLoggingLevel(
   serverId: string,
-  level: LoggingLevel,
+  // `null` opts out of the modern per-request mechanism (absent `_meta` key
+  // on the wire). Not meaningful for the legacy `logging/setLevel`
+  // mechanism — the server route rejects it there.
+  level: LoggingLevel | null,
 ) {
   if (HOSTED_MODE) {
     void serverId;

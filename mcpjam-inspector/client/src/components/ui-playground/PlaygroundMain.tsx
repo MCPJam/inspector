@@ -1,3 +1,6 @@
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
  * PlaygroundMain
  *
@@ -10,6 +13,7 @@
  * Device/display mode handling is delegated to the Thread component
  * which manages PiP/fullscreen at the widget level.
  */
+import { useConversationTargetRestoration } from "@/hooks/use-conversation-target-restoration";
 
 import {
   FormEvent,
@@ -21,11 +25,12 @@ import {
   useRef,
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Braces, Loader2, Trash2 } from "lucide-react";
+import { Braces, Loader2, RotateCcw } from "lucide-react";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
 } from "@/components/elicitation/ElicitationRequestDialog";
+import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,10 +49,13 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
   formatErrorMessage,
+  buildMcpPromptMessages,
+  buildSkillToolMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
@@ -55,13 +63,22 @@ import {
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
-import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
+import {
+  MultiModelStarterPromptsBlock,
+  MultiModelStartersEmptyLayout,
+} from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
+  DETACH_FORK_FAILED_MESSAGE,
   type ChatSessionResetReason,
   useChatSession,
 } from "@/hooks/use-chat-session";
+import {
+  RESUMED_THREAD_CONFLICT_MESSAGE,
+  RESUMED_THREAD_UNSAVED_MESSAGE,
+  useResumedThreadPersistence,
+} from "@/hooks/use-resumed-thread-persistence";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -83,22 +100,25 @@ import {
 } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  getChatboxChatBackground,
-  getChatboxHostFamily,
-  getChatboxShellStyle,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  getScenarioHostFamily,
+  getScenarioHostLogo,
+  getScenarioShellStyle,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { track } from "@/lib/analytics";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
   useHost,
   useHostList,
@@ -107,19 +127,65 @@ import {
   type HostDetail,
 } from "@/hooks/useClients";
 import {
-  DEFAULT_SEEDED_HOST_MODEL_ID,
+  cloneHostTemplateInput,
   emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
+  DEFAULT_SEEDED_HOST_MODEL_ID,
 } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
+import { LocalHarnessTrustDialog } from "@/components/harness/LocalHarnessTrustDialog";
+import {
+  LocalHarnessComposerNotice,
+  LocalHarnessReadyNotice,
+} from "@/components/harness/LocalHarnessComposerNotice";
+import type { ExecutionTargetChipData } from "@/components/chat-v2/chat-input/execution-target-chip";
+import { isLocalHarnessScope } from "@/lib/local-harness-scope";
+import { HOSTED_MODE } from "@/lib/config";
+import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
+import { ConversationTargetNotice } from "@/components/playground/ConversationTargetNotice";
+import {
+  describeConversationTargetDisclosure,
+  readConversationExecutionTarget,
+  type ComposerExecutionTarget,
+  type ConversationExecutionTarget,
+} from "@/lib/conversation-execution-target";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useBrowserTools } from "@/hooks/useBrowserTools";
+import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
+import {
+  buildComputerAttachmentNote,
+  isComputerAttachmentUploadActive,
+} from "@/lib/computer-attachments";
+import {
+  getBillingErrorMessage,
+  isComputerStartLimitError,
+} from "@/lib/billing-entitlements";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
-import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
+import { clientDisplayName } from "@/lib/client-display-name";
+import {
+  loadSelectedHostIds,
+  replaceLeadHostId,
+  saveSelectedHostIds,
+} from "@/lib/selected-host-storage";
+import {
+  loadPreviewedHostId,
+  savePreviewedHostId,
+} from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -133,13 +199,16 @@ import {
   extractHostTheme,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
-import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  POST_CONNECT_GUIDE_COPY,
+  PostConnectGuide,
+} from "@/components/ui-playground/PostConnectGuide";
+import {
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
@@ -177,6 +246,10 @@ import {
   getCachedChatHistoryDetail,
   prefetchChatHistorySession,
 } from "@/components/chat-v2/history/chat-history-prefetch";
+import {
+  usePlaygroundConversationUrl,
+  type ConversationRestoreOutcome,
+} from "@/components/ui-playground/use-playground-conversation-url";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import {
   resolveSelectablePlaygroundModel,
@@ -196,11 +269,27 @@ import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
-const RESUMED_THREAD_REFRESH_RETRIES = 2;
+
+// Backoff for retrying a failed seed. Deleting the per-project "seeded"
+// marker only PERMITS a retry — nothing in the seed effect's dependency list
+// changes when a create rejects, so without an explicit nudge the effect
+// never runs again and the guest sits on an empty playground for the rest of
+// the session. Bounded: a backend that's down stays down, and three spaced
+// attempts is the difference between "recovers from a blip" and "hammers a
+// struggling server".
+const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
+
+// PUR-11: the 3 catalog templates a first-run guest's Playground compare
+// lineup is seeded from, lead first. See the "Seed backstop" effect below.
+// Keep every id here flag-free: guests never match a rollout gate, and the
+// seed refuses a partial lineup (falling back to one blank host), so a gated
+// template like "claude-code" would both leak the gated client to everyone
+// and have no working way to be filtered out.
+const PLAYGROUND_SEED_TEMPLATE_IDS = ["claude", "chatgpt", "cursor"] as const;
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
-  widgetSnapshots?: ChatHistoryWidgetSnapshot[]
+  widgetSnapshots?: ChatHistoryWidgetSnapshot[],
 ) {
   const snapshotSignature = (widgetSnapshots ?? [])
     .map((snapshot) =>
@@ -210,7 +299,7 @@ function buildHistoryContentSignature(
         snapshot.resourceUri ?? "",
         snapshot.widgetHtmlUrl ?? "",
         snapshot.toolOutputUrl ?? "",
-      ].join(":")
+      ].join(":"),
     )
     .sort()
     .join("|");
@@ -232,7 +321,7 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundCompareThemeScopeProps {
   children: ReactNode;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   chatUiOverride: ChatUiOverride | undefined;
   effectiveThreadTheme: ThreadThemeMode;
@@ -248,14 +337,16 @@ function PlaygroundCompareThemeScope({
   hostShellStyle,
 }: PlaygroundCompareThemeScopeProps) {
   return (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
-        <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-          <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+    <ScenarioHostStyleProvider value={hostStyle}>
+      <ScenarioHostCapabilitiesOverrideProvider
+        value={hostCapabilitiesOverride}
+      >
+        <ScenarioChatUiOverrideProvider value={chatUiOverride}>
+          <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             <div
               className={cn(
-                "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
-                effectiveThreadTheme === "dark" && "dark"
+                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                effectiveThreadTheme === "dark" && "dark",
               )}
               data-testid="playground-compare-shell"
               data-host-style={hostStyle}
@@ -264,10 +355,10 @@ function PlaygroundCompareThemeScope({
             >
               {children}
             </div>
-          </ChatboxHostThemeProvider>
-        </ChatboxChatUiOverrideProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioChatUiOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
+    </ScenarioHostStyleProvider>
   );
 }
 
@@ -275,11 +366,11 @@ interface PlaygroundMainProps {
   activeProjectId?: string | null;
   serverName: string;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   onSaveHostContext?: (
     projectId: string,
-    hostContext: ProjectHostContextDraft
+    hostContext: ProjectHostContextDraft,
   ) => Promise<void>;
   enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
@@ -317,6 +408,8 @@ interface PlaygroundMainProps {
   // View-mode controls
   disableChatInput?: boolean;
   hideInlineEdit?: boolean;
+  /** Suppresses the per-user-message edit/branch affordance. */
+  hideMessageEdit?: boolean;
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
@@ -325,7 +418,15 @@ interface PlaygroundMainProps {
   /** When true, Send / Enter are blocked until the playground server is connected. */
   blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
+  /** Legacy #1689 NUX branch, pinned `false` in production — see below. */
   showPostConnectGuide?: boolean;
+  /**
+   * Swaps the welcome hero's heading for the post-connect guide copy, so the
+   * first-run user sees the MCPJam logo and the Excalidraw nudge at once.
+   * Unlike `showPostConnectGuide` this keeps the rest of the composer NUX
+   * (typewriter, send hint, model/host selectors) intact.
+   */
+  showPostConnectGuideCopy?: boolean;
   onFirstMessageSent?: () => void;
   /**
    * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
@@ -384,6 +485,13 @@ interface PlaygroundMainProps {
    * here from the live messages (toolCallId → owning user-turn ordinal).
    */
   recorder?: RecorderProps;
+  /**
+   * Mirror the active conversation into `?conversation=<chatSessionId>` and
+   * reopen it on load. Opt-in because only the routed Playground owns the URL —
+   * the eval preview embeds this same surface in a docked panel, where writing
+   * the page's query string would be a side effect on someone else's route.
+   */
+  syncConversationToUrl?: boolean;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -463,12 +571,14 @@ export function PlaygroundMain({
   onTimeZoneChange: _onTimeZoneChange,
   disableChatInput = false,
   hideInlineEdit = false,
+  hideMessageEdit = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
   blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
+  showPostConnectGuideCopy = false,
   onFirstMessageSent,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
@@ -480,6 +590,7 @@ export function PlaygroundMain({
   onStreamingChange,
   suppressHistoryConflictToast,
   recorder,
+  syncConversationToUrl = false,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
@@ -503,6 +614,25 @@ export function PlaygroundMain({
   // every send. Compare gates key off this flag so the layout only steps
   // aside for genuine replay.
   const [viewingHistoryReplay, setViewingHistoryReplay] = useState(false);
+  /**
+   * The execution target the OPEN persisted conversation actually recorded,
+   * kept beside the conversation it came from.
+   *
+   * The host and environment controls are ambient per-project browser state,
+   * so a restored conversation renders under the viewer's current selection.
+   * That is only a problem when it goes UNSAID — this is what lets the composer
+   * say it (see `ConversationTargetNotice`) and what gates a reply until the
+   * user has deliberately accepted the target it will actually run on.
+   *
+   * `acknowledged` is per conversation and survives a reactive refresh of the
+   * same one; it is dropped wholesale when the conversation is (New Chat,
+   * detach, a rewind branch) because the next one is a different question.
+   */
+  const [restoredConversation, setRestoredConversation] = useState<{
+    chatSessionId: string;
+    target: ConversationExecutionTarget;
+    acknowledged: boolean;
+  } | null>(null);
   const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
     string | null
   >(null);
@@ -520,7 +650,21 @@ export function PlaygroundMain({
   const historySelectionRequestIdRef = useRef(0);
   const activeHistorySessionIdRef = useRef<string | null>(null);
   const reactiveHistoryLoadRequestIdRef = useRef(0);
+  // Model from a restored conversation that the catalog didn't know yet. Kept
+  // WITH its session id: the catalog can arrive after the user has moved to a
+  // different thread, and applying it then would retag their new thread with
+  // the old one's model.
+  const pendingRestoredModelRef = useRef<{
+    chatSessionId: string;
+    modelId: string;
+  } | null>(null);
+  // Set by `usePlaygroundConversationUrl` below; called from the chat hook's
+  // `onReset` above it, which is why this is a ref rather than the callback.
+  const clearConversationUrlRef = useRef<() => void>(() => {});
   const appliedHistoryContentSignatureRef = useRef<string | null>(null);
+  // Assigned during render from `needsConversationTargetAck` below; read by the
+  // send paths, which are declared above it.
+  const conversationSendBlockedRef = useRef(false);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
@@ -541,7 +685,7 @@ export function PlaygroundMain({
   }, []);
 
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
-    []
+    [],
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
@@ -585,6 +729,22 @@ export function PlaygroundMain({
     Record<string, { version: number; messages: UIMessage[] }>
   >({});
   const compareTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  /**
+   * Prompts sent from the composer WHILE IN COMPARE MODE, oldest first.
+   *
+   * Compare sends never reach root `messages`: they are broadcast to each
+   * card's own session, whose transcript lives in `compareTranscriptsRef`
+   * (a ref, so cards re-render without the parent) and is only replayed into
+   * the single-pane thread when compare ends. So the conversation — this
+   * feature's whole history source — has a hole in it for exactly the mode
+   * people iterate hardest in.
+   *
+   * State, not a ref, because the composer's history has to re-derive when it
+   * grows. Cleared in `clearMultiModelUiState`, which runs at the same
+   * transitions that hand the lead transcript back to the thread, so the two
+   * sources never both hold the same prompt.
+   */
+  const [compareSentPrompts, setCompareSentPrompts] = useState<string[]>([]);
   // Three-state compare mode tracked across renders so transition effects
   // can tell "off → multi-host" from "multi-model → multi-host" (the
   // latter needs cross-mode transcript handoff). Refs are mode-neutral
@@ -631,7 +791,7 @@ export function PlaygroundMain({
     const propsMulti = playgroundServerSelectorProps?.selectedMultipleServers;
     if (Array.isArray(propsMulti) && propsMulti.length > 0) {
       return propsMulti.filter(
-        (name) => servers[name]?.connectionStatus === "connected"
+        (name) => servers[name]?.connectionStatus === "connected",
       );
     }
     return [];
@@ -647,7 +807,7 @@ export function PlaygroundMain({
   }, [multiSelectedServerNames, serverName, servers]);
 
   const serverConnected = Boolean(
-    serverName && servers[serverName]?.connectionStatus === "connected"
+    serverName && servers[serverName]?.connectionStatus === "connected",
   );
 
   const handlePlaygroundServerToggle = useCallback(
@@ -657,16 +817,64 @@ export function PlaygroundMain({
       // of tools, and the docked tools pane aggregates across them.
       playgroundServerSelectorProps?.onMultiServerToggle?.(name);
     },
-    [playgroundServerSelectorProps]
+    [playgroundServerSelectorProps],
   );
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+
+  // Resolved Local⇄Cloud engine for this project's personal computer. Passed
+  // into useChatSession so a direct turn runs this host's bash on the local
+  // machine when the user has selected + consented to "This machine". The
+  // config fetch lives here (the surface that uses it), not in the central
+  // chat hook. Hosted mode / no local engine ⇒ cloud, and the turn sends
+  // nothing extra.
+  const playgroundComputerEngine = useComputerEngine(convexProjectId);
+  const playgroundBrowserEngine = useBrowserEngine(convexProjectId);
+  const personalBrowserEngineOption = useMemo(
+    () => ({
+      engine: playgroundBrowserEngine.engine,
+      consentToken: playgroundBrowserEngine.localAvailable
+        ? playgroundBrowserEngine.consent.token
+        : null,
+    }),
+    [
+      playgroundBrowserEngine.engine,
+      playgroundBrowserEngine.localAvailable,
+      playgroundBrowserEngine.consent.token,
+    ],
+  );
+  // The resolved engine passed to every chat session on this tab — the root
+  // and each comparison column — so "This machine" runs bash consistently
+  // across model/host comparison, not just the primary session.
+  const personalComputerEngineOption = useMemo(
+    () => ({
+      engine: playgroundComputerEngine.engine,
+      consentToken: playgroundComputerEngine.consent.token,
+    }),
+    [playgroundComputerEngine.engine, playgroundComputerEngine.consent.token],
+  );
+
+  // COMP-14: when the previewed host attaches a personal computer, composer
+  // attachments are ALSO uploaded into the sandbox (reserve → mint → upload,
+  // the same primitives the Shell uses) and the outgoing message carries a
+  // system-visible note with the sandbox paths so the model's bash tool can
+  // reach them. Signed-in only — guests keep today's inline-only attachments
+  // (the backend rejects guest computer reservations for host-bound previews).
+  // The `computer` gate itself lives below, once the previewed host resolves.
+  const computersEnabled = useComputersEnabled();
+  const computerAttachmentUpload = useComputerAttachmentUpload({
+    projectId: convexProjectId,
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const attachmentUploadInFlightRef = useRef(false);
+  const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
-    organizationId: activeProject?.organizationId ?? null,
+    organizationId: projectOrganizationId,
   });
+  const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -679,16 +887,16 @@ export function PlaygroundMain({
       selectedServers
         .map((name) => serversByName.get(name))
         .filter((serverId): serverId is string => !!serverId),
-    [selectedServers, serversByName]
+    [selectedServers, serversByName],
   );
   const hostedOAuthTokens = useMemo(
     () =>
       buildOAuthTokensByServerId(
         selectedServers,
         (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
       ),
-    [selectedServers, serversByName, appState.servers]
+    [selectedServers, serversByName, appState.servers],
   );
 
   // Mirror the previewed host's chat-execution fields (system prompt,
@@ -710,27 +918,195 @@ export function PlaygroundMain({
   // silently disabled the reseed in authed projects because the writer
   // wrote under a different storage scope.
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
-    convexProjectId ?? activeProjectId
+    convexProjectId ?? activeProjectId,
   );
-  const { host: previewedHost } = useHost({
+  // Same storage scope as `usePersistedHost` / `usePreviewedHostId` below.
+  // Hoisted above `useChatSession` because the environment target has to be in
+  // the hosted context before the first transport body is built.
+  const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
+  // Project Environments (Phase 2). Flag-gated and fail-closed inside the hook;
+  // outside environment mode every field below is inert and the Playground
+  // behaves exactly as it does today.
+  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId);
+  const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Whether this turn may use the tools of the page open in the WebMCP tab.
+  // Derived from session liveness: a closed status leaves the last tool
+  // snapshot in place, and advertising a dead browser's tools to a model is
+  // worse than showing none.
+  const webmcpPageToolsEnabled = useWebmcpInspectorStore((state) =>
+    state.pageToolsLive(),
+  );
+  const { host: previewedHost, isLoading: previewedHostLoading } = useHost({
     isAuthenticated: isConvexAuthenticated,
+    hostId: previewedHostId,
+  });
+  // `shouldQueryProjectId`, not a bare truthiness check — the same guard the
+  // rest of the Convex-reading hooks use. `convexProjectId` is a shared project
+  // id today, but a local/placeholder id reaching `v.id("projects")` throws
+  // before the handler and cannot be caught downstream.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as never,
+    isConvexAuthenticated && shouldQueryProjectId(convexProjectId)
+      ? ({ projectId: convexProjectId } as never)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+  // Match the Tools and Browser rails: no explicit selection means the
+  // project default. An explicit host still loading must not inherit another
+  // host's capabilities, and an explicit empty list must stay empty.
+  const effectiveBuiltInToolIds = useBrowserToolIds(
+    previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
+    playgroundBrowserEngine.engine,
+    { projectId: convexProjectId, hostId: previewedHostId },
+  );
+  // A newly selected host is unknown for one render while its config loads.
+  // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
+  // opaque harness sessions cannot be safely rewound. Ordinary model hosts get
+  // editing back as soon as their config resolves.
+  const previewedHostConfigUnresolved =
+    previewedHostId !== null && previewedHost?.hostId !== previewedHostId;
+  // The agent browser's tool definitions, for the Raw request preview. The
+  // Tools rail resolves the same thing for its own list; both are reads of one
+  // static per-session cache, and sharing a single hook instance across two
+  // distant trees would mean threading it through the whole playground.
+  const playgroundBrowserTools = useBrowserTools({
+    projectId: convexProjectId,
     hostId: previewedHostId,
   });
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
         previewedHost?.config?.mcpToolResultImageRendering,
-        previewedHost?.config?.modelVisibleMcpToolResults
+        previewedHost?.config?.modelVisibleMcpToolResults,
       ),
     [
       previewedHost?.config?.mcpToolResultImageRendering,
       previewedHost?.config?.modelVisibleMcpToolResults,
-    ]
+    ],
   );
   // Native built-in tools for the previewed harness (if any) — fed into the Raw
   // tab so a harness host's empty `tools` is annotated rather than confusing.
-  const { tools: harnessBuiltinTools } =
+  // `harnessId` is non-null exactly when this chat executes inside a harness
+  // runtime (Claude Code, Codex), which is what gates the edit affordance below.
+  const { tools: harnessBuiltinTools, harnessId: previewedHarnessId } =
     useHarnessBuiltinTools(previewedHostId);
+
+  // Hoisted above the local-harness controller below, which needs the acting
+  // user: an approval captured by one human does not describe what would
+  // happen for another. Unconditional and cheap (it skips when signed out), so
+  // reading it earlier changes nothing about who asks for it.
+  const currentUserForSender = useQuery(
+    "users:getCurrentUser" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as { _id?: string } | undefined;
+
+  // ── Local Claude Code execution ──────────────────────────────────────────
+  //
+  // Owned HERE, beside `useComputerEngine`, and passed down as an option — the
+  // same shape and the same reason: the central chat hook must not run an
+  // availability fetch, an install poll and a consent lifecycle, because every
+  // chat surface in the app mounts it.
+  //
+  // The scope predicate is the shared one, so the chip, this gate and the
+  // transport cannot drift into disagreeing about whether a send is even the
+  // kind of send local execution applies to. `previewedHarnessId` is what the
+  // composer is PREVIEWING; the transport re-derives from the host that
+  // actually sends.
+  const localHarnessInScope = isLocalHarnessScope({
+    harnessId: previewedHarnessId,
+    hostedMode: HOSTED_MODE,
+    environmentId: isEnvironmentMode
+      ? playgroundEnvironment.environmentId ?? null
+      : null,
+    requiresWebChatApi: isEnvironmentMode,
+    // A shared transcript and a replayed one are both somebody else's turn, or
+    // an old one being re-read. Neither is the attended member session a
+    // filesystem grant is bound to, so neither may offer local execution.
+    sharedRun: isSharedSession || viewingHistoryReplay,
+  });
+  // Identifies WHAT an approval was captured against, so switching host or
+  // surface invalidates it rather than carrying a click across.
+  const localHarnessScopeKey = `${previewedHostId ?? "no-host"}:${
+    previewedHarnessId ?? "no-harness"
+  }`;
+  const localHarness = useLocalHarnessController({
+    projectId: convexProjectId,
+    // The signed-in member as this surface knows it. Not an identity the
+    // server trusts — it resolves that itself from the verified bearer — but a
+    // change to it invalidates a captured approval, because the human who
+    // clicked is not necessarily the human who would now run. Null while
+    // signed out, which is a reachable state rather than a hidden feature: the
+    // controller answers `needs-signin` and the dialog says so.
+    // `undefined` while the member query is in flight, so the controller can
+    // tell "not answered yet" from "signed out" — it used to say `needs-signin`
+    // for that whole window, to a user who was signed in.
+    userKey: isConvexAuthenticated
+      ? currentUserForSender?._id ?? undefined
+      : null,
+    inScope: localHarnessInScope,
+    scopeKey: localHarnessScopeKey,
+  });
+  const localHarnessRequested =
+    localHarnessInScope && localHarness.requestedTarget === "local-native";
+  const localHarnessResolveSendTarget = localHarness.resolveSendTarget;
+  const localHarnessExecutionOption = useMemo(
+    () => ({
+      requested: localHarnessRequested,
+      resolveSendTarget: localHarnessResolveSendTarget,
+    }),
+    [localHarnessRequested, localHarnessResolveSendTarget],
+  );
+
+  // ONE dialog for the whole surface. Six composers each owning their own
+  // would be six dialogs racing one approval, and a compare view would open
+  // several at once.
+  const [localHarnessDialog, setLocalHarnessDialog] = useState<{
+    trigger: "first_send" | "chip";
+  } | null>(null);
+  // Set after a COLD install finishes, so the composer can say what to do next
+  // rather than leaving the user to guess whether anything happened.
+  const [localHarnessJustReady, setLocalHarnessJustReady] = useState(false);
+  const localHarnessWasInstallingRef = useRef(false);
+  const localHarnessPhase = localHarness.phase;
+  useEffect(() => {
+    if (localHarnessPhase === "installing") {
+      localHarnessWasInstallingRef.current = true;
+      return;
+    }
+    if (!localHarnessWasInstallingRef.current) return;
+    localHarnessWasInstallingRef.current = false;
+    // Only after an install this surface watched: a runtime that was already
+    // there needs no announcement.
+    if (
+      localHarnessPhase === "needs-consent" ||
+      localHarnessPhase === "ready"
+    ) {
+      setLocalHarnessJustReady(true);
+    }
+  }, [localHarnessPhase]);
+  // A send in flight that is waiting for a WARM authorization to land. Held in
+  // a ref because the dialog's callback runs across an await and must not read
+  // a stale render's copy.
+  const localHarnessPendingSendRef = useRef<null | (() => void)>(null);
+  const localHarnessCancelSendRef = useRef<null | (() => void)>(null);
+  const localHarnessDialogOpenRef = useRef(false);
+  localHarnessDialogOpenRef.current = localHarnessDialog !== null;
+  // Read at SEND time by a callback defined above this line, so it has to be a
+  // ref rather than a closed-over render value.
+  const localHarnessRef = useRef(localHarness);
+  localHarnessRef.current = localHarness;
+
+  // COMP-14 gate: composer attachments go into the sandbox only when the
+  // previewed host actually attaches a computer (honesty rule — no computer, no
+  // sandbox upload; attachments stay inline-only exactly as before) AND the
+  // resolved engine is cloud — the upload targets the CLOUD box, so on "This
+  // machine" it would wake a sandbox the local bash tool can't see.
+  const computerAttachmentsActive = isComputerAttachmentUploadActive({
+    computersEnabled: computersEnabled === true,
+    isAuthenticated: isConvexAuthenticated,
+    hostHasComputer: !!previewedHost?.config?.computer,
+    engine: playgroundComputerEngine.engine,
+  });
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
@@ -743,6 +1119,7 @@ export function PlaygroundMain({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -761,6 +1138,9 @@ export function PlaygroundMain({
     mcpToolsTokenCountErrors,
     resetChat,
     startChatWithMessages,
+    detachToLocalFork,
+    consumePersistReceipt,
+    consumeTurnAborted,
     liveTraceEnvelope,
     requestPayloadHistory,
     hasTraceSnapshot,
@@ -774,6 +1154,7 @@ export function PlaygroundMain({
     addToolApprovalResponse,
     isSessionBootstrapComplete,
     loadChatSession,
+    rewindToMessage,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -786,26 +1167,61 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
+    // Opt-in from the Tools panel's Page tools section. Off unless the user
+    // ticked it for the page they currently have open in the WebMCP tab.
+    usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     hostedContext: {
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
-      // Resolve/persist selected server names → Convex ids before a hosted
-      // harness send (ad-hoc/App servers included), so the proxy never sees a
-      // display name. Absent in isolated embeds → falls back to the
-      // pre-resolved selection above.
-      ...(playgroundServerActions?.ensureHostedServerIdsForNames
+      // ENVIRONMENT MODE (Phase 2) and host mode are mutually exclusive on the
+      // wire — `normalizeExecutionTarget` 400s a body carrying both pointers.
+      ...(isEnvironmentMode
         ? {
-            ensureServerIds:
-              playgroundServerActions.ensureHostedServerIdsForNames,
+            executionTarget: playgroundEnvironment.executionTarget,
+            // Only present when the user explicitly overrode the server set.
+            ...(playgroundEnvironment.environmentOverrides
+              ? {
+                  environmentOverrides:
+                    playgroundEnvironment.environmentOverrides,
+                }
+              : {}),
+            // The environment's servers resolve by Convex id server-side (and
+            // some are plugin-contributed, i.e. invisible to the browser's
+            // catalog), so the turn MUST go through /api/web/chat-v2 — the local
+            // /api/mcp engine cannot connect them and rejects the target
+            // outright.
+            requiresWebChatApi: true,
+            // Deliberately NO `ensureServerIds`: resolving environment servers
+            // by NAME would fail for plugin-contributed ones and bypass plugin
+            // lifecycle semantics for the rest.
+            //
+            // NOT a second execution pointer — a client-side cache key. The
+            // environment's host is already the previewed host (presentation
+            // only), and host-keyed client caches (the harness workdir the
+            // Shell opens a terminal in) are read by that id, so the write side
+            // has to know it. The server still resolves the host from the
+            // environment.
+            ...(previewedHostId ? { presentationHostId: previewedHostId } : {}),
           }
-        : {}),
-      // Forward the previewed host id so the server re-resolves its
-      // authoritative runtime config (harness/computer) for this direct
-      // session, and so switching hosts forks the chat session.
-      ...(previewedHostId ? { hostId: previewedHostId } : {}),
+        : {
+            // Resolve/persist selected server names → Convex ids before a hosted
+            // harness send (ad-hoc/App servers included), so the proxy never
+            // sees a display name. Absent in isolated embeds → falls back to the
+            // pre-resolved selection above.
+            ...(playgroundServerActions?.ensureHostedServerIdsForNames
+              ? {
+                  ensureServerIds:
+                    playgroundServerActions.ensureHostedServerIdsForNames,
+                }
+              : {}),
+            // Forward the previewed host id so the server re-resolves its
+            // authoritative runtime config (harness/computer) for this direct
+            // session, and so switching hosts forks the chat session.
+            ...(previewedHostId ? { hostId: previewedHostId } : {}),
+          }),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
@@ -816,10 +1232,18 @@ export function PlaygroundMain({
       previewedHost?.config?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
-    // previewed host's hostConfig. The server re-resolves via the shared
-    // execution-context helper, so this also flows through chatbox sessions
+    // effective host's hostConfig. The server re-resolves via the shared
+    // execution-context helper, so this also flows through scenario sessions
     // (where the persisted host config wins via the runtime-config fetch).
-    builtInToolIds: previewedHost?.config?.builtInToolIds,
+    builtInToolIds: effectiveBuiltInToolIds,
+    // For the RAW view of a reopened session only. Live turns stream the real
+    // advertised set; a rehydrated one has nothing to show, and the browser is
+    // the capability most likely to be a host's ONLY one — so without this Raw
+    // reads `"tools": {}` beside a conversation that drove a browser.
+    builtInToolDefinitions: playgroundBrowserTools.tools,
+    personalComputerEngine: personalComputerEngineOption,
+    personalBrowserEngine: personalBrowserEngineOption,
+    localHarnessExecution: localHarnessExecutionOption,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -827,13 +1251,41 @@ export function PlaygroundMain({
       if (reason === "servers-changed") {
         return;
       }
+      // Only an explicit New Chat drops the conversation from the URL. The
+      // other reasons that empty the transcript — `auth-bootstrap` above all —
+      // are re-mints of the SAME conversation, and clearing on those would
+      // strip the id right before the restore effect goes looking for it.
+      if (reason === "reset") {
+        pendingRestoredModelRef.current = null;
+        clearConversationUrlRef.current();
+      }
       composerOnResetRef.current();
     },
   });
 
+  // The Browser tab lives in the sibling right rail. Publish the current
+  // conversation only while this Playground center is mounted; the rail then
+  // binds the watched browser to the same durable owner. Clearing is guarded
+  // so an overlapping PlaygroundMain cannot erase a newer active session.
+  const restoredSessionHasBrowser = useActiveChatSessionStore(
+    (state) => state.restoredSession?.sessionId === chatSessionId && !!state.restoredSession.browser,
+  );
+  const apiSessionViewOnly = useActiveChatSessionStore(state => state.restoredSession?.sessionId === chatSessionId && state.restoredSession.origin === "api");
+  const setActiveChatSessionId = useActiveChatSessionStore(
+    (state) => state.setSessionId,
+  );
+  useEffect(() => {
+    setActiveChatSessionId(chatSessionId);
+    return () => {
+      useActiveChatSessionStore.setState((state) =>
+        state.sessionId === chatSessionId ? { sessionId: null } : state,
+      );
+    };
+  }, [chatSessionId, setActiveChatSessionId]);
+
   // Set playground active flag for widget renderers to read
   const setPlaygroundActive = useUIPlaygroundStore(
-    (s) => s.setPlaygroundActive
+    (s) => s.setPlaygroundActive,
   );
   useEffect(() => {
     setPlaygroundActive(true);
@@ -849,7 +1301,7 @@ export function PlaygroundMain({
     playgroundServerSelectorProps?.onSelectMultipleServers;
   const previewedHostConfigId = previewedHost?.config.id;
   const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
-    null
+    null,
   );
   // Declared early so the previewed-host reseed effect can early-return
   // while an eval-chat handoff is still pending. The handoff-consume
@@ -935,7 +1387,7 @@ export function PlaygroundMain({
     const desiredModelId = cfg.modelId?.trim();
     if (desiredModelId) {
       const match = availableModels.find(
-        (m) => String(m.id) === desiredModelId
+        (m) => String(m.id) === desiredModelId,
       );
       if (match) {
         setSelectedModel(match);
@@ -973,22 +1425,22 @@ export function PlaygroundMain({
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
   const hostCapabilitiesOverride = usePreferencesStore(
-    (s) => s.hostCapabilitiesOverride
+    (s) => s.hostCapabilitiesOverride,
   );
   const chatUiOverride = usePreferencesStore((s) => s.chatUiOverride);
   const globalThemeMode = usePreferencesStore(
-    (s) => s.themeMode
+    (s) => s.themeMode,
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
-  const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
+  const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
   const hostBackgroundColor =
-    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
+    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
-  const hostShellStyle = getChatboxShellStyle(
+  const hostShellStyle = getScenarioShellStyle(
     hostStyle,
     effectiveThreadTheme,
-    chatUiOverride
+    chatUiOverride,
   );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
@@ -998,16 +1450,16 @@ export function PlaygroundMain({
       patchHostContext({ displayMode: mode });
       onDisplayModeChange?.(mode);
     },
-    [patchHostContext, onDisplayModeChange]
+    [patchHostContext, onDisplayModeChange],
   );
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
-    (msg) => msg.role === "user" || msg.role === "assistant"
+    (msg) => msg.role === "user" || msg.role === "assistant",
   );
   const multiModelAvailableModels = useMemo(
     () => new Map(availableModels.map((model) => [String(model.id), model])),
-    [availableModels]
+    [availableModels],
   );
   const resolvedSelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
@@ -1020,8 +1472,17 @@ export function PlaygroundMain({
 
     return selectedModel ? [selectedModel] : [];
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
+  // `!isEnvironmentMode`: like multi-HOST below, model comparison is mutually
+  // exclusive with environment mode in v1. Each comparison card runs its own
+  // request against `hostId`, so leaving it enabled would silently execute the
+  // cards against the host instead of the environment. Withdrawing the
+  // affordance also drives the "reset a stale persisted multiModelEnabled"
+  // effect below, so it cannot be re-enabled behind the environment's back.
   const canEnableMultiModel =
-    enableMultiModelChat && availableModels.length > 1 && !isSharedSession;
+    enableMultiModelChat &&
+    availableModels.length > 1 &&
+    !isSharedSession &&
+    !isEnvironmentMode;
 
   // Phase 4 (multi-host plan): read multi-host state in parallel to
   // multi-model. Lead host is derived inside `usePersistedHost` from the
@@ -1035,66 +1496,400 @@ export function PlaygroundMain({
   // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
   // the Phase-1 multi-select regression fix); lifting state to this
   // common parent is the correct fix instead of adding event traffic.
-  const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
   const {
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
     setMultiHostEnabled,
   } = usePersistedHost(multiHostProjectId);
+
+  // Environment mode ⇒ single host, always.
+  //
+  //  1. Multi-host comparison is switched OFF. Comparison runs one turn against
+  //     several hosts; an environment names exactly one, so the two states
+  //     cannot both be true without one of them lying about what ran.
+  //  2. The environment's host becomes the PREVIEWED host — for PRESENTATION
+  //     only (model chip, harness built-ins, host chrome). It is not sent as a
+  //     `hostId` on the wire; `executionTarget` is the single statement about
+  //     what executes, and the server re-resolves this host from the
+  //     environment itself.
+  const environmentHostId = playgroundEnvironment.preview?.host.hostId ?? null;
+  useEffect(() => {
+    if (!isEnvironmentMode) return;
+    if (multiHostEnabled) setMultiHostEnabled(false);
+    if (environmentHostId && previewedHostId !== environmentHostId) {
+      setPreviewedHostId(environmentHostId);
+    }
+  }, [
+    isEnvironmentMode,
+    environmentHostId,
+    multiHostEnabled,
+    setMultiHostEnabled,
+    previewedHostId,
+    setPreviewedHostId,
+  ]);
+
   const { hosts: hostList, isLoading: hostListLoading } = useHostList({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
-  const { createHost: createPlaygroundHost } = useHostMutations();
+  const { restoreTarget, restoringTarget } = useConversationTargetRestoration({
+    projectId: multiHostProjectId,
+    composer:
+      isEnvironmentMode && playgroundEnvironment.environmentId
+        ? {
+            kind: "environment",
+            environmentId: playgroundEnvironment.environmentId,
+          }
+        : { kind: "host", hostId: previewedHostId },
+    settled:
+      isSessionBootstrapComplete &&
+      !previewedHostLoading &&
+      (!isEnvironmentMode ||
+        (!playgroundEnvironment.isResolutionPending &&
+          !playgroundEnvironment.isPreviewLoading &&
+          (!environmentHostId || environmentHostId === previewedHostId))),
+    hostsLoading: hostListLoading,
+    hostIds: hostList.map((host) => host.hostId),
+    environmentsEnabled,
+    selectHost: setPreviewedHostId,
+    selectEnvironment: playgroundEnvironment.selectEnvironment,
+    clearEnvironment: playgroundEnvironment.clearEnvironment,
+  });
+  // A recorded ad-hoc session intentionally has no named host. Do not let the
+  // new-project default picker replace that explicit choice while reopening it.
+  const restoringAdhoc =
+    restoringTarget?.kind === "adhoc" ||
+    (restoredConversation?.target.kind === "adhoc" &&
+      (restoredConversation.chatSessionId === chatSessionId ||
+        loadingHistorySessionId !== null));
+  const restoringAdhocRef = useRef(restoringAdhoc);
+  restoringAdhocRef.current = restoringAdhoc;
+  const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
+    useHostMutations();
+  const seedCatalogState = useHostCatalog();
+  const seedThemeMode = usePreferencesStore((s) => s.themeMode);
+  // Mirrors `multiHostProjectId` so the seed effect's async continuation
+  // (below) can detect a navigate-away while its mutations were in flight —
+  // without this, a slow seed could apply project A's freshly-created host
+  // ids/lead to whatever project the user has since switched to. A layout
+  // effect (not a passive one) so the ref is current before any already-
+  // in-flight promise continuation's microtask can observe it — a passive
+  // effect can still be pending when a `.then()` callback runs in the same
+  // tick as the commit that changed `multiHostProjectId`.
+  const activeMultiHostProjectIdRef = useRef(multiHostProjectId);
+  useLayoutEffect(() => {
+    activeMultiHostProjectIdRef.current = multiHostProjectId;
+  }, [multiHostProjectId]);
   const resolveFallbackHostId = useCallback(
     (hosts: HostListItem[]): string | null => {
       const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
       if (mcpjamHost) return mcpjamHost.hostId;
       const [firstHost] = [...hosts].sort((a, b) =>
-        a.name.localeCompare(b.name)
+        a.name.localeCompare(b.name),
       );
       return firstHost?.hostId ?? null;
     },
-    []
+    [],
   );
-  // Seed backstop: the global host bar (which normally auto-creates the
-  // default "MCPJam" host for empty projects) is hidden on the playground,
-  // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
-  // + a per-project ref so it fires at most once per empty project and never
-  // blocks a different empty project from getting its own default host.
+  // Seed backstop: the global host bar (which normally auto-creates a single
+  // default "MCPJam" host for empty projects) is hidden on the playground, so
+  // this replicates that one-shot seed — but with the immediate client-
+  // comparison value prop (PUR-11): guests land with 3 pre-selected clients
+  // (ChatGPT, Claude, Cursor) instead of one blank host + a toggle they'd
+  // have to find and flip themselves. Guarded by `hostList.length === 0` + a
+  // per-project ref so it fires at most once per empty project and never
+  // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  // While the three first-run hosts are being created, a subscription can
+  // surface ChatGPT before Claude. Do not let the generic missing-preview
+  // fallback turn that timing artifact into the selected default; the seed
+  // writes Claude as the lead after all three creates succeed.
+  const playgroundSeedingProjectIdsRef = useRef(new Set<string>());
+  // Retry plumbing for the two failure paths below (single-host create
+  // rejected / 3-host seed rolled back). Both clear the project's "seeded"
+  // marker, which permits a retry but cannot cause one — this tick is what
+  // actually re-runs the effect. Attempts are counted per project so one
+  // project exhausting its budget doesn't spend another's.
+  const seedRetryCountsRef = useRef(new Map<string, number>());
+  const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const [seedRetryTick, setSeedRetryTick] = useState(0);
+  // A seed completion only mutates a ref. This tick lets the missing-preview
+  // fallback run again when a user changed the compare lineup mid-seed and
+  // the seed correctly declined to overwrite that choice.
+  const [seedCompletionTick, setSeedCompletionTick] = useState(0);
+  useEffect(() => {
+    const timers = seedRetryTimersRef.current;
+    return () => {
+      // Unmounting drops the retry: a pending timer would setState on a dead
+      // component, and a remount re-runs the seed effect from scratch anyway.
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+  const schedulePlaygroundSeedRetry = useCallback((projectId: string) => {
+    const attempt = seedRetryCountsRef.current.get(projectId) ?? 0;
+    const delay = PLAYGROUND_SEED_RETRY_DELAYS_MS[attempt];
+    // Budget exhausted — stop retrying. The guest can still recover with a
+    // reload, which re-fetches the catalog and resets this state entirely.
+    if (delay === undefined) return;
+    seedRetryCountsRef.current.set(projectId, attempt + 1);
+    const timer = setTimeout(() => {
+      seedRetryTimersRef.current.delete(timer);
+      setSeedRetryTick((tick) => tick + 1);
+    }, delay);
+    seedRetryTimersRef.current.add(timer);
+  }, []);
   useEffect(() => {
     if (
       !isConvexAuthenticated ||
       hostListLoading ||
       !multiHostProjectId ||
       hostList.length > 0 ||
-      playgroundSeededProjectIdsRef.current.has(multiHostProjectId)
+      restoringAdhoc ||
+      playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
+      seedCatalogState.status === "loading"
     ) {
       return;
     }
-    playgroundSeededProjectIdsRef.current.add(multiHostProjectId);
-    createPlaygroundHost({
-      projectId: multiHostProjectId,
-      name: "MCPJam",
-      // Pin a cheap default model — see HostOverlayBar's seed for why a
-      // modelless default host breaks synthetic/swarm runs.
-      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
-    })
-      .then(({ hostId }) => {
-        setPreviewedHostId(hostId);
+    const seedProjectId = multiHostProjectId;
+    // A degraded catalog is NOT a transient gap worth waiting out:
+    // `useHostCatalog` fetches once per page load and memoizes the result for
+    // the rest of the session, so "fallback"/"error" never upgrade to "live"
+    // without a full reload. The playground hides the global host bar, so this
+    // effect is the only thing between a guest and a project with zero
+    // clients — every resolved status therefore has to produce something:
+    //   - "fallback" (the server served its bundled catalog): that catalog
+    //     carries all 3 seed templates, so the full lineup still lands. Treated
+    //     exactly like "live".
+    //   - "error" (no catalog at all), or a catalog somehow missing a seed
+    //     template: nothing to clone from, so fall back to the pre-PUR-11
+    //     backstop — one blank "MCPJam" host, no compare lineup. Worse than the
+    //     3-client default, far better than an empty playground the guest has
+    //     no way to recover from.
+    const catalog =
+      seedCatalogState.status === "error" ? null : seedCatalogState.catalog;
+    const seeds = catalog
+      ? PLAYGROUND_SEED_TEMPLATE_IDS.map((id) => ({
+          id,
+          host: getCatalogHost(catalog, id),
+          template: getCatalogTemplate(catalog, id),
+        }))
+      : [];
+    // Never seed a partial (e.g. 2-client) lineup: it is neither the intended
+    // default nor the known-good single-host backstop.
+    const canSeedFullLineup =
+      seeds.length > 0 && seeds.every(({ host, template }) => host && template);
+    if (!canSeedFullLineup) {
+      // Same mid-seed snapshot discipline as the 3-host path below — see the
+      // long comment there for why the lead and the lineup are tracked
+      // separately, and why the snapshot (not a bare `length > 0` on the
+      // final value) is what distinguishes a real user choice from a stale
+      // array left behind by deleted hosts.
+      const preFallbackSelectedHostIds = loadSelectedHostIds(seedProjectId);
+      const preFallbackPreviewedHostId = loadPreviewedHostId(seedProjectId);
+      playgroundSeededProjectIdsRef.current.add(seedProjectId);
+      createPlaygroundHost({
+        projectId: seedProjectId,
+        name: "MCPJam",
+        // Pin a cheap default model — see ClientSelectionSync's seed for why a
+        // modelless default host breaks synthetic/swarm runs.
+        input: emptyHostConfigInputV2({
+          modelId: DEFAULT_SEEDED_HOST_MODEL_ID,
+        }),
       })
-      .catch(() => {
-        playgroundSeededProjectIdsRef.current.delete(multiHostProjectId);
+        .then(({ hostId }) => {
+          if (
+            activeMultiHostProjectIdRef.current === seedProjectId &&
+            restoringAdhocRef.current
+          )
+            return;
+          // As in the 3-host path: a lead now pointing at the host THIS
+          // fallback just created is our own "no valid previewed host"
+          // effect auto-picking it once the host list caught up, not a user
+          // choice — it must not veto the lineup write below.
+          const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+          const leadIsSeededHost = currentPreviewedHostId === hostId;
+          const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+          const selectionChangedMidSeed =
+            (!leadIsSeededHost &&
+              currentPreviewedHostId !== preFallbackPreviewedHostId) ||
+            currentSelectedHostIds.length !==
+              preFallbackSelectedHostIds.length ||
+            currentSelectedHostIds.some(
+              (id, index) => id !== preFallbackSelectedHostIds[index],
+            );
+          if (selectionChangedMidSeed) return;
+          // Persisted to the project it belongs to (not just React state) for
+          // the same navigate-away reason as the 3-host path below.
+          savePreviewedHostId(seedProjectId, hostId);
+          // The lineup is overwritten, not left alone, because "no compare"
+          // is not the same as "don't touch": a project reseeded after its
+          // hosts were deleted still has those dead ids in storage, and
+          // `usePersistedHost` PRESERVES the stored column count at read time
+          // (it replaces slot 0 with the lead rather than shrinking), so they
+          // would come back as a 3-column compare lineup wrapped around one
+          // real host — `isComparingHosts` reads `selectedHostIds.length > 1`
+          // and would happily switch on. Writing `[hostId]` collapses it.
+          saveSelectedHostIds(seedProjectId, [hostId]);
+          if (activeMultiHostProjectIdRef.current === seedProjectId) {
+            setPreviewedHostId(hostId);
+            setSelectedHostIds([hostId]);
+          }
+        })
+        .catch(() => {
+          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+          schedulePlaygroundSeedRetry(seedProjectId);
+        });
+      return;
+    }
+    // Snapshot the persisted lineup as it stood the moment we decided to
+    // seed, so the completion below can tell "nothing touched this since
+    // we started" (safe to apply the seed) from "something changed while
+    // we were creating hosts" (respect whatever's there now instead of
+    // overwriting it) — regardless of whether the snapshot itself was
+    // empty (a genuinely fresh project) or already non-empty (e.g. a
+    // reseed after the project's prior hosts were deleted, leaving a
+    // stale-but-present array — a bare `length > 0` check on the FINAL
+    // value alone can't distinguish that from a real manual selection
+    // made mid-seed, and would wrongly skip applying the new lineup).
+    //
+    // The lead is snapshotted separately from the array because it moves
+    // separately: the global host bar switches the previewed client through
+    // `savePreviewedHostId` alone, without touching the compare lineup, so a
+    // guard that watched only the array would still let the seed overwrite a
+    // client the user picked there mid-seed.
+    const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
+    const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
+    playgroundSeededProjectIdsRef.current.add(seedProjectId);
+    playgroundSeedingProjectIdsRef.current.add(seedProjectId);
+    Promise.allSettled(
+      seeds.map(({ host, template }) =>
+        createPlaygroundHost({
+          projectId: seedProjectId,
+          name: host!.label,
+          input: cloneHostTemplateInput(template, {
+            themeMode: seedThemeMode,
+          }),
+        }),
+      ),
+    )
+      .then(async (results) => {
+        const fulfilled = results.filter(
+          (
+            result,
+          ): result is PromiseFulfilledResult<
+            Awaited<ReturnType<typeof createPlaygroundHost>>
+          > => result.status === "fulfilled",
+        );
+        if (fulfilled.length < results.length) {
+          // Partial failure: a half-seeded project (1-2 hosts, no compare) is
+          // worse than an empty one that can cleanly retry — roll back
+          // whichever calls DID succeed. Only clear the "seeded" marker (and
+          // schedule the retry that actually re-runs this effect) if every
+          // rollback delete succeeded; if one fails, the partial hosts are
+          // stuck either way, and retrying would just hammer the same
+          // struggling backend with the other two creates too.
+          const rollback = await Promise.allSettled(
+            fulfilled.map((result) =>
+              deletePlaygroundHost({ hostId: result.value.hostId }),
+            ),
+          );
+          if (rollback.every((result) => result.status === "fulfilled")) {
+            playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+            schedulePlaygroundSeedRetry(seedProjectId);
+          }
+          return;
+        }
+        const hostIds = fulfilled.map((result) => result.value.hostId);
+        // The user may have already picked something for this project since
+        // the seed started — e.g. manually added/selected a host via "Add
+        // client", or switched the previewed client in the global host bar,
+        // while these mutations were still in flight. The seed is a first-run
+        // default, not an authoritative overwrite: if either the lineup or the
+        // lead has changed since the snapshots above (whether those snapshots
+        // were empty or already stale-non-empty), leave both alone rather than
+        // clobbering a choice the user has already made. Both are checked
+        // because the seed writes both, and the two move independently — the
+        // global host bar moves the lead through `savePreviewedHostId` alone
+        // and never touches the lineup.
+        //
+        // One lead move is NOT a user choice, though: the "no valid previewed
+        // host" fallback effect below auto-picks a lead as soon as the host-
+        // list query catches up to the FIRST of these creates, which routinely
+        // lands while the other two are still in flight. That is our own
+        // write, so a lead now pointing at a host THIS seed just created must
+        // not veto the lineup — vetoing would strand the guest with 3 hosts
+        // and no compare lineup, the exact half-seeded state this backstop
+        // exists to prevent. Whichever seed host holds the lead is kept as
+        // lead (so a user who did pick one of them in the host bar keeps it),
+        // and the full 3-way lineup lands either way.
+        const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+        const leadIsSeededHost =
+          currentPreviewedHostId !== null &&
+          hostIds.includes(currentPreviewedHostId);
+        const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+        const selectionChangedMidSeed =
+          (!leadIsSeededHost &&
+            currentPreviewedHostId !== preSeedPreviewedHostId) ||
+          currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
+          currentSelectedHostIds.some(
+            (id, index) => id !== preSeedSelectedHostIds[index],
+          );
+        if (selectionChangedMidSeed) return;
+        const leadHostId = leadIsSeededHost
+          ? currentPreviewedHostId
+          : hostIds[0];
+        // Persist directly to `seedProjectId`'s OWN storage — bypassing the
+        // current React state setters, which are scoped to whatever project
+        // is ACTIVE right now — so a seed that resolves after the user has
+        // navigated away still lands correctly for the project it belongs to,
+        // rather than being dropped or misapplied to whatever's open when
+        // this resolves. `usePersistedHost`/`usePreviewedHostId` re-read from
+        // storage whenever their `projectId` changes, so returning to
+        // `seedProjectId` later picks this up. Lead is set explicitly
+        // alongside the array since a bare array write can't promote a lead
+        // when `previewedHostId` is still null (brand-new project).
+        if (
+          activeMultiHostProjectIdRef.current === seedProjectId &&
+          restoringAdhocRef.current
+        )
+          return;
+        savePreviewedHostId(seedProjectId, leadHostId);
+        saveSelectedHostIds(seedProjectId, hostIds);
+        if (activeMultiHostProjectIdRef.current === seedProjectId) {
+          // Still on the seeded project — also reflect it in live React state
+          // so the lead/lineup update immediately instead of waiting for a
+          // remount. Not touching `multiHostEnabled` here: nothing renders
+          // off it anymore (see `isComparingHosts` above `isMultiHostMode`,
+          // and the multi-model mutual-exclusion check below reads
+          // `selectedHostIds.length` directly for the same reason) — setting
+          // it would just get silently reverted by the "!canEnableMultiHost
+          // -> disable" effect before the host-list query catches up anyway.
+          setPreviewedHostId(leadHostId);
+          setSelectedHostIds(hostIds);
+        }
+      })
+      .finally(() => {
+        playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
+        setSeedCompletionTick((tick) => tick + 1);
       });
   }, [
     isConvexAuthenticated,
     hostListLoading,
     multiHostProjectId,
     hostList.length,
+    restoringAdhoc,
     createPlaygroundHost,
+    deletePlaygroundHost,
     setPreviewedHostId,
+    setSelectedHostIds,
+    seedCatalogState,
+    seedThemeMode,
+    schedulePlaygroundSeedRetry,
+    // Re-runs the effect after a failed attempt cleared the project's marker;
+    // nothing else in this list changes when a create rejects.
+    seedRetryTick,
   ]);
   useEffect(() => {
     if (
@@ -1105,6 +1900,10 @@ export function PlaygroundMain({
     ) {
       return;
     }
+    if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
+      return;
+    }
+    if (restoringAdhoc) return;
     const previewedHostIsValid =
       previewedHostId !== null &&
       hostList.some((host) => host.hostId === previewedHostId);
@@ -1118,14 +1917,16 @@ export function PlaygroundMain({
     hostList,
     previewedHostId,
     resolveFallbackHostId,
+    restoringAdhoc,
     setPreviewedHostId,
+    seedCompletionTick,
   ]);
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
   const hostSlots = usePlaygroundHostSlots(
     isConvexAuthenticated,
-    selectedHostIds
+    selectedHostIds,
   );
   const resolvedSelectedHosts = useMemo<HostDetail[]>(
     () =>
@@ -1133,9 +1934,33 @@ export function PlaygroundMain({
         .slice(0, selectedHostIds.length)
         .map((slot) => slot.host)
         .filter((host): host is HostDetail => host !== null),
-    [hostSlots, selectedHostIds.length]
+    [hostSlots, selectedHostIds.length],
   );
-  const canEnableMultiHost = hostList.length > 1 && !isSharedSession;
+  // `!isEnvironmentMode`: comparison and environment mode are mutually
+  // exclusive in v1 (see the effect above). Withdrawing the affordance also
+  // drives the existing "reset a stale persisted multiHostEnabled" effect
+  // below, so the two can't be re-enabled behind the environment's back.
+  const canEnableMultiHost =
+    hostList.length > 1 && !isSharedSession && !isEnvironmentMode;
+
+  // The "is the user actually comparing right now" signal for render-
+  // gating and mutual-exclusion, computed fresh every render from
+  // `selectedHostIds` (reliably persisted — see the seed effect above and
+  // `usePersistedHost`) rather than trusted from the separately-persisted
+  // `multiHostEnabled` flag. Removing the "Multiple clients" toggle
+  // (PUR-11) means there's no longer any legitimate way to have 2+ hosts
+  // checked with comparison intentionally off, so `multiHostEnabled` no
+  // longer needs to be an imperatively-synchronized source of truth for
+  // this — which matters because keeping a stateful flag in sync across
+  // async seeding, Convex host-list catch-up lag, and navigate-away/back
+  // is exactly the kind of thing that's easy to get subtly wrong (an
+  // earlier version of this seed tracked "pending enable" per project in
+  // a ref, which worked for the common case but could still strand a
+  // project in single-pane if the user navigated away and back before its
+  // host list caught up, since the ref doesn't survive a remount).
+  // Deriving this fresh from already-correct persisted data has no state
+  // to fall out of sync in the first place, including across a remount.
+  const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
@@ -1156,21 +1981,17 @@ export function PlaygroundMain({
   const sharedHostColumnModel = selectedModel ?? null;
 
   // Same gating as multi-model: history mode wins (transcript replay lives
-  // on the single session). When `multiHostEnabled` is true but the lead
+  // on the single session). When `isComparingHosts` is true but the lead
   // host or its model isn't resolved yet (loading, deleted, missing from
   // `availableModels`), fall through to single-pane — don't render a
   // degraded grid where the lead identity is wrong.
   // Multi-host compare requires at least 2 resolved columns. Without
-  // this guard a stale persisted `multiHostEnabled = true` paired with
-  // a single selected host (or only the lead resolving) would render
-  // the compare grid as a one-column variant of single-pane — visually
-  // confusing and routed through the compare submit/stop/state path
-  // unnecessarily. The picker auto-disables `multiHostEnabled` when
-  // selection drops to one, but we still want a defensive gate for
-  // unresolved secondaries and migrated localStorage.
+  // this guard a stale persisted `selectedHostIds` paired with a single
+  // selected host (or only the lead resolving) would render the compare
+  // grid as a one-column variant of single-pane — visually confusing and
+  // routed through the compare submit/stop/state path unnecessarily.
   const isMultiHostMode =
-    canEnableMultiHost &&
-    multiHostEnabled &&
+    isComparingHosts &&
     !viewingHistoryReplay &&
     resolvedSelectedHosts.length > 1 &&
     !!leadHost &&
@@ -1236,7 +2057,9 @@ export function PlaygroundMain({
       if (!host) continue;
       columns.push({
         compareId: host.hostId,
-        compareLabel: host.name,
+        compareLabel: clientDisplayName(
+          hostList.find((item) => item.hostId === host.hostId) ?? host,
+        ),
         compareKind: "host",
         compareSubLabel: sharedHostColumnModel.name,
         model: sharedHostColumnModel,
@@ -1251,19 +2074,83 @@ export function PlaygroundMain({
     sharedHostColumnModel,
     selectedHostIds,
     resolvedSelectedHosts,
+    hostList,
     systemPrompt,
     temperature,
     requireToolApproval,
+  ]);
+
+  // What each column's host actually attaches, resolved by the SAME hook the
+  // single pane uses (`effectiveBuiltInToolIds` above). The grid used to
+  // inline its own copy of that logic, which read neither the member's saved
+  // Browser setting nor its loading state — see
+  // `usePlaygroundBrowserToolSlots`.
+  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
+    multiHostColumns.map((column) => ({
+      hostId: column.compareId,
+      config: column.hostConfig,
+    })),
+    playgroundBrowserEngine.engine,
+    convexProjectId,
+  );
+
+  // ── The same question, asked once per COLUMN ─────────────────────────────
+  //
+  // `localHarnessExecutionOption` above answers for the PREVIEWED host, which
+  // is the right answer for the single composer and the wrong one for a
+  // compare grid: there each column runs its own host, and only the columns
+  // running Claude Code have anything to do with local execution.
+  //
+  // Handing every column the page's answer is precisely the inheritance
+  // `isLocalHarnessScope` exists to stop. A Codex column would arrive at
+  // `use-chat-session` with `requested: true`, fail the authorization check
+  // that only a Claude Code turn can satisfy, and block Send behind a dialog
+  // that could never unblock it — the local target is not a thing that lane
+  // can ever have.
+  //
+  // Keyed by `compareId` (the column's hostId) rather than by harness, so a
+  // grid comparing two Claude Code hosts still gets one entry each.
+  const localHarnessExecutionByColumn = useMemo(() => {
+    const byColumn = new Map<string, typeof localHarnessExecutionOption>();
+    for (const column of multiHostColumns) {
+      const columnInScope = isLocalHarnessScope({
+        // This column's own host, not the previewed one.
+        harnessId: column.hostConfig?.harness ?? null,
+        hostedMode: HOSTED_MODE,
+        environmentId: isEnvironmentMode
+          ? playgroundEnvironment.environmentId ?? null
+          : null,
+        requiresWebChatApi: isEnvironmentMode,
+        sharedRun: isSharedSession || viewingHistoryReplay,
+      });
+      byColumn.set(column.compareId, {
+        requested:
+          columnInScope && localHarness.requestedTarget === "local-native",
+        resolveSendTarget: localHarnessResolveSendTarget,
+      });
+    }
+    return byColumn;
+  }, [
+    multiHostColumns,
+    isEnvironmentMode,
+    playgroundEnvironment.environmentId,
+    isSharedSession,
+    viewingHistoryReplay,
+    localHarness.requestedTarget,
+    localHarnessResolveSendTarget,
   ]);
 
   const handleMultiModelTranscriptSync = useCallback(
     (compareId: string, transcript: UIMessage[]) => {
       compareTranscriptsRef.current[compareId] = cloneUiMessages(transcript);
     },
-    []
+    [],
   );
 
   const clearMultiModelUiState = useCallback(() => {
+    // The lead transcript is replayed into the thread by the same transitions
+    // that call this, so the thread becomes the single source again.
+    setCompareSentPrompts([]);
     setBroadcastRequest(null);
     setDeterministicExecutionRequest(null);
     setStopBroadcastRequestId(0);
@@ -1290,8 +2177,8 @@ export function PlaygroundMain({
   const currentCompareMode: CompareMode = isMultiHostMode
     ? "host"
     : isMultiModelMode
-    ? "model"
-    : "none";
+      ? "model"
+      : "none";
   useLayoutEffect(() => {
     const prev = prevCompareModeRef.current;
     if (prev === currentCompareMode) return;
@@ -1407,7 +2294,7 @@ export function PlaygroundMain({
       buildPreludeTraceEnvelope(preludeTraceExecutions, {
         ...hostStyleSupportsModelVisibleMcpToolImages(hostStyle),
       }),
-    [hostStyle, preludeTraceExecutions]
+    [hostStyle, preludeTraceExecutions],
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
@@ -1447,15 +2334,61 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  // Project Environments (Phase 2). Selecting an environment activates the new
+  // `executionTarget` synchronously, but the things that must agree with it do
+  // not land in the same tick: the chat scope re-keys on the new target, and
+  // the environment's host only becomes the previewed host once the preview
+  // resolves. A turn submitted inside that window carries the NEW environment
+  // id with the PREVIOUS host's model, system prompt and approval setting, and
+  // the scope reset that follows can drop the in-flight message. Block SENDS
+  // (not typing) until the transition has settled.
+  //
+  // `isPreviewLoading` is load-bearing separately from `isResolutionPending`
+  // and the host comparison, and covers the case neither can see: a live EDIT
+  // of the SELECTED environment. That refetch deliberately KEEPS the previous
+  // body on screen (live-config semantics), so mid-flight `preview` is the
+  // STALE one — `isResolutionPending` is false because a preview exists, and
+  // `environmentHostId` still reads the OLD host, which the previewed host
+  // already matches. If the edit repointed the environment at a different
+  // host, every clause would read "settled" while the next turn resolves
+  // server-side against the new host.
+  const isEnvironmentTargetPending =
+    isEnvironmentMode &&
+    (playgroundEnvironment.isResolutionPending ||
+      playgroundEnvironment.isPreviewLoading ||
+      !isSessionBootstrapComplete ||
+      (!!environmentHostId && previewedHostId !== environmentHostId));
+  /**
+   * When a requested local turn cannot run AT ALL, and Send should say so.
+   *
+   * Deliberately narrow. Missing consent and a missing folder are NOT here:
+   * both `submitDisabled` paths — Enter and the button — refuse before
+   * `onSubmit` ever runs (`chat-input.tsx`), so disabling for them would make
+   * first-send setup unreachable, which is the one thing this flow cannot
+   * afford. Those states open the dialog instead.
+   *
+   * What IS here is work in flight (nothing to do but wait) and a machine that
+   * cannot run this at all. The composer notice carries the explanation, so
+   * the disabled Send is never unexplained.
+   */
+  const localHarnessBlocksSend =
+    localHarnessRequested &&
+    (localHarness.phase === "installing" ||
+      localHarness.phase === "authorizing" ||
+      localHarness.phase === "unavailable");
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
-      disableChatInput || submitBlocked || isPreparingServerForSend,
+      apiSessionViewOnly || disableChatInput || submitBlocked || isPreparingServerForSend,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
       composer.submitGatedByServer ||
-      isPreparingServerForSend,
+      isPreparingServerForSend ||
+      isEnvironmentTargetPending ||
+      loadingHistorySessionId !== null ||
+      restoringTarget !== null ||
+      localHarnessBlocksSend,
   });
 
   // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
@@ -1470,6 +2403,17 @@ export function PlaygroundMain({
   }, [canEnableMultiHost, multiHostEnabled, setMultiHostEnabled]);
 
   useEffect(() => {
+    // Mirrors the gate in ChatTabV2's copy of this effect. Both branches below
+    // end in `setSelectedModelIds`, which persists the lead model id
+    // (`use-persisted-model.ts:150-159`) under a key every chat surface reads
+    // back. While the persisted selection has not resolved against
+    // `availableModels` — the window where an org-managed provider config is
+    // still in flight — `selectedModel` is only a derived fallback, and
+    // writing it destroys the user's own-provider pick. See BACK2-628.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
@@ -1477,7 +2421,7 @@ export function PlaygroundMain({
     }
 
     const sanitizedIds = resolvedSelectedModels.map((model) =>
-      String(model.id)
+      String(model.id),
     );
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
@@ -1489,12 +2433,13 @@ export function PlaygroundMain({
         sanitizedIds.length > 0 && multiModelEnabled
           ? sanitizedIds
           : selectedModel
-          ? [String(selectedModel.id)]
-          : []
+            ? [String(selectedModel.id)]
+            : [],
       );
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,
@@ -1516,7 +2461,7 @@ export function PlaygroundMain({
     let matchingModel = null;
     if (handoffExec.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === handoffExec.modelId
+        (model) => String(model.id) === handoffExec.modelId,
       );
       // Wait for the model list to load — `availableModels.length === 0`
       // means the catalog hasn't arrived yet; re-run when it does.
@@ -1607,7 +2552,7 @@ export function PlaygroundMain({
 
   const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
   const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
-    null
+    null,
   );
   const discardDraftSettledRef = useRef(false);
 
@@ -1649,6 +2594,10 @@ export function PlaygroundMain({
     setActiveHistorySessionId(null);
     setLoadedThreadOwnerUserId(null);
     setViewingHistoryReplay(false);
+    // No persisted conversation is open any more, so there is nothing left to
+    // disclose about one — and leaving the flag set would gate sends on a
+    // fresh chat the user just started.
+    setRestoredConversation(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
@@ -1659,6 +2608,68 @@ export function PlaygroundMain({
     }
   }, []);
 
+  // ── As-run configuration honesty ──────────────────────────────────────────
+  //
+  // Scoped to the LIVE session id: the moment the chat forks or resets (New
+  // Chat, a rewind branch, the auth-bootstrap wipe) the ids diverge and the
+  // disclosure stands down on its own, without a second clear path to keep in
+  // step with `restoredConversation`.
+  const activeRestoredConversation =
+    restoredConversation && restoredConversation.chatSessionId === chatSessionId
+      ? restoredConversation
+      : null;
+  // Where a reply typed right now would actually run. Environment mode and
+  // host mode are mutually exclusive on the wire, so this is one statement.
+  const composerExecutionTarget: ComposerExecutionTarget =
+    isEnvironmentMode && playgroundEnvironment.environmentId
+      ? {
+          kind: "environment",
+          environmentId: playgroundEnvironment.environmentId,
+        }
+      : { kind: "host", hostId: previewedHostId ?? null };
+  const conversationTargetDisclosure = describeConversationTargetDisclosure({
+    recorded: activeRestoredConversation?.target ?? null,
+    composer: composerExecutionTarget,
+  });
+  const needsConversationTargetAck =
+    conversationTargetDisclosure.kind !== "none" &&
+    !(activeRestoredConversation?.acknowledged ?? false);
+  // Read at SEND time by callbacks defined above this line, so it has to be a
+  // ref rather than a dependency — the send paths must not be re-created (and
+  // re-armed) on every host or environment change.
+  conversationSendBlockedRef.current =
+    apiSessionViewOnly || needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
+  const acknowledgeConversationTarget = useCallback(() => {
+    setRestoredConversation((previous) =>
+      previous ? { ...previous, acknowledged: true } : previous,
+    );
+  }, []);
+
+  /**
+   * Record what an EXPLICITLY opened conversation says about where it ran.
+   *
+   * Called from the two open paths only — the rail click and the
+   * `?conversation=` restore — and deliberately NOT from `loadHistorySession`,
+   * which the reactive Convex refresh also drives for the LIVE chat once
+   * `refreshCurrentHistorySession` adopts its session id. Deriving there would
+   * make the composer disclose a mismatch against a conversation the user is
+   * sitting in and just sent on.
+   */
+  const adoptRestoredConversationTarget = useCallback(
+    (detail: ChatHistoryDetailSession) => {
+      setRestoredConversation((previous) => ({
+        chatSessionId: detail.chatSessionId,
+        target: readConversationExecutionTarget(detail),
+        // Reopening the SAME conversation keeps the acknowledgement; a
+        // different one is a different question.
+        acknowledged:
+          previous?.chatSessionId === detail.chatSessionId &&
+          previous.acknowledged,
+      }));
+    },
+    [],
+  );
+
   const restoreHistoryServerSelection = useCallback(
     (savedServerNames: string[] | undefined) => {
       if (!Array.isArray(savedServerNames) || savedServerNames.length === 0) {
@@ -1667,7 +2678,7 @@ export function PlaygroundMain({
       const desired = resolveRestorableServerNames(
         savedServerNames,
         serversById,
-        Object.keys(servers)
+        Object.keys(servers),
       );
       if (desired.length === 0) return;
 
@@ -1702,14 +2713,14 @@ export function PlaygroundMain({
       const onServerChange = playgroundServerSelectorProps?.onServerChange;
       if (!onServerChange) return;
       const firstMatch = desired.find(
-        (name) => servers[name]?.connectionStatus === "connected"
+        (name) => servers[name]?.connectionStatus === "connected",
       );
       const target = firstMatch ?? desired[0];
       if (target && target !== serverName) {
         onServerChange(target);
       }
     },
-    [playgroundServerSelectorProps, serverName, servers, serversById]
+    [playgroundServerSelectorProps, serverName, servers, serversById],
   );
 
   const loadHistorySession = useCallback(
@@ -1717,11 +2728,20 @@ export function PlaygroundMain({
       detail: ChatHistoryDetailSession,
       widgetSnapshots?: ChatHistoryWidgetSnapshot[],
       options?: {
+        restoreExecutionTarget?: boolean;
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
         turnTraces?: ChatHistoryTurnTrace[];
-      }
+      },
     ) => {
+      if (options?.restoreExecutionTarget && detail.origin !== "api") {
+        adoptRestoredConversationTarget(detail);
+        const apply = await restoreTarget(
+          readConversationExecutionTarget(detail),
+          options.shouldApply ?? (() => true),
+        );
+        if (!apply) return false;
+      }
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -1734,16 +2754,18 @@ export function PlaygroundMain({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
-        }
+        },
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
+      useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
+      if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
         const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId
+          (model) => String(model.id) === detail.modelId,
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -1754,18 +2776,21 @@ export function PlaygroundMain({
       setPendingDirectVisibility(detail.directVisibility);
       appliedHistoryContentSignatureRef.current = buildHistoryContentSignature(
         detail,
-        widgetSnapshots
+        widgetSnapshots,
       );
       syncResumedVersion(detail.version);
       void markHistorySessionRead(detail._id);
+      return true;
     },
     [
       availableModels,
       loadChatSession,
+      adoptRestoredConversationTarget,
+      restoreTarget,
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const {
@@ -1786,12 +2811,8 @@ export function PlaygroundMain({
   });
   const senderProfileByUserId = useMemo(
     () => buildProjectOwnerProfileByUserId(senderActiveMembers),
-    [senderActiveMembers]
+    [senderActiveMembers],
   );
-  const currentUserForSender = useQuery(
-    "users:getCurrentUser" as any,
-    isConvexAuthenticated ? ({} as any) : "skip"
-  ) as { _id?: string } | undefined;
   const senderFallbackUserId =
     reactiveHistorySession?.userId ??
     loadedThreadOwnerUserId ??
@@ -1804,7 +2825,7 @@ export function PlaygroundMain({
         profileByUserId: senderProfileByUserId,
         fallbackOwnerUserId: senderFallbackUserId,
       }),
-    [senderProfileByUserId, senderFallbackUserId]
+    [senderProfileByUserId, senderFallbackUserId],
   );
   // Stamp current user onto live outgoing prompts in shared sessions so the
   // transcript can attribute them before persistence round-trips.
@@ -1826,27 +2847,57 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
-      syncResumedVersion(null);
-      if (effectiveHasMessages) {
-        startChatWithMessages(cloneUiMessages(messagesRef.current), {
-          toolRenderOverrides: restoredToolRenderOverrides,
-        });
-      }
+
       // The eval preview is an ephemeral sandbox: its own Quick Run / replay
       // mutates the session (e.g. a replayed "Add to cart" click fires a tool
       // call), so a "changed elsewhere" alarm there is self-inflicted noise. The
       // detach still happens; we just skip the user-facing toast.
-      if (!opts?.silent) {
-        toast.error(toastMessage);
+      const notify = (message: string) => {
+        if (!opts?.silent) {
+          toast.error(message);
+        }
+      };
+
+      // Gated on the ROOT transcript, which is what gets forked below —
+      // `effectiveHasMessages` is compare-aware and reads the columns in
+      // compare layout, so the two can disagree. The dangerous direction is a
+      // root that holds messages while the columns do not: the fork would be
+      // skipped and the guard dropped on a transcript that can still be written
+      // back to the old row. (The old code gated on the compare-aware value.)
+      if (isThreadEmpty) {
+        // Nothing to fork — with no transcript there is no snapshot that could
+        // be written back over the old row, so dropping the guard is enough.
+        syncResumedVersion(null);
+        notify(toastMessage);
+        return;
       }
+
+      // Verified rather than fire-and-forget: the reassuring toast may only be
+      // shown once the fork is confirmed live. `resumedVersion` is cleared by
+      // the fork's own hydration, so it survives a fork that never commits.
+      void detachToLocalFork(cloneUiMessages(messagesRef.current), {
+        toolRenderOverrides: restoredToolRenderOverrides,
+      })
+        .then((fork) => {
+          notify(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+        })
+        .catch((error) => {
+          // `void` silences the linter, not the rejection. Routed through
+          // `notify` so the eval preview's suppression still applies.
+          console.error(
+            "[PlaygroundMain] Failed to fork the detached thread",
+            error,
+          );
+          notify(DETACH_FORK_FAILED_MESSAGE);
+        });
     },
     [
       cancelPendingHistorySelection,
-      effectiveHasMessages,
+      isThreadEmpty,
       restoredToolRenderOverrides,
-      startChatWithMessages,
+      detachToLocalFork,
       syncResumedVersion,
-    ]
+    ],
   );
 
   useEffect(() => {
@@ -1864,7 +2915,7 @@ export function PlaygroundMain({
 
     if (reactiveHistorySession === null) {
       detachHistorySession(
-        "This chat is no longer available. Continuing locally in a new thread."
+        "This chat is no longer available. Continuing locally in a new thread.",
       );
       return;
     }
@@ -1882,7 +2933,7 @@ export function PlaygroundMain({
 
     const contentSignature = buildHistoryContentSignature(
       reactiveHistorySession,
-      reactiveHistoryWidgetSnapshots
+      reactiveHistoryWidgetSnapshots,
     );
     if (appliedHistoryContentSignatureRef.current === contentSignature) {
       setPendingDirectVisibility(reactiveHistorySession.directVisibility);
@@ -1904,11 +2955,11 @@ export function PlaygroundMain({
           reactiveHistoryLoadRequestIdRef.current === requestId &&
           activeHistorySessionIdRef.current === reactiveHistorySession._id,
         turnTraces: undefined,
-      }
+      },
     ).catch((error) => {
       console.error(
         "[PlaygroundMain] Failed to apply reactive chat history",
-        error
+        error,
       );
     });
   }, [
@@ -1954,11 +3005,16 @@ export function PlaygroundMain({
           ) {
             return null;
           }
-          console.error(
-            "[PlaygroundMain] Failed to refresh history session",
-            error
-          );
-          return null;
+          // Anything else — a network blip, a 5xx — is RETHROWN rather than
+          // flattened to null, matching ChatTabV2's twin of this helper. `null`
+          // is the caller's signal that the thread is gone, and callers act on
+          // it by detaching; collapsing a transient failure into that signal
+          // would tear users off perfectly valid conversations during a brief
+          // history-API outage. Every caller already distinguishes the two: the
+          // pre-send sync reports the error and refuses the send, the
+          // share/unshare handler logs and leaves the thread alone, and the
+          // post-stream rail refresh catches and ignores.
+          throw error;
         }
       }
       return null;
@@ -1969,51 +3025,45 @@ export function PlaygroundMain({
       convexProjectId,
       markHistorySessionRead,
       syncResumedVersion,
-    ]
+    ],
   );
+  /**
+   * Sync the resumed thread's cursor before a send, so the turn carries a
+   * current `expectedVersion` rather than one that went stale while the user
+   * sat idle. ChatTabV2 has always done this; the Playground had no pre-send
+   * sync at all, which mattered little while hosted turns ignored
+   * `expectedVersion` and matters now that they honor it — a stale baseline
+   * becomes a real 409 and a forced new thread.
+   *
+   * Returns false when the send must not proceed: the sync failed (the user is
+   * told, and a blind send could clobber another writer), or the thread is gone
+   * and the surface has detached from it.
+   */
+  const ensureThreadReadyForSend = useCallback(async () => {
+    if (!activeHistorySessionId) return true;
 
-  // After a streaming turn ends we re-fetch the active session so the rail
-  // reflects the new version and the local resume cursor advances. If the
-  // turn was on a resumed thread, we additionally require that the new
-  // detail's version actually exceeds the baseline we sent against — that
-  // proves the server applied this turn rather than a concurrent edit.
-  const refreshHistorySessionAfterStream = useCallback(
-    async (
-      resumedThreadSendBaseline: {
-        sessionId: string;
-        version: number;
-      } | null
-    ) => {
-      const maxAttempts = resumedThreadSendBaseline
-        ? RESUMED_THREAD_REFRESH_RETRIES + 1
-        : 2;
+    let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
+    try {
+      detail = await refreshCurrentHistorySession();
+    } catch (error) {
+      console.error(
+        "[PlaygroundMain] Failed to sync chat history before send",
+        error,
+      );
+      toast.error("Failed to sync chat history. Try again.");
+      return false;
+    }
+    if (detail) return true;
 
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        try {
-          const detail = await refreshCurrentHistorySession({
-            markRead: true,
-          });
-          if (
-            !resumedThreadSendBaseline ||
-            (detail &&
-              detail._id === resumedThreadSendBaseline.sessionId &&
-              detail.version > resumedThreadSendBaseline.version)
-          ) {
-            return detail;
-          }
-        } catch (error) {
-          if (attempt >= maxAttempts - 1) {
-            throw error;
-          }
-        }
-        if (attempt < maxAttempts - 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-        }
-      }
-      return null;
-    },
-    [refreshCurrentHistorySession]
-  );
+    detachHistorySession(
+      "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
+    );
+    return false;
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    refreshCurrentHistorySession,
+  ]);
 
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
@@ -2042,16 +3092,27 @@ export function PlaygroundMain({
           return;
         }
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots, {
-          turnTraces: detail.turnTraces,
-        });
+        const applied = await loadHistorySession(
+          detail.session,
+          detail.widgetSnapshots,
+          {
+            restoreExecutionTarget: true,
+            turnTraces: detail.turnTraces,
+            shouldApply: () =>
+              historySelectionRequestIdRef.current === selectionRequestId,
+          },
+        );
 
-        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+        if (
+          !applied ||
+          historySelectionRequestIdRef.current !== selectionRequestId
+        ) {
           return;
         }
         restoreHistoryServerSelection(
-          detail.session.resumeConfig?.selectedServers
+          detail.session.resumeConfig?.selectedServers,
         );
+        adoptRestoredConversationTarget(detail.session);
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
@@ -2066,14 +3127,149 @@ export function PlaygroundMain({
       }
     },
     [
+      adoptRestoredConversationTarget,
       clearComposerDraft,
       convexProjectId,
       ensureDiscardDraftConfirmed,
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
-    ]
+    ],
   );
+
+  // Reopen the conversation named in the URL. Same machinery as picking the
+  // thread from the rail (`handleSelectThread`), minus the discard-draft
+  // confirm — this only ever runs against an empty transcript.
+  const restoreConversationFromUrl = useCallback(
+    async (conversationId: string): Promise<ConversationRestoreOutcome> => {
+      const selectionRequestId = historySelectionRequestIdRef.current + 1;
+      historySelectionRequestIdRef.current = selectionRequestId;
+      // Same as picking the thread from the rail: the restored transcript
+      // lives on the single chat session, so the compare grid must stand down
+      // rather than render over it.
+      setViewingHistoryReplay(true);
+      setLoadingHistorySessionId(conversationId);
+      let restored = false;
+
+      try {
+        const detail = await getCachedChatHistoryDetail({
+          chatSessionId: conversationId,
+          projectId: convexProjectId ?? undefined,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return "failed";
+        }
+
+        const applied = await loadHistorySession(
+          detail.session,
+          detail.widgetSnapshots,
+          {
+            restoreExecutionTarget: true,
+            turnTraces: detail.turnTraces,
+            shouldApply: () =>
+              historySelectionRequestIdRef.current === selectionRequestId,
+          },
+        );
+
+        if (
+          !applied ||
+          historySelectionRequestIdRef.current !== selectionRequestId
+        ) {
+          return "failed";
+        }
+        restoreHistoryServerSelection(
+          detail.session.resumeConfig?.selectedServers,
+        );
+        adoptRestoredConversationTarget(detail.session);
+        // `loadHistorySession` skips the model when the catalog hasn't loaded
+        // yet; remember it so the effect below can apply it on arrival.
+        pendingRestoredModelRef.current = detail.session.modelId
+          ? {
+              chatSessionId: detail.session.chatSessionId,
+              modelId: detail.session.modelId,
+            }
+          : null;
+        if (new URLSearchParams(window.location.search).get("browser") === "open") {
+          if (detail.session.browser) useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
+          const url = new URL(window.location.href); url.searchParams.delete("browser"); window.history.replaceState(window.history.state, "", url);
+        }
+        restored = true;
+        return "restored";
+      } catch (error) {
+        // 404: deleted, archived away, or never existed. 403: someone else's.
+        // Either way this id will never restore — say so, so the caller drops
+        // it from the URL instead of retrying on every scope change.
+        if (
+          error instanceof WebApiError &&
+          (error.status === 403 || error.status === 404)
+        ) {
+          if (error.status === 403) {
+            toast.error("You no longer have access to that chat.");
+          }
+          return "unavailable";
+        }
+        console.error(
+          "[PlaygroundMain] Failed to restore conversation from URL",
+          error,
+        );
+        return "failed";
+      } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId)
+          setLoadingHistorySessionId(null);
+        // Nothing restored means nothing to replay — release the compare
+        // suppression so the user's own layout isn't stuck off.
+        if (
+          !restored &&
+          historySelectionRequestIdRef.current === selectionRequestId
+        ) {
+          setViewingHistoryReplay(false);
+        }
+      }
+    },
+    [
+      adoptRestoredConversationTarget,
+      convexProjectId,
+      loadHistorySession,
+      restoreHistoryServerSelection,
+    ],
+  );
+
+  const { isRestoringConversation, clearConversation } =
+    usePlaygroundConversationUrl({
+      enabled: syncConversationToUrl,
+      chatSessionId,
+      hasMessages: !isThreadEmpty,
+      isSessionBootstrapComplete,
+      isStreaming,
+      projectId: convexProjectId,
+      isMultiModelLayoutMode,
+      isEvalHandoffPending:
+        !!evalChatHandoff &&
+        appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id,
+      activeHistorySessionId,
+      restoreConversation: restoreConversationFromUrl,
+    });
+  clearConversationUrlRef.current = clearConversation;
+
+  // The model catalog can arrive after the transcript. Apply the restored
+  // model once — and only while the restored conversation is still the one on
+  // screen, so a thread the user opened in the meantime keeps its own model.
+  useEffect(() => {
+    const pending = pendingRestoredModelRef.current;
+    if (!pending) return;
+    if (pending.chatSessionId !== chatSessionId) {
+      pendingRestoredModelRef.current = null;
+      return;
+    }
+    const matchingModel = availableModels.find(
+      (model) => String(model.id) === pending.modelId,
+    );
+    if (!matchingModel) return;
+    pendingRestoredModelRef.current = null;
+    if (String(selectedModel?.id ?? "") === pending.modelId) return;
+    setSelectedModel(matchingModel);
+  }, [availableModels, chatSessionId, selectedModel, setSelectedModel]);
 
   const resetMultiModelSessions = useCallback(() => {
     clearMultiModelUiState();
@@ -2082,8 +3278,8 @@ export function PlaygroundMain({
 
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
-      if (isStreaming) return;
-      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (isStreaming) return false;
+      if (!(await ensureDiscardDraftConfirmed())) return false;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
@@ -2097,6 +3293,7 @@ export function PlaygroundMain({
       resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
+      return true;
     },
     [
       cancelPendingHistorySelection,
@@ -2106,7 +3303,7 @@ export function PlaygroundMain({
       resetChat,
       resetMultiModelSessions,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const handleArchiveAllComplete = useCallback(
@@ -2129,7 +3326,7 @@ export function PlaygroundMain({
       resetChat,
       resetMultiModelSessions,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const handleHistorySessionAction = useCallback(
@@ -2155,18 +3352,22 @@ export function PlaygroundMain({
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
             detachHistorySession(
-              "This chat is no longer shared with you. Continuing locally in a new thread."
+              "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
           }
         } catch (error) {
           console.error(
             "[PlaygroundMain] Failed to refresh unshared chat",
-            error
+            error,
           );
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
+    [
+      activeHistorySessionId,
+      detachHistorySession,
+      refreshCurrentHistorySession,
+    ],
   );
 
   // Hover prefetch — fires on row pointer-enter. Warms the detail + blob
@@ -2180,7 +3381,7 @@ export function PlaygroundMain({
         projectId: convexProjectId ?? undefined,
       });
     },
-    [convexProjectId]
+    [convexProjectId],
   );
 
   // Publish the chat-history bridge so the docked Playground pane (outside
@@ -2225,103 +3426,59 @@ export function PlaygroundMain({
     setBridge,
   ]);
 
-  // Track streaming baseline + resumedVersion drift while a history session is
-  // active. Ports ChatTabV2:1017-1088 so that a turn started on a resumed
-  // thread is reconciled against its baseline version when it ends:
-  //   - mark active session read on stream completion
-  //   - refresh the active session detail (with retry) so the rail picks up
-  //     the new version
-  //   - detach if the server's version doesn't advance past the baseline
-  //     (concurrent edit / fork / deletion)
-  const previousStatusRef = useRef(status);
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = status;
-    const wasStreaming =
-      previousStatus === "submitted" || previousStatus === "streaming";
-    const isNowStreaming = status === "submitted" || status === "streaming";
-    const hasStartedStream = !wasStreaming && isNowStreaming;
-
-    if (hasStartedStream) {
-      resumedThreadSendBaselineRef.current =
-        activeHistorySessionId && resumedVersion !== null
-          ? { sessionId: activeHistorySessionId, version: resumedVersion }
-          : null;
-      return;
-    }
-
-    if (!wasStreaming) {
-      return;
-    }
-
-    if (status === "error") {
-      resumedThreadSendBaselineRef.current = null;
-      return;
-    }
-
-    // Still mid-stream (submitted ↔ streaming transition). The stream hasn't
-    // ended, so don't consume the baseline yet — otherwise the version-conflict
-    // check below will read `null` when the stream actually completes.
-    if (isNowStreaming) {
-      return;
-    }
-
-    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
-    resumedThreadSendBaselineRef.current = null;
-    const hasCompletedStream = status === "ready";
-    if (!hasCompletedStream) {
-      return;
-    }
-
-    if (activeHistorySessionId) {
-      void markHistorySessionRead(activeHistorySessionId);
-    }
-
-    // Defer slightly so the server has a chance to flush the version bump
-    // before we ask for the new detail row.
-    const timerId = window.setTimeout(() => {
-      void (async () => {
-        const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline
-        );
-        if (
-          resumedThreadSendBaseline &&
-          (!detail ||
-            detail._id !== resumedThreadSendBaseline.sessionId ||
-            detail.version <= resumedThreadSendBaseline.version)
-        ) {
-          detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
-            { silent: suppressHistoryConflictToastRef.current }
-          );
-        }
-      })().catch((error) => {
+  useResumedThreadPersistence({
+    sendBaselineRef: resumedThreadSendBaselineRef,
+    enabled: true,
+    status,
+    activeHistorySessionId,
+    resumedVersion,
+    consumePersistReceipt,
+    consumeTurnAborted,
+    reactiveSessionVersion: reactiveHistorySession?.version,
+    syncResumedVersion,
+    markHistorySessionRead: (sessionId) => {
+      void markHistorySessionRead(sessionId);
+    },
+    refreshAfterStream: () => {
+      void refreshCurrentHistorySession({ markRead: true }).catch((error) => {
         console.error("[PlaygroundMain] Failed to refresh chat history", error);
       });
-    }, 250);
-
-    return () => window.clearTimeout(timerId);
-  }, [
-    activeHistorySessionId,
-    detachHistorySession,
-    markHistorySessionRead,
-    refreshHistorySessionAfterStream,
-    resumedVersion,
-    status,
-  ]);
+    },
+    onConflict: () => {
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE, {
+        silent: suppressHistoryConflictToastRef.current,
+      });
+    },
+    onUnsaved: () => {
+      // The eval preview mutates its own session by design, so its
+      // self-inflicted noise stays suppressed here too.
+      if (!suppressHistoryConflictToastRef.current) {
+        toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
+      }
+    },
+  });
 
   // Delay the spinner so a hover-prefetched (instant) load doesn't flash an
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
   // visible feedback.
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  useLayoutEffect(() => {
+    useActiveChatSessionStore.getState().setRestorationPending(
+      !!loadingHistorySessionId || isRestoringConversation || restoringTarget !== null,
+    );
+    return () => useActiveChatSessionStore.getState().setRestorationPending(false);
+  }, [loadingHistorySessionId, isRestoringConversation, restoringTarget]);
   useEffect(() => {
-    if (!loadingHistorySessionId) {
+    // A URL restore is the same "fetching a transcript" wait, and it happens on
+    // a cold load — without it the user stares at an empty composer until the
+    // messages land.
+    if (!loadingHistorySessionId && !isRestoringConversation) {
       setShowLoadingOverlay(false);
       return;
     }
     const timerId = window.setTimeout(() => setShowLoadingOverlay(true), 120);
     return () => window.clearTimeout(timerId);
-  }, [loadingHistorySessionId]);
+  }, [isRestoringConversation, loadingHistorySessionId]);
 
   // `compareSummaries` / `compareHasMessages` are keyed by `compareId`,
   // which is a modelId in multi-model mode and a hostId in multi-host
@@ -2363,8 +3520,8 @@ export function PlaygroundMain({
     setCompareSummaries((previous) => {
       const filtered = Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeIds.has(compareId)
-        )
+          activeIds.has(compareId),
+        ),
       );
       // Bail when the filter would be a no-op so we don't write a new
       // reference into state for an unchanged value.
@@ -2375,8 +3532,8 @@ export function PlaygroundMain({
     setCompareHasMessages((previous) => {
       const filtered = Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeIds.has(compareId)
-        )
+          activeIds.has(compareId),
+        ),
       );
       return Object.keys(filtered).length === Object.keys(previous).length
         ? previous
@@ -2454,13 +3611,13 @@ export function PlaygroundMain({
             toolCallId: pendingExecution.toolCallId,
           }
         : pendingExecution.toolCallId
-        ? {
-            toolCallId: pendingExecution.toolCallId,
-            modelOutput: pendingExecution.modelOutput,
-          }
-        : pendingExecution.modelOutput
-        ? { modelOutput: pendingExecution.modelOutput }
-        : {}),
+          ? {
+              toolCallId: pendingExecution.toolCallId,
+              modelOutput: pendingExecution.modelOutput,
+            }
+          : pendingExecution.modelOutput
+            ? { modelOutput: pendingExecution.modelOutput }
+            : {}),
       mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     };
     const { messages: newMessages, toolCallId } =
@@ -2469,7 +3626,7 @@ export function PlaygroundMain({
         params,
         result,
         toolMeta,
-        deterministicOptions
+        deterministicOptions,
       );
 
     if (pendingExecution.renderOverride) {
@@ -2481,7 +3638,7 @@ export function PlaygroundMain({
 
     const upsertById = (
       current: typeof newMessages,
-      nextMessage: (typeof newMessages)[number]
+      nextMessage: (typeof newMessages)[number],
     ) => {
       const idx = current.findIndex((m) => m.id === nextMessage.id);
       if (idx === -1) return [...current, nextMessage];
@@ -2519,7 +3676,7 @@ export function PlaygroundMain({
         return prev.map((execution) =>
           execution.toolCallId === pendingExecution.toolCallId
             ? nextExecution
-            : execution
+            : execution,
         );
       }
 
@@ -2545,7 +3702,7 @@ export function PlaygroundMain({
     (toolCallId: string, state: unknown) => {
       onWidgetStateChange?.(toolCallId, state);
     },
-    [onWidgetStateChange]
+    [onWidgetStateChange],
   );
 
   const ensureSelectedServerReadyForChat = useCallback(async () => {
@@ -2577,8 +3734,8 @@ export function PlaygroundMain({
       const errorMessage = result.missingServerNames.includes(serverName)
         ? `${serverName} is no longer available in this project.`
         : result.reauthServerNames.includes(serverName)
-        ? `Reauthenticate ${serverName} before sending.`
-        : `Couldn't connect to ${serverName}.`;
+          ? `Reauthenticate ${serverName} before sending.`
+          : `Couldn't connect to ${serverName}.`;
       toast.error(errorMessage);
       return false;
     } finally {
@@ -2587,10 +3744,92 @@ export function PlaygroundMain({
   }, [ensureServersReady, serverName, servers]);
 
   // Handle follow-up messages from widgets
+  /**
+   * Can this scoped local send actually run — and if not, what does the user
+   * do about it?
+   *
+   * Same shape as `ensureThreadReadyForSend`, and the same rule: return false
+   * and the send does not happen, with the composer state intact. The
+   * distinction that matters here is between CAN INITIATE SETUP and CAN
+   * EXECUTE A TURN. They are not the same gate:
+   *
+   *   - a send with no workspace or no consent is how setup STARTS. Blocking
+   *     it (in `submitDisabled`, say) would make first-send setup unreachable,
+   *     because both Enter and the button are refused before `onSubmit` ever
+   *     runs;
+   *   - a send during setup, or with a hard unavailable state, cannot execute
+   *     and is refused with something to read.
+   *
+   * WARM: the runtime is verified and only consent is missing, so Allow awaits
+   * the grant and this returns true — the original send continues, once, after
+   * the context is re-checked. COLD: setup starts, this returns false, the
+   * draft stays, and the user presses Send again.
+   */
+  const ensureLocalHarnessReadyForSend =
+    useCallback(async (): Promise<boolean> => {
+      if (!localHarnessRequested) return true;
+      const phase = localHarnessRef.current.phase;
+      if (phase === "ready") return true;
+
+      if (phase === "installing" || phase === "authorizing") {
+        // Setup is running. Saying so beats a dialog that would only report the
+        // same thing.
+        toast.info("Claude Code is still setting up on this machine.");
+        return false;
+      }
+      if (phase === "unavailable") {
+        toast.error(
+          localHarnessRef.current.reason ??
+            "This Inspector can't run Claude Code on this machine.",
+        );
+        return false;
+      }
+
+      // Deduplicated: repeated Send gestures while the dialog is open must not
+      // stack dialogs or capture a second approval.
+      if (localHarnessDialogOpenRef.current) return false;
+
+      return await new Promise<boolean>((resolve) => {
+        localHarnessPendingSendRef.current = () => resolve(true);
+        localHarnessCancelSendRef.current = () => resolve(false);
+        setLocalHarnessDialog({ trigger: "first_send" });
+      });
+    }, [localHarnessRequested]);
+
   const handleSendFollowUp = useCallback(
     (text: string) => {
       void (async () => {
+        // Same gate as the composer, and for the same reason: a widget-driven
+        // follow-up on a reopened conversation would otherwise be the FIRST
+        // thing that runs on a target the transcript never used, with no user
+        // action in between to make that a choice.
+        if (conversationSendBlockedRef.current) {
+          return;
+        }
         if (!(await ensureSelectedServerReadyForChat())) {
+          return;
+        }
+        // Every send entry point takes the same thread preflight, not just the
+        // composer: a resumed session that moved between subscription updates
+        // would otherwise send with a stale `expectedVersion`, and now that the
+        // hosted route honors it, the turn runs in full and only THEN takes a
+        // 409 and a conflict detach. A no-op when no history thread is open.
+        if (!(await ensureThreadReadyForSend())) {
+          return;
+        }
+        // The local-execution gate runs at EVERY send entry point, exactly as
+        // the thread preflight above does. Reaching the transport without it
+        // is not a silent downgrade — `prepareSendMessagesRequest` throws — so
+        // skipping it here traded the one dialog that can grant authorization
+        // for an error the user cannot act on.
+        if (!(await ensureLocalHarnessReadyForSend())) {
+          // This text arrived as an argument — a widget follow-up, an eval
+          // auto-run, a Quick Run — so unlike the composer paths there is no
+          // draft sitting behind it. Dropping it left the cold-install notice
+          // saying "press Send to continue" over an empty composer, with the
+          // prompt it was talking about gone. Putting it there is what makes
+          // that instruction true.
+          composer.setInput(text);
           return;
         }
         sendMessage({
@@ -2602,11 +3841,14 @@ export function PlaygroundMain({
       })();
     },
     [
+      composer,
       ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
       modelContextQueue,
       sendMessage,
       outgoingSenderMetadata,
-    ]
+    ],
   );
 
   // Auto-run: when `autoRunInput` is set (eval preview "run on open"), send it
@@ -2631,13 +3873,24 @@ export function PlaygroundMain({
       return;
     }
     autoRanRef.current = true;
-    handleSendFollowUp(autoRunInput as string);
-    // The prompt was just auto-sent, so clear it out of the composer. The
-    // composer is otherwise seeded with the same `initialInput` (so it mirrors
-    // the eval editor's left-pane prompt); leaving the sent text behind would
-    // both look stale and invite an accidental duplicate send. The mirror only
-    // re-seeds when `initialInput` itself changes, so this clear sticks.
+    // The prompt is auto-sent, so clear it out of the composer. The composer is
+    // otherwise seeded with the same `initialInput` (so it mirrors the eval
+    // editor's left-pane prompt); leaving the sent text behind would both look
+    // stale and invite an accidental duplicate send. The mirror only re-seeds
+    // when `initialInput` itself changes, so this clear sticks.
+    //
+    // Written BEFORE the call, which is only a matter of reading order — the
+    // call suspends on its first `await`, so this line always ran first anyway.
+    // Stating it plainly because `handleSendFollowUp` can now DEFER instead of
+    // sending (the local-execution gate opens a dialog) and puts the prompt back
+    // when it does, which lands after this clear and outlives it. That is the
+    // intended end state, not a leak past the clear: nothing was sent, so there
+    // is no stale text and no duplicate to invite — and the notice under the
+    // composer says "press Send to continue", which needs the prompt to still
+    // be there. `autoRanRef` is already set, so the only send that can follow
+    // is the user's own.
     composer.setInput("");
+    handleSendFollowUp(autoRunInput as string);
   }, [
     autoRunInput,
     composer,
@@ -2673,24 +3926,42 @@ export function PlaygroundMain({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      }
+      },
     ) => {
       setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
       );
     },
-    []
+    [],
   );
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
+    // Clearing empties the transcript and mints a fresh `chatSessionId`, so the
+    // next turn persists to a NEW history row. Keeping the previously-opened
+    // thread attached would leave the post-stream reconciliation above checking
+    // a baseline this session can never advance — the turn lands elsewhere, the
+    // old row's version never moves, and the user gets a false "This chat
+    // changed elsewhere" detach toast on a chat they just cleared. Same detach
+    // `handleNewChat` does, since a cleared thread IS a new one.
+    resumedThreadSendBaselineRef.current = null;
+    cancelPendingHistorySelection();
+    syncResumedVersion(null);
+    setPendingDirectVisibility("private");
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
     setViewingHistoryReplay(false);
-  }, [clearLogs, composer, resetChat, resetMultiModelSessions]);
+  }, [
+    cancelPendingHistorySelection,
+    clearLogs,
+    composer,
+    resetChat,
+    resetMultiModelSessions,
+    syncResumedVersion,
+  ]);
 
   const handleClearChat = useCallback(() => {
     handleResetAllChats();
@@ -2698,12 +3969,12 @@ export function PlaygroundMain({
   }, [handleResetAllChats]);
 
   const handleSingleModelChange = useCallback(
-    (model: ModelDefinition) => {
-      setSelectedModel(model);
+    (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
+      setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
-    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
   );
 
   // Publish the chat composer's controls so the global playground agent tools
@@ -2715,7 +3986,7 @@ export function PlaygroundMain({
   // history count + last role) — never message text or the prompt itself. The
   // actions reuse the exact functions the composer controls call.
   const setAgentControls = usePlaygroundAgentControlsBridgeStore(
-    (s) => s.setControls
+    (s) => s.setControls,
   );
   useEffect(() => {
     const lastMessage =
@@ -2739,7 +4010,7 @@ export function PlaygroundMain({
         // (disabled rows rejected), so the agent can't select a locked model.
         const resolution = resolveSelectablePlaygroundModel(
           identifier,
-          availableModels
+          availableModels,
         );
         if (!resolution.ok) return resolution;
         const { model } = resolution;
@@ -2774,15 +4045,16 @@ export function PlaygroundMain({
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
-        setSelectedModel(leadModel);
+        // Straight from the multi-model menu, so the lead counts as a pick.
+        setSelectedModel(leadModel, { userInitiated: true });
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
-          String(selectedModelItem.id)
-        )
+          String(selectedModelItem.id),
+        ),
       );
     },
-    [selectedModel, setSelectedModel, setSelectedModelIds]
+    [selectedModel, setSelectedModel, setSelectedModelIds],
   );
 
   const handleMultiModelEnabledChange = useCallback(
@@ -2795,17 +4067,27 @@ export function PlaygroundMain({
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
       // `MultiHostPicker` pick up the live lead from `currentHostId`.
-      if (enabled && multiHostEnabled) {
+      // Checked against `selectedHostIds.length` directly, NOT
+      // `isComparingHosts` (which also requires `canEnableMultiHost`, a
+      // transient signal that lags behind the Convex host-list query) and
+      // NOT the separately-persisted `multiHostEnabled` flag. The lineup
+      // itself is the durable signal of user intent — if `canEnableMultiHost`
+      // happened to be momentarily false when the user enabled multi-model,
+      // gating on `isComparingHosts` would skip clearing the lineup, and
+      // once the host list caught up afterward `isMultiHostMode` would win
+      // over the multi-model the user just turned on, undoing their action
+      // with no visible cause.
+      if (enabled && selectedHostIds.length > 1) {
         setMultiHostEnabled(false);
         setSelectedHostIds([]);
       }
     },
     [
       setMultiModelEnabled,
-      multiHostEnabled,
+      selectedHostIds.length,
       setMultiHostEnabled,
       setSelectedHostIds,
-    ]
+    ],
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
@@ -2821,7 +4103,7 @@ export function PlaygroundMain({
         setMultiModelEnabled(false);
       }
     },
-    [setMultiHostEnabled, multiModelEnabled, setMultiModelEnabled]
+    [setMultiHostEnabled, multiModelEnabled, setMultiModelEnabled],
   );
 
   // Lead-host promotion: the picker delegates the "make this host the
@@ -2838,7 +4120,7 @@ export function PlaygroundMain({
       if (!multiHostProjectId) return;
       replaceLeadHostId(multiHostProjectId, hostId);
     },
-    [multiHostProjectId]
+    [multiHostProjectId],
   );
 
   const handleRequireToolApprovalChange = useCallback(
@@ -2852,7 +4134,7 @@ export function PlaygroundMain({
         handleResetAllChats();
       }
     },
-    [handleResetAllChats, isCompareMode, setRequireToolApproval]
+    [handleResetAllChats, isCompareMode, setRequireToolApproval],
   );
 
   const handleMultiModelSummaryChange = useCallback(
@@ -2864,7 +4146,7 @@ export function PlaygroundMain({
         [summary.modelId]: summary,
       }));
     },
-    []
+    [],
   );
 
   const handleMultiModelHasMessagesChange = useCallback(
@@ -2874,14 +4156,11 @@ export function PlaygroundMain({
         [compareId]: hasMessages,
       }));
     },
-    []
+    [],
   );
 
-  const queueBroadcastRequest = useCallback(
-    (
-      request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>
-    ) => {
+  const trackSendMessage = useCallback(
+    (captureProps?: Record<string, unknown>) => {
       track("app_builder_send_message", {
         location: "app_builder_tab",
         model_id: selectedModel?.id ?? null,
@@ -2891,11 +4170,6 @@ export function PlaygroundMain({
         multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
         ...(captureProps ?? {}),
       });
-
-      setBroadcastRequest({
-        ...request,
-        id: Date.now(),
-      });
     },
     [
       isMultiModelMode,
@@ -2903,7 +4177,26 @@ export function PlaygroundMain({
       selectedModel?.id,
       selectedModel?.name,
       selectedModel?.provider,
-    ]
+    ],
+  );
+
+  // Compare mode ONLY. `broadcastRequest` has no consumer in single-model
+  // mode, but freshly mounted compare cards replay whatever request is stored
+  // here — so a single-model send that wrote this state would be re-sent to
+  // every column when the user later enables compare. Single-model paths call
+  // `trackSendMessage` directly instead.
+  const queueBroadcastRequest = useCallback(
+    (
+      request: Omit<BroadcastChatTurnRequest, "id">,
+      captureProps?: Record<string, unknown>,
+    ) => {
+      trackSendMessage(captureProps);
+      setBroadcastRequest({
+        ...request,
+        id: Date.now(),
+      });
+    },
+    [trackSendMessage],
   );
 
   const mergedToolRenderOverrides = useMemo(
@@ -2921,7 +4214,7 @@ export function PlaygroundMain({
       restoredToolRenderOverrides,
       injectedToolRenderOverrides,
       externalToolRenderOverrides,
-    ]
+    ],
   );
 
   // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
@@ -2996,8 +4289,8 @@ export function PlaygroundMain({
   let placeholder = showPostConnectGuide
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
     : isCompareMode
-    ? DEFAULT_CHAT_COMPOSER_PLACEHOLDER
-    : "Try a prompt that could call your tools...";
+      ? DEFAULT_CHAT_COMPOSER_PLACEHOLDER
+      : "Try a prompt that could call your tools...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
@@ -3018,16 +4311,36 @@ export function PlaygroundMain({
     signUp();
   };
 
+  // A turn's content is text OR anything explicitly attached to it: an
+  // expanded MCP prompt, a skill, a file. Text-only would disable Send on a
+  // composer that visibly holds an attached skill.
+  const composerHasContent =
+    composer.input.trim().length > 0 ||
+    mcpPromptResults.length > 0 ||
+    skillResults.length > 0 ||
+    fileAttachments.length > 0;
+
   // Submit handler — shared by the composer form and eval Quick Run.
+
   const performComposerSubmit = useCallback(async (): Promise<boolean> => {
-    const hasContent =
-      composer.input.trim() ||
-      mcpPromptResults.length > 0 ||
-      fileAttachments.length > 0;
-    if (!hasContent || sendBlocked) {
+    if (!composerHasContent || sendBlocked) {
+      return false;
+    }
+    // The composer is disabled in this state, so this is the belt to that
+    // brace: Enter-to-send, starter chips and eval Quick Run all land here.
+    if (conversationSendBlockedRef.current) {
       return false;
     }
     if (!(await ensureSelectedServerReadyForChat())) {
+      return false;
+    }
+    if (!(await ensureThreadReadyForSend())) {
+      return false;
+    }
+    // AFTER the other gates and before anything is consumed: a dialog that
+    // opened and was cancelled must leave the draft, the attachments and the
+    // prompt/skill results exactly as they were.
+    if (!(await ensureLocalHarnessReadyForSend())) {
       return false;
     }
 
@@ -3035,30 +4348,93 @@ export function PlaygroundMain({
       setIsFullscreenChatOpen(true);
     }
 
+    // COMP-14: computer-attached host → land the attachments in the sandbox
+    // (via the existing reserve → mint → upload path; the upload route enforces
+    // the COMP-8 quota) and append a system-visible note with the sandbox paths
+    // so the model can reference them. A failed upload ABORTS the send with the
+    // composer state intact — an honest error beats a message whose files
+    // silently never reached the box. Inline file parts are unchanged (vision
+    // et al. keep working).
+    let composerText = composer.input;
+    if (fileAttachments.length > 0 && computerAttachmentsActive) {
+      if (attachmentUploadInFlightRef.current) {
+        return false;
+      }
+      attachmentUploadInFlightRef.current = true;
+      try {
+        const entries = await computerAttachmentUpload.uploadAttachments(
+          fileAttachments.map((a) => a.file),
+        );
+        const note = buildComputerAttachmentNote(entries);
+        if (note) {
+          composerText =
+            composerText.trim().length > 0
+              ? `${composerText}\n\n${note}`
+              : note;
+        }
+        track("computer_chat_attachment_uploaded", {
+          file_count: entries.length,
+        });
+      } catch (err) {
+        if (isComputerStartLimitError(err)) {
+          track("computer_start_limit_hit", {
+            location: "playground_attachments",
+          });
+          useMCPJamLimitDialogStore.getState().notifyLimitHit();
+        } else {
+          toast.error(
+            getBillingErrorMessage(
+              err,
+              "Could not upload attachments to the computer.",
+            ),
+          );
+        }
+        return false;
+      } finally {
+        attachmentUploadInFlightRef.current = false;
+      }
+    }
+
     const files =
       fileAttachments.length > 0
         ? await attachmentsToFileUIParts(fileAttachments)
         : undefined;
 
+    // EXPLICIT injection (INS-4): a prompt the user expanded and a skill they
+    // attached are turn CONTENT, not context the model has to go fetch. The
+    // Playground was building neither, so an explicitly attached skill was
+    // silently dropped — a skill-only send left the composer and produced an
+    // empty turn. Same construction as ChatTabV2; the helpers own the shapes.
+    const promptMessages = buildMcpPromptMessages(
+      mcpPromptResults,
+    ) as UIMessage[];
+    const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
+    const prependMessages = [...promptMessages, ...skillMessages];
+
     if (isCompareMode) {
+      // Each card prepends the same messages to its own thread.
       queueBroadcastRequest({
-        text: composer.input,
+        text: composerText,
         files,
-        prependMessages: [],
+        prependMessages,
         widgetModelContext: modelContextQueue,
       });
+      // The composer's own record of this send — root `messages` will not see
+      // it until compare ends (see `compareSentPrompts`).
+      if (composerText.trim()) {
+        setCompareSentPrompts((prev) => [...prev, composerText]);
+      }
       setModelContextQueue([]);
     } else {
-      queueBroadcastRequest(
-        {
-          text: composer.input,
-          files,
-          prependMessages: [],
-        },
-        { single_model_send: true }
-      );
+      trackSendMessage({ single_model_send: true });
+      // Single-model mode has no broadcast consumer, so the prepends have to
+      // land in the thread here — before `sendMessage`, so the request carries
+      // them as history rather than arriving after the model answered.
+      if (prependMessages.length > 0) {
+        setMessages((prev) => [...prev, ...prependMessages]);
+      }
       sendMessage({
-        text: composer.input,
+        text: composerText,
         files,
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
@@ -3068,30 +4444,152 @@ export function PlaygroundMain({
 
     composer.setInput("");
     setMcpPromptResults([]);
+    setSkillResults([]);
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
     onFirstMessageSent?.();
     return true;
   }, [
     composer,
-    mcpPromptResults.length,
+    composerHasContent,
+    mcpPromptResults,
+    skillResults,
     fileAttachments,
     sendBlocked,
     ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
     isCompareMode,
     displayMode,
     isWidgetFullscreen,
     queueBroadcastRequest,
+    trackSendMessage,
     modelContextQueue,
     sendMessage,
+    setMessages,
     outgoingSenderMetadata,
     onFirstMessageSent,
+    computerAttachmentsActive,
+    computerAttachmentUpload,
   ]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     await performComposerSubmit();
   };
+
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
+  // so the original transcript survives in history.
+  //
+  // Server readiness is checked BEFORE the branch is minted: a branch that
+  // never sends would leave an empty orphan thread behind.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return false;
+      // A rewind IS a send, and a costlier one: it mints a branch and runs the
+      // edited turn on the CURRENT target, so on a reopened conversation it
+      // would both execute somewhere the transcript never ran AND fork the
+      // thread to record it. `editDisabled` below carries the same condition
+      // so the affordance reads as unavailable rather than failing on click.
+      if (conversationSendBlockedRef.current) return false;
+      // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
+      // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
+      // try/FINALLY with no catch, so a rejected connect propagates straight
+      // out of this handler. `UserMessageRow.submitEdit` does not await it, so
+      // that surfaces as an unhandled rejection with the editor already closed.
+      let serverReady: boolean;
+      try {
+        serverReady = await ensureSelectedServerReadyForChat();
+      } catch (error) {
+        console.error(
+          "[PlaygroundMain] Failed to prepare the server for an edit",
+          error,
+        );
+        toast.error("Couldn't prepare the server for that edit. Try again.");
+        return false;
+      }
+      if (!serverReady) return false;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file",
+      );
+      // `rewindToMessage` guards its own send, but the branch mint ahead of it
+      // (`startChatWithMessages`) can still reject. `UserMessageRow.submitEdit`
+      // invokes this handler fire-and-forget, so a rejection escapes as an
+      // unhandled one and the user is left on a closed editor with no turn and
+      // no explanation. Refusal (`null`) stays silent; a throw does not.
+      let outcome: Awaited<ReturnType<typeof rewindToMessage>>;
+      try {
+        outcome = await rewindToMessage({
+          messageId: message.id,
+          text,
+          files: files.length > 0 ? files : undefined,
+          metadata: outgoingSenderMetadata,
+          // Detach from the resumed thread as the branch is minted, not before
+          // the rewind. The teardown has to precede the branch's turn — the
+          // post-stream conflict check captures its baseline the instant that
+          // turn starts, and still attached it would name the ORIGINAL thread,
+          // surfacing the deliberate branch as a phantom "this chat changed
+          // elsewhere" and re-forking into a third session. But running it up
+          // front meant a refusal left the original stripped of its concurrency
+          // guard (next ordinary send overwrote its row blind) and stripped of
+          // its `?conversation=` id for good, since `clearConversation` masks
+          // the param it cleared. `onBeforeBranch` fires only once the rewind is
+          // past every refusal that leaves the thread untouched.
+          //
+          // `cancelPendingHistorySelection` is load-bearing beyond the
+          // baseline: it clears `activeHistorySessionId`, which is what stops
+          // the reactive history effect from reloading the ORIGINAL transcript
+          // over the branch. The conversation has to leave the URL with it —
+          // that clearing removes one of the two guards holding the restore
+          // effect back, and the other (`hasMessages`) falls too whenever the
+          // FIRST message is the one being edited, because the prefix before it
+          // is empty. With both down and `?conversation=` still naming the
+          // ORIGINAL, the restore refetched the original and reloaded it over
+          // the branch. `onReset("fork")` deliberately will not do this — an
+          // auth-bootstrap re-mint is the SAME conversation and must keep its
+          // id — so a branch says so here, the way New Chat does through
+          // `onReset("reset")`.
+          onBeforeBranch: () => {
+            resumedThreadSendBaselineRef.current = null;
+            cancelPendingHistorySelection();
+            syncResumedVersion(null);
+            pendingRestoredModelRef.current = null;
+            clearConversationUrlRef.current();
+          },
+        });
+      } catch (error) {
+        console.error("[PlaygroundMain] Failed to rewind to message", error);
+        toast.error("Couldn't apply that edit. Try again.");
+        return false;
+      }
+      // `null` means the rewind was refused — nothing branched, so say nothing.
+      if (!outcome) return false;
+      track("edit_message", {
+        location: "playground",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
+      // Nothing is announced. A rewind forks the session so the original
+      // transcript survives in the database, but that is deliberately invisible
+      // — same as Claude Code and Codex, where editing a message just edits it.
+      // This used to raise a "New branch created" toast with an "Open original"
+      // action; both were removed on the task author's call.
+      return true;
+    },
+    [
+      sendBlocked,
+      ensureSelectedServerReadyForChat,
+      cancelPendingHistorySelection,
+      syncResumedVersion,
+      rewindToMessage,
+      outgoingSenderMetadata,
+      selectedModel,
+    ],
+  );
 
   // Eval Quick Run: re-run the case in the live preview. Two phases so the send
   // never races the reset's `setMessages`:
@@ -3144,9 +4642,26 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
 
-  const handleMultiModelStarterPrompt = useCallback(
+  // Starter chips render in both empty states (compare grid and single-model
+  // hero), so route by mode like `submitAgentToolPrompt`: compare mode feeds
+  // the broadcast queue, single mode must call `sendMessage` itself — there is
+  // no broadcast consumer in single-model mode.
+  const handleStarterPrompt = useCallback(
     (prompt: string) => {
-      if (composerDisabled || sendBlocked) {
+      track("chat_starter_prompt_clicked", {
+        prompt,
+        location: isCompareMode ? "playground_compare" : "playground_single",
+      });
+      // Same gate as the composer. A starter chip is a one-click SEND, so
+      // without this it is the shortest path to running a reopened
+      // conversation on a target its transcript never used. Preserved as a
+      // draft rather than dropped: the chip's text is the user's input, and
+      // it is waiting for them the moment they accept the target.
+      if (
+        composerDisabled ||
+        sendBlocked ||
+        conversationSendBlockedRef.current
+      ) {
         composer.setInput(prompt);
         return;
       }
@@ -3155,13 +4670,37 @@ export function PlaygroundMain({
           composer.setInput(prompt);
           return;
         }
-        queueBroadcastRequest({
-          text: prompt,
-          prependMessages: [],
-          widgetModelContext: modelContextQueue,
-        });
+        if (!(await ensureThreadReadyForSend())) {
+          composer.setInput(prompt);
+          return;
+        }
+        // Same gate as the composer's, and the same restore on refusal: a
+        // cancelled dialog must leave the prompt where the user can see it.
+        if (!(await ensureLocalHarnessReadyForSend())) {
+          composer.setInput(prompt);
+          return;
+        }
+        if (isCompareMode) {
+          queueBroadcastRequest({
+            text: prompt,
+            prependMessages: [],
+            widgetModelContext: modelContextQueue,
+          });
+        } else {
+          trackSendMessage({ single_model_send: true });
+          sendMessage({
+            text: prompt,
+            metadata: outgoingSenderMetadata,
+            widgetModelContext: modelContextQueue,
+          });
+        }
         setModelContextQueue([]);
         composer.setInput("");
+        // Starter sends are text-only: staged prompt/skill results are
+        // discarded like the typed draft and file attachments, so they don't
+        // silently ride along on the next composer submit.
+        setMcpPromptResults([]);
+        setSkillResults([]);
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
         onFirstMessageSent?.();
@@ -3171,11 +4710,18 @@ export function PlaygroundMain({
       composer,
       composerDisabled,
       ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
       fileAttachments,
+      isCompareMode,
+      modelContextQueue,
       onFirstMessageSent,
+      outgoingSenderMetadata,
       queueBroadcastRequest,
       sendBlocked,
-    ]
+      sendMessage,
+      trackSendMessage,
+    ],
   );
   // "Ask agent to run" (harness built-in tools): the rail builds a structured
   // prompt and requests a send via the bridge; we route it through the SAME
@@ -3183,11 +4729,28 @@ export function PlaygroundMain({
   // composer as a draft). No bespoke execution path — it's a normal turn.
   const submitAgentToolPrompt = useCallback(
     async (text: string) => {
-      if (composerDisabled || sendBlocked) {
+      // Same gate as the composer, and this path is the one the user never
+      // typed into: the rail requests the send from a sibling subtree, so a
+      // disabled Send button is no protection at all. Left in the composer as
+      // a draft, which is exactly what this handler already does for every
+      // other not-ready state.
+      if (
+        composerDisabled ||
+        sendBlocked ||
+        conversationSendBlockedRef.current
+      ) {
         composer.setInput(text);
         return;
       }
       if (!(await ensureSelectedServerReadyForChat())) {
+        composer.setInput(text);
+        return;
+      }
+      if (!(await ensureThreadReadyForSend())) {
+        composer.setInput(text);
+        return;
+      }
+      if (!(await ensureLocalHarnessReadyForSend())) {
         composer.setInput(text);
         return;
       }
@@ -3199,10 +4762,7 @@ export function PlaygroundMain({
         });
         setModelContextQueue([]);
       } else {
-        queueBroadcastRequest(
-          { text, prependMessages: [] },
-          { single_model_send: true }
-        );
+        trackSendMessage({ single_model_send: true });
         sendMessage({
           text,
           metadata: outgoingSenderMetadata,
@@ -3217,13 +4777,16 @@ export function PlaygroundMain({
       composerDisabled,
       sendBlocked,
       ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
       isCompareMode,
       queueBroadcastRequest,
+      trackSendMessage,
       sendMessage,
       outgoingSenderMetadata,
       modelContextQueue,
       onFirstMessageSent,
-    ]
+    ],
   );
 
   const pendingAgentToolPrompt = useAgentToolPromptBridge((s) => s.pending);
@@ -3246,10 +4809,124 @@ export function PlaygroundMain({
     !hasLiveTimelineContent &&
     !preludeTraceEnvelope?.spans?.length;
 
+  /**
+   * ONE construction site for the as-run disclosure, consumed by every surface
+   * that can be blocked by it.
+   *
+   * The gate must never be reachable from a surface that cannot lift it. The
+   * docked/centered/compare composers take it through `ChatInput`'s `notice`
+   * slot; the fullscreen overlay REPLACES those composers, so it takes the
+   * same element through its own slot; and a widget full takeover, which
+   * renders no composer at all, gets it pinned over the thread (see
+   * `showPinnedConversationTargetNotice`). Rendering it in only one of those
+   * places disables the visible Send and hides the button that re-enables it.
+   */
+  const conversationTargetNotice = needsConversationTargetAck ? (
+    <ConversationTargetNotice
+      disclosure={conversationTargetDisclosure}
+      composerHostName={
+        previewedHost
+          ? clientDisplayName(
+              hostList.find((item) => item.hostId === previewedHost.hostId) ??
+                previewedHost,
+            )
+          : null
+      }
+      composerEnvironmentId={
+        composerExecutionTarget.kind === "environment"
+          ? composerExecutionTarget.environmentId
+          : null
+      }
+      onAcknowledge={acknowledgeConversationTarget}
+    />
+  ) : null;
+
+  /**
+   * The composer's notice slot, with BOTH statements when both apply.
+   *
+   * `ChatInput` has one slot, and the as-run conversation-target disclosure
+   * already uses it — and that one is not decoration: it carries the only
+   * button that re-enables Send. So the local-harness status composes below
+   * it rather than replacing it. Overwriting it would disable the visible Send
+   * and hide the control that re-enables it.
+   */
+  const localHarnessNotice =
+    localHarnessInScope &&
+    (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
+      <LocalHarnessComposerNotice
+        controller={localHarness}
+        onRetry={() => setLocalHarnessDialog({ trigger: "chip" })}
+      />
+    ) : null;
+  const localHarnessReadyNotice =
+    localHarnessInScope && localHarnessJustReady ? (
+      <LocalHarnessReadyNotice
+        onDismiss={() => setLocalHarnessJustReady(false)}
+      />
+    ) : null;
+  const apiSessionNotice = apiSessionViewOnly ? (
+    <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+      This conversation is driven by an agent. Continue it through the session API.
+      {restoredSessionHasBrowser ? " You can take over its browser here." : ""}
+    </p>
+  ) : null;
+  const composerNotice =
+    apiSessionNotice ||
+    conversationTargetNotice ||
+    localHarnessNotice ||
+    localHarnessReadyNotice ? (
+      <div className="flex flex-col gap-2">
+        {apiSessionNotice}
+        {conversationTargetNotice}
+        {localHarnessNotice}
+        {localHarnessReadyNotice}
+      </div>
+    ) : null;
+
+  /**
+   * The chip's data. Rendered only inside the shared scope, and only with the
+   * feature enabled — `phase: "unavailable"` is what the controller answers
+   * outside either, so one check covers both.
+   */
+  const executionTargetChip: ExecutionTargetChipData | undefined =
+    localHarnessInScope && localHarness.phase !== "unavailable"
+      ? {
+          target: localHarness.requestedTarget,
+          phase: localHarness.phase,
+          ...(localHarness.runtimeStatus?.state === "downloading"
+            ? { percent: localHarness.runtimeStatus.percent }
+            : {}),
+          ...(localHarness.workspace?.displayRoot
+            ? { displayRoot: localHarness.workspace.displayRoot }
+            : {}),
+          hostedAvailable: localHarness.hostedAvailable,
+          onSelect: (target) => {
+            localHarness.select(target);
+            track("local_harness_target_selected", { target });
+          },
+          onOpenDetails: () => setLocalHarnessDialog({ trigger: "chip" }),
+        }
+      : undefined;
+
   // Shared chat input props
+  /**
+   * Up/Down through this thread's own user messages (BB-183). Same derivation
+   * as `ChatTabV2` — the Playground mirrors that component rather than reusing
+   * it, so the wiring has to be made twice; the walk itself does not.
+   */
+  const chatInputHistory = useMemo(() => {
+    const fromThread = collectInputHistory(messages);
+    if (compareSentPrompts.length === 0) return fromThread;
+    // Newest first, like the thread's own, and joined with the same
+    // adjacent-duplicate rule across the seam.
+    const merged = [...compareSentPrompts].reverse().concat(fromThread);
+    return merged.filter((entry, index) => merged[index - 1] !== entry);
+  }, [messages, compareSentPrompts]);
+
   const sharedChatInputProps = {
     value: composer.input,
     onChange: composer.handleInputChange,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
@@ -3278,7 +4955,6 @@ export function PlaygroundMain({
           cloudProjectId: convexProjectId,
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
-          multiHostEnabled,
           onHostChange: (hostId: string) => setPreviewedHostId(hostId),
           onSelectedHostIdsChange: setSelectedHostIds,
           onMultiHostEnabledChange: handleMultiHostEnabledChange,
@@ -3294,14 +4970,28 @@ export function PlaygroundMain({
       disableChatInput ||
       submitBlocked ||
       composer.submitGatedByServer ||
-      isPreparingServerForSend,
+      isPreparingServerForSend ||
+      // Same environment-transition gate as `sharedChatInputProps` above.
+      isEnvironmentTargetPending ||
+      // A reopened conversation whose composer does not describe it. The
+      // notice rendered directly above the input says why and carries the
+      // one-click way out.
+      needsConversationTargetAck ||
+      // Setup in flight, or a machine that cannot run this at all. Explicitly
+      // NOT missing consent or a missing folder: both Enter and the button are
+      // refused by this flag before `onSubmit` runs, so disabling for those
+      // would make first-send setup unreachable. The composer notice above
+      // carries the explanation for each state that does disable.
+      localHarnessBlocksSend,
+    notice: composerNotice,
+    ...(executionTargetChip ? { executionTarget: executionTargetChip } : {}),
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
     mcpToolsTokenCountErrors,
     connectedOrConnectingServerConfigs: Object.fromEntries(
-      selectedServers.map((name) => [name, { name }])
+      selectedServers.map((name) => [name, { name }]),
     ),
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
@@ -3316,11 +5006,28 @@ export function PlaygroundMain({
     pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
     moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
-    allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
-    onServerToggle: handlePlaygroundServerToggle,
-    onReconnectServer: playgroundServerSelectorProps?.onReconnect,
-    onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
-    onAddServer: playgroundServerSelectorProps?.onConnect,
+    // ENVIRONMENT MODE swaps the "+" menu's server section wholesale: the
+    // backend connects the environment's servers on every turn, so the
+    // browser-connection rows (Connect/Retry, Add server) would all be dead
+    // controls against the wrong system. The rows shown instead come from the
+    // preview and their toggle is the SAME per-turn narrowing override as the
+    // header chips (`setServerEnabled`), so the two surfaces cannot disagree.
+    ...(isEnvironmentMode
+      ? {
+          environmentServers: playgroundEnvironment.servers,
+          onEnvironmentServerToggle: playgroundEnvironment.setServerEnabled,
+          environmentServersOverridden:
+            playgroundEnvironment.hasExplicitOverride,
+          onResetEnvironmentServers:
+            playgroundEnvironment.resetServersToEnvironment,
+        }
+      : {
+          allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+          onServerToggle: handlePlaygroundServerToggle,
+          onReconnectServer: playgroundServerSelectorProps?.onReconnect,
+          onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
+          onAddServer: playgroundServerSelectorProps?.onConnect,
+        }),
     voiceInputContext: convexProjectId
       ? {
           projectId: convexProjectId,
@@ -3330,6 +5037,7 @@ export function PlaygroundMain({
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
+    onManageOrgProviders: manageOrgProviders,
   };
 
   // Check if widget should take over the full container
@@ -3360,9 +5068,38 @@ export function PlaygroundMain({
     !shouldShowUpsell &&
     (showPostConnectGuide || !showFullscreenChatOverlay);
 
+  /**
+   * The one layout that renders NO composer: a mobile/tablet widget full
+   * takeover hides the footer input and forbids the overlay. A widget can
+   * still request a follow-up there, and the as-run gate refuses it — so
+   * without this the refusal is silent and there is nothing on screen that
+   * could lift it. Pin the disclosure over the thread instead.
+   *
+   * The two exclusions keep it from doubling up on a notice another surface
+   * is already rendering: the centered empty-state composer survives a full
+   * takeover (but only ACTUALLY renders on an empty thread, which is the
+   * condition that matters here), and the trace-diagnostics shell has its own
+   * composer with the device frame behind it set to `display: none`.
+   */
+  const showPinnedConversationTargetNotice =
+    !!(apiSessionNotice || conversationTargetNotice) &&
+    isWidgetFullTakeover &&
+    !showLiveTraceDiagnostics &&
+    !(isThreadEmpty && showSingleModelEmptyStateComposer);
+
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
+      {showPinnedConversationTargetNotice ? (
+        <div
+          data-testid="pinned-conversation-target-notice"
+          className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
+        >
+          <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
+            {apiSessionNotice || conversationTargetNotice}
+          </div>
+        </div>
+      ) : null}
       {isThreadEmpty ? (
         // Empty state — centered (welcome + composer, or post-connect guide)
         <div
@@ -3378,8 +5115,8 @@ export function PlaygroundMain({
                 ? "text-neutral-50"
                 : "text-neutral-950"
               : effectiveThreadTheme === "dark"
-              ? "text-[#F1F0ED]"
-              : "text-[rgba(61,57,41,1)]"
+                ? "text-[#F1F0ED]"
+                : "text-[rgba(61,57,41,1)]",
           )}
           style={{ backgroundColor: hostBackgroundColor }}
         >
@@ -3390,7 +5127,7 @@ export function PlaygroundMain({
             <div
               className={cn(
                 "w-full max-w-4xl shrink-0",
-                !showPostConnectGuide && "py-8"
+                !showPostConnectGuide && "py-8",
               )}
             >
               <div
@@ -3427,15 +5164,33 @@ export function PlaygroundMain({
                 ) : hideWelcomeHero ? null : (
                   <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                     <div className="text-center max-w-md">
+                      {/*
+                        BB-106: render both theme variants and toggle with CSS
+                        rather than swapping `src`. During NUX `effectiveThreadTheme`
+                        flips once `hostContext` resolves asynchronously; swapping the
+                        `src` forced a fresh fetch of the other PNG and left a blank
+                        frame (the logo "disappearing"). Both files download once, so
+                        the theme flip is now instant with no refetch.
+                      */}
                       <img
-                        src={
-                          effectiveThreadTheme === "dark"
-                            ? "/mcp_jam_dark.png"
-                            : "/mcp_jam_light.png"
-                        }
+                        src="/mcp_jam_light.png"
                         alt="MCPJam"
                         draggable={false}
-                        className="h-10 w-auto mx-auto mb-4"
+                        aria-hidden={effectiveThreadTheme === "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme === "dark" && "hidden",
+                        )}
+                      />
+                      <img
+                        src="/mcp_jam_dark.png"
+                        alt="MCPJam"
+                        draggable={false}
+                        aria-hidden={effectiveThreadTheme !== "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme !== "dark" && "hidden",
+                        )}
                       />
                       <div className="space-y-3">
                         <h3
@@ -3446,14 +5201,19 @@ export function PlaygroundMain({
                                 ? "text-white"
                                 : "text-neutral-950"
                               : effectiveThreadTheme === "dark"
-                              ? "text-[#F1F0ED]"
-                              : "text-[rgba(61,57,41,1)]"
+                                ? "text-[#F1F0ED]"
+                                : "text-[rgba(61,57,41,1)]",
                           )}
                         >
-                          This is your playground for MCP.
+                          {showPostConnectGuideCopy
+                            ? POST_CONNECT_GUIDE_COPY
+                            : "This is your playground for MCP."}
                         </h3>
                       </div>
                     </div>
+                    <MultiModelStarterPromptsBlock
+                      onStarterPrompt={handleStarterPrompt}
+                    />
                     {errorMessage && (
                       <div className="w-full">
                         <ErrorBox
@@ -3476,7 +5236,7 @@ export function PlaygroundMain({
                 <div
                   className={cn(
                     "w-full shrink-0",
-                    showPostConnectGuide ? "pt-6" : "pt-8"
+                    showPostConnectGuide ? "pt-6" : "pt-8",
                   )}
                 >
                   <ChatInput {...sharedChatInputProps} hasMessages={false} />
@@ -3513,12 +5273,66 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
-                onToolApprovalResponse={addToolApprovalResponse}
+                interactive={
+                  !apiSessionViewOnly && loadingHistorySessionId === null && restoringTarget === null
+                }
+                onToolApprovalResponse={(response) => {
+                  if (!conversationSendBlockedRef.current)
+                    return addToolApprovalResponse(response);
+                }}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
                 }
                 showInlineEdit={!hideInlineEdit}
+                // Also gated on `isConvexAuthenticated`, not just compare mode
+                // and the evals panel's opt-out. Editing seeds a fresh session
+                // with the prefix and leaves the original behind, and the whole
+                // justification for that is the original SURVIVING — persisted
+                // under its own row, which is what the task author asked for
+                // ("if a user decides to rewind messages we shouldn't delete
+                // them, from our db"). Signed out there is no row and no
+                // persistence: every path needs a bearer token (the reactive
+                // Convex query in `use-chat-history.ts`, and the REST fallback
+                // whose endpoint `assertBearerToken`s in
+                // `server/routes/web/chat-history.ts`). A rewind there is a
+                // purely destructive truncation — exactly what this feature
+                // exists to replace.
+                //
+                // NOTE: this gate was originally justified by "signed out there
+                // is no way back to the original". That reason no longer
+                // separates the two cases — the way back (the branch notice and
+                // its "Open original" action) was removed for everyone. The gate
+                // now rests only on persistence, which is a narrower but still
+                // sufficient reason. Worth a second look if the retention
+                // requirement ever changes.
+                //
+                // Keyed on auth rather than `HOSTED_MODE` or a project id: a
+                // signed-in desktop user persists through the same API, and a
+                // signed-in user with no project still gets personal history.
+                // Withheld on harness hosts (Claude Code, Codex). Those
+                // runtimes keep the conversation on their own side, filed under
+                // the chat session id, and we send only the newest user message
+                // — `@ai-sdk/harness` exposes resume-this-exact-session and
+                // nothing else: no fork, no rewind, and the resume payload is
+                // opaque so the discarded tail cannot be trimmed out of it. A
+                // branch is a NEW session id, so there is no state to resume
+                // and the harness would answer the edited message with no
+                // memory of the conversation at all, while the persisted
+                // transcript still shows the full history — a stored turn that
+                // misrepresents what the model was given. Until the harness
+                // turn path flattens the copied prefix into the first prompt,
+                // withholding is the honest option.
+                onEditUserMessage={
+                  isCompareMode ||
+                  hideMessageEdit ||
+                  !isConvexAuthenticated ||
+                  previewedHostConfigUnresolved ||
+                  previewedHarnessId
+                    ? undefined
+                    : handleEditUserMessage
+                }
+                editDisabled={sendBlocked || needsConversationTargetAck}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
@@ -3560,7 +5374,7 @@ export function PlaygroundMain({
           <div
             className={cn(
               "mx-auto w-full max-w-4xl shrink-0",
-              isThreadEmpty ? "px-4 pb-4" : "p-3"
+              isThreadEmpty ? "px-4 pb-4" : "p-3",
             )}
           >
             {errorMessage && (
@@ -3591,26 +5405,25 @@ export function PlaygroundMain({
           onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={composerDisabled}
-          canSend={!sendBlocked && composer.input.trim().length > 0}
+          // The overlay replaces the docked composer, so it carries the
+          // disclosure — and its "Continue here" button — itself. Disabling
+          // Send without this would leave the user unable to send AND unable
+          // to acknowledge, which is a worse failure than the one the gate
+          // exists to prevent. The same composed element, for the same reason:
+          // the local-setup status has to be reachable from whichever composer
+          // is actually on screen.
+          notice={composerNotice}
+          canSend={
+            !sendBlocked && composerHasContent && !needsConversationTargetAck
+          }
           isThinking={isStreamingActive}
           onStop={stopActiveChat}
+          // Same submit path as the docked composer. Its own copy dropped
+          // attached prompts/skills (it sent raw text and then cleared the
+          // prompt results), so an explicit attachment vanished from a
+          // fullscreen widget session.
           onSend={() => {
-            void (async () => {
-              if (sendBlocked) {
-                return;
-              }
-              if (!(await ensureSelectedServerReadyForChat())) {
-                return;
-              }
-              sendMessage({
-                text: composer.input,
-                metadata: outgoingSenderMetadata,
-                widgetModelContext: modelContextQueue,
-              });
-              setModelContextQueue([]);
-              composer.setInput("");
-              setMcpPromptResults([]);
-            })();
+            void performComposerSubmit();
           }}
         />
       )}
@@ -3629,12 +5442,50 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
+      {/* ONE dialog for the surface. Rendered here rather than by a composer
+          because there are six composers and a compare view mounts several at
+          once — each owning its own would race one approval. */}
+      {localHarnessDialog !== null ? (
+        <LocalHarnessTrustDialog
+          open
+          onOpenChange={(next) => {
+            if (next) return;
+            setLocalHarnessDialog(null);
+            // A dialog that closes without authorizing releases the send it
+            // was gating. Leaving that promise pending would hang the composer
+            // on a dialog that is no longer on screen.
+            const cancel = localHarnessCancelSendRef.current;
+            localHarnessCancelSendRef.current = null;
+            localHarnessPendingSendRef.current = null;
+            cancel?.();
+          }}
+          controller={localHarness}
+          scopeKey={localHarnessScopeKey}
+          trigger={localHarnessDialog.trigger}
+          {...(window.electronAPI?.localHarness?.pickWorkspace
+            ? {
+                onPickWorkspace: () =>
+                  window.electronAPI!.localHarness!.pickWorkspace(),
+              }
+            : {})}
+          onAuthorized={() => {
+            setLocalHarnessDialog(null);
+            // WARM only: the grant is in hand, so the original send continues
+            // once. A cold install resolves through the cancel path instead —
+            // there is deliberately no queued send.
+            const resume = localHarnessPendingSendRef.current;
+            localHarnessPendingSendRef.current = null;
+            localHarnessCancelSendRef.current = null;
+            resume?.();
+          }}
+        />
+      ) : null}
       <div
         className={cn(
           "relative h-full flex flex-col overflow-hidden",
           showPostConnectGuide || isMultiModelLayoutMode
             ? "bg-background"
-            : "bg-muted/20"
+            : "bg-muted/20",
         )}
       >
         {showLoadingOverlay && (
@@ -3660,7 +5511,31 @@ export function PlaygroundMain({
             protocol={selectedProtocol}
             isMultiModelLayoutMode={isMultiModelLayoutMode}
             leadHostInMultiHost={
-              isMultiHostMode ? leadHost?.name ?? null : null
+              isMultiHostMode && leadHost
+                ? clientDisplayName(
+                    hostList.find((item) => item.hostId === leadHost.hostId) ??
+                      leadHost,
+                  )
+                : null
+            }
+            // Project Environments (Phase 2.5). The header's leading slot is the
+            // Playground's only always-rendered chrome row, so the Environments
+            // section lives here rather than beside the run pill's client chip
+            // (which is a popover and would hide the resolved bundle behind a
+            // click). Flag-gated, fail-closed.
+            leading={
+              environmentsEnabled && !isSharedSession ? (
+                <PlaygroundEnvironmentSection
+                  projectId={multiHostProjectId}
+                  environment={playgroundEnvironment}
+                  // Switching environments forks the chat scope and exits
+                  // comparison mode. Doing that mid-turn would strand the
+                  // in-flight request — its results vanish from the UI and the
+                  // Stop control goes with them. Same gate the chat-input
+                  // client selector uses.
+                  disabled={isStreamingActive || isPreparingServerForSend}
+                />
+              ) : null
             }
             // The standalone "Compare" host picker moved into the chat-input
             // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
@@ -3671,11 +5546,12 @@ export function PlaygroundMain({
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
                       onClick={() => setShowClearConfirm(true)}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Clear chat
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent
@@ -3685,6 +5561,7 @@ export function PlaygroundMain({
                   >
                     <p className="font-medium">Clear chat</p>
                     <p className="text-xs font-light text-muted-foreground">
+                      Clears this conversation and starts fresh ·{" "}
                       {navigator.platform.includes("Mac")
                         ? "⌘⇧K"
                         : "Ctrl+Shift+K"}
@@ -3770,7 +5647,7 @@ export function PlaygroundMain({
                       </div>
                     ) : null
                   }
-                  onStarterPrompt={handleMultiModelStarterPrompt}
+                  onStarterPrompt={handleStarterPrompt}
                   chatInputSlot={
                     <ChatInput {...sharedChatInputProps} hasMessages={false} />
                   }
@@ -3785,7 +5662,7 @@ export function PlaygroundMain({
                 }
                 className={cn(
                   "flex flex-1 min-h-0 flex-col overflow-hidden",
-                  !effectiveHasMessages && "hidden"
+                  !effectiveHasMessages && "hidden",
                 )}
                 aria-hidden={!effectiveHasMessages}
               >
@@ -3811,11 +5688,17 @@ export function PlaygroundMain({
                         multiHostColumns.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
                         multiHostColumns.length >= 3 &&
-                          "grid-cols-1 xl:grid-cols-3"
+                          "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {multiHostColumns.map((column) => (
+                      {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
+                          browserWorkspace={{
+                            id: chatSessionId,
+                            order: columnIndex,
+                            clientCount: multiHostColumns.length,
+                          }}
+                          usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
                           // accidentally reuse a card instance keyed by a
@@ -3833,7 +5716,15 @@ export function PlaygroundMain({
                             deterministicExecutionRequest
                           }
                           stopRequestId={stopBroadcastRequestId}
-                          executionConfig={column.executionConfig}
+                          executionConfig={{
+                            ...column.executionConfig,
+                            // Undefined is a real answer — "this turn states
+                            // nothing", which lets the server fall back to the
+                            // host's own config. Exactly what the single pane
+                            // sends, rather than substituting the raw host
+                            // list and pre-empting the loading guard.
+                            builtInToolIds: columnBuiltInToolIds[columnIndex],
+                          }}
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
@@ -3841,6 +5732,13 @@ export function PlaygroundMain({
                             hostId: column.compareId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
+                          personalBrowserEngine={personalBrowserEngineOption}
+                          personalComputerEngine={personalComputerEngineOption}
+                          localHarnessExecution={
+                            localHarnessExecutionByColumn.get(
+                              column.compareId,
+                            ) ?? localHarnessExecutionOption
+                          }
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
@@ -3860,8 +5758,15 @@ export function PlaygroundMain({
                           // model title + Latency/Tokens chrome is redundant
                           // (same model in every column) and noisy. Keep the
                           // Trace/Chat/Raw tab strip — that comes from
-                          // `showTraceTabs` inside the header.
+                          // `showTraceTabs` inside the header. Show the host
+                          // identity row so columns are immediately branded.
                           showComparisonChrome={false}
+                          showIdentityHeader
+                          logoSrc={getScenarioHostLogo(
+                            column.hostSnapshot.hostStyle,
+                            column.hostSnapshot.chatUiOverride,
+                            effectiveThreadTheme,
+                          )}
                           suppressThreadEmptyHint={false}
                           compareEnterVersion={multiCompareEnterVersion}
                           compareEnterMessages={multiCompareEnterMessages}
@@ -3886,13 +5791,19 @@ export function PlaygroundMain({
                         resolvedSelectedModels.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
                         resolvedSelectedModels.length >= 3 &&
-                          "grid-cols-1 xl:grid-cols-3"
+                          "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {resolvedSelectedModels.map((model) => {
+                      {resolvedSelectedModels.map((model, modelIndex) => {
                         const compareId = String(model.id);
                         return (
                           <MultiModelPlaygroundCard
+                            browserWorkspace={{
+                              id: chatSessionId,
+                              order: modelIndex,
+                              clientCount: resolvedSelectedModels.length,
+                            }}
+                            usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide
                             // during mode-swap transitions.
@@ -3902,7 +5813,7 @@ export function PlaygroundMain({
                             compareKind="model"
                             model={model}
                             comparisonSummaries={Object.values(
-                              compareSummaries
+                              compareSummaries,
                             )}
                             selectedServers={selectedServers}
                             broadcastRequest={broadcastRequest}
@@ -3923,8 +5834,7 @@ export function PlaygroundMain({
                                   ?.modelVisibleMcpToolResults,
                               mcpToolResultImageRendering:
                                 effectiveMcpToolResultImageRendering,
-                              builtInToolIds:
-                                previewedHost?.config?.builtInToolIds,
+                              builtInToolIds: effectiveBuiltInToolIds,
                             }}
                             hostedContext={{
                               projectId: convexProjectId,
@@ -3934,6 +5844,19 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            // The same org provider config the tab root and
+                            // the multi-host columns get. Each column builds
+                            // its own model list from this, so without it a
+                            // "Your providers" model is missing from the
+                            // column's list, its provider gets guessed from
+                            // the bare id (which reads as Ollama), and the
+                            // turn fails.
+                            hostedOrgModelConfig={hostedOrgModelConfig}
+                            personalBrowserEngine={personalBrowserEngineOption}
+                            personalComputerEngine={
+                              personalComputerEngineOption
+                            }
+                            localHarnessExecution={localHarnessExecutionOption}
                             displayMode={displayMode}
                             onDisplayModeChange={handleDisplayModeChange}
                             hostStyle={hostStyle}
@@ -3987,15 +5910,15 @@ export function PlaygroundMain({
           ) : (
             <>
               {showLiveTraceDiagnostics && (
-                <ChatboxHostStyleProvider value={hostStyle}>
-                  <ChatboxHostCapabilitiesOverrideProvider
+                <ScenarioHostStyleProvider value={hostStyle}>
+                  <ScenarioHostCapabilitiesOverrideProvider
                     value={hostCapabilitiesOverride}
                   >
-                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                    <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                       <div
                         className={cn(
                           "flex h-full min-h-0 flex-col overflow-hidden",
-                          effectiveThreadTheme === "dark" && "dark"
+                          effectiveThreadTheme === "dark" && "dark",
                         )}
                         data-testid="playground-trace-diagnostics"
                       >
@@ -4054,9 +5977,9 @@ export function PlaygroundMain({
                           </div>
                         </div>
                       </div>
-                    </ChatboxHostThemeProvider>
-                  </ChatboxHostCapabilitiesOverrideProvider>
-                </ChatboxHostStyleProvider>
+                    </ScenarioHostThemeProvider>
+                  </ScenarioHostCapabilitiesOverrideProvider>
+                </ScenarioHostStyleProvider>
               )}
 
               {/* Device frame container */}
@@ -4066,15 +5989,15 @@ export function PlaygroundMain({
                   showLiveTraceDiagnostics ? { display: "none" } : undefined
                 }
               >
-                <ChatboxHostStyleProvider value={hostStyle}>
-                  <ChatboxHostCapabilitiesOverrideProvider
+                <ScenarioHostStyleProvider value={hostStyle}>
+                  <ScenarioHostCapabilitiesOverrideProvider
                     value={hostCapabilitiesOverride}
                   >
-                    <ChatboxHostThemeProvider value={effectiveThreadTheme}>
+                    <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                       <div
                         className={cn(
-                          "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
-                          effectiveThreadTheme === "dark" && "dark"
+                          "scenario-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                          effectiveThreadTheme === "dark" && "dark",
                         )}
                         data-testid="playground-thread-shell"
                         data-host-style={hostStyle}
@@ -4088,8 +6011,8 @@ export function PlaygroundMain({
                           height: showPostConnectGuide
                             ? "100%"
                             : isWidgetFullTakeover
-                            ? "100%"
-                            : deviceConfig.height,
+                              ? "100%"
+                              : deviceConfig.height,
                           maxHeight: "100%",
                           backgroundColor: showPostConnectGuide
                             ? undefined
@@ -4100,9 +6023,9 @@ export function PlaygroundMain({
                           {threadContent}
                         </div>
                       </div>
-                    </ChatboxHostThemeProvider>
-                  </ChatboxHostCapabilitiesOverrideProvider>
-                </ChatboxHostStyleProvider>
+                    </ScenarioHostThemeProvider>
+                  </ScenarioHostCapabilitiesOverrideProvider>
+                </ScenarioHostStyleProvider>
               </div>
             </>
           )}
@@ -4163,6 +6086,9 @@ export function PlaygroundMain({
         event={urlElicitationRequired[0] ?? null}
         onDismiss={dismissUrlElicitationRequired}
       />
+      {/* Hosted MRTR (§12.5): a suspended `input_required` round. Durable, so
+          it outlives its turn — answering it re-drives the chat turn. */}
+      <HostedMrtrHost />
     </WidgetSurfaceProvider>
   );
 }

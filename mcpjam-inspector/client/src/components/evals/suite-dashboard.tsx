@@ -6,9 +6,12 @@ import {
 } from "./suite-insights-collapsible";
 import { SuiteMetricStrip } from "./suite-metric-strip";
 import { TestCasesOverview } from "./test-cases-overview";
+import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { SuiteResultsSplit } from "./suite-results-split";
+import { buildHostNamesById } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
+import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 
 interface RunTrendPoint {
   runId: string;
@@ -64,6 +67,9 @@ export interface SuiteDashboardProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  onRecordTestCase?: () => void;
+  /** Evaluate (New) only; passed straight through to the cases table. */
+  simpleCaseEditor?: boolean;
   /**
    * When set, the results split shows this run's detail in its right pane
    * (the rail highlights the run). Drives the folded-in run-detail view; the
@@ -74,6 +80,21 @@ export interface SuiteDashboardProps {
   runDetailPane?: React.ReactNode;
   /** Leave the selected run (back to suite overview) — clears the URL run id. */
   onExitRun?: () => void;
+  /**
+   * `namedHostId` → display name, spanning the suite's attachments AND the
+   * project host list (see `buildHostNamesById`). The project list is the only
+   * source for a host with no attachment — the resolved host of an
+   * environment-backed run. Falls back to attachment names alone when omitted.
+   */
+  hostNamesById?: Map<string, string | null>;
+  /**
+   * The suite's project environments, owned by the parent like `hostNamesById`.
+   * Without them the matrix can only place a run by its resolved host, so two
+   * model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
+  /** Forwarded to the per-case credit estimate (quick-run iteration override). */
+  quickRunIterationOverride?: number;
 }
 
 /**
@@ -107,26 +128,38 @@ export function SuiteDashboard({
   generateTestCasesDisabledReason,
   isGeneratingTestCases,
   onCreateTestCase,
+  onRecordTestCase,
+  simpleCaseEditor,
   selectedRunId,
   runDetailPane,
   onExitRun,
+  hostNamesById: hostNamesByIdProp,
+  environments,
+  quickRunIterationOverride,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
-  const hostNamesById = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const attachment of suite.hostAttachments ?? []) {
-      map.set(attachment.namedHostId, attachment.hostName);
-    }
-    return map;
-  }, [suite.hostAttachments]);
+  const attachmentHostNames = useMemo(
+    () => buildHostNamesById(suite.hostAttachments, undefined),
+    [suite.hostAttachments],
+  );
+  const hostNamesById = hostNamesByIdProp ?? attachmentHostNames;
 
-  // Monitoring rail item: synthetic-monitors flag AND the suite actually has
-  // monitoring signal (a schedule or at least one widget probe case).
+  // Monitoring rail item: the suite has monitoring signal AND the flag that
+  // owns that signal is on. TWO flags, because the rail has two halves and
+  // they ship on different clocks — a schedule answers to `scheduled-evals-
+  // enabled` (dark until Schedule is tested), a widget probe case to
+  // `synthetic-monitors`. One shared flag would make hiding either hide both.
+  //
+  // The OR opens the pane; it does NOT say what the pane may show. Both flags
+  // travel on so each section answers to its own — otherwise a suite with a
+  // schedule AND a probe case would earn the pane from `synthetic-monitors`
+  // alone and then render the "Scheduled runs" strip inside it.
+  const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
   const showMonitoring =
-    syntheticMonitorsEnabled &&
-    (Boolean(suite.schedule) ||
+    (scheduledEvalsEnabled && Boolean(suite.schedule)) ||
+    (syntheticMonitorsEnabled &&
       cases.some((testCase) => isModelFree(testCase.steps)));
 
   // The case-authoring library (with add / delete / run affordances). The split
@@ -152,6 +185,7 @@ export function SuiteDashboard({
       onOpenLastRun={onOpenLastRun}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       onRunTestCase={onRunTestCase}
+      quickRunIterationOverride={quickRunIterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={blockTestCaseRuns}
       runTestCaseDisabledReason={runTestCaseDisabledReason}
@@ -161,6 +195,10 @@ export function SuiteDashboard({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      onRecordTestCase={onRecordTestCase}
+      simpleCaseEditor={simpleCaseEditor}
+      hostNamesById={hostNamesById}
+      environments={environments}
     />
   );
 
@@ -202,6 +240,7 @@ export function SuiteDashboard({
       {hasRuns ? (
         <div className="shrink-0">
           <SuiteMetricStrip
+            showCost={false}
             runs={metricRuns}
             allIterations={metricIterations}
             aggregate={metricAggregate}
@@ -224,11 +263,14 @@ export function SuiteDashboard({
         runs={runs}
         allIterations={allIterations}
         hostNamesById={hostNamesById}
+        environments={environments}
         allRunsPane={caseLibrary}
         onTestCaseClick={onTestCaseClick}
         onOpenCaseIteration={onOpenCaseIteration}
         onRunClick={onRunClick}
         showMonitoring={showMonitoring}
+        showScheduledRuns={scheduledEvalsEnabled}
+        showProbeLatency={syntheticMonitorsEnabled}
         selectedRunId={selectedRunId}
         runDetailPane={runDetailPane}
         onExitRun={onExitRun}

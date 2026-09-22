@@ -13,6 +13,7 @@
 
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import models from "../routes/mcp/models.js";
+import { buildHealthMeta } from "../utils/health-payload.js";
 
 /**
  * /api/mcp paths that remain reachable in hosted mode.
@@ -78,11 +79,16 @@ export function applyHostedPartition(app: Hono): void {
  * `GET /api/mcp/models`.
  */
 export function mountHostedOpenRoutes(app: Hono): void {
+  // These are the handlers PRODUCTION actually serves — hosted mode mounts
+  // this instead of the MCP router — and they are two of the three endpoints
+  // the prod canary probes. Without `buildHealthMeta()` here, "what version is
+  // prod running?" would still be unanswerable on the paths that matter.
   app.get("/api/mcp/health", (c) =>
     c.json({
       service: "MCP API",
       status: "ready",
       timestamp: new Date().toISOString(),
+      ...buildHealthMeta(),
     })
   );
   app.get("/api/apps/health", (c) =>
@@ -90,6 +96,7 @@ export function mountHostedOpenRoutes(app: Hono): void {
       service: "Apps API",
       status: "ready",
       timestamp: new Date().toISOString(),
+      ...buildHealthMeta(),
     })
   );
   app.route("/api/mcp/models", models);

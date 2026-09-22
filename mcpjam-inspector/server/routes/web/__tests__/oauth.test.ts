@@ -33,7 +33,27 @@ initGuestTokenSecret();
 interface OAuthErrorResponse {
   code: string;
   message: string;
+  /** Legacy compatibility key — see `webErrorCompat`. */
   error: string;
+  /** Attribution, now that these routes serialize through `webErrorFromRoute`. */
+  origin?: string;
+  normalized?: { slug?: string };
+}
+
+/**
+ * The compat keys these routes have always returned. Asserted alongside the
+ * new attribution fields rather than with a bare `toEqual`, so an accidental
+ * REMOVAL of `error`/`code`/`message` still fails while an additive envelope
+ * change does not.
+ */
+function expectCompatBody(
+  data: OAuthErrorResponse,
+  code: string,
+  message: string,
+) {
+  expect(data.code).toBe(code);
+  expect(data.message).toBe(message);
+  expect(data.error).toBe(message);
 }
 
 describe("web routes — oauth requires bearer token", () => {
@@ -77,6 +97,7 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
 
     const response = await postJson(
@@ -93,12 +114,17 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/token"
+    );
   });
 
   it("GET /metadata succeeds with bearer token", async () => {
     fetchOAuthMetadataMock.mockResolvedValueOnce({
       metadata: { issuer: "https://example.com" },
+      finalUrl: "https://example.com/.well-known/oauth",
     });
 
     const response = await getJson(
@@ -110,6 +136,9 @@ describe("web routes — oauth requires bearer token", () => {
 
     expect(status).toBe(200);
     expect(data).toEqual({ issuer: "https://example.com" });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/.well-known/oauth"
+    );
   });
 });
 
@@ -135,11 +164,13 @@ describe("web routes — oauth error contract", () => {
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
     expect(status).toBe(400);
-    expect(data).toEqual({
-      code: "VALIDATION_ERROR",
-      message: "Invalid URL format",
-      error: "Invalid URL format",
-    });
+    expectCompatBody(data, "VALIDATION_ERROR", "Invalid URL format");
+    // A 400 from our own validation is not evidence of an MCPJam fault, and
+    // these routes declare no internal boundary — so it must never read
+    // `mcpjam`. It carries attribution regardless: before this, the row had
+    // none at all.
+    expect(data.origin).toBeDefined();
+    expect(data.origin).not.toBe("mcpjam");
   });
 
   it("returns compatibility payload for missing metadata url", async () => {
@@ -147,11 +178,8 @@ describe("web routes — oauth error contract", () => {
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
     expect(status).toBe(400);
-    expect(data).toEqual({
-      code: "VALIDATION_ERROR",
-      message: "Missing url parameter",
-      error: "Missing url parameter",
-    });
+    expectCompatBody(data, "VALIDATION_ERROR", "Missing url parameter");
+    expect(data.origin).not.toBe("mcpjam");
   });
 
   it("returns compatibility payload for metadata upstream status errors", async () => {
@@ -168,11 +196,19 @@ describe("web routes — oauth error contract", () => {
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
     expect(status).toBe(502);
-    expect(data).toEqual({
-      code: "SERVER_UNREACHABLE",
-      message: "Failed to fetch OAuth metadata: 502 Bad Gateway",
-      error: "Failed to fetch OAuth metadata: 502 Bad Gateway",
-    });
+    expectCompatBody(
+      data,
+      "SERVER_UNREACHABLE",
+      "Failed to fetch OAuth metadata: 502 Bad Gateway",
+    );
+    // THE POINT OF THIS CHANGE. This route reaches the USER's authorization
+    // server, so a 502 from it is theirs — it must be attributed (it used to
+    // log as a bare `internal_error` with no origin at all) and it must not be
+    // attributed to us, or the MCPJam-fault monitor pages on third-party
+    // downtime.
+    expect(data.origin).toBeDefined();
+    expect(data.origin).not.toBe("mcpjam");
+    expect(data.normalized?.slug).toBeDefined();
   });
 
   it("returns compatibility payload for generic runtime errors", async () => {
@@ -189,11 +225,13 @@ describe("web routes — oauth error contract", () => {
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
     expect(status).toBe(502);
-    expect(data).toEqual({
-      code: "SERVER_UNREACHABLE",
-      message: "connect ECONNREFUSED",
-      error: "connect ECONNREFUSED",
-    });
+    // mapRuntimeError frames connection-class failures as a target-server
+    // problem (the raw errno alone reads like an MCPJam outage in the client
+    // toast) while preserving the raw error for debugging.
+    expect(data.code).toBe("SERVER_UNREACHABLE");
+    expect(data.message).toContain("connect ECONNREFUSED");
+    expect(data.message).toContain("not an MCPJam outage");
+    expect(data.error).toBe(data.message);
   });
 });
 

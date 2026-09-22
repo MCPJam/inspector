@@ -1,18 +1,31 @@
+import { listBaseServers } from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
 import "../../types/hono";
-import { handleJsonRpc, BridgeMode } from "../../services/mcp-http-bridge";
+import {
+  handleJsonRpc,
+  parseAndValidateJsonRpc,
+  BridgeMode,
+} from "../../services/mcp-http-bridge";
 import {
   getServerIdForTunnelDomain,
   isActiveTunnelDomain,
 } from "../../services/tunnel-registry";
 import { recordTunnelRequest } from "../../services/tunnel-request-log";
 import { getRequestLogger } from "../../utils/request-logger";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
+import {
+  HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+  normalizeHarnessScopeStepUpCorrelationId,
+  publishHarnessScopeStepUpFromToolError,
+} from "../../utils/harness/harness-scope-step-up.js";
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
   send: (event: string, data: string) => void;
   close: () => void;
+  scopeStepUpCorrelationId?: string;
 };
 const sessions: Map<string, Session> = new Map();
 const latestSessionByServer: Map<string, string> = new Map();
@@ -140,8 +153,7 @@ function logTunnelRequest(
 }
 
 function normalizeServerId(clientManager: any, serverId: string): string {
-  const availableServers = clientManager
-    .listServers()
+  const availableServers = listBaseServers(clientManager)
     // `getClient()` is legacy-only. Use `getManagedClient()` so stateless
     // preview connections show up in the available-servers list.
     .filter((id: string) => Boolean(clientManager.getManagedClient(id)));
@@ -164,6 +176,18 @@ function normalizeServerId(clientManager: any, serverId: string): string {
 // `?t=` query fallback is removed — tokens in URLs leak into edge/access logs.
 function readProxyToken(c: any): string | undefined {
   return c.req.header("x-mcpjam-proxy-token") || undefined;
+}
+
+function readScopeStepUpCorrelationId(c: any): string | undefined {
+  const fromHeader = normalizeHarnessScopeStepUpCorrelationId(
+    c.req.header(HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER),
+  );
+  if (fromHeader) return fromHeader;
+  return normalizeHarnessScopeStepUpCorrelationId(
+    new URL(c.req.url).searchParams.get(
+      HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+    ),
+  );
 }
 
 // Unified HTTP adapter for adapter-http + manager-http (same robust
@@ -255,7 +279,12 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           };
 
           // Register session
-          sessions.set(`${serverId}:${sessionId}`, { send, close });
+          const scopeStepUpCorrelationId = readScopeStepUpCorrelationId(c);
+          sessions.set(`${serverId}:${sessionId}`, {
+            send,
+            close,
+            ...(scopeStepUpCorrelationId ? { scopeStepUpCorrelationId } : {}),
+          });
           latestSessionByServer.set(serverId, sessionId);
 
           // Relay real server notifications down this SSE stream.
@@ -321,11 +350,15 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       return c.json({ error: "Unsupported request" }, 400);
     }
 
-    // Parse JSON body (best effort)
-    let body: any = undefined;
-    try {
-      body = await c.req.json();
-    } catch {}
+    // Malformed payloads must NOT fall through to the notification → 202 path
+    // (the bridge treats a missing method as a notification): a garbage body
+    // acknowledged as "Accepted" looks like a delivered message to the client.
+    // Shared with the hosted harness proxy (`harness-mcp`) via the bridge helper.
+    const validation = await parseAndValidateJsonRpc(() => c.req.json());
+    if (!validation.ok) {
+      return c.json(validation.response, validation.status as 400);
+    }
+    const body = validation.body;
 
     const clientManager = c.mcpClientManager;
 
@@ -338,7 +371,18 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       normalizedServerId,
       body as any,
       clientManager,
-      mode
+      mode,
+      {
+        onToolCallError: (context) =>
+          publishHarnessScopeStepUpFromToolError(
+            readScopeStepUpCorrelationId(c),
+            context,
+          ),
+        // Bridge failures leave here as HTTP 200 JSON-RPC error envelopes,
+        // invisible to http.request.failed — the reporter is their only
+        // typed record.
+        failureReporter: createRequestStreamFailureReporter(c, "mcp-bridge"),
+      },
     );
     if (!response) {
       // Notification → 202 Accepted
@@ -400,7 +444,17 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         normalizedServerId,
         { id, method, params },
         c.mcpClientManager,
-        mode
+        mode,
+        {
+          onToolCallError: (context) =>
+            publishHarnessScopeStepUpFromToolError(
+              readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,
+              context,
+            ),
+          // Doubly invisible on this transport: the JSON-RPC error goes out
+          // over the SSE session while HTTP answers 202 Accepted.
+          failureReporter: createRequestStreamFailureReporter(c, "mcp-bridge"),
+        },
       );
       // If there is a JSON-RPC response, emit it over SSE to the client
       if (responseMessage) {

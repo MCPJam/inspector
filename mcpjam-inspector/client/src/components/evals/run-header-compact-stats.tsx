@@ -8,6 +8,7 @@ export type RunHeaderCompactStatsOverride = {
   total: number;
   /** Stored like summary: decimal 0–1 or 0–100. */
   passRate: number;
+  policyBlockedIterations?: number;
 };
 
 function normalizePassRatePercent(passRate: number): number {
@@ -86,13 +87,20 @@ export function RunHeaderCompactStats({
 
   const pct = normalizePassRatePercent(summary.passRate);
   const countsLine = `${summary.passed.toLocaleString()} passed · ${summary.failed.toLocaleString()} failed`;
+  const policyBlockedLine =
+    summary.policyBlockedIterations && summary.policyBlockedIterations > 0
+      ? `${summary.policyBlockedIterations.toLocaleString()} iteration(s) had calls blocked by policy`
+      : null;
 
   return (
-    <p className={cn("text-xs text-muted-foreground tabular-nums", className)}>
-      {variant === "operational"
-        ? countsLine
-        : `${countsLine} · ${pct}%`}
-      {durationText !== "—" ? ` · ${durationText}` : ""}
-    </p>
+    <div
+      className={cn("text-xs text-muted-foreground tabular-nums", className)}
+    >
+      <p>
+        {variant === "operational" ? countsLine : `${countsLine} · ${pct}%`}
+        {durationText !== "—" ? ` · ${durationText}` : ""}
+      </p>
+      {policyBlockedLine ? <p>{policyBlockedLine}</p> : null}
+    </div>
   );
 }

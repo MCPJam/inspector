@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, X } from "lucide-react";
+import { defaultFilter } from "cmdk";
+import { ArrowUpRight, Check, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -30,13 +32,24 @@ import {
   getLogoProvider,
   getProviderDisplayName,
   isMCPJamProvidedModelMenuItem,
+  pickOwnProviderModel,
 } from "@/components/chat-v2/shared/model-helpers";
+import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
+  /** Alternate trigger for embedded surfaces such as eval tables. */
+  trigger?: ReactNode;
+  inModal?: boolean;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
-  onModelChange: (model: ModelDefinition) => void;
+  /** `userInitiated` marks a pick made from this menu, as opposed to the
+   * out-of-credits hand-off below deriving one. Only the former should update
+   * the remembered own-provider model. */
+  onModelChange: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean },
+  ) => void;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
   isLoading?: boolean;
@@ -67,6 +80,14 @@ interface ModelSelectorProps {
    * on the configured tab. Only the chat-input instance opts in.
    */
   respondToProviderTabIntent?: boolean;
+  /**
+   * Navigates to the org's model providers page. Rendered as a footer under the
+   * "Your providers" list so adding another BYOK key doesn't mean hunting
+   * through Settings. Callers pass it only when the viewer may actually open
+   * org settings; omitted, the footer is absent rather than disabled.
+   */
+  onManageOrgProviders?: () => void;
+  platformPaidFallback?: boolean;
 }
 
 type GroupKey = string;
@@ -83,7 +104,7 @@ type PendingSelectionChange =
     };
 
 const groupModelsByProvider = (
-  models: ModelDefinition[]
+  models: ModelDefinition[],
 ): Map<GroupKey, ModelDefinition[]> => {
   const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
@@ -102,20 +123,99 @@ const groupModelsByProvider = (
 const getCustomName = (groupKey: GroupKey): string | undefined =>
   groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
 
+type ModelGroup = {
+  provider: GroupKey;
+  title: string;
+  providerType: "provided" | "configured";
+  models: ModelDefinition[];
+};
+
+/**
+ * The string cmdk scores a row against. Also used to decide whether a provider
+ * heading has any surviving rows, so both must derive from the same value —
+ * cmdk trims item values, so this is pre-trimmed to match exactly.
+ */
+const modelSearchValue = (model: ModelDefinition, groupTitle: string): string =>
+  `${model.name} ${groupTitle} ${String(model.id)}`.trim();
+
+/**
+ * cmdk's `defaultFilter` accepts any subsequence, so o-p-u-s scattered across
+ * "Claude Sonnet 4.5 Anthropic anthropic/claude-sonnet-4.5" scores above zero
+ * and renders under a search for "opus". Real matches score ~0.89+ against the
+ * hosted catalog while that incidental noise tops out near 0.17, so anything
+ * below this is treated as no match.
+ */
+const MIN_MODEL_SEARCH_SCORE = 0.3;
+
+/**
+ * The threshold is applied per word rather than to the whole query, because
+ * cmdk scores a multi-word search as one gapped subsequence and the gaps drag
+ * even an exact hit under it — "gemini 3 pro" scores 0.168 against Gemini 3.1
+ * Pro Preview, while its words score 0.99 each. Single-character words are
+ * exempt: they only clear the threshold when they start a word, so gating on
+ * them would drop every Qwen3 Coder row from a search for "qwen 3 coder".
+ * cmdk's own score is returned untouched so ranking is unchanged.
+ */
+export const modelFilter = (
+  value: string,
+  search: string,
+  keywords?: string[],
+): number => {
+  const score = defaultFilter(value, search, keywords);
+  if (score <= 0) {
+    return 0;
+  }
+
+  const words = search.split(/\s+/).filter((word) => word.length > 1);
+  const everyWordMatches = words.every(
+    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE,
+  );
+
+  return everyWordMatches ? score : 0;
+};
+
+/**
+ * Provider headings are plain rows, not `CommandGroup`s, so cmdk's own
+ * empty-group hiding never applies to them: without this, a search shows a
+ * heading for every provider even when it has no matching model. This must
+ * score with the same `modelFilter` the `Command` below is given — the two
+ * drifting apart is what left headings stranded over no rows once already.
+ */
+const groupHasMatch = (group: ModelGroup, search: string): boolean =>
+  group.models.some(
+    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
+  );
+
+// The credential source is part of a selection: equal IDs can belong to
+// different providers, and an omitted routing flag has legacy server semantics.
+function sameModelSelection(
+  left: ModelDefinition,
+  right: ModelDefinition,
+): boolean {
+  return (
+    String(left.id) === String(right.id) &&
+    left.provider === right.provider &&
+    left.customProviderName === right.customProviderName &&
+    left.hosted === right.hosted
+  );
+}
+
 function sameModelOrder(
   left: ModelDefinition[],
-  right: ModelDefinition[]
+  right: ModelDefinition[],
 ): boolean {
   if (left.length !== right.length) {
     return false;
   }
 
   return left.every(
-    (model, index) => String(model.id) === String(right[index]?.id)
+    (model, index) => sameModelSelection(model, right[index]!),
   );
 }
 
 export function ModelSelector({
+  trigger,
+  inModal = false,
   currentModel,
   availableModels,
   onModelChange,
@@ -133,10 +233,12 @@ export function ModelSelector({
   align = "start",
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
+  onManageOrgProviders,
+  platformPaidFallback = false,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
-    "provided"
+    "provided",
   );
   const [search, setSearch] = useState("");
   const keepPopoverOpenRef = useRef(false);
@@ -149,7 +251,7 @@ export function ModelSelector({
   const handledProvidersTabNonceRef = useRef(0);
   const selectedProvidersTabNonceRef = useRef(0);
   const providersTabNonce = useModelPickerIntentStore((state) =>
-    respondToProviderTabIntent ? state.openProvidersTabNonce : 0
+    respondToProviderTabIntent ? state.openProvidersTabNonce : 0,
   );
 
   useEffect(() => {
@@ -171,7 +273,7 @@ export function ModelSelector({
         return;
       }
       setProviderTab(
-        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured"
+        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured",
       );
     } else {
       forceConfiguredTabRef.current = false;
@@ -231,6 +333,16 @@ export function ModelSelector({
     }
   };
 
+  const handleManageOrgProviders = () => {
+    track("chat_model_selector_manage_org_models_clicked", {
+      location: analyticsLocation,
+    });
+    // Navigating away from a chat while the popover is mounted leaves it
+    // orphaned over the next screen, so close it before handing off.
+    setIsOpen(false);
+    onManageOrgProviders?.();
+  };
+
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
       ? selectedModels
@@ -244,20 +356,15 @@ export function ModelSelector({
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
-    [availableModels]
+    [availableModels],
   );
   const sortedProviders = useMemo(
     () => Array.from(groupedModels.keys()).sort(),
-    [groupedModels]
+    [groupedModels],
   );
 
   const modelGroups = useMemo(() => {
-    const groups: {
-      provider: GroupKey;
-      title: string;
-      providerType: "provided" | "configured";
-      models: ModelDefinition[];
-    }[] = [];
+    const groups: ModelGroup[] = [];
 
     for (const provider of sortedProviders) {
       const allModels = groupedModels.get(provider) || [];
@@ -270,10 +377,10 @@ export function ModelSelector({
       }
 
       const provided = filtered.filter((model) =>
-        isMCPJamProvidedModelMenuItem(model)
+        isMCPJamProvidedModelMenuItem(model),
       );
       const configured = filtered.filter(
-        (model) => !isMCPJamProvidedModelMenuItem(model)
+        (model) => !isMCPJamProvidedModelMenuItem(model),
       );
       const title = getProviderDisplayName(provider);
 
@@ -300,7 +407,7 @@ export function ModelSelector({
 
   const selectedIds = useMemo(
     () => new Set(selectedModelsData.map((model) => String(model.id))),
-    [selectedModelsData]
+    [selectedModelsData],
   );
   const canUseMultiModel =
     enableMultiModel &&
@@ -309,26 +416,48 @@ export function ModelSelector({
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
   const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
-  const triggerLabel =
-    isComparingModels
-      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
-      : compactModelLabel(leadModel.name);
+  const triggerLabel = isComparingModels
+    ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+    : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
-      (g) => g.providerType === "configured"
+      (g) => g.providerType === "configured",
     );
     return { provided, configured };
   }, [modelGroups]);
-  const firstEnabledConfiguredModel = useMemo(
-    () =>
-      modelSections.configured
-        .flatMap((group) => group.models)
-        .find((model) => !model.disabled),
-    [modelSections]
+  const configuredModels = useMemo(
+    () => modelSections.configured.flatMap((group) => group.models),
+    [modelSections],
   );
+  // Headings for providers whose rows all get filtered out are dropped here;
+  // `search` (not its trimmed form) gates this so the set of headings tracks
+  // cmdk's row filtering, which keys off the raw search string.
+  const visibleSections = useMemo(() => {
+    if (!search) {
+      return modelSections;
+    }
+    return {
+      provided: modelSections.provided.filter((group) =>
+        groupHasMatch(group, search),
+      ),
+      configured: modelSections.configured.filter((group) =>
+        groupHasMatch(group, search),
+      ),
+    };
+  }, [modelSections, search]);
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
+
+  // Counterpart of the nonce subscription below: tell the store a picker is
+  // on screen that will actually honour the intent. The out-of-credits
+  // dialog reads that count to decide between opening this picker in place
+  // and navigating to the org's AI providers page. Read off `getState()` so
+  // registering adds no subscription and no re-render.
+  useEffect(() => {
+    if (!respondToProviderTabIntent) return;
+    return useModelPickerIntentStore.getState().registerProvidersTabResponder();
+  }, [respondToProviderTabIntent]);
 
   // React to the global "open Your providers tab" intent (out-of-credits
   // BYOK). Only the opted-in instance subscribes to a live nonce; others read
@@ -344,15 +473,36 @@ export function ModelSelector({
       setIsOpen(true);
     }
 
-    if (
-      providersTabNonce !== selectedProvidersTabNonceRef.current &&
-      firstEnabledConfiguredModel
-    ) {
-      selectedProvidersTabNonceRef.current = providersTabNonce;
-      onModelChange(firstEnabledConfiguredModel);
+    if (providersTabNonce === selectedProvidersTabNonceRef.current) {
+      return;
     }
+
+    // Already on an own-provider model: the user's standing choice wins.
+    // Re-selecting here overwrote a working BYOK pick every time the
+    // out-of-credits dialog reopened, which is what made the selection look
+    // like it never persisted across chats (BACK2-628).
+    if (!isMCPJamProvidedModelMenuItem(currentModel)) {
+      selectedProvidersTabNonceRef.current = providersTabNonce;
+      return;
+    }
+
+    const nextModel = pickOwnProviderModel(
+      configuredModels,
+      loadLastOwnProviderModelId(),
+    );
+    // No own-provider models resolved yet (keys still loading). Leave the
+    // nonce unconsumed so this settles once the list arrives.
+    if (!nextModel) {
+      return;
+    }
+
+    selectedProvidersTabNonceRef.current = providersTabNonce;
+    // Derived, not picked — deliberately not `userInitiated`, so restoring a
+    // remembered model doesn't count as choosing it again.
+    onModelChange(nextModel);
   }, [
-    firstEnabledConfiguredModel,
+    configuredModels,
+    currentModel,
     onModelChange,
     providersTabNonce,
     respondToProviderTabIntent,
@@ -361,7 +511,7 @@ export function ModelSelector({
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     const isSingleNoOp =
       nextChange.type === "single" &&
-      String(nextChange.nextModel.id) === String(currentModel.id);
+      sameModelSelection(nextChange.nextModel, currentModel);
     const isMultiNoOp =
       nextChange.type === "multi" &&
       nextChange.enabled === multiModelEnabled &&
@@ -376,7 +526,7 @@ export function ModelSelector({
     }
 
     if (nextChange.type === "single") {
-      onModelChange(nextChange.nextModel);
+      onModelChange(nextChange.nextModel, { userInitiated: true });
       setIsOpen(false);
     } else {
       onSelectedModelsChange?.(nextChange.selectedModels);
@@ -414,7 +564,7 @@ export function ModelSelector({
     const isSelected = selectedIds.has(String(model.id));
     const nextSelectedModels = isSelected
       ? selectedModelsData.filter(
-          (selectedModel) => String(selectedModel.id) !== String(model.id)
+          (selectedModel) => String(selectedModel.id) !== String(model.id),
         )
       : [...selectedModelsData, model];
 
@@ -439,7 +589,7 @@ export function ModelSelector({
     const nextSelectedModels = [
       model,
       ...selectedModelsData.filter(
-        (selectedModel) => String(selectedModel.id) !== String(model.id)
+        (selectedModel) => String(selectedModel.id) !== String(model.id),
       ),
     ];
 
@@ -450,7 +600,7 @@ export function ModelSelector({
     });
   };
 
-  const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
+  const renderGroupModelItems = (group: ModelGroup) =>
     group.models.map((model) => {
       const isDisabled =
         !!model.disabled ||
@@ -469,7 +619,7 @@ export function ModelSelector({
       const row = (
         <CommandItem
           key={String(model.id)}
-          value={`${model.name} ${group.title} ${String(model.id)}`}
+          value={modelSearchValue(model, group.title)}
           onSelect={() => {
             if (multiModelEnabled) {
               handleMultiModelSelect(model);
@@ -484,7 +634,7 @@ export function ModelSelector({
           className={cn(
             "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
             lockedRowHighlightId &&
-              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit"
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
           )}
         >
           <ProviderLogo
@@ -501,7 +651,7 @@ export function ModelSelector({
                 "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
                 isSelected
                   ? "border-primary bg-primary shadow-sm"
-                  : "border-border/60 bg-transparent hover:border-border"
+                  : "border-border/60 bg-transparent hover:border-border",
               )}
               aria-hidden
             >
@@ -512,7 +662,7 @@ export function ModelSelector({
                 />
               ) : null}
             </div>
-          ) : String(model.id) === String(currentModel.id) ? (
+          ) : sameModelSelection(model, currentModel) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
           ) : null}
         </CommandItem>
@@ -524,7 +674,7 @@ export function ModelSelector({
             <div
               className={cn(
                 "rounded-sm transition-colors",
-                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60"
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
               )}
               onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
               onMouseLeave={() => setHoveredLockedModelId(null)}
@@ -545,58 +695,62 @@ export function ModelSelector({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={disabled || isLoading}
-                className={cn(
-                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]",
-                )}
-                data-testid="model-selector-trigger"
-              >
-                {isComparingModels ? (
-                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
-                    {selectedModelsData.map((model, index) => (
-                      <span
-                        key={String(model.id)}
-                        className={cn(
-                          "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
-                          index === 0
-                            ? "border-primary/25 text-foreground"
-                            : "border-border/50 text-muted-foreground",
-                        )}
-                      >
-                        <ProviderLogo
-                          provider={model.provider}
-                          customProviderName={model.customProviderName}
-                          className="size-3 shrink-0"
-                        />
-                        <span className="truncate">
-                          {compactModelLabel(model.name)}
+              {trigger ?? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled || isLoading}
+                  className={cn(
+                    "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                    isComparingModels
+                      ? "max-w-[280px] gap-1"
+                      : "max-w-[180px] gap-1",
+                  )}
+                  data-testid="model-selector-trigger"
+                >
+                  {isComparingModels ? (
+                    <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                      {selectedModelsData.map((model, index) => (
+                        <span
+                          key={String(model.id)}
+                          className={cn(
+                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                            index === 0
+                              ? "border-primary/25 text-foreground"
+                              : "border-border/50 text-muted-foreground",
+                          )}
+                        >
+                          <ProviderLogo
+                            provider={model.provider}
+                            customProviderName={model.customProviderName}
+                            className="size-3 shrink-0"
+                          />
+                          <span className="truncate">
+                            {compactModelLabel(model.name)}
+                          </span>
                         </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={leadModel.provider}
+                        customProviderName={leadModel.customProviderName}
+                      />
+                      <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                        {triggerLabel}
                       </span>
-                    ))}
-                  </span>
-                ) : (
-                  <>
+                    </>
+                  )}
+                  {isComparingModels ? (
                     <ProviderLogo
                       provider={leadModel.provider}
                       customProviderName={leadModel.customProviderName}
+                      className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
                     />
-                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      {triggerLabel}
-                    </span>
-                  </>
-                )}
-                {isComparingModels ? (
-                  <ProviderLogo
-                    provider={leadModel.provider}
-                    customProviderName={leadModel.customProviderName}
-                    className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
-                  />
-                ) : null}
-              </Button>
+                  ) : null}
+                </Button>
+              )}
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
@@ -607,12 +761,13 @@ export function ModelSelector({
         </Tooltip>
 
         <PopoverContent
+          portalled={!inModal}
           align={align}
           className="w-[280px] p-0"
           sideOffset={8}
           collisionPadding={8}
         >
-          <Command shouldFilter={true}>
+          <Command shouldFilter={true} filter={modelFilter}>
             <CommandInput
               placeholder="Search models"
               value={search}
@@ -648,7 +803,7 @@ export function ModelSelector({
                             "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                             isLead
                               ? "border-primary/25 bg-primary/5 text-foreground"
-                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
                           )}
                           onClick={() => handlePromoteLeadModel(model)}
                         >
@@ -687,19 +842,27 @@ export function ModelSelector({
             ) : null}
 
             {(() => {
-              const hasBothSections =
-                modelSections.provided.length > 0 &&
-                modelSections.configured.length > 0;
               const isSearching = search.trim().length > 0;
-              const showTabs = hasBothSections && !isSearching;
-              const showProvided =
+              // An org admin with no keys yet is exactly who the footer below is
+              // for, so the tab stays reachable while their list is empty —
+              // gating it on a non-empty list hid the offer to add a key from
+              // everyone who had none.
+              const offerEmptyConfigured =
+                !!onManageOrgProviders && modelSections.configured.length === 0;
+              const showTabs =
+                !isSearching &&
                 modelSections.provided.length > 0 &&
-                (isSearching || !hasBothSections || providerTab === "provided");
+                (modelSections.configured.length > 0 || offerEmptyConfigured);
+              const showProvided =
+                visibleSections.provided.length > 0 &&
+                (isSearching || !showTabs || providerTab === "provided");
               const showConfigured =
-                modelSections.configured.length > 0 &&
-                (isSearching ||
-                  !hasBothSections ||
-                  providerTab === "configured");
+                visibleSections.configured.length > 0 &&
+                (isSearching || !showTabs || providerTab === "configured");
+              const showConfiguredEmpty =
+                showTabs &&
+                providerTab === "configured" &&
+                visibleSections.configured.length === 0;
 
               return (
                 <>
@@ -714,25 +877,41 @@ export function ModelSelector({
                             "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                             providerTab === tab
                               ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
                           )}
                         >
                           {tab === "provided"
-                            ? "Free models"
+                            ? (platformPaidFallback ? "MCPJam models" : "Free models")
                             : "Your providers"}
                         </button>
                       ))}
                     </div>
                   ) : null}
 
+                  {platformPaidFallback && providerTab === "provided" && (
+                    <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                      Shared free allowance is unavailable. These models use your purchased credits.
+                    </p>
+                  )}
                   <CommandList className="max-h-[min(320px,45vh)]">
-                    <CommandEmpty>No matching models.</CommandEmpty>
+                    {/* cmdk renders Empty whenever no rows are mounted, which
+                        the empty providers tab below would otherwise inherit —
+                        and "No matching models" reads as a failed search. */}
+                    {showConfiguredEmpty ? null : (
+                      <CommandEmpty>No matching models.</CommandEmpty>
+                    )}
+
+                    {showConfiguredEmpty ? (
+                      <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
+                        No provider keys yet.
+                      </p>
+                    ) : null}
 
                     {showProvided ? (
                       <CommandGroup
-                        heading={isSearching ? "Free models" : undefined}
+                        heading={isSearching ? (platformPaidFallback ? "MCPJam models" : "Free models") : undefined}
                       >
-                        {modelSections.provided.map((group) => (
+                        {visibleSections.provided.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
                             <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                               {group.title}
@@ -751,7 +930,7 @@ export function ModelSelector({
                       <CommandGroup
                         heading={isSearching ? "Your providers" : undefined}
                       >
-                        {modelSections.configured.map((group) => (
+                        {visibleSections.configured.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
                             <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                               {group.title}
@@ -762,6 +941,23 @@ export function ModelSelector({
                       </CommandGroup>
                     ) : null}
                   </CommandList>
+
+                  {/* Only under the user's own providers — while searching the
+                      rows are a transient mix of both sections. */}
+                  {onManageOrgProviders &&
+                  !isSearching &&
+                  (showConfigured || showConfiguredEmpty) ? (
+                    <div className="border-t px-2 py-1.5">
+                      <button
+                        type="button"
+                        onClick={handleManageOrgProviders}
+                        className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        Manage organization models
+                        <ArrowUpRight className="size-3 shrink-0" />
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               );
             })()}

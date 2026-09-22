@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { ToolList } from "../ToolList";
@@ -20,6 +20,13 @@ vi.mock("../../ui/search-input", () => ({
       onChange={(e) => onValueChange(e.target.value)}
     />
   ),
+}));
+
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+
+vi.mock("@/lib/app-navigation", () => ({
+  useAppNavigate: () => navigate,
+  routePaths: { servers: "/servers" },
 }));
 
 vi.mock("@mcpjam/design-system/tooltip", () => ({
@@ -56,6 +63,10 @@ const defaultProps = {
 };
 
 describe("ToolList", () => {
+  beforeEach(() => {
+    navigate.mockClear();
+  });
+
   // ── Selection behavior ──
 
   it("allows selecting a non-UI tool", () => {
@@ -339,6 +350,83 @@ describe("ToolList", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the missing connection when no server is connected", () => {
+    render(<ToolList {...defaultProps} hasConnectedServer={false} />);
+
+    expect(
+      screen.getByText(
+        "No server connected yet. Connect one to load its tools and use them in chat.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "No tools found. Try refreshing and make sure the server is running.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("connects in place when the caller can handle it", () => {
+    const onAddServerRequested = vi.fn();
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        onAddServerRequested={onAddServerRequested}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
+
+    expect(onAddServerRequested).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("routes to Servers when the caller cannot connect in place", () => {
+    render(<ToolList {...defaultProps} hasConnectedServer={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
+
+    expect(navigate).toHaveBeenCalledWith("/servers");
+  });
+
+  it("prefers the search-miss message when a search hides a harness's built-ins", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        builtinTools={[
+          { key: "read", name: "Read", description: "Read a file" },
+          { key: "bash", name: "Bash", description: "Run a command" },
+        ]}
+        onSelectBuiltin={vi.fn()}
+        searchQuery="zzz"
+      />,
+    );
+
+    expect(screen.getByText("No tools match your search")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefers the search-miss message over the no-server copy", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        tools={{ read_me: makeTool("read_me") }}
+        toolNames={["read_me"]}
+        filteredToolNames={[]}
+        searchQuery="xyz"
+      />,
+    );
+
+    expect(screen.getByText("No tools match your search")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows search-miss message when filter yields no results", () => {
     render(
       <ToolList
@@ -438,6 +526,21 @@ describe("ToolList", () => {
       />,
     );
     expect(screen.queryByText("Built-in tools")).not.toBeInTheDocument();
+    expect(screen.getByText("Servers")).toBeInTheDocument();
+  });
+
+  it("does not put a Servers header over a harness-only list", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Servers")).not.toBeInTheDocument();
+    expect(screen.getByText("Built-in tools")).toBeInTheDocument();
   });
 
   it("clicking a built-in row selects it via onSelectBuiltin (not onSelectTool)", () => {
@@ -466,7 +569,10 @@ describe("ToolList", () => {
         toolNames={[]}
         filteredToolNames={[]}
         searchQuery="grep"
-        builtinTools={[makeBuiltin("bash", "Bash"), makeBuiltin("grep", "Grep")]}
+        builtinTools={[
+          makeBuiltin("bash", "Bash"),
+          makeBuiltin("grep", "Grep"),
+        ]}
         onSelectBuiltin={vi.fn()}
       />,
     );
@@ -488,4 +594,15 @@ describe("ToolList", () => {
     );
     expect(screen.queryByText("Source:")).not.toBeInTheDocument();
   });
+});
+
+it("keeps catalog recovery visible when there are no server tools", () => {
+  const refreshPage = vi.fn();
+  render(<ToolList {...defaultProps} browserTools={{
+    attached: true, engine: "local", tools: [], page: null,
+    catalogError: true, refreshPage,
+    invokePage: async () => ({ ok: false, error: "no_browser_session" }),
+  }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(refreshPage).toHaveBeenCalledOnce();
 });

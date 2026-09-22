@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
   resolveEffectiveHostCapabilities,
+  type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { applyJsonToDraft } from "../AppsExtensionTab";
 import {
@@ -41,6 +42,29 @@ describe("focusTabForNodeId — sandbox routing", () => {
 });
 
 describe("AppsExtensionTab — sandbox JSON round-trip", () => {
+  it("round-trips browser storage API findings below CSP and permissions", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          csp: { connectDomains: ["https://api.openai.com"] },
+          permissions: { clipboardWrite: {} },
+          browserStorage: {
+            localStorage: true,
+            sessionStorage: false,
+            indexedDB: true,
+          },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.browserStorage).toEqual({
+      localStorage: true,
+      sessionStorage: false,
+      indexedDB: true,
+    });
+  });
+
   it("reads the four spec CSP allowlists from spec position into restrictTo storage", () => {
     // The user types SEP-1865 shape: the four allowlists live directly
     // under `sandbox.csp` (no `restrictTo` wrapper) so they map to
@@ -578,5 +602,157 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
       name: "fakehost",
       version: "1.0",
     });
+  });
+});
+
+describe("AppsExtensionTab — CSP subtype override round-trip", () => {
+  it("keeps cspConnectDomains / cspResourceDomains through an apply", () => {
+    // Seeded Claude, ChatGPT, Cursor and Goose rows carry these objects.
+    // They are not in the boolean allowlist, so without explicit handling any
+    // apply silently dropped them and the row lost its subtype policy.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+          cspResourceDomains: {
+            script: false,
+            stylesheet: false,
+            image: false,
+            font: false,
+            media: false,
+          },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+    });
+  });
+
+  it("keeps a partial map partial (an omitted subtype stays unknown)", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: { cspConnectDomains: { fetch: false } },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains,
+    ).toEqual({ fetch: false });
+  });
+
+  it("drops unknown leaves and non-boolean values (soft validation)", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          cspConnectDomains: { fetch: false, grpc: true, xhr: "nope" },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains,
+    ).toEqual({ fetch: false });
+  });
+
+  it("collapses an all-invalid map to no override at all", () => {
+    // An empty object would canonicalize away anyway; not emitting the key
+    // keeps the draft sparse so the resolver falls back to the preset.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: { cspConnectDomains: { grpc: true } },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+  });
+});
+
+describe("AppsExtensionTab — widget tool results round-trip", () => {
+  it("keeps the toolResult policy through a JSON save", () => {
+    // Moved here from the Protocol tab along with the card that edits it.
+    const prev: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: {
+            toolResult: {
+              structuredContent: false,
+              content: { text: true, image: false, resourceLink: true },
+            },
+          },
+        },
+      },
+    };
+
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          toolResult: {
+            structuredContent: false,
+            content: { text: true, image: false, resourceLink: true },
+          },
+        },
+      },
+      prev
+    );
+
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult
+    ).toEqual({
+      structuredContent: false,
+      content: { text: true, image: false, resourceLink: true },
+    });
+  });
+
+  it("clears the policy when the key is deleted from the JSON", () => {
+    // The card lives in this tab, so an absent key must mean "cleared" —
+    // preserving the previous value would make the JSON uneditable.
+    const prev: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: { toolResult: { structuredContent: false } },
+        },
+      },
+    };
+
+    const next = applyJsonToDraft({ hostContext: {} }, prev);
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult
+    ).toBeUndefined();
+  });
+
+  it("ignores non-boolean leaves rather than persisting them", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          toolResult: {
+            structuredContent: "no",
+            content: { text: 1, image: false },
+          },
+        },
+      },
+      emptyHostConfigInputV2()
+    );
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult
+    ).toEqual({ content: { image: false } });
   });
 });

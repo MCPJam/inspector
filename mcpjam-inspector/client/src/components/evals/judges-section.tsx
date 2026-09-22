@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { useMemo } from "react";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -9,7 +10,10 @@ import {
 } from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { ModelDefinition } from "@/shared/types";
-import type { EvalJudgeConfig } from "./types";
+import {
+  MANAGED_DEFAULT_JUDGE_MODEL,
+  type GoalJudgeConfig as EvalJudgeConfig,
+} from "@/components/shared/session-quality/judge-config";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -24,9 +28,8 @@ import type { EvalJudgeConfig } from "./types";
  * one place a user can change the suite contract.
  */
 
-const MANAGED_DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
-
 interface JudgesSectionProps {
+  policy?: GoalJudgePolicy;
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
@@ -39,27 +42,63 @@ interface JudgesSectionProps {
    * (e.g. the suite settings sheet).
    */
   chrome?: "panel" | "bare";
+  /**
+   * Bare-chrome auto-grade row copy. Defaults to the eval-suite phrasing
+   * ("every run / each case's objective"); other products pass their own so
+   * the one shared control reads correctly in context (Swarm journeys grade
+   * "every session against the journey goal"). Ignored in panel chrome.
+   */
+  bareAutoGradeBlurb?: string;
+  bareAutoGradeAriaLabel?: string;
 }
 
-function pruneEmpty(value: EvalJudgeConfig): EvalJudgeConfig | undefined {
-  if (!value.goalCompletion) return undefined;
+/**
+ * Drop a judge config that carries no information, keep one that does.
+ *
+ * Exported for its own test: the rule it encodes — every field that means
+ * something counts — is easy to break by adding a field and forgetting this
+ * list, and the symptom is a setting silently disappearing on an unrelated
+ * edit rather than anything that looks like a bug.
+ */
+export function pruneEmpty(
+  value: EvalJudgeConfig,
+): EvalJudgeConfig | undefined {
   const gc = value.goalCompletion;
-  const hasAnyField =
-    gc.enabled !== undefined ||
-    (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
-    gc.threshold !== undefined ||
-    gc.autoRun !== undefined;
-  if (!hasAnyField) return undefined;
-  return { goalCompletion: gc };
+  const hasGoalCompletion = Boolean(
+    gc &&
+    (gc.enabled !== undefined ||
+      (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
+      gc.threshold !== undefined ||
+      gc.autoRun !== undefined ||
+      // `role` counts, and it is the one field here that must never be dropped
+      // by accident: a suite carrying only `role: "gating"` — legal, because an
+      // absent `enabled` already resolves to on — would otherwise have its whole
+      // judge config discarded the moment someone reset the model to the managed
+      // default, silently erasing a gate the organization had to earn.
+      gc.role !== undefined ||
+      // Same for presentation severity: a suite whose only authored field is
+      // `severity: "warn"` would otherwise vanish on an unrelated model reset.
+      gc.severity !== undefined),
+  );
+  const groundedness = value.groundedness;
+  const hasGroundedness = groundedness !== undefined;
+  if (!hasGoalCompletion && !hasGroundedness) return undefined;
+  return {
+    ...(hasGoalCompletion ? { goalCompletion: gc } : {}),
+    ...(hasGroundedness ? { groundedness } : {}),
+  };
 }
 
 export function JudgesSection({
+  policy,
   value,
   onChange,
   availableModels,
   title = "LLM as Judge",
   description = "Advisory grading of run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
   chrome = "panel",
+  bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
+  bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
 }: JudgesSectionProps) {
   const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
@@ -68,32 +107,12 @@ export function JudgesSection({
   // does at run time.
   const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
-  const autoRun = gc?.autoRun === true;
+  const autoRun = gc?.autoRun ?? policy?.effective.autoRun;
 
-  // The bare (suite settings sheet) surface presents ONE switch that means
-  // what a developer reads it to mean: "grade every run automatically." So it
-  // binds to `enabled && autoRun` and writes both together — turning it on
-  // makes new runs grade on completion (via the backend snapshot auto-run
-  // gate), with no per-run click. The panel chrome keeps the two as separate
-  // advanced knobs. `sectionOn` drives both the switch and the model-row
-  // visibility so they never disagree.
-  const sectionOn = isBare ? enabled && autoRun : enabled;
+  const stateUnknown = enabled && autoRun === undefined;
+  const sectionOn = enabled && autoRun === true;
   const handleMainToggle = (checked: boolean) => {
-    if (isBare) {
-      // ON → enable + auto-grade every run. OFF → fully off (no auto, no
-      // manual). The nuanced "enabled but manual-only" state stays reachable
-      // from the panel chrome's separate toggles.
-      update(
-        checked
-          ? { enabled: true, autoRun: true }
-          : { enabled: false, autoRun: undefined },
-      );
-      return;
-    }
-    // Persist EXPLICIT true/false. `undefined` means "inherit the default"
-    // (enabled: true), so writing `enabled: undefined` here would silently
-    // re-enable a suite the user just disabled.
-    update({ enabled: checked });
+    update({ enabled: checked, autoRun: checked });
   };
 
   const modelOptions = useMemo(() => {
@@ -115,9 +134,14 @@ export function JudgesSection({
     return Array.from(map, ([id, label]) => ({ id, label }));
   }, [availableModels, judgeModel]);
 
-  const update = (patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>) => {
+  const update = (
+    patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
+  ) => {
     const nextGC = { ...(gc ?? {}), ...patch };
-    const nextConfig: EvalJudgeConfig = { goalCompletion: nextGC };
+    const nextConfig: EvalJudgeConfig = {
+      goalCompletion: nextGC,
+      ...(value?.groundedness ? { groundedness: value.groundedness } : {}),
+    };
     onChange(pruneEmpty(nextConfig));
   };
 
@@ -131,8 +155,7 @@ export function JudgesSection({
             // repeat the section header. In `panel` chrome there's no outer
             // label, so we keep the sub-heading + description.
             <p className="text-[12px] text-muted-foreground">
-              Grade every run automatically against each case&apos;s
-              objective. Uses credits.
+              {bareAutoGradeBlurb}
             </p>
           ) : (
             <>
@@ -140,20 +163,27 @@ export function JudgesSection({
                 LLM as Judge
               </span>
               <p className="mt-0.5 text-[11px] text-muted-foreground/80">
-                Grades each case&apos;s final answer against its objective.
+                Automatically grades the full recorded trace against each
+                case&apos;s objective. Uses credits.
               </p>
             </>
           )}
         </div>
-        <Switch
-          checked={sectionOn}
-          onCheckedChange={handleMainToggle}
-          aria-label={
-            isBare
-              ? "Auto-grade every run with LLM as Judge"
-              : "Enable LLM as Judge for this suite"
-          }
-        />
+        {stateUnknown ? (
+          <span className="text-xs text-muted-foreground">
+            Grading state unavailable
+          </span>
+        ) : (
+          <Switch
+            checked={sectionOn}
+            onCheckedChange={handleMainToggle}
+            aria-label={
+              isBare
+                ? bareAutoGradeAriaLabel
+                : "Enable LLM as Judge for this suite"
+            }
+          />
+        )}
       </div>
 
       {sectionOn ? (
@@ -187,28 +217,6 @@ export function JudgesSection({
               ))}
             </SelectContent>
           </Select>
-
-          {/* Threshold is hidden from the suite UI — runs grade against a
-              fixed default and surface only the model choice. Auto-run is
-              still configurable in the full panel chrome. */}
-          {!isBare ? (
-            <>
-              <Label
-                htmlFor="suite-goal-auto-run"
-                className="text-sm text-muted-foreground"
-              >
-                Auto-run on every run
-              </Label>
-              <Switch
-                id="suite-goal-auto-run"
-                checked={autoRun}
-                onCheckedChange={(checked: boolean) =>
-                  update({ autoRun: checked || undefined })
-                }
-                aria-label="Auto-run the LLM as Judge on every new completed run"
-              />
-            </>
-          ) : null}
         </div>
       ) : null}
     </>
@@ -240,9 +248,9 @@ export function JudgesSection({
         {sectionOn ? (
           <p className="text-[11px] text-muted-foreground/70">
             Runs grade against this config. Individual runs can apply a one-off
-            override from the run detail page — overridden runs show a banner
-            on the run card so their scores aren&apos;t mistaken for
-            suite-contract calibration.
+            override from the run detail page — overridden runs show a banner on
+            the run card so their scores aren&apos;t mistaken for suite-contract
+            calibration.
           </p>
         ) : null}
       </div>

@@ -94,6 +94,31 @@ This response comes from **your MCP server**, not from MCPJam Inspector. The ser
 - **Bearer Token** - Use this if you already have an API token from the server
 - **OAuth 2.0** - Use this for servers that require OAuth authorization flow
 
+### "resolves to a private/reserved IP address" during OAuth discovery
+
+The **web app at app.mcpjam.com runs on our servers**, so it can only reach
+authorization servers that are reachable from the public internet. A local
+authorization server — on `localhost`, on your LAN, or on a hostname like
+`auth.local` that resolves to `127.0.0.1` — is not, and discovery is refused
+with a message naming the address it resolved to.
+
+**Solution:** use the local inspector for a local OAuth setup:
+
+```bash
+npx @mcpjam/inspector
+```
+
+The local inspector reaches loopback, LAN, CGNAT, and unique-local addresses,
+including hostnames that resolve to them, because it runs on your machine. No
+flag or configuration is needed. The same applies to the CLI, which reaches
+private targets by default and takes `--https-only` when you want to reproduce
+the hosted policy.
+
+Link-local and cloud-metadata addresses (`169.254.169.254` and friends) are
+refused everywhere, including locally. If you see the message naming a
+"link-local or cloud-metadata host", something is pointing discovery at an
+instance-metadata endpoint rather than at an authorization server.
+
 ### Getting 401 Unauthorized errors
 
 If you're seeing **401 Unauthorized** errors when trying to connect to your server, this typically means the server requires authentication that hasn't been set up yet.
@@ -181,6 +206,16 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Proc
 ### App crashes after an automatic update
 
 The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
+
+### Update button does nothing after a download completes
+
+If you click **Update** and nothing happens — or the app refuses to quit after a download finishes — this was a known bug fixed in 3.8.1. The app was continuing to check for updates even after a build was already staged, which caused the system to forget the staged build. After that, both the Update button and quitting were silently refused.
+
+The fix is included in 3.8.1 and later. If you are on an affected version:
+
+- **Quitting:** quit normally (Cmd+Q / Alt+F4). The app now always completes the quit even if the install fails.
+- **Update button stuck:** click **Update** once. If the staged build has gone missing, the app relaunches automatically, re-downloads the update, and installs it without a second click.
+- **If neither works:** use the **Reset app data and quit** option in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
 
 ## Getting Help
 

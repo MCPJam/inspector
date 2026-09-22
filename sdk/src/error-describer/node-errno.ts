@@ -21,15 +21,42 @@ export function extractNodeErrno(
   }
 
   const code = (error as { code?: unknown }).code;
-  if (typeof code === "string") {
-    return code;
+  const ownCode = typeof code === "string" ? code : undefined;
+  // A recognized errno wins immediately — nothing deeper can beat it.
+  if (ownCode !== undefined && looksLikeNodeErrno(ownCode)) {
+    return ownCode;
   }
 
+  // An UNRECOGNIZED string code must NOT stop the walk. Wrappers stamp their
+  // own domain codes on the outside of a chain (the MCP SDK's era-negotiation
+  // failure carries `code: "ERA_NEGOTIATION_FAILED"`), and returning that here
+  // shadowed the real `ECONNREFUSED` sitting one hop below — the caller then
+  // classified a refused connection as a generic failure.
   const cause = (error as { cause?: unknown }).cause;
   if (cause !== undefined && cause !== error) {
-    return extractNodeErrno(cause, depth + 1);
+    const fromCause = extractNodeErrno(cause, depth + 1);
+    if (fromCause !== undefined) {
+      return fromCause;
+    }
   }
-  return undefined;
+  // Nothing recognized anywhere in the chain: fall back to whatever string
+  // code this level carried, preserving the previous contract for callers
+  // that only test set membership.
+  return ownCode;
+}
+
+/**
+ * Recognition is by explicit membership, never by shape. An `E`-prefixed
+ * screaming-snake pattern reads like a safe heuristic and is not: a wrapper
+ * that stamps `code: "EWRAPPER"` on the outside of a chain would satisfy it,
+ * end the walk, and hide the real `ECONNREFUSED` below — the exact failure
+ * this walk exists to prevent, reintroduced through a looser door.
+ *
+ * An unlisted errno costs nothing: the walk continues, and `extractNodeErrno`
+ * still returns the code as its last-resort fallback.
+ */
+function looksLikeNodeErrno(code: string): boolean {
+  return RETRYABLE_NODE_ERROR_CODES.has(code) || code.startsWith("UND_ERR_");
 }
 
 /**

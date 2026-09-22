@@ -23,7 +23,9 @@ export type SkillSharing = "user" | "project";
  * known {@link SkillProvenance}. Absent / unknown ⇒ 'authored' — the legacy
  * default, matching the backend `rowProvenance` read-normalizer.
  */
-export function normalizeProvenance(value: string | undefined): SkillProvenance {
+export function normalizeProvenance(
+  value: string | undefined,
+): SkillProvenance {
   return value === "computer-adopted" ? "computer-adopted" : "authored";
 }
 
@@ -37,8 +39,47 @@ export interface CloudSkillListItem {
   aggregateHash: string;
   /** Wire-tolerant (see {@link normalizeProvenance}); absent ⇒ 'authored'. */
   provenance?: string;
+  /**
+   * Whether this skill can be pinned into a project environment's
+   * `skillSelection` (backend P0.3 metadata: rejects `plugin_component`
+   * skills, supporting files, extra frontmatter). Forwarded verbatim through
+   * `/api/web/skills/list` so pickers can disable ineligible rows with the
+   * backend-aligned reason instead of failing at save time. Absent on older
+   * backends (wire-tolerant).
+   */
+  pinnability?: { ok: true } | { ok: false; reason: string };
+  /**
+   * Which revision "Latest" currently resolves to, for a `v3` badge and as the
+   * default in a version picker. Absent on a skill that predates versioning and
+   * has not been backfilled — consumers render nothing rather than guessing v1.
+   */
+  currentVersionId?: string;
+  currentVersionNumber?: number;
   createdAt: number;
   updatedAt: number;
+}
+
+/** One revision in a skill's history (newest-first from `listSkillVersions`). */
+export interface CloudSkillVersionSummary {
+  versionId: string;
+  versionNumber: number;
+  versionHash: string;
+  contentHash: string;
+  name: string;
+  description: string;
+  fileCount: number;
+  /** The revision the skill's "Latest" resolves to right now. */
+  isCurrent: boolean;
+  /** Set when this revision was minted by restoring an older one. */
+  restoredFromVersionNumber?: number;
+  createdByUserId: string;
+  createdAt: number;
+}
+
+export interface CloudSkillVersionDetail extends CloudSkillVersionSummary {
+  content: string;
+  extraFrontmatter?: SkillExtraFrontmatterInput;
+  files: { path: string; size: number; contentHash: string }[];
 }
 
 export interface CloudSkillDetail extends CloudSkillListItem {
@@ -136,6 +177,9 @@ const FN = {
   fileUrl: "projectSkills:getSkillFileUrl",
   filesForRuntime: "projectSkills:listSkillFilesForRuntime",
   filesForRuntimeExecution: "projectSkills:listSkillFilesForRuntimeExecution",
+  listVersions: "projectSkills:listSkillVersions",
+  getVersion: "projectSkills:getSkillVersion",
+  restoreVersion: "projectSkills:restoreSkillVersion",
 } as const;
 
 function stripBearer(token: string): string {
@@ -219,9 +263,41 @@ export async function convexCreateSkill(
     sharing?: SkillSharing;
     /** Preserved spec frontmatter (backend re-validates + size-caps). */
     extraFrontmatter?: SkillExtraFrontmatterInput;
+    /**
+     * FOLDER IMPORT: create the skill as a hidden draft that mints no version.
+     * The bulk `attachSkillFiles` carrying its files commits it and mints v1, so
+     * a crash between the two leaves an invisible draft rather than a visible
+     * skill whose scripts never arrived. Only the folder-upload flow sets it.
+     */
+    importPending?: boolean;
   },
 ): Promise<CloudSkillDetail> {
   return await makeClient(bearer).mutation(FN.create as any, args);
+}
+
+export async function convexListSkillVersions(
+  bearer: string,
+  projectId: string,
+  skillId: string,
+): Promise<CloudSkillVersionSummary[]> {
+  return await makeClient(bearer).query(FN.listVersions as any, {
+    projectId,
+    skillId,
+  });
+}
+
+export async function convexGetSkillVersion(
+  bearer: string,
+  args: { projectId: string; skillId: string; versionId: string },
+): Promise<CloudSkillVersionDetail> {
+  return await makeClient(bearer).query(FN.getVersion as any, args);
+}
+
+export async function convexRestoreSkillVersion(
+  bearer: string,
+  args: { projectId: string; skillId: string; versionId: string },
+): Promise<CloudSkillDetail> {
+  return await makeClient(bearer).mutation(FN.restoreVersion as any, args);
 }
 
 export async function convexUpdateSkill(

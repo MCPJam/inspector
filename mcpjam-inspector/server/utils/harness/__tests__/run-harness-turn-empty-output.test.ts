@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
@@ -28,15 +28,22 @@ vi.mock("@ai-sdk/harness/agent", () => ({
 }));
 
 vi.mock("../registry.js", () => ({
-  buildBrokerDummyAuth: vi.fn(),
+  // Broker-only credential delivery (COMP-23): the turn builds dummy auth
+  // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
+  buildBrokerDummyAuth: vi.fn(() => ({
+    anthropic: {
+      apiKey: "",
+      authToken: "mcpjam-broker-dummy",
+      baseUrl: "https://broker.example",
+    },
+  })),
   getHarnessAdapter: vi.fn(() => ({
     id: "claude-code",
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    supportsSelectedMcpServers: false,
+    mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
-    resolveAuth: vi.fn(async () => ({ gateway: { apiKey: "key" } })),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
@@ -56,7 +63,7 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  claudeCodeSafeSkills: vi.fn((skills) => skills),
+  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -66,8 +73,9 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../harness-session-state.js")>();
+  const actual = await importOriginal<
+    typeof import("../harness-session-state.js")
+  >();
   return {
     ...actual,
     claimHarnessSessionState: vi.fn(async () => ({
@@ -84,6 +92,8 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -133,10 +143,17 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
 
 describe("runHarnessTurn empty output projection", () => {
   beforeEach(() => {
+    // Broker delivery is default-ON; pin it so the test doesn't depend on the
+    // default (the turn hard-fails without it since COMP-23).
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     harnessState.streamParts = [];
     harnessState.finalText = "";
     harnessState.session.stop.mockClear();
     harnessState.session.destroy.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("persists a visible assistant fallback when the harness finishes with no renderable parts", async () => {
@@ -220,7 +237,7 @@ describe("runHarnessTurn empty output projection", () => {
 
     // The continuity claim (and therefore the resume-state commit) resolves the
     // `swarm-chat` owner keyed on the run + pinned host + session — never the
-    // Direct/Chatbox lane a swarm turn used to misfile under.
+    // Direct/Scenario lane a swarm turn used to misfile under.
     expect(claimHarnessSessionState).toHaveBeenCalled();
     const owner = (vi.mocked(claimHarnessSessionState).mock.calls[0]![0] as any)
       .owner;

@@ -9,6 +9,8 @@ import { useMemo, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HostChip } from "@/components/hosts/host-chip";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { EnvironmentChip } from "../run-context-chip";
 import { CaseMetricStrip } from "../case-metric-strip";
 import { computeIterationResult } from "../pass-criteria";
 import {
@@ -46,8 +48,8 @@ function ResultDot({ result }: { result: Result }) {
     <span
       className={cn(
         "inline-block h-2 w-2 shrink-0 rounded-full",
-        result === "passed" && "bg-emerald-500",
-        result === "failed" && "bg-rose-500",
+        result === "passed" && "bg-success",
+        result === "failed" && "bg-destructive",
         result === "cancelled" && "bg-warning/60",
       )}
     />
@@ -64,6 +66,7 @@ function RunBatchGroup({
   hostNamesById,
   defaultHostLabel,
   hasHostAttachments,
+  projectEnvironmentsEnabled,
 }: {
   batch: CaseRunBatch;
   expanded: boolean;
@@ -74,12 +77,14 @@ function RunBatchGroup({
   hostNamesById?: Map<string, string | null>;
   defaultHostLabel?: string | null;
   hasHostAttachments?: boolean;
+  projectEnvironmentsEnabled?: boolean;
 }) {
   const batchHost = resolveCaseRunBatchHost(batch, {
     runsById,
     hostNamesById,
     defaultHostLabel,
     hasHostAttachments,
+    projectEnvironmentsEnabled,
   });
   const total = batch.iterations.length;
   const decided = batch.iterations.filter((i) => {
@@ -120,7 +125,7 @@ function RunBatchGroup({
             replay: {
               label: "Replay",
               title: "Re-ran from a previous run",
-              className: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+              className: "bg-warning/10 text-warning",
             },
           }[trigger];
           return (
@@ -138,7 +143,20 @@ function RunBatchGroup({
         <span className="text-[12px] text-muted-foreground">
           {formatTimeAgo(batch.createdAt)}
         </span>
-        {batchHost ? (
+        {batchHost?.environmentId ? (
+          // Environment-backed batch: the environment NAMES the batch, and the
+          // exact revision this one run pinned rides alongside it. Shares
+          // `EnvironmentChip` with `RunContextChip` so the two renderings of
+          // environment identity cannot drift. `resolveCaseRunBatchHost` has
+          // already applied the kill-switch, so reaching here means it is on.
+          <EnvironmentChip
+            name={batchHost.hostName}
+            environmentId={batchHost.environmentId}
+            revisionLabel={batchHost.revisionLabel}
+            className="text-[10px]"
+            nameClassName="max-w-[120px]"
+          />
+        ) : batchHost ? (
           <HostChip
             name={batchHost.hostName}
             hostId={batchHost.hostId}
@@ -154,8 +172,8 @@ function RunBatchGroup({
           className={cn(
             "ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium",
             allPass
-              ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"
-              : "bg-amber-500/14 text-amber-700 dark:text-amber-400",
+              ? "bg-success/10 text-success"
+              : "bg-warning/15 text-warning",
           )}
         >
           {passed}/{total}
@@ -231,6 +249,7 @@ export function CaseRunsHistory({
   defaultHostLabel?: string | null;
   hasHostAttachments?: boolean;
 }) {
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const batches = useMemo(() => groupCaseIterations(iterations), [iterations]);
   const runsById = useMemo(
     () => new Map(suiteRuns.map((run) => [run._id, run])),
@@ -274,6 +293,7 @@ export function CaseRunsHistory({
             hostNamesById={hostNamesById}
             defaultHostLabel={defaultHostLabel}
             hasHostAttachments={hasHostAttachments}
+            projectEnvironmentsEnabled={projectEnvironmentsEnabled}
           />
         ))}
       </div>

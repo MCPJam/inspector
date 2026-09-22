@@ -18,8 +18,8 @@ const SPEC_FEATURES = {
 type SpecFeatureKey = keyof typeof SPEC_FEATURES;
 
 /**
- * Build the `allow=` attribute for the outer Chatbox-Preview iframe from the
- * chatbox's host config.
+ * Build the `allow=` attribute for the outer Scenario-Preview iframe from the
+ * scenario's host config.
  *
  * Why this exists: Permissions-Policy ratchets at every iframe boundary. The
  * inner mcp-apps renderer (`mcp-apps-renderer.tsx`) already enforces the
@@ -37,16 +37,16 @@ type SpecFeatureKey = keyof typeof SPEC_FEATURES;
  *     the Permissions-Policy spec — no cross-origin children inherit.
  *   - Default (undefined / no opt-in): emit the full spec set so the inner
  *     mcp-apps renderer's per-resource gate isn't pre-blocked by the
- *     wrapper. This mirrors the chatbox-surface CSP default of `permissive`
+ *     wrapper. This mirrors the scenario-surface CSP default of `permissive`
  *     in `mcp-apps-renderer.tsx` — both layers default permissive on
- *     chatbox surfaces and the inner renderer / host config remain the
+ *     scenario surfaces and the inner renderer / host config remain the
  *     authoritative enforcement points. Hosts that want strict enforcement
  *     opt in via `apps.sandbox.permissions` (`mode: "deny-all"` for
  *     block-everything, or `mode: "custom"` with an `allow` map).
  *   - `deny-all` mode produces an empty string regardless of `allow`.
  *
  * The outer iframe is NOT given a `sandbox=` attribute — it wraps a
- * first-party published-chatbox runtime, and the actual untrusted MCP HTML
+ * first-party published-scenario runtime, and the actual untrusted MCP HTML
  * is two iframes deeper inside the SandboxedIframe proxy that the inner
  * mcp-apps renderer builds per SEP-1865 §Sandbox-proxy.
  */

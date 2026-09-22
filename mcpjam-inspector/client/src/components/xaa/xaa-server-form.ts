@@ -133,8 +133,12 @@ export function buildXaaServerFormData(
 ): ServerFormData {
   // A typed value replaces the saved secret; the Clear toggle removes it. A
   // typed replacement always wins over Clear (the save path rejects both).
-  const trimmedSecret = input.clientSecret.trim();
-  const submittedClearSecret = input.clearClientSecret && !trimmedSecret;
+  // Trimming is only used to decide whether there's a real replacement
+  // (whitespace-only counts as none) — the value actually saved is the raw
+  // typed input, so a secret with legitimate surrounding whitespace isn't
+  // silently corrupted.
+  const hasSecretValue = Boolean(input.clientSecret.trim());
+  const submittedClearSecret = input.clearClientSecret && !hasSecretValue;
 
   return {
     name: input.name,
@@ -147,7 +151,7 @@ export function buildXaaServerFormData(
     useOAuth: false,
     authServerMode: "mcpjam",
     clientId: input.clientId,
-    ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
+    ...(hasSecretValue ? { clientSecret: input.clientSecret } : {}),
     ...(submittedClearSecret ? { clearClientSecret: true } : {}),
     hasClientSecret: input.hasClientSecret,
     oauthScopes: input.oauthScopes,

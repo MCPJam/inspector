@@ -18,6 +18,8 @@ import {
   openPlaygroundAction,
 } from "../ui-actions";
 import {
+  PUBLISH_NATIVE,
+  PUBLISH_NATIVE_UNTRUSTED,
   asOptionalString,
   ensurePlaygroundOpen,
   errorResult,
@@ -55,6 +57,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) =>
         fromActionResult(
@@ -90,6 +93,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -145,11 +149,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
-      // Its result comes from a third-party MCP server — externally sourced,
-      // so a browser-native agent should treat it as untrusted. `openWorldHint`
-      // (MCP) doesn't convey that to a WebMCP agent; `untrustedContentHint`
-      // (WebMCP) does. Native mirror only.
-      nativeUntrustedContentHint: true,
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -197,6 +197,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         const model = asOptionalString(args.model);
@@ -236,6 +237,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         // Free text, so accept it verbatim — including the empty string, which
@@ -274,6 +276,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async () => {
         const notOpen = await ensurePlaygroundOpen("resetChat");
@@ -302,6 +305,7 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async () => {
         const notOpen = await ensurePlaygroundOpen("stopGeneration");

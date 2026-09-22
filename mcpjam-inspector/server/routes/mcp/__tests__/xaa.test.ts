@@ -27,6 +27,40 @@ import { WebRouteError } from "../../web/errors.js";
 import { NEGATIVE_TEST_MODES } from "../../../../shared/xaa.js";
 import xaa, { createXaaRouter } from "../xaa.js";
 
+// This suite models the whole network with a `fetch` stub. The OAuth proxy now
+// connects through raw node:http(s) so it can pin a validated DNS address, so
+// route its two outbound calls back through `fetch`, and stub DNS for the
+// `validateUrl` gate that stays real (it fails closed on an unresolvable host,
+// and these synthetic `*.example.com` names NXDOMAIN).
+vi.mock("../../../utils/oauth-proxy.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../utils/oauth-proxy.js")>();
+  const { executeOAuthProxyViaFetch, fetchOAuthMetadataViaFetch } = await import(
+    "../../../test/support/oauth-proxy-fetch-mock.js"
+  );
+  return {
+    ...actual,
+    executeOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
+    fetchOAuthMetadata: vi.fn(fetchOAuthMetadataViaFetch),
+  };
+});
+
+const dnsLookupMock = vi.hoisted(() => vi.fn());
+vi.mock("node:dns", () => ({
+  lookup: dnsLookupMock,
+}));
+
+// Re-installed per test: the shared server setup clears all mocks in afterEach.
+beforeEach(() => {
+  dnsLookupMock.mockImplementation(
+    (
+      _hostname: string,
+      _options: unknown,
+      callback: (error: Error | null, addresses: unknown) => void
+    ) => callback(null, [{ address: "93.184.216.34", family: 4 }])
+  );
+});
+
 // The 11 scorecard modes — everything the hosted split must mint and redeem.
 const SCORECARD_MODES = NEGATIVE_TEST_MODES.filter((mode) => mode !== "valid");
 

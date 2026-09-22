@@ -1,3 +1,4 @@
+import type { ConformanceSkipReason } from "../conformance-outcome.js";
 import type {
   InfoLogEntry,
   HttpHistoryEntry,
@@ -17,12 +18,21 @@ import type { OAuthStepInfo } from "../oauth/state-machines/shared/step-metadata
 // (the interactive debugger state machine never enters these states).
 
 export type OAuthConformanceCheckId =
+  | "verify_profile_shape"
+  | "verify_profile_stable"
+  | "verify_profile_id_opaque"
+  | "verify_profile_identity_stable_across_flows"
+  | "verify_profile_stable_after_refresh"
   | "oauth_dcr_http_redirect_uri"
   | "oauth_invalid_client"
   | "oauth_invalid_authorize_redirect"
   | "oauth_invalid_token"
   | "oauth_invalid_redirect"
-  | "oauth_token_format";
+  | "oauth_token_format"
+  // Server-side spec obligations (HP-17 findings 3/4/5).
+  | "oauth_unauthenticated_challenge"
+  | "oauth_resource_metadata_challenge"
+  | "oauth_stale_session_rejection";
 
 /** A step in a conformance result: either a real flow step or a post-flow check. */
 export type ConformanceStepId = OAuthFlowStep | OAuthConformanceCheckId;
@@ -31,6 +41,31 @@ export const CONFORMANCE_CHECK_METADATA: Record<
   OAuthConformanceCheckId,
   OAuthStepInfo
 > = {
+  verify_profile_shape: {
+    title: "Profile response",
+    summary: "Validate the authenticated profile response.",
+    teachableMoments: [],
+  },
+  verify_profile_stable: {
+    title: "Stable profile identity",
+    summary: "Repeat the profile call with the same credentials.",
+    teachableMoments: [],
+  },
+  verify_profile_id_opaque: {
+    title: "Opaque profile ID",
+    summary: "Look for display metadata used as identity (heuristic).",
+    teachableMoments: [],
+  },
+  verify_profile_identity_stable_across_flows: {
+    title: "Profile identity across flows",
+    summary: "Compare flows declared to represent the same account.",
+    teachableMoments: [],
+  },
+  verify_profile_stable_after_refresh: {
+    title: "Profile identity after refresh",
+    summary: "Compare identity before and after token refresh.",
+    teachableMoments: [],
+  },
   oauth_dcr_http_redirect_uri: {
     title: "OAuth Check: DCR Redirect URI Policy",
     summary:
@@ -79,6 +114,30 @@ export const CONFORMANCE_CHECK_METADATA: Record<
       "Token responses should include a usable bearer token, token type, and expiration metadata.",
     ],
   },
+  oauth_unauthenticated_challenge: {
+    title: "OAuth Check: Unauthenticated Request Challenge",
+    summary:
+      "Send an unauthenticated MCP request and confirm the server answers with HTTP 401 and a WWW-Authenticate Bearer challenge, never a 500.",
+    teachableMoments: [
+      "A protected resource must reject unauthenticated requests with 401 and a Bearer challenge (RFC 6750 §3), not a server error.",
+    ],
+  },
+  oauth_resource_metadata_challenge: {
+    title: "OAuth Check: Resource Metadata URL in Challenge",
+    summary:
+      "Confirm the WWW-Authenticate Bearer challenge advertises an absolute resource_metadata URL so clients can discover protected-resource metadata.",
+    teachableMoments: [
+      "RFC 9728 §5.1 requires the Bearer challenge to carry an absolute resource_metadata URL; a relative or missing value breaks discovery.",
+    ],
+  },
+  oauth_stale_session_rejection: {
+    title: "OAuth Check: Stale Session Rejection",
+    summary:
+      "Send an authenticated request carrying an unknown Mcp-Session-Id and confirm the server rejects it with a 4xx, never a 500.",
+    teachableMoments: [
+      "The Streamable HTTP transport requires a stale or unknown session id to fail with a clean 4xx (404 preferred), not crash the server with a 500.",
+    ],
+  },
 };
 
 export type OAuthRegistrationStrategy =
@@ -121,6 +180,13 @@ export interface OAuthConformanceConfig {
   customHeaders?: Record<string, string>;
   redirectUrl?: string;
   fetchFn?: typeof fetch;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local) for
+   * the outbound metadata fetches this flow makes. Set by the local inspector
+   * and the CLI, where the server under test is routinely on the developer's
+   * own machine. Link-local and cloud-metadata destinations stay refused.
+   */
+  allowPrivateNetwork?: boolean;
   stepTimeout?: number;
   verification?: OAuthVerificationConfig;
   oauthConformanceChecks?: boolean;
@@ -128,11 +194,51 @@ export interface OAuthConformanceConfig {
   onProgress?: (message: string) => void;
 }
 
+/**
+ * Why a skipped step produced no verdict. The two are NOT interchangeable, and
+ * a score built on these must treat them differently:
+ *
+ *   - `"not-applicable"` — the requirement cannot apply to THIS server, so
+ *     nothing is left unverified. Authorization is OPTIONAL in every MCP
+ *     revision ("Authorization is **OPTIONAL** for MCP implementations. When
+ *     supported:" — identical text in 2025-03-26 through 2026-07-28), so a
+ *     server that never requires it has no authorization obligations to
+ *     violate. These must never count against a server.
+ *   - `"could-not-run"` — the requirement DOES apply here but the run could
+ *     not exercise it. The obligation is untested, so this must never be
+ *     summed into a passing verdict.
+ */
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type OAuthSkipReason = ConformanceSkipReason;
+
+/**
+ * Suite-level verdict. `passed` stays a boolean for existing consumers and is
+ * true ONLY for `"passed"` — but a `"not-applicable"` run is not a failure
+ * either, which is exactly why a third value is needed: a public server used
+ * to be reported as a hard OAuth failure.
+ *
+ * `"incomplete"` is the fourth value, aligning OAuth with the other three
+ * suites' {@link ConformanceRunOutcome}: a completed flow whose applicable
+ * steps include one that COULD NOT RUN established nothing about that
+ * obligation, and calling it "passed" is how a two-of-eight run once reported
+ * success elsewhere. OAuth keeps `"not-applicable"` on top because a whole
+ * RUN can be inapplicable (authorization is OPTIONAL), which no other suite
+ * expresses.
+ */
+export type OAuthRunOutcome =
+  | "passed"
+  | "failed"
+  | "incomplete"
+  | "not-applicable";
+
 export interface StepResult {
+  intrusiveness?: "active" | "passive";
   step: ConformanceStepId;
   title: string;
   summary: string;
   status: "passed" | "failed" | "skipped";
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: OAuthSkipReason;
   durationMs: number;
   logs: InfoLogEntry[];
   http?: HttpHistoryEntry;
@@ -141,11 +247,23 @@ export interface StepResult {
     message: string;
     details?: unknown;
   };
+  /** Non-fatal evidence recorded on a passing step (e.g. a spec-preferred but
+   * not mandated behavior was missed). Never present on a failed step —
+   * failures use `error`. */
+  warnings?: string[];
   teachableMoments?: string[];
 }
 
 export interface ConformanceResult {
+  profileId?: string;
+  /** True only when `outcome` is `"passed"`. */
   passed: boolean;
+  outcome: OAuthRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which steps never ran and what
+   * has to change for them to run.
+   */
+  incompleteReason?: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
   serverUrl: string;
@@ -176,6 +294,7 @@ export interface NormalizedOAuthConformanceConfig {
   customHeaders?: Record<string, string>;
   redirectUrl?: string;
   fetchFn: typeof fetch;
+  allowPrivateNetwork: boolean;
   stepTimeout: number;
   verification: OAuthVerificationConfig;
   oauthConformanceChecks: boolean;
@@ -207,6 +326,7 @@ export interface ClientCredentialsResult {
 
 /** Optional post-auth verification: connect to the MCP server and exercise tools. */
 export interface OAuthVerificationConfig {
+  profile?: { enabled?: boolean; expectSameAccount?: boolean };
   /** After successful OAuth, connect and call tools/list. Default: false. */
   listTools?: boolean;
   /** Also call the named tool with the given params after listing. */

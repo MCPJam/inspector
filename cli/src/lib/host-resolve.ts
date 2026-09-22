@@ -71,12 +71,36 @@ export function applyHostToConfig(
       ? { supportedProtocolVersions: host.supportedProtocolVersions }
       : {}),
   };
-  // `mcpProtocolVersion` is HTTP-only (the stateless wire-mode pin).
+  // Both of these are HTTP-only: the stateless wire-mode pin, and the SEP-2243
+  // mirroring knob (mirroring is a Streamable HTTP concern, so the flag is
+  // inert on stdio and is not worth putting on the config there).
   const httpOnly =
-    "url" in config && host.mcpProtocolVersion
-      ? { mcpProtocolVersion: host.mcpProtocolVersion }
+    "url" in config
+      ? {
+          ...(host.mcpProtocolVersion
+            ? { mcpProtocolVersion: host.mcpProtocolVersion }
+            : {}),
+          ...(host.mirrorToolParamHeaders === false
+            ? { mirrorToolParamHeaders: false }
+            : {}),
+        }
       : {};
-  return { ...config, ...identity, ...httpOnly } as MCPServerConfig;
+  // The client-conformance knobs are NOT http-only, unlike the two above.
+  // Pagination truncation is enforced by a transport wrapper on JSON-RPC
+  // frames, and the MRTR knob works through capability advertisement and the
+  // verb gates — neither mechanism is Streamable-HTTP-specific, and both are
+  // behaviors a stdio client can exhibit. Gating them to `url` would make a
+  // `--host` silently mean something different over stdio.
+  const conformance = {
+    ...(host.firstPageOnly ? { firstPageOnly: true } : {}),
+    ...(host.supportsMrtr === false ? { supportsMrtr: false } : {}),
+  };
+  return {
+    ...config,
+    ...identity,
+    ...httpOnly,
+    ...conformance,
+  } as MCPServerConfig;
 }
 
 /**
@@ -123,12 +147,12 @@ export async function assertToolVisibleToHost(
   host: ResolvedHost,
 ): Promise<void> {
   if (host.policy.respectToolVisibility === false) return;
-  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
     const result = await manager.listTools(
       serverId,
-      cursor ? { cursor } : undefined,
+      // Presence, not truthiness: `""` is a valid continuation cursor.
+      cursor !== undefined ? { cursor } : undefined,
     );
     const tool = (result.tools ?? []).find(
       (t) => (t as { name?: unknown }).name === toolName,
@@ -143,13 +167,19 @@ export async function assertToolVisibleToHost(
     }
     cursor = result.nextCursor;
     // Paged through the WHOLE list without finding it → genuinely unlisted;
-    // allow the call (the server may still expose it).
-    if (!cursor) return;
-    if (seenCursors.has(cursor)) break; // server looping on a cursor
-    seenCursors.add(cursor);
+    // allow the call (the server may still expose it). "Whole list" means the
+    // server stopped handing out cursors — MCP 2026-07-28
+    // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
+    // read as the end of results.
+    //
+    // There is no repeated-cursor guard here: comparing two cursors for
+    // equality is itself a determination based on cursor value, and a server
+    // may legally reissue one constant token for every page. The cap bounds
+    // the walk, and hitting it already fails CLOSED below.
+    if (cursor === undefined) return;
   }
-  // Couldn't page through the full tool list (page cap or cursor loop) and the
-  // tool hasn't appeared — can't confirm it's model-visible, so fail CLOSED.
+  // Couldn't page through the full tool list (hit the page cap) and the tool
+  // hasn't appeared — can't confirm it's model-visible, so fail CLOSED.
   throw usageError(
     `Could not verify "${toolName}" is visible to host "${host.id}" — the server's tool list is too long to page through. Omit --host to call it as an operator.`,
   );

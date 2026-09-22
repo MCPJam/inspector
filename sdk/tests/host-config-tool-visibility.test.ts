@@ -1,6 +1,7 @@
 import {
   filterAppOnlyTools,
   applyVisibilityPolicyAndCountSignals,
+  applyToolDescriptionOverrides,
   isAppOnlyTool,
   type HostExecutionPolicy,
   type ToolMetadataSource,
@@ -217,5 +218,45 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
   // eslint-disable-next-line vitest/no-disabled-tests
   it.skip("preserves raw Tool[] app-only when respectToolVisibility=false — fix at HostRunner.ts:90 (Stage 4)", () => {
     // TODO(Stage 4): mock raw Tool[] input + assert post-filter preservation.
+  });
+});
+
+describe("applyToolDescriptionOverrides", () => {
+  it("rewrites description only and reports missing names", () => {
+    const tools = [
+      {
+        name: "search",
+        description: "old",
+        inputSchema: { type: "object" },
+        _meta: { ui: { visibility: ["model"] } },
+      },
+      { name: "get", description: "keep", inputSchema: { type: "object" } },
+    ];
+    const {
+      tools: next,
+      applied,
+      missing,
+    } = applyToolDescriptionOverrides(tools, {
+      search: "new description",
+      absent: "never",
+    });
+    expect(applied).toBe(1);
+    expect(missing).toEqual(["absent"]);
+    expect(next[0]?.description).toBe("new description");
+    expect(next[0]?.inputSchema).toEqual(tools[0]?.inputSchema);
+    expect(next[0]?._meta).toEqual(tools[0]?._meta);
+    expect(next[1]).toBe(tools[1]);
+  });
+
+  it("returns the input unchanged when overrides are empty", () => {
+    const tools = [{ name: "search", description: "old" }];
+    const {
+      tools: next,
+      applied,
+      missing,
+    } = applyToolDescriptionOverrides(tools, {});
+    expect(applied).toBe(0);
+    expect(missing).toEqual([]);
+    expect(next).toEqual(tools);
   });
 });

@@ -1,0 +1,1019 @@
+import { swarmVerdictValueLabel } from "@mcpjam/sdk/contract";
+import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, usePaginatedQuery } from "convex/react";
+import { Check, ChevronDown, Info, Layers } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import { cn } from "@/lib/utils";
+import { toast } from "@/lib/toast";
+import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
+import { JudgesSection } from "@/components/evals/judges-section";
+import { areAllChecksValid } from "@/components/evals/checks-section";
+import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
+import { useAvailableModels } from "@/hooks/use-available-models";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
+import {
+  serializeRubricForWire,
+  type JourneyCriterion,
+} from "@/shared/journey-rubric";
+import {
+  SWARM_QUERIES,
+  DEFAULT_PAGE_SIZE,
+  LaunchJourneyRunError,
+  type JourneyRun,
+  type JourneyRollup,
+} from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import { useProjectServerAttachments } from "@/hooks/useViews";
+import { JourneyHostLogoMark } from "./journey-host-logo";
+import {
+  buildSwarmRunTargets,
+  buildUnrunJourneyTargets,
+  summaryTargetKey,
+  type SwarmTargetColumn,
+} from "./swarm-targets";
+import {
+  buildClearToLegacyPayload,
+  buildEnvJourneyPayload,
+  MAX_ENVIRONMENTS_PER_JOURNEY,
+} from "./journey-environments";
+import {
+  formatJourneyRelativeTime,
+  runNumberLabel,
+  journeyRunDisplayStatus,
+  runStatusChipClass,
+  runSummaryLine,
+} from "./journey-run-format";
+import { SwarmSessionsMatrix } from "./journey-run-results";
+import { useRunSessionsContext } from "./run-sessions-context";
+
+// Structural view of the SwarmsTab `Journey` / `HostItem` shapes — kept local so
+// this module stays decoupled from the surface component (no import cycle).
+export type JourneyListJourney = {
+  createdByUserId?: string;
+  projectId?: string;
+  _id: string;
+  personaRefId: string;
+  name?: string;
+  goal: string;
+  hostIds: string[];
+  serverAttachmentId?: string | null;
+  /** Env-based fan-out (Project Environments). Non-empty ⇒ env-based; the
+   * legacy `hostIds` are kept as inactive compat data. */
+  environmentIds?: string[] | null;
+  config: { sessionsPerTarget: number; maxTurns: number };
+  /** Per-journey judge config. Already on the wire from `listJourneysByPersona`;
+   * declared here because `autoRun` decides whether the pre-run credit estimate
+   * carries a judge line at all. */
+  judgeConfig?: GoalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
+  /** Deterministic criteria. `null` from the wire when the journey has none. */
+  rubric?: JourneyCriterion[] | null;
+};
+export type JourneyListHost = { hostId: string; name: string };
+type ServerAttachment = { _id: string; name: string };
+
+/** The run currently open in the surface's detail panel. `targetKey` is the
+ * canonical `targetId ?? hostId` (D2) of the focused column, if any. */
+export type JourneyRunSelection = {
+  journeyId: string;
+  runId: string;
+  targetKey: string | null;
+};
+
+export type JourneyCellOutcome = "pass" | "fail" | "part" | "running" | "none";
+
+const CELL_STATUS_META: Record<
+  Exclude<JourneyCellOutcome, "none">,
+  { label: string; dot: string; text: string }
+> = {
+  pass: {
+    label: swarmVerdictValueLabel("passed"),
+    dot: "bg-success",
+    text: "text-success",
+  },
+  fail: {
+    label: swarmVerdictValueLabel("failed"),
+    dot: "bg-destructive",
+    text: "text-destructive",
+  },
+  part: {
+    label: swarmVerdictValueLabel("inconclusive"),
+    dot: "bg-amber-500",
+    text: "text-amber-600 dark:text-amber-400",
+  },
+  running: {
+    label: "Running",
+    dot: "bg-muted-foreground animate-pulse",
+    text: "text-muted-foreground",
+  },
+};
+
+/** Trend-segment fills — same palette as the evals RunTrendStrip. */
+const SEGMENT_CLASS: Record<JourneyCellOutcome, string> = {
+  none: "bg-muted",
+  pass: "bg-success/70",
+  fail: "bg-destructive/70",
+  part: "bg-amber-500/70 dark:bg-amber-400/70",
+  running: "bg-warning/50 animate-pulse",
+};
+
+const MAX_TREND_SEGMENTS = 12;
+
+/**
+ * One journey's execution-TARGET columns (B6). Prefers the latest run's
+ * per-target summary rows (joined to its snapshot for env labels); an unrun
+ * journey falls back to its current config — environments in `environmentIds`
+ * order for env-based journeys, hosts otherwise. Env labels are environment
+ * names, `#n`-suffixed on collisions; host labels come from the project host
+ * list with a truncated-id fallback.
+ */
+export function journeyTargetColumns(
+  journey: JourneyListJourney,
+  hosts: JourneyListHost[],
+  latestRun?: JourneyRun | null,
+  environments?: ProjectEnvironmentView[],
+  environmentsEnabled = true,
+): SwarmTargetColumn[] {
+  // `nameOf` returns undefined for a host no longer in the project so
+  // `buildSwarmRunTargets` can fall back to the RUN SNAPSHOT's own hostName
+  // before truncating the id. The unrun path has no snapshot, so it takes the
+  // truncating variant directly.
+  const nameOf = (id: string) => hosts.find((h) => h.hostId === id)?.name;
+  const labelOf = (id: string) => nameOf(id) ?? id.slice(0, 8);
+  if (latestRun && latestRun.hostSummaries.length > 0) {
+    return buildSwarmRunTargets({
+      hostSummaries: latestRun.hostSummaries,
+      snapshotHosts: latestRun.snapshot?.hosts,
+      hostName: nameOf,
+    });
+  }
+  // Flag-off rollback: an unrun env-based journey renders as legacy (its
+  // hostIds) rather than exposing environment ids/labels.
+  return buildUnrunJourneyTargets({
+    hostIds: journey.hostIds,
+    environmentIds: environmentsEnabled ? journey.environmentIds : undefined,
+    environments: environmentsEnabled ? environments : undefined,
+    hostName: labelOf,
+  });
+}
+
+/** Per-(run, target) outcome from the run's per-target rollup summary, keyed
+ * by the canonical `targetId ?? hostId` (host-shaped ids collapse to hostId —
+ * pre-3A historical rows and fresh legacy rows key identically). */
+export function journeyHostOutcome(
+  run: JourneyRun,
+  targetKey: string,
+): JourneyCellOutcome {
+  if (run.status === "running" || run.verdictSummary?.status === "pending")
+    return "running";
+  if (run.verdictSummary?.status !== "decided") return "none";
+  const decision = run.verdictSummary.decision.cases.find(
+    (c) =>
+      c.caseId ===
+      swarmTargetCaseId(
+        run.snapshot?.hosts?.find((h) => summaryTargetKey(h) === targetKey)
+          ?.targetId ?? targetKey,
+      ),
+  );
+  return decision?.verdict === "passed"
+    ? "pass"
+    : decision?.verdict === "failed"
+      ? "fail"
+      : decision?.verdict === "inconclusive"
+        ? "part"
+        : "none";
+}
+
+function hostSummaryFor(run: JourneyRun, targetKey: string) {
+  return (
+    run.hostSummaries.find((h) => summaryTargetKey(h) === targetKey) ?? null
+  );
+}
+
+/** Per-journey blocks: each journey shows its own hosts as result cells. */
+export function JourneyList({
+  journeys,
+  hosts,
+  isAuthenticated,
+  projectId,
+  onLaunch,
+  initialRunId,
+  selection,
+  onOpenRun,
+  onCloseRun,
+  environments,
+  environmentsEnabled = false,
+}: {
+  journeys: JourneyListJourney[];
+  hosts: JourneyListHost[];
+  isAuthenticated: boolean;
+  projectId: string;
+  onLaunch: (
+    journeyId: string,
+  ) => Promise<
+    { status: "launched"; runId?: string } | { status: "already_launching" }
+  >;
+  initialRunId?: string;
+  selection: JourneyRunSelection | null;
+  /** Open a run in the surface's detail panel (optionally focused on a target). */
+  onOpenRun: (
+    journey: JourneyListJourney,
+    run: JourneyRun,
+    targetKey: string | null,
+  ) => void;
+  onCloseRun: () => void;
+  /** Live project environments (flag-gated; undefined when the flag is off). */
+  environments?: ProjectEnvironmentView[];
+  /** `project-environments-enabled` — gates the env edit affordance. */
+  environmentsEnabled?: boolean;
+}) {
+  const { serverAttachments } = useProjectServerAttachments({
+    isAuthenticated,
+    projectId,
+  });
+
+  return (
+    <div className="flex flex-col gap-3">
+      {journeys.map((journey) => (
+        <JourneyBlock
+          key={journey._id}
+          journey={journey}
+          hosts={hosts}
+          projectId={projectId}
+          serverAttachments={serverAttachments}
+          onLaunch={onLaunch}
+          initialRunId={initialRunId}
+          selection={selection?.journeyId === journey._id ? selection : null}
+          onOpenRun={onOpenRun}
+          onCloseRun={onCloseRun}
+          environments={environments}
+          environmentsEnabled={environmentsEnabled}
+        />
+      ))}
+    </div>
+  );
+}
+
+function JourneyBlock({
+  journey,
+  hosts,
+  projectId,
+  serverAttachments,
+  onLaunch,
+  initialRunId,
+  selection,
+  onOpenRun,
+  onCloseRun,
+  environments,
+  environmentsEnabled,
+}: {
+  journey: JourneyListJourney;
+  hosts: JourneyListHost[];
+  projectId: string;
+  serverAttachments: ServerAttachment[];
+  onLaunch: (
+    journeyId: string,
+  ) => Promise<
+    { status: "launched"; runId?: string } | { status: "already_launching" }
+  >;
+  initialRunId?: string;
+  /** Non-null only when the open run belongs to THIS journey. */
+  selection: JourneyRunSelection | null;
+  onOpenRun: (
+    journey: JourneyListJourney,
+    run: JourneyRun,
+    targetKey: string | null,
+  ) => void;
+  onCloseRun: () => void;
+  environments?: ProjectEnvironmentView[];
+  environmentsEnabled?: boolean;
+}) {
+  const { results: runs } = usePaginatedQuery(
+    SWARM_QUERIES.listJourneyRuns as any,
+    { journeyRefId: journey._id } as any,
+    { initialNumItems: DEFAULT_PAGE_SIZE },
+  );
+  const rollup = useQuery(
+    SWARM_QUERIES.journeyRollup as any,
+    { journeyRefId: journey._id } as any,
+  ) as JourneyRollup | undefined;
+
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const runSessions = useRunSessionsContext();
+
+  const typedRuns = runs as JourneyRun[];
+  const latestRun = typedRuns[0] ?? null;
+  const runCount = rollup?.runCount ?? typedRuns.length;
+  const isEnvBased =
+    environmentsEnabled && (journey.environmentIds?.length ?? 0) > 0;
+  const targetCols = useMemo(
+    () =>
+      journeyTargetColumns(
+        journey,
+        hosts,
+        latestRun,
+        environments,
+        environmentsEnabled,
+      ),
+    [journey, hosts, latestRun, environments, environmentsEnabled],
+  );
+  const serverGroupName = journey.serverAttachmentId
+    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null)
+    : null;
+  const configHint = `${journey.config.sessionsPerTarget}/host · ${journey.config.maxTurns} turns`;
+  // Cost-relevant journey config, so an edit re-prices an already-open estimate
+  // instead of leaving a pre-edit number on screen. Host-level model changes are
+  // resolved server-side and aren't visible here.
+  // Structured serialization rather than a delimiter join: the judge model is
+  // configurable text, so a hand-rolled key would not be collision-free.
+  //
+  // Whether the judge auto-runs adds or removes a whole line, so it belongs in
+  // the signature as much as the target list does — and when it IS on, its model
+  // sets the line's price, so a model swap has to invalidate too. When it's off
+  // there is no judge line, so the model is irrelevant to the key.
+  const estimateJudgeKey =
+    journey.judgeConfig?.goalCompletion?.enabled !== false &&
+    journey.judgeConfig?.goalCompletion?.autoRun === true
+      ? ["on", journey.judgeConfig?.goalCompletion?.judgeModel ?? "default"]
+      : ["off"];
+  const estimateConfigKey = JSON.stringify([
+    journey.environmentIds ?? [],
+    journey.hostIds,
+    journey.config.sessionsPerTarget,
+    journey.config.maxTurns,
+    estimateJudgeKey,
+  ]);
+
+  // Deep-link restore: open the linked run in the detail panel. Runs once.
+  const appliedInitialRunRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialRunRef.current || !initialRunId) return;
+    const match = typedRuns.find((r) => r._id === initialRunId);
+    if (match) {
+      appliedInitialRunRef.current = true;
+      onOpenRun(journey, match, null);
+    }
+  }, [initialRunId, typedRuns, journey, onOpenRun]);
+
+  const onRun = async () => {
+    if (launching) return;
+    setLaunchError(null);
+    setLaunching(true);
+    try {
+      const result = await onLaunch(journey._id);
+      if (result.status === "already_launching") return;
+      toast.success("Goal run started");
+    } catch (e) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it inline under the goal
+      // would say the same thing twice with nothing to act on.
+      if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
+      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  const openRun = (run: JourneyRun, targetKey: string | null) => {
+    if (selection?.runId === run._id && selection.targetKey === targetKey) {
+      onCloseRun();
+      return;
+    }
+    onOpenRun(journey, run, targetKey);
+  };
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-2.5",
+        selection ? "border-primary/50" : "border-border/60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <p
+          className="min-w-0 flex-1 truncate text-sm font-medium"
+          title={journey.goal}
+        >
+          {journey.goal}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 shrink-0 px-2.5 text-xs"
+          disabled={launching}
+          onClick={onRun}
+        >
+          {launching ? "Starting…" : "Run"}
+        </Button>
+      </div>
+
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          {runCount} run{runCount === 1 ? "" : "s"}
+        </span>
+        {latestRun ? (
+          <>
+            <span aria-hidden>·</span>
+            <span>latest:</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
+                runStatusChipClass(journeyRunDisplayStatus(latestRun)),
+              )}
+            >
+              {journeyRunDisplayStatus(latestRun).replace(/_/g, " ")}
+            </span>
+            <span>{formatJourneyRelativeTime(latestRun.createdAt)}</span>
+          </>
+        ) : null}
+        {serverGroupName && !isEnvBased ? (
+          <>
+            <span aria-hidden>·</span>
+            <span className="truncate">{serverGroupName}</span>
+          </>
+        ) : null}
+        {environmentsEnabled && isEnvBased ? (
+          <>
+            <span aria-hidden>·</span>
+            <JourneyEnvironmentsEditor
+              projectId={projectId}
+              journey={journey}
+              environments={environments ?? []}
+            />
+          </>
+        ) : null}
+        <span aria-hidden>·</span>
+        <JourneyGradingEditor journey={journey} projectId={projectId} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Goal config"
+              className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Info className="size-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[220px]">
+            <p className="text-xs leading-snug">{configHint}</p>
+          </TooltipContent>
+        </Tooltip>
+        {/* Pre-run credit estimate for this journey's next run. Lazy-fetched on
+            tooltip open — the list renders one card per journey, so a live
+            subscription per card would re-read every journey's usage history.
+            Renders (and fetches) nothing when the flag is off. */}
+        <JourneyRunCostEstimateHint
+          journeyId={journey._id}
+          configKey={estimateConfigKey}
+        />
+      </div>
+
+      {launchError ? (
+        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
+          {launchError}
+        </p>
+      ) : null}
+
+      {/* One result cell per execution TARGET (env or host) — latest outcome +
+          clickable run trend. Env targets are labeled by environment name. */}
+      <div className="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-1.5">
+        {targetCols.map((col) => {
+          if (!latestRun) {
+            return (
+              <div
+                key={col.key}
+                data-testid="journey-cell-empty"
+                className="flex min-h-[4rem] flex-col items-start justify-center gap-1 rounded-md border border-dashed border-border/50 bg-muted/5 px-2.5 py-2"
+              >
+                <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+                  <JourneyHostLogoMark label={col.label} />
+                  <span className="truncate text-[11px] font-medium text-foreground/80">
+                    {col.label}
+                  </span>
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  Not run
+                </span>
+              </div>
+            );
+          }
+
+          const outcome = journeyHostOutcome(latestRun, col.key);
+          const meta = outcome === "none" ? null : CELL_STATUS_META[outcome];
+          const summary = hostSummaryFor(latestRun, col.key);
+          // Oldest → newest, capped like the evals trend strip.
+          const trendRuns = [...typedRuns]
+            .reverse()
+            .map((r) => ({
+              run: r,
+              outcome: journeyHostOutcome(r, col.key),
+            }))
+            .slice(-MAX_TREND_SEGMENTS);
+          const cellSelected =
+            selection?.targetKey === col.key &&
+            selection?.runId === runSessions?.runId;
+
+          return (
+            <div
+              key={col.key}
+              className={cn(
+                "flex min-h-[4rem] w-full flex-col items-start justify-center gap-1 rounded-md border px-2.5 py-2 text-left transition-colors",
+                cellSelected
+                  ? "border-primary bg-primary/5"
+                  : "border-border/50 bg-background/60",
+              )}
+            >
+              <button
+                type="button"
+                data-testid="journey-host-cell"
+                data-outcome={outcome}
+                aria-label={`Open runs for ${journey.goal} on ${col.label}`}
+                title={
+                  summary
+                    ? `Latest run on ${col.label}: ${summary.succeeded}/${summary.total} sessions ok`
+                    : undefined
+                }
+                onClick={() => openRun(latestRun, col.key)}
+                className="flex w-full min-w-0 items-center justify-between gap-1.5 rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <JourneyHostLogoMark label={col.label} />
+                  <span className="truncate text-[11px] font-medium text-foreground/80">
+                    {col.label}
+                  </span>
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1.5">
+                  {meta ? (
+                    <span className={cn("size-1.5 rounded-full", meta.dot)} />
+                  ) : null}
+                  <span
+                    className={cn(
+                      "text-[11px] font-semibold tabular-nums",
+                      meta?.text ?? "text-muted-foreground",
+                    )}
+                  >
+                    {summary
+                      ? `${summary.succeeded}/${summary.total} ok`
+                      : (meta?.label ?? "No data")}
+                  </span>
+                </span>
+              </button>
+              {trendRuns.length > 0 ? (
+                <div
+                  className="flex h-4 w-full items-stretch gap-[2px]"
+                  data-testid="journey-trend-strip"
+                >
+                  {trendRuns.map(({ run, outcome: segOutcome }) => (
+                    <button
+                      key={run._id}
+                      type="button"
+                      // `journeyRunDisplayStatus`, not `run.status` — a
+                      // canceled or stale run arrives as `status: "failed"`
+                      // with the real outcome on `error`, so the raw field
+                      // would announce a deliberate stop as a failure here
+                      // while the row chip beside it says "canceled".
+                      aria-label={`Open run ${journeyRunDisplayStatus(
+                        run,
+                      )} (${runSummaryLine(run)}) on ${col.label}`}
+                      title={`${runNumberLabel(
+                        runCount,
+                        typedRuns.indexOf(run),
+                      )} · ${journeyRunDisplayStatus(run).replace(
+                        /_/g,
+                        " ",
+                      )} · ${runSummaryLine(run)} · ${formatJourneyRelativeTime(
+                        run.createdAt,
+                      )}`}
+                      onClick={() => openRun(run, col.key)}
+                      className={cn(
+                        "min-w-[4px] flex-1 rounded-[2px] outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-ring",
+                        SEGMENT_CLASS[segOutcome],
+                        selection?.runId === run._id &&
+                          "ring-1 ring-primary ring-offset-1 ring-offset-background",
+                      )}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {cellSelected && selection?.targetKey && runSessions ? (
+                <div className="mt-2 w-full border-t border-border/40 pt-2">
+                  <SwarmSessionsMatrix
+                    runId={runSessions.runId}
+                    targets={runSessions.targets}
+                    sessionsPerTarget={runSessions.sessionsPerTarget}
+                    sessions={runSessions.sessions}
+                    hostSummaries={runSessions.hostSummaries}
+                    stream={runSessions.stream}
+                    runStatus={String(runSessions.runStatus)}
+                    selection={runSessions.matrixSelection}
+                    onSelect={runSessions.onMatrixSelect}
+                    targetKeyFilter={col.key}
+                  />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Post-create grading editor: the rubric + judge a journey was created with,
+ * editable afterwards.
+ *
+ * Without this a rubric is write-once — the create forms are the only place it
+ * can be authored, so a journey that shipped without criteria could never gain
+ * them. Edits apply to FUTURE runs only: every run pins its own
+ * `snapshot.rubric` at launch and the runner reads that, never the journey.
+ *
+ * This surface owns both fields, so it always sends explicit values —
+ * `null` to clear, never `[]` (which would persist "graded against nothing").
+ */
+function JourneyGradingEditor({
+  journey,
+  projectId,
+}: {
+  journey: JourneyListJourney;
+  projectId: string;
+}) {
+  const updateJourney = useMutation("journeys:updateJourney" as any);
+  const { availableModels } = useAvailableModels({ projectId });
+  const [open, setOpen] = useState(false);
+  const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
+  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
+    undefined,
+  );
+  const [saving, setSaving] = useState(false);
+
+  // Seed ONLY on the closed→open transition — same reason as the environments
+  // editor: `journey` is a live subscription, and reseeding mid-edit would
+  // discard the user's unsaved criteria.
+  const currentRef = useRef({
+    rubric: journey.rubric,
+    judge: journey.judgeConfig,
+  });
+  currentRef.current = { rubric: journey.rubric, judge: journey.judgeConfig };
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setRubric(currentRef.current.rubric ?? []);
+      setJudgeConfig(currentRef.current.judge);
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  const criteriaCount = journey.rubric?.length ?? 0;
+  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateJourney({
+        journeyRefId: journey._id,
+        // Explicit on both fields: this editor is the whole state of the
+        // journey's grading, so "the user removed everything" has to reach the
+        // backend as a clear, not as an omission it would ignore.
+        rubric: rubric.length > 0 ? serializeRubricForWire(rubric) : null,
+        judgeConfig: judgeConfig ?? null,
+      } as any);
+      toast.success("Grading updated — applies to future runs");
+      setOpen(false);
+    } catch (e) {
+      toast.error(getBillingErrorMessage(e, "Failed to update grading"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="journey-grading-trigger"
+          className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-px text-[11px] text-foreground/80 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Goal grading"
+        >
+          <span className="min-w-0 truncate">
+            {criteriaCount > 0
+              ? `${criteriaCount} ${criteriaCount === 1 ? "evaluator" : "evaluators"}`
+              : "Grading"}
+          </span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-96 p-3"
+        align="start"
+        sideOffset={4}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <SharedSettingsGate
+          projectId={projectId}
+          creatorId={journey.createdByUserId}
+          resource="swarm settings"
+        >
+          <JudgesSection
+            policy={journey.judgePolicy}
+            chrome="bare"
+            value={judgeConfig}
+            onChange={setJudgeConfig}
+            availableModels={availableModels}
+            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
+            bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
+          />
+          <div className="mt-3 border-t border-border/40 pt-3">
+            <JourneyRubricEditor value={rubric} onChange={setRubric} />
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
+            <p className="text-[10px] text-muted-foreground">
+              Applies to future runs — finished runs keep their launch snapshot.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              disabled={saving || !rubricValid}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
+          </div>
+        </SharedSettingsGate>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Minimal env edit affordance for an ENV-BASED journey (B5): an "Environments"
+ * popover with the ordered ≤10 multi-select and a confirm-gated
+ * clear-back-to-legacy. Every write sends BOTH `environmentIds` AND compat
+ * `hostIds` recomputed from those environments (deduped, in order) in the SAME
+ * `journeys:updateJourney` call, so the legacy rollback data can never go
+ * stale. Clearing is blocked when no valid compat host resolves.
+ */
+function JourneyEnvironmentsEditor({
+  projectId,
+  journey,
+  environments,
+}: {
+  journey: JourneyListJourney;
+  environments: ProjectEnvironmentView[];
+  projectId: string;
+}) {
+  const updateJourney = useMutation("journeys:updateJourney" as any);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const current = useMemo(
+    () => journey.environmentIds ?? [],
+    [journey.environmentIds],
+  );
+  // Seed ONLY on the closed→open transition. `journey` is a live Convex
+  // subscription, so `current` gets a new identity whenever anything on the
+  // journey changes (a rollup landing, a new run) — reseeding on every change
+  // while the popover is open would wipe the user's unsaved selection
+  // mid-edit. `currentRef` keeps the seed value fresh without making the
+  // effect depend on it.
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) setDraft(currentRef.current);
+    wasOpen.current = open;
+  }, [open]);
+
+  // New selections are limited to LIVE environments; a draft id that no longer
+  // resolves in the list (archived/retired) renders as a detach-only row so the
+  // user can remove it (a saved journey can't target a retired environment).
+  const liveEnvironments = useMemo(
+    () => environments.filter((e) => !e.archivedAt),
+    [environments],
+  );
+  const orphanDraftIds = useMemo(
+    () =>
+      draft.filter((id) => !environments.some((e) => e.environmentId === id)),
+    [draft, environments],
+  );
+
+  const toggle = (environmentId: string) =>
+    setDraft((prev) =>
+      prev.includes(environmentId)
+        ? prev.filter((id) => id !== environmentId)
+        : prev.length >= MAX_ENVIRONMENTS_PER_JOURNEY
+        ? prev
+        : [...prev, environmentId],
+    );
+
+  const dirty =
+    draft.length !== current.length || draft.some((id, i) => id !== current[i]);
+
+  const save = async () => {
+    const payload = buildEnvJourneyPayload(draft, environments);
+    if (!payload) {
+      toast.error(
+        "Pick at least one environment that resolves to a valid client.",
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateJourney({
+        journeyRefId: journey._id,
+        environmentIds: payload.environmentIds,
+        hostIds: payload.hostIds,
+      } as any);
+      toast.success("Goal environments updated");
+      setOpen(false);
+    } catch (e) {
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearToLegacy = async () => {
+    const payload = buildClearToLegacyPayload(current, environments);
+    if (!payload) {
+      toast.error(
+        "Can't switch to clients: none of this goal's environments " +
+          "resolves to a valid client. Select clients manually instead.",
+      );
+      return;
+    }
+    if (
+      !window.confirm(
+        "Switch this goal back to clients? Environment server-group " +
+          "overrides and environment skills stop applying; future runs use " +
+          "those clients' own defaults.",
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateJourney({
+        journeyRefId: journey._id,
+        environmentIds: null,
+        hostIds: payload.hostIds,
+      } as any);
+      toast.success("Goal switched back to clients");
+      setOpen(false);
+    } catch (e) {
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const label =
+    current.length === 1
+      ? (environments.find((e) => e.environmentId === current[0])?.name ??
+        "1 environment")
+      : `${current.length} environments`;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="journey-environments-trigger"
+          className="inline-flex max-w-[200px] items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-px text-[11px] text-foreground/80 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Goal environments"
+        >
+          <Layers className="size-3 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate">{label}</span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-72 p-2"
+        align="start"
+        sideOffset={4}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <SharedSettingsGate
+          projectId={projectId}
+          creatorId={journey.createdByUserId}
+          resource="swarm settings"
+        >
+          <div className="space-y-0.5" role="group" aria-label="Environments">
+            <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Environments
+            </p>
+            {liveEnvironments.length === 0 && orphanDraftIds.length === 0 ? (
+              <p className="px-1 py-1.5 text-xs text-muted-foreground">
+                No environments in this project.
+              </p>
+            ) : (
+              <>
+                {liveEnvironments.map((env) => {
+                  const selected = draft.includes(env.environmentId);
+                  const ordinal = draft.indexOf(env.environmentId);
+                  const disabled =
+                    !selected && draft.length >= MAX_ENVIRONMENTS_PER_JOURNEY;
+                  return (
+                    <button
+                      key={env.environmentId}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={selected}
+                      disabled={disabled}
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => toggle(env.environmentId)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                        "hover:bg-accent hover:text-accent-foreground",
+                        selected && "bg-accent/50",
+                        disabled && "cursor-not-allowed opacity-50",
+                      )}
+                    >
+                      <Check
+                        className={cn(
+                          "size-3.5 shrink-0",
+                          selected ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-medium">{env.name}</span>
+                      </span>
+                      {selected ? (
+                        <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                          {ordinal + 1}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {orphanDraftIds.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="checkbox"
+                    aria-checked
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => toggle(id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
+                      "hover:bg-accent hover:text-accent-foreground",
+                    )}
+                  >
+                    <Check className="size-3.5 shrink-0 opacity-100" />
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">Retired environment</span>
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        (unavailable — remove)
+                      </span>
+                    </span>
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                      {draft.indexOf(id) + 1}
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:text-destructive hover:underline"
+              disabled={saving}
+              onClick={() => void clearToLegacy()}
+            >
+              Use clients instead
+            </button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              disabled={saving || !dirty || draft.length === 0}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
+          </div>
+        </SharedSettingsGate>
+      </PopoverContent>
+    </Popover>
+  );
+}

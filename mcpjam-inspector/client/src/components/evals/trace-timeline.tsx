@@ -33,6 +33,11 @@ import type {
   EvalTraceSpanCategory,
 } from "@/shared/eval-trace";
 import { mcpErrorCodeLabel } from "@/shared/eval-trace";
+import {
+  BrowserStepDetail,
+  browserStepLabel,
+  browserStepStatus,
+} from "./browser-step-replay";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -185,49 +190,6 @@ type TraceTurnRuntime = {
   harness?: string;
 };
 
-/** Human-readable verb for an interaction step's action enum. */
-function interactionActionVerb(action: string): string {
-  switch (action) {
-    case "left_click":
-      return "Click";
-    case "double_click":
-      return "Double-click";
-    case "right_click":
-      return "Right-click";
-    case "mouse_move":
-      return "Move";
-    case "type":
-      return "Type";
-    case "key":
-      return "Key";
-    case "scroll":
-      return "Scroll";
-    case "wait":
-      return "Wait";
-    case "screenshot":
-      return "Assert";
-    default:
-      return action;
-  }
-}
-
-/** Label for an interaction row, e.g. `Interact · Click "Add to cart"`. */
-function interactionRowLabel(step: EvalTraceBrowserInteractionStepView): string {
-  const verb = interactionActionVerb(step.action);
-  const target = step.locatorLabel?.trim();
-  return target ? `Interact · ${verb} ${target}` : `Interact · ${verb}`;
-}
-
-/** Verdict for an interaction step: asserts use `assertion`, actions use `ok`. */
-function interactionRowStatus(
-  step: EvalTraceBrowserInteractionStepView,
-): "ok" | "error" | "unknown" {
-  if (step.assertion) return step.assertion.passed ? "ok" : "error";
-  if (step.ok === true) return "ok";
-  if (step.ok === false) return "error";
-  return "unknown";
-}
-
 function aggregateLlmTokenTotals(spans: EvalTraceSpan[]): {
   inputTokens?: number;
   outputTokens?: number;
@@ -271,8 +233,25 @@ export type TraceRevealSelection = {
   highlightSourceIndices: number[];
 };
 
+/**
+ * Compile-time exhaustiveness with a runtime fallback.
+ *
+ * Every known category must be handled above, or `never` stops the build.
+ * A category this build has never heard of still renders: the backend's
+ * primary eval-trace writer accepts spans as `v.any()`, so a newer producer
+ * reaches an older client, and dropping the row would hide real evidence.
+ */
+function assertExhaustiveCategory<T>(category: never, fallback: T): T {
+  void category;
+  return fallback;
+}
+
 function categoryRank(category: EvalTraceSpanCategory): number {
   switch (category) {
+    case "connection":
+      return -2;
+    case "discovery":
+      return -1;
     case "step":
       return 0;
     case "llm":
@@ -282,7 +261,10 @@ function categoryRank(category: EvalTraceSpanCategory): number {
     case "error":
       return 3;
     default:
-      return 9;
+      // A category this build does not know still has to sort. The backend
+      // primary trace writer takes spans as `v.any()`, so a newer producer
+      // can reach an older client.
+      return assertExhaustiveCategory(category, 9);
   }
 }
 
@@ -581,9 +563,20 @@ function findUserMessageIndexForRange(
     return inRangeIndex;
   }
 
-  if (range && range.startIndex > 0) {
+  // Span indices are recorded against the server's transcript, which can be
+  // longer than the one the browser holds (rehydrated sessions rebuild it from
+  // the UI, dropping transient messages and incomplete tool calls). A range
+  // starting past the end describes messages this transcript doesn't have, so
+  // there is no "preceding" user message to walk back to — anything found
+  // there would belong to an unrelated turn.
+  if (range.startIndex >= messages.length) {
+    return undefined;
+  }
+
+  if (range.startIndex > 0) {
     for (let index = range.startIndex - 1; index >= 0; index -= 1) {
-      const message = messages[index]!;
+      const message = messages[index];
+      if (!message) continue;
       if (message.role === "user") {
         return index;
       }
@@ -610,17 +603,20 @@ function getWaterfallBarClass(
     return "trace-waterfall-bar-error";
   }
   if (row.kind !== "span") return "trace-waterfall-bar-step";
-  switch (row.span.category) {
+  const spanCategory = row.span.category;
+  switch (spanCategory) {
     case "llm":
       return "trace-waterfall-bar-llm";
     case "tool":
       return "trace-waterfall-bar-tool";
     case "step":
+    case "connection":
+    case "discovery":
       return "trace-waterfall-bar-step";
     case "error":
       return "trace-waterfall-bar-error";
     default:
-      return "trace-waterfall-bar-step";
+      return assertExhaustiveCategory(spanCategory, "trace-waterfall-bar-step");
   }
 }
 
@@ -639,8 +635,11 @@ function getCategoryIconClass(
       return "trace-waterfall-glyph-tool";
     case "error":
       return "trace-waterfall-glyph-error";
+    case "connection":
+    case "discovery":
+      return "trace-waterfall-glyph-step";
     default:
-      return "text-muted-foreground";
+      return assertExhaustiveCategory(category, "text-muted-foreground");
   }
 }
 
@@ -665,9 +664,11 @@ function getRowBorderAccentClass(
     case "error":
       return "trace-waterfall-row-accent-error";
     case "step":
+    case "connection":
+    case "discovery":
       return "trace-waterfall-row-accent-step";
     default:
-      return "border-l-muted-foreground";
+      return assertExhaustiveCategory(cat, "border-l-muted-foreground");
   }
 }
 
@@ -731,6 +732,8 @@ export function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
         llm: 0,
         tool: 0,
         error: 0,
+        connection: 0,
+        discovery: 0,
       };
       for (const span of promptSpans) {
         if (span.category in counts) {
@@ -1130,8 +1133,12 @@ function CategoryGlyph({
       return <MousePointerClick className={iconClass} aria-hidden />;
     case "error":
       return <AlertCircle className={iconClass} aria-hidden />;
+    case "connection":
+    case "discovery":
     case "step":
+      return <ListTree className={iconClass} aria-hidden />;
     default:
+      // Unknown category: still draw a row rather than rendering nothing.
       return <ListTree className={iconClass} aria-hidden />;
   }
 }
@@ -1453,97 +1460,21 @@ function PayloadPreview({
   );
 }
 
-const INTERACTION_STATUS_BADGE_CLASS: Record<
-  InteractionRow["status"],
-  string
-> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  error: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
-  unknown: "border-border/50 bg-muted/40 text-muted-foreground",
-};
-
 function InteractionDetailPane({ row }: { row: InteractionRow }) {
-  const { step } = row;
-  const statusLabel =
-    row.status === "ok" ? "OK" : row.status === "error" ? "Failed" : "Unknown";
-  const calls = step.widgetToolCalls ?? [];
-  // Computer Use steps target a pixel; surface it so the Trace tab carries the
-  // coordinate the retired Browser-tab timeline used to show.
-  const coordinate =
-    step.coordinateX != null && step.coordinateY != null
-      ? `(${step.coordinateX}, ${step.coordinateY})`
-      : null;
+  // Content lives in the shared `BrowserStepDetail` (browser-step-replay.tsx),
+  // which the Replay filmstrip mounts too — the label, the coordinate, the
+  // screenshot, and the widget tool calls used to be hand-rolled here and
+  // separately over there. This wrapper contributes only the timeline's own
+  // chrome: its category glyph and detail-pane framing.
   return (
     <div
       data-testid="trace-detail-pane"
-      className="flex min-h-[280px] flex-col gap-4 rounded-lg bg-muted/5 px-5 py-5"
+      className="min-h-[280px] rounded-lg bg-muted/5 px-5 py-5"
     >
-      <div className="flex items-center gap-2">
-        <CategoryGlyph category="interaction" size="lg" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">
-            {interactionRowLabel(step)}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            App interaction · {step.elapsedMs}ms
-            {coordinate ? ` · ${coordinate}` : ""}
-          </p>
-        </div>
-        <Badge className={INTERACTION_STATUS_BADGE_CLASS[row.status]}>
-          {statusLabel}
-        </Badge>
-      </div>
-      {step.assertion && !step.assertion.passed && step.assertion.reason ? (
-        <p className="text-xs text-red-500">{step.assertion.reason}</p>
-      ) : null}
-      {step.screenshotUrl ? (
-        <img
-          src={step.screenshotUrl}
-          alt={interactionRowLabel(step)}
-          className="max-h-72 w-full rounded-md border border-border/50 object-contain"
-        />
-      ) : null}
-      {calls.length > 0 ? (
-        <div className="space-y-1.5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Widget tool calls
-          </p>
-          {calls.map((call, i) => (
-            <div
-              key={`${call.name}-${i}`}
-              className="flex items-center gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs"
-            >
-              <span
-                className={cn(
-                  "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-                  call.ok ? "bg-emerald-500" : "bg-destructive",
-                )}
-                aria-hidden
-              />
-              <span className="font-mono text-foreground">{call.name}</span>
-              {call.error ? (
-                <span className="truncate text-red-500">{call.error}</span>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {step.followUps && step.followUps.length > 0 ? (
-        <div className="space-y-1.5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Sent message to chat
-          </p>
-          {step.followUps.map((text, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs"
-            >
-              <span aria-hidden>↳</span>
-              <span className="truncate text-foreground">{text}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <BrowserStepDetail
+        step={row.step}
+        leading={<CategoryGlyph category="interaction" size="lg" />}
+      />
     </div>
   );
 }
@@ -2177,7 +2108,7 @@ export function TraceTimeline({
               .filter((step) => {
                 if (filter === "all" || filter === "tool") return true;
                 if (filter === "error")
-                  return interactionRowStatus(step) === "error";
+                  return browserStepStatus(step) === "error";
                 return false;
               })
               .map((step, i) => ({
@@ -2188,7 +2119,7 @@ export function TraceTimeline({
                 step,
                 startMs: node.span.startMs,
                 endMs: node.span.endMs,
-                status: interactionRowStatus(step),
+                status: browserStepStatus(step),
               }))
           : [];
 
@@ -2364,7 +2295,7 @@ export function TraceTimeline({
       hoveredRow.kind === "prompt"
         ? (hoveredRow.conversationLabel ?? hoveredRow.label)
         : hoveredRow.kind === "interaction"
-          ? interactionRowLabel(hoveredRow.step)
+          ? browserStepLabel(hoveredRow.step)
           : derivedLabel!.title;
     const tokenStats = getRowTokenStats(hoveredRow, recordedSpans);
     const glyphCategory: EvalTraceSpanCategory | "prompt" | "interaction" =
@@ -2536,6 +2467,8 @@ export function TraceTimeline({
             {(
               [
                 { label: "User", cls: "trace-waterfall-bar-prompt" },
+                { label: "Connect", cls: "trace-waterfall-bar-step" },
+                { label: "Discovery", cls: "trace-waterfall-bar-step" },
                 { label: "LLM",  cls: "trace-waterfall-bar-llm" },
                 { label: "Tool", cls: "trace-waterfall-bar-tool" },
                 { label: "Step", cls: "trace-waterfall-bar-step" },
@@ -2711,7 +2644,7 @@ export function TraceTimeline({
                       row.kind === "prompt"
                         ? (row.conversationLabel ?? row.label)
                         : row.kind === "interaction"
-                          ? interactionRowLabel(row.step)
+                          ? browserStepLabel(row.step)
                           : derivedLabel!.title;
                     const durationLabel = formatDuration(durationMs);
                     const canToggle =

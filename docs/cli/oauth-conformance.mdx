@@ -10,7 +10,7 @@ The OAuth conformance module runs real OAuth handshakes against your MCP server 
 
 - **Each MCP client exercises OAuth slightly differently.** Passing conformance means your server works for all of them.
 - **OAuth bugs are silent.** A valid-looking token can be rejected by MCP authentication downstream. Users see "failed to connect" with no context. `--verify-tools` catches this.
-- **3 registration strategies x 3 protocol versions x 3 auth modes** = 27 possible flow combinations. The suite runner covers the matrix in one invocation.
+- **3 registration strategies x 4 protocol versions x 3 auth modes** = 36 possible flow combinations. The suite runner covers the matrix in one invocation.
 - **CI-ready output.** `--reporter junit-xml` for dashboards. Exit 0/1/2 for scripts.
 
 ## Quick start
@@ -114,7 +114,8 @@ Create a config file:
     { "label": "2025-03-26 / dcr", "protocolVersion": "2025-03-26", "registrationStrategy": "dcr" },
     { "label": "2025-06-18 / dcr", "protocolVersion": "2025-06-18", "registrationStrategy": "dcr" },
     { "label": "2025-11-25 / dcr", "protocolVersion": "2025-11-25", "registrationStrategy": "dcr" },
-    { "label": "2025-11-25 / cimd", "protocolVersion": "2025-11-25", "registrationStrategy": "cimd" }
+    { "label": "2025-11-25 / cimd", "protocolVersion": "2025-11-25", "registrationStrategy": "cimd" },
+    { "label": "2026-07-28 / cimd", "protocolVersion": "2026-07-28", "registrationStrategy": "cimd" }
   ]
 }
 ```
@@ -185,12 +186,12 @@ This adds 6 checks after the main flow: DCR redirect URI policy, invalid client 
 
 | Strategy | Description | Protocol versions |
 |----------|-------------|-------------------|
-| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25 only |
+| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25, 2026-07-28 |
 | `dcr` | Dynamic Client Registration — the client registers itself at runtime | All |
 | `preregistered` | Pre-registered client ID and optional secret | All |
 
 **When to choose what:**
-- **CIMD** (2025-11-25): preferred for production when the auth server supports it — avoids mutable DCR state.
+- **CIMD** (2025-11-25, 2026-07-28): preferred for production when the auth server supports it — avoids mutable DCR state.
 - **DCR**: the default for quick testing — works everywhere, no pre-configuration needed.
 - **Preregistered**: use when the auth server doesn't support DCR, or for `client_credentials` M2M flows.
 
@@ -208,7 +209,7 @@ When `cimd` is used without `--client-metadata-url`, the runner falls back to mc
 
 | Registration | `headless` | `interactive` | `client_credentials` |
 |--------------|:----------:|:-------------:|:--------------------:|
-| `cimd` (2025-11-25 only) | yes | yes | no |
+| `cimd` (2025-11-25, 2026-07-28) | yes | yes | no |
 | `dcr` | yes | yes | yes (secret from DCR) |
 | `preregistered` | yes | yes | yes (requires `--client-secret`) |
 
@@ -216,7 +217,7 @@ When `cimd` is used without `--client-metadata-url`, the runner falls back to mc
 
 ## Post-auth verification
 
-OAuth conformance proves a token was issued. Verification proves the token is actually **usable for MCP operations**.
+OAuth conformance proves a token was issued. Verification proves the token is **usable for MCP operations**.
 
 Three silent-failure modes this catches:
 
@@ -305,7 +306,7 @@ oauth-conformance:
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | MCP server URL |
-| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, `2025-11-25`, or `2026-07-28` |
 | `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
 | `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
 | `--client-id <id>` | No | | OAuth client ID (required for `preregistered`) |

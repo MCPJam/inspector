@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import {
   __resetUiToolExecutorForTests,
   fulfillApprovedUiToolCall,
@@ -32,7 +28,6 @@ describe("handleUiToolCall", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -50,12 +45,36 @@ describe("handleUiToolCall", () => {
     });
 
     expect(handled).toBe(true);
-    expect(def.execute).toHaveBeenCalledWith({ target: "playground" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "playground" },
+      { toolCallId: "tc-1", caller: "ask_mcpjam" },
+    );
     expect(addToolOutput).toHaveBeenCalledWith({
       tool: "ui_navigate",
       toolCallId: "tc-1",
       output: { content: [{ type: "text", text: "navigated" }] },
     });
+  });
+
+  it("hands execute the call's identity and session scope", async () => {
+    // Tools that park on user input (`ui_ask_user`) key their pending state
+    // on the tool-call id and cancel per conversation — neither is derivable
+    // from the arguments, so both have to arrive through the context.
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+
+    await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-scoped",
+      input: { target: "playground" },
+      addToolOutput: vi.fn(),
+      telemetryScope: "session-a",
+    });
+
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "playground" },
+      { toolCallId: "tc-scoped", caller: "ask_mcpjam", scope: "session-a" },
+    );
   });
 
   it("defers mutating tools when requireToolApproval is on (no execute, no output)", async () => {
@@ -83,10 +102,11 @@ describe("handleUiToolCall", () => {
     ]);
   });
 
-  it("defers a DESTRUCTIVE tool even when requireToolApproval is off", async () => {
-    // The default mode. The client decides "defer" before the server's
-    // approval-request chunk arrives, so this must match the server's
-    // classification exactly or the turn strands.
+  it("defers a DESTRUCTIVE tool when the switch is ON", async () => {
+    // The client decides "defer" before the server's approval-request chunk
+    // arrives, so this must match the server's classification exactly or the
+    // turn strands. Both sides call the same `uiToolCallNeedsApproval`, which
+    // is what keeps them from drifting.
     const def = makeTool({
       name: "ui_execute_tool",
       readOnly: false,
@@ -100,7 +120,7 @@ describe("handleUiToolCall", () => {
       toolCallId: "tc-destructive",
       input: {},
       addToolOutput,
-      requireToolApproval: false,
+      requireToolApproval: true,
     });
 
     expect(handled).toBe(true);
@@ -109,6 +129,31 @@ describe("handleUiToolCall", () => {
     expect(listDeferredUiToolCalls()).toEqual([
       { toolCallId: "tc-destructive", toolName: "ui_execute_tool", input: {} },
     ]);
+  });
+
+  it("runs a DESTRUCTIVE tool without asking when the switch is OFF", async () => {
+    // The switch governs every family now. A client that kept deferring here
+    // would wait for an approval the server never requests, which strands the
+    // turn — the mirror image of the drift the test above guards.
+    const def = makeTool({
+      name: "ui_execute_tool",
+      readOnly: false,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    const handled = await handleUiToolCall({
+      toolName: "ui_execute_tool",
+      toolCallId: "tc-destructive-off",
+      input: {},
+      addToolOutput,
+      requireToolApproval: false,
+    });
+
+    expect(handled).toBe(true);
+    expect(def.execute).toHaveBeenCalled();
+    expect(listDeferredUiToolCalls()).toEqual([]);
   });
 
   it("executes an ADDITIVE tool immediately when requireToolApproval is off", async () => {
@@ -164,7 +209,10 @@ describe("handleUiToolCall", () => {
     await fulfillApprovedUiToolCall({ toolCallId: "tc-appr", addToolOutput });
 
     expect(def.execute).toHaveBeenCalledTimes(1);
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      { toolCallId: "tc-appr", caller: "ask_mcpjam" },
+    );
     expect(addToolOutput).toHaveBeenCalledTimes(1);
     expect(listDeferredUiToolCalls()).toEqual([]);
   });
@@ -183,9 +231,12 @@ describe("handleUiToolCall", () => {
       addToolOutput,
     });
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "evals" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "evals" },
+      { toolCallId: "tc-reload", caller: "ask_mcpjam" },
+    );
     expect(addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ toolCallId: "tc-reload" })
+      expect.objectContaining({ toolCallId: "tc-reload" }),
     );
   });
 
@@ -266,21 +317,58 @@ describe("handleUiToolCall", () => {
     expect(handled).toBe(true);
     expect(def.execute).toHaveBeenCalled();
     expect(addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ toolCallId: "tc-throw" })
+      expect.objectContaining({ toolCallId: "tc-throw" }),
     );
   });
 
-  it("coerces non-object input to empty args", async () => {
+  it("rejects non-object input instead of substituting empty args", async () => {
+    // Shared execution validates the arguments (`ui-tool-execution.ts`), so
+    // both transports say the same thing about a malformed call. Silently
+    // running with `{}` used to report whichever required field went missing
+    // — an error about the wrong problem.
     const def = makeTool();
     useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
 
     await handleUiToolCall({
       toolName: "ui_navigate",
       toolCallId: "tc-1",
       input: "garbage",
+      addToolOutput,
+    });
+
+    expect(def.execute).not.toHaveBeenCalled();
+    expect(addToolOutput).toHaveBeenCalledWith({
+      tool: "ui_navigate",
+      toolCallId: "tc-1",
+      output: {
+        content: [
+          {
+            type: "text",
+            text: "ui_navigate: Arguments must be a JSON object, got a string.",
+          },
+        ],
+        isError: true,
+      },
+    });
+  });
+
+  it("treats a missing payload as a no-argument call", async () => {
+    // `ui_snapshot_app` and friends legitimately take nothing.
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+
+    await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-empty",
+      input: undefined,
       addToolOutput: vi.fn(),
     });
-    expect(def.execute).toHaveBeenCalledWith({});
+
+    expect(def.execute).toHaveBeenCalledWith(
+      {},
+      { toolCallId: "tc-empty", caller: "ask_mcpjam" },
+    );
   });
 
   it("converts execute throws into isError outputs", async () => {
@@ -331,7 +419,10 @@ describe("handleUiToolCall", () => {
       toolCallId: "tc-1",
       output: {
         content: [
-          { type: "text", text: 'UI tool "ui_navigate" is no longer available.' },
+          {
+            type: "text",
+            text: 'UI tool "ui_navigate" is no longer available.',
+          },
         ],
         isError: true,
       },
@@ -348,7 +439,7 @@ describe("handleUiToolCall", () => {
         toolName,
         toolCallId: "tc-1",
         input: {},
-          addToolOutput,
+        addToolOutput,
       });
       expect(handled).toBe(false);
     }

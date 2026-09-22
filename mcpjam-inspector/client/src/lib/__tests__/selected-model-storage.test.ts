@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  loadLastOwnProviderModelId,
   loadSelectedModelId,
   loadSelectedModelIds,
   replaceLeadModelId,
+  saveLastOwnProviderModelId,
   saveSelectedModelId,
   saveSelectedModelIds,
   subscribeSelectedModelId,
@@ -11,6 +13,7 @@ import {
 
 const LEAD_KEY = "mcp-inspector-selected-model";
 const ARRAY_KEY = "mcp-inspector-selected-models";
+const OWN_PROVIDER_KEY = "mcp-inspector-last-own-provider-model";
 
 describe("selected-model-storage", () => {
   beforeEach(() => {
@@ -19,6 +22,33 @@ describe("selected-model-storage", () => {
 
   afterEach(() => {
     localStorage.clear();
+  });
+
+  describe("loadLastOwnProviderModelId / saveLastOwnProviderModelId", () => {
+    it("round-trips an own-provider model id", () => {
+      saveLastOwnProviderModelId("claude-haiku-4-5");
+      expect(loadLastOwnProviderModelId()).toBe("claude-haiku-4-5");
+      expect(localStorage.getItem(OWN_PROVIDER_KEY)).toBe("claude-haiku-4-5");
+    });
+
+    it("returns null when nothing is stored", () => {
+      expect(loadLastOwnProviderModelId()).toBeNull();
+    });
+
+    it("treats blank ids as cleared", () => {
+      saveLastOwnProviderModelId("claude-haiku-4-5");
+      saveLastOwnProviderModelId("   ");
+      expect(loadLastOwnProviderModelId()).toBeNull();
+      expect(localStorage.getItem(OWN_PROVIDER_KEY)).toBeNull();
+    });
+
+    it("is independent of the lead selection", () => {
+      saveLastOwnProviderModelId("claude-haiku-4-5");
+      // The lead flips to a free-tier model — the own-provider memory is what
+      // the BYOK hand-off reads back, so it must survive this (BACK2-628).
+      saveSelectedModelId("anthropic/claude-haiku-4.5");
+      expect(loadLastOwnProviderModelId()).toBe("claude-haiku-4-5");
+    });
   });
 
   describe("loadSelectedModelIds / saveSelectedModelIds", () => {

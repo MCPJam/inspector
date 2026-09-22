@@ -205,7 +205,7 @@ httpServer.listen(PORT, () => {
   console.log(`   2. Enter URL: http://localhost:${PORT}/mcp`);
   console.log("");
   console.log("   To connect to ChatGPT:");
-  console.log("   Click 'Create ngrok tunnel' with a connected server,");
+  console.log("   Click 'Create Tunnel' on the card of a connected server,");
   console.log("   then use the tunnel URL as your connector endpoint.");
   console.log("");
   console.log("☕️ ============================================");

@@ -270,11 +270,19 @@ function formatVerification(result: ConformanceResult): string[] {
   return lines;
 }
 
+/** A run that did not apply — or never exercised an applicable step — is
+ * neither PASSED nor FAILED. */
+function formatOutcome(outcome: ConformanceResult["outcome"]): string {
+  if (outcome === "not-applicable") return "NOT APPLICABLE";
+  if (outcome === "incomplete") return "INCOMPLETE";
+  return outcome === "passed" ? "PASSED" : "FAILED";
+}
+
 export function formatOAuthConformanceHuman(
   result: ConformanceResult,
 ): string {
   const lines = [
-    `OAuth conformance: ${result.passed ? "PASSED" : "FAILED"}`,
+    `OAuth conformance: ${formatOutcome(result.outcome)}`,
     `Server: ${result.serverUrl}`,
     `Flow: ${result.protocolVersion} / ${result.registrationStrategy}`,
     `Summary: ${result.summary}`,
@@ -299,17 +307,36 @@ export function formatOAuthConformanceSuiteHuman(
   result: OAuthConformanceSuiteResult,
 ): string {
   const lines = [
-    `OAuth conformance suite: ${result.passed ? "PASSED" : "FAILED"}`,
+    // Worst-of the flows, not a flattened boolean: a suite whose only
+    // non-passing flow is incomplete is unestablished, not violated.
+    `OAuth conformance suite: ${
+      result.results.some((flow) => flow.outcome === "failed")
+        ? "FAILED"
+        : result.results.some((flow) => flow.outcome === "incomplete")
+          ? "INCOMPLETE"
+          : "PASSED"
+    }`,
     `Suite: ${result.name}`,
     `Server: ${result.serverUrl}`,
     `Summary: ${result.summary}`,
     `Duration: ${result.durationMs}ms`,
     "",
     "Flows",
-    ...result.results.map((flow) => `${flow.passed ? "PASS" : "FAIL"} ${flow.label}`),
+    ...result.results.map(
+      (flow) =>
+        `${
+          flow.outcome === "not-applicable"
+            ? "N/A "
+            : flow.outcome === "incomplete"
+              ? "INC "
+              : flow.outcome === "passed"
+                ? "PASS"
+                : "FAIL"
+        } ${flow.label}`,
+    ),
   ];
 
-  const failures = result.results.filter((flow) => !flow.passed);
+  const failures = result.results.filter((flow) => flow.outcome === "failed");
   if (failures.length > 0) {
     lines.push("", "Failure details");
     for (const failure of failures) {

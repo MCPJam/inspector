@@ -102,6 +102,27 @@ function defaultStreamTextReturn(
 
 const ORIGINAL_CONVEX = process.env.CONVEX_HTTP_URL;
 
+/** Drain a UI-message stream response into the chunks it carried. */
+async function readSseBody(response: Response): Promise<any[]> {
+  const reader = response.body?.getReader();
+  if (!reader) return [];
+  const parts: string[] = [];
+  const decoder = new TextDecoder();
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    parts.push(decoder.decode(chunk.value));
+  }
+  return parts
+    .join("")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice("data: ".length))
+    .filter((payload) => payload !== "[DONE]")
+    .map((payload) => JSON.parse(payload));
+}
+
 describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
   beforeEach(() => {
     streamTextMock.mockReset();
@@ -121,49 +142,120 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
   });
 
-  it("rejects synchronously with tool_approval_unsupported when requireToolApproval=true", async () => {
+  it("rejects synchronously with tool_approval_unsupported when a server tool would ask", async () => {
     // The synchronous guard must NEVER reach the engine — it's a
     // wrapper-level reject so the model is not built, the SSE writer
     // emits a single `error` chunk with code `tool_approval_unsupported`,
     // and the upstream provider is never contacted.
-    const writtenChunks: any[] = [];
+    //
+    // The tool carries the declaration a switch-on turn gives a real MCP
+    // tool. That declaration, not the switch, is what the guard reads: what
+    // it cannot serve is the RESUME after an approval, and only a tool that
+    // would actually ask can get there.
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
       systemPrompt: "s",
-      tools: { foo: { description: "f" } } as any,
+      tools: { foo: { description: "f", needsApproval: true } } as any,
       requireToolApproval: true,
-      onStreamWriterReady: ({ write }) => {
-        // Capture chunks the handler writes to the SSE stream.
-        const original = write;
-        // Re-bind so capture works in the same execution tick.
-        (response as any)._writer = original;
-      },
     });
-
-    // Run the stream so `execute` runs.
-    // The mocked `createUIMessageStreamResponse` in the production
-    // chain returns a real Response wrapping the stream; we don't need
-    // to drain SSE bytes here — we drive the wrapper through the
-    // handler's `onStreamWriterReady` capture.
     expect(response).toBeInstanceOf(Response);
 
-    // Drain the response body to force `execute` to run.
-    const reader = response.body?.getReader();
-    if (reader) {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        writtenChunks.push(chunk.value);
-      }
-    }
+    // Read the refusal off the WIRE. This used to hand the handler an
+    // `onStreamWriterReady` that assigned to `response` before its own `const`
+    // was initialized — a TDZ throw inside `execute`, which the stream turned
+    // into an error chunk reading "Cannot access 'response' before
+    // initialization". The real refusal never reached the stream at all, and
+    // the test passed anyway because it asserted only that nothing downstream
+    // ran. `createUIMessageStreamResponse` is not mocked in this file, so the
+    // body is the honest observation.
+    const body = await readSseBody(response);
+    const errorChunk = body.find((chunk) => chunk?.type === "error");
+    expect(errorChunk, "no error chunk reached the stream").toBeDefined();
+    expect(JSON.parse(errorChunk.errorText).code).toBe(
+      "tool_approval_unsupported",
+    );
 
     // The model factory must NOT have been called.
     expect(buildOrgModelFromResolvedConfig).not.toHaveBeenCalled();
     // The engine must NOT have been invoked.
     expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT refuse a switch-on turn whose server tools all declare `never`", async () => {
+    // The turn this used to refuse for nothing. With the switch on and only
+    // floor-`never` server tools advertised — workspace reads, exa search —
+    // no call can pause, so there is no resume to support and nothing for the
+    // refusal to protect. The user saw "tool approval is not supported"
+    // about a turn that was never going to ask.
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: {
+        list_project_servers: {
+          description: "read",
+          needsApproval: false,
+          execute: async () => ({}),
+        },
+        web_search: {
+          description: "search",
+          needsApproval: false,
+          execute: async () => ({}),
+        },
+      } as any,
+      requireToolApproval: true,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+
+    // It reached the engine, which is the whole point.
+    expect(buildOrgModelFromResolvedConfig).toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalled();
+  });
+
+  it("does NOT refuse a FUNCTION-form declaration up front", async () => {
+    // The skill tools declare `needsApproval` as a function, unconditionally,
+    // and answer `false` on the common path. Reading the form itself as
+    // "might ask" refused every local-runtime turn that carried a skill tool,
+    // switch off or on, where before it ran. The guard reads `true`;
+    // `streamText` evaluates the function per call, as it always did.
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: {
+        loadSkill: {
+          description: "load",
+          needsApproval: () => false,
+          execute: async () => "",
+        },
+      } as any,
+      requireToolApproval: false,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+
+    expect(buildOrgModelFromResolvedConfig).toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalled();
   });
 
   it("surfaces config errors via formatLocalStreamError without invoking the engine", async () => {

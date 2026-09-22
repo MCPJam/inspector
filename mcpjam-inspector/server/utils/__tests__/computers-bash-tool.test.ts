@@ -65,7 +65,8 @@ function happyControlPlane() {
 const toolOpts = {
   authHeader: "Bearer user-token",
   projectId: "proj_1",
-  workdir: "/workspace",
+  // COMP-16: the working directory is confined under /home/user at exec time.
+  workdir: "/home/user/workspace",
 };
 
 function execTool(
@@ -104,13 +105,20 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
     const tool = buildBashTool(toolOpts, runner);
 
     const result = await execTool(tool, { command: "echo hello" });
-    expect(result).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+    // `engine: "cloud"` is the non-hosted run-location stamp (e2b and
+    // delegated both read "cloud"); hosted turns omit it entirely.
+    expect(result).toEqual({
+      stdout: "hello\n",
+      stderr: "",
+      exitCode: 0,
+      engine: "cloud",
+    });
 
     expect(runner).toHaveBeenCalledWith(
       expect.objectContaining({
         sandboxId: "sbx_42",
         command: "echo hello",
-        workdir: "/workspace",
+        workdir: "/home/user/workspace",
         timeoutMs: 120_000,
       })
     );
@@ -131,6 +139,18 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
       status: "completed",
       exitCode: 0,
     });
+  });
+
+  it("rejects a working directory that escapes /home/user with a clear error, before running (COMP-16)", async () => {
+    happyControlPlane();
+    const runner = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    const tool = buildBashTool({ ...toolOpts, workdir: "/etc" }, runner);
+
+    const result = await execTool(tool, { command: "cat passwd" });
+    expect(result).toMatchObject({ error: expect.stringContaining("/home/user") });
+    expect((result as { error: string }).error).toContain("/etc");
+    // The escape is caught before the vendor exec — the runner never runs.
+    expect(runner).not.toHaveBeenCalled();
   });
 
   it("polls reserve until ready and surfaces waking → ready", async () => {
@@ -197,8 +217,47 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
     const result = await execTool(tool, { command: "ls" });
     expect(result).toEqual({
       error: "Computers are not configured on this server.",
+      engine: "cloud",
     });
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("names the LOCAL engine in the error when the turn explicitly asked for it", async () => {
+    const tool = buildBashTool(
+      {
+        ...toolOpts,
+        engine: "unavailable",
+        localEngineRequested: true,
+      },
+      vi.fn()
+    );
+    const result = await execTool(tool, { command: "ls" });
+    expect(result.error).toMatch(/local computer engine/i);
+  });
+
+  it("approval: both engines honor the host policy", () => {
+    const cloudOff = buildBashTool(
+      { ...toolOpts, engine: "e2b", requireToolApproval: false },
+      vi.fn()
+    ) as any;
+    const cloudOn = buildBashTool(
+      { ...toolOpts, engine: "e2b", requireToolApproval: true },
+      vi.fn()
+    ) as any;
+    const localOff = buildBashTool(
+      { ...toolOpts, engine: "local", requireToolApproval: false },
+      vi.fn()
+    ) as any;
+    const localOn = buildBashTool(
+      { ...toolOpts, engine: "local", requireToolApproval: true },
+      vi.fn()
+    ) as any;
+    expect(cloudOff.needsApproval).toBe(false);
+    expect(cloudOn.needsApproval).toBe(true);
+    // Local used to ask unconditionally. It is the sharpest tool here and the
+    // weakest case for overruling the person whose machine it is.
+    expect(localOff.needsApproval).toBe(false);
+    expect(localOn.needsApproval).toBe(true);
   });
 
   it("surfaces reserve denials (e.g. non-member) as tool errors", async () => {

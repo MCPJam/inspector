@@ -89,7 +89,13 @@ describe("runPredicatesOnChatSession", () => {
     expect(client.mutation.mock.calls[0]?.[0]).toContain("startCheckRun");
     const startArgs = client.mutation.mock.calls[0]?.[1] as {
       definitionSnapshot: Record<string, unknown>;
+      runKind: string;
     };
+    // The row must declare which grader wrote it. `source` cannot say (the
+    // judge writes `on_demand` too), so the per-session Checks panel keys on
+    // `runKind` to decide which rows it owns — drop this and every run from
+    // this path renders under the judge's identity instead of its own.
+    expect(startArgs.runKind).toBe("checks");
     expect(startArgs.definitionSnapshot).toMatchObject({
       setKind: "suite_defaults",
       setRef: "suite_42",

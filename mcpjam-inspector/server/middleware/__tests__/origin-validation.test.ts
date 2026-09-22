@@ -30,13 +30,16 @@ function createTestApp(): Hono {
 describe("originValidationMiddleware", () => {
   let app: Hono;
   const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
-  const originalNonprodLockdown = process.env.MCPJAM_NONPROD_LOCKDOWN;
+  const originalAllowWildcardOrigins =
+    process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
+  const originalAllowedHosts = process.env.MCPJAM_ALLOWED_HOSTS;
 
   beforeEach(() => {
     app = createTestApp();
     // Clear any custom allowed origins
     delete process.env.ALLOWED_ORIGINS;
-    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
+    delete process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
+    delete process.env.MCPJAM_ALLOWED_HOSTS;
   });
 
   afterEach(() => {
@@ -46,10 +49,15 @@ describe("originValidationMiddleware", () => {
     } else {
       delete process.env.ALLOWED_ORIGINS;
     }
-    if (originalNonprodLockdown) {
-      process.env.MCPJAM_NONPROD_LOCKDOWN = originalNonprodLockdown;
+    if (originalAllowWildcardOrigins) {
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = originalAllowWildcardOrigins;
     } else {
-      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
+      delete process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
+    }
+    if (originalAllowedHosts) {
+      process.env.MCPJAM_ALLOWED_HOSTS = originalAllowedHosts;
+    } else {
+      delete process.env.MCPJAM_ALLOWED_HOSTS;
     }
   });
 
@@ -240,7 +248,7 @@ describe("originValidationMiddleware", () => {
     it("supports wildcard origins like https://*.up.railway.app", async () => {
       process.env.ALLOWED_ORIGINS =
         "https://*.up.railway.app,https://staging.mcpjam.com";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -258,7 +266,7 @@ describe("originValidationMiddleware", () => {
       // origin validation.
       process.env.ALLOWED_ORIGINS =
         "https://staging.mcpjam.com,https://mcp-inspector-pr-*.up.railway.app";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -285,7 +293,7 @@ describe("originValidationMiddleware", () => {
 
     it("blocks origins that don't match wildcard pattern", async () => {
       process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -297,7 +305,7 @@ describe("originValidationMiddleware", () => {
 
     it("rejects wildcard origin when scheme mismatches (http vs https)", async () => {
       process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -310,7 +318,7 @@ describe("originValidationMiddleware", () => {
     it("strips wildcard origins outside non-prod lockdown", async () => {
       process.env.ALLOWED_ORIGINS =
         "https://*.up.railway.app,https://staging.mcpjam.com";
-      // MCPJAM_NONPROD_LOCKDOWN is not set — simulates production
+      // MCPJAM_ALLOW_WILDCARD_ORIGINS is not set — simulates production
 
       app = createTestApp();
 
@@ -338,6 +346,136 @@ describe("originValidationMiddleware", () => {
 
       // localhost is no longer allowed when custom origins are set
       expect(res.status).toBe(403);
+    });
+  });
+
+  // Regression: MCPJAM_ALLOWED_HOSTS must open BOTH the token gate and this
+  // origin gate. Before this, a self-hosted operator who set it to reach the
+  // inspector over the LAN got the token but then 403'd on every connect / tool
+  // / chat POST here, because origin validation only knew localhost +
+  // ALLOWED_ORIGINS. See BB-118.
+  describe("MCPJAM_ALLOWED_HOSTS (self-hosted LAN access)", () => {
+    it("allows a GET from an allowlisted LAN host origin", async () => {
+      process.env.MCPJAM_ALLOWED_HOSTS = "192.168.1.50";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "http://192.168.1.50:6274" },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("allows a POST from an allowlisted LAN host origin (the connect/tool path)", async () => {
+      process.env.MCPJAM_ALLOWED_HOSTS = "192.168.1.50";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        method: "POST",
+        headers: {
+          Origin: "http://192.168.1.50:6274",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ data: "test" }),
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("still blocks a LAN host that is NOT on the allowlist", async () => {
+      process.env.MCPJAM_ALLOWED_HOSTS = "192.168.1.50";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "http://192.168.1.99:6274" },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("supports a *.domain allowlist entry (with the wildcard opt-in)", async () => {
+      // Wildcard Origin acceptance requires MCPJAM_ALLOW_WILDCARD_ORIGINS, the
+      // same gate ALLOWED_ORIGINS wildcards go through (see the two dedicated
+      // wildcard cases below).
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.internal.example.com";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://box.internal.example.com" },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("does not widen localhost: a bad localhost port is still blocked", async () => {
+      // Allowlisting a LAN IP must not accidentally re-open localhost origins
+      // that getAllowedOrigins would reject on an exact scheme+port basis.
+      process.env.MCPJAM_ALLOWED_HOSTS = "192.168.1.50";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "http://localhost:9999" },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects a non-serialized Origin that embeds the allowlisted host", async () => {
+      // A real browser Origin is scheme://host[:port] only. A value carrying a
+      // path or userinfo must not smuggle the allowlisted host past the gate
+      // via hostname extraction.
+      process.env.MCPJAM_ALLOWED_HOSTS = "192.168.1.50";
+      app = createTestApp();
+
+      for (const origin of [
+        "http://192.168.1.50:6274/evil",
+        "http://attacker@192.168.1.50:6274",
+      ]) {
+        const res = await app.request("/api/test", {
+          headers: { Origin: origin },
+        });
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it("vetoes a tunnel Origin even when its domain is allowlisted", async () => {
+      // Same invariant the token gate enforces: a tunnel host must never pass
+      // the allowlist, even misconfigured into MCPJAM_ALLOWED_HOSTS.
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.tunnels.mcpjam.com";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://abc123.tunnels.mcpjam.com" },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("ignores a wildcard allowlist entry for Origins without the opt-in", async () => {
+      // Production (no MCPJAM_ALLOW_WILDCARD_ORIGINS): a platform wildcard must
+      // not make every co-tenant an accepted Origin.
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.up.railway.app";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://someone-elses-app.up.railway.app" },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("honors a wildcard allowlist entry when MCPJAM_ALLOW_WILDCARD_ORIGINS=true", async () => {
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.up.railway.app";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://my-app.up.railway.app" },
+      });
+
+      expect(res.status).toBe(200);
     });
   });
 

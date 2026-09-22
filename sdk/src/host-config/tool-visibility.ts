@@ -29,6 +29,12 @@ export type ToolExposureSignals = {
   toolsTotalBefore: number;
   toolsExposed: number;
   toolsDroppedVisibility: number;
+  /**
+   * How many model-facing tools had their `description` rewritten for
+   * this turn. Omitted from iteration metadata when 0 / absent — same
+   * convention as `toolsDroppedVisibility`.
+   */
+  toolsDescriptionOverridden?: number;
 };
 
 /**
@@ -92,5 +98,40 @@ export function applyVisibilityPolicyAndCountSignals(
     toolsTotalBefore,
     toolsExposed,
     toolsDroppedVisibility: toolsTotalBefore - toolsExposed,
+  };
+}
+
+/**
+ * Rewrite `description` on tools whose name appears in `overrides`.
+ *
+ * Description ONLY — name, input schema, and `_meta` are left on the
+ * original object (the returned entry is a shallow copy with a new
+ * `description` string). Tools not named in `overrides` are returned
+ * unchanged (same reference). Missing override names are reported, never
+ * invented.
+ */
+export function applyToolDescriptionOverrides<
+  T extends { name: string; description?: string },
+>(
+  tools: readonly T[],
+  overrides: Readonly<Record<string, string>> | undefined,
+): { tools: T[]; applied: number; missing: string[] } {
+  if (!overrides || Object.keys(overrides).length === 0) {
+    return { tools: [...tools], applied: 0, missing: [] };
+  }
+  const remaining = new Set(Object.keys(overrides));
+  let applied = 0;
+  const next = tools.map((tool) => {
+    if (!Object.prototype.hasOwnProperty.call(overrides, tool.name)) {
+      return tool;
+    }
+    remaining.delete(tool.name);
+    applied += 1;
+    return { ...tool, description: overrides[tool.name] };
+  });
+  return {
+    tools: next,
+    applied,
+    missing: [...remaining].sort(),
   };
 }

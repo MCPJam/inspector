@@ -1,0 +1,484 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
+import { SwarmAgentError } from "../../../services/swarm-agent.js";
+
+const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+
+const generateSwarmPersonaMock = vi.fn();
+const generateSwarmPersonaBatchMock = vi.fn();
+const generateSwarmJourneysMock = vi.fn();
+
+// The masked-5xx assertions below are about the LOG row, which is the only
+// record of the upstream failure — spy on the sink the request logger writes
+// to rather than on the request logger itself, so the emitted envelope (and
+// its `requestId`) is what gets asserted.
+const loggerEventMock = vi.fn();
+vi.mock("../../../utils/logger.js", () => ({
+  logger: {
+    event: (...args: unknown[]) => loggerEventMock(...args),
+    systemEvent: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
+vi.mock("../../../services/swarm-generate.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/swarm-generate.js")
+  >("../../../services/swarm-generate.js");
+  return {
+    ...actual,
+    generateSwarmPersona: (...args: unknown[]) =>
+      generateSwarmPersonaMock(...args),
+    generateSwarmPersonaBatch: (...args: unknown[]) =>
+      generateSwarmPersonaBatchMock(...args),
+    generateSwarmJourneys: (...args: unknown[]) =>
+      generateSwarmJourneysMock(...args),
+  };
+});
+
+describe("web routes — swarm generation proxy", () => {
+  const { app, token } = createWebTestApp();
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+    generateSwarmPersonaMock.mockReset();
+    generateSwarmPersonaBatchMock.mockReset();
+    generateSwarmJourneysMock.mockReset();
+    loggerEventMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+  });
+
+  it("generates a persona + journeys, defaulting journeyCount to 3", async () => {
+    generateSwarmPersonaMock.mockResolvedValue({
+      persona: {
+        name: "Curious First-Time User",
+        role: "Hobbyist",
+        notes: "n",
+      },
+      journeys: [{ name: "J1", goal: "Do the thing." }],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      persona?: { name: string };
+      journeys?: unknown[];
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(data.persona?.name).toBe("Curious First-Time User");
+    expect(data.journeys).toHaveLength(1);
+
+    expect(generateSwarmPersonaMock).toHaveBeenCalledTimes(1);
+    const args = generateSwarmPersonaMock.mock.calls[0]![2] as any;
+    expect(args).toMatchObject({
+      projectId: "proj-1",
+      serverAttachmentId: "att-1",
+      journeyCount: 3,
+    });
+  });
+
+  it("generates journeys for an inline persona with the requested count", async () => {
+    generateSwarmJourneysMock.mockResolvedValue({
+      journeys: [{ goal: "one" }, { goal: "two" }],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        swarmRefId: "swarm-1",
+        serverAttachmentId: "att-1",
+        journeyCount: 2,
+        persona: { name: "P", role: "R", notes: "N" },
+      },
+      token
+    );
+    const { status, data } = await expectJson<{ journeys?: unknown[] }>(
+      response
+    );
+
+    expect(status).toBe(200);
+    expect(data.journeys).toHaveLength(2);
+    const args = generateSwarmJourneysMock.mock.calls[0]![2] as any;
+    expect(args).toMatchObject({
+      swarmRefId: "swarm-1",
+      journeyCount: 2,
+      persona: { name: "P", role: "R", notes: "N" },
+    });
+  });
+
+  it("routes to the batch generator only when personaCount is present", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        { persona: { name: "P1", role: "R1" }, journeys: [{ goal: "g1" }] },
+      ],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 6,
+        journeyCount: 3,
+        description: "Finance ops reconciling payouts",
+        existingPersonas: [{ name: "Ana", role: "Ops" }],
+      },
+      token
+    );
+    const { status, data } = await expectJson<{ personas?: unknown[] }>(
+      response
+    );
+
+    expect(status).toBe(200);
+    expect(data.personas).toHaveLength(1);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+    // Every new field has to survive the zod schema: `z.object` strips unknown
+    // keys, so an unlisted field would vanish silently instead of erroring.
+    expect(generateSwarmPersonaBatchMock.mock.calls[0]![2] as any).toMatchObject(
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 6,
+        journeyCount: 3,
+        description: "Finance ops reconciling payouts",
+        existingPersonas: [{ name: "Ana", role: "Ops" }],
+      }
+    );
+  });
+
+  it("forwards the description to journey generation too", async () => {
+    generateSwarmJourneysMock.mockResolvedValue({ journeys: [{ goal: "g" }] });
+
+    await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        persona: { name: "P", role: "R" },
+        description: "Support agents chasing refunds",
+      },
+      token
+    );
+
+    expect(generateSwarmJourneysMock.mock.calls[0]![2] as any).toMatchObject({
+      description: "Support agents chasing refunds",
+    });
+  });
+
+  it("rejects an out-of-range personaCount or over-long description with 400", async () => {
+    const tooMany = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", environmentId: "env-1", personaCount: 13 },
+      token
+    );
+    expect(tooMany.status).toBe(400);
+
+    const tooLong = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 3,
+        description: "x".repeat(2001),
+      },
+      token
+    );
+    expect(tooLong.status).toBe(400);
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an out-of-range journeyCount with 400 before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1", journeyCount: 9 },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards environmentId grounding to the backend service", async () => {
+    generateSwarmPersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "R" },
+      journeys: [{ goal: "g" }],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", environmentId: "env-1" },
+      token
+    );
+    expect(response.status).toBe(200);
+    expect(generateSwarmPersonaMock).toHaveBeenCalledWith(
+      "https://test-deployment.convex.site",
+      expect.any(String),
+      expect.objectContaining({ projectId: "proj-1", environmentId: "env-1" })
+    );
+    const args = generateSwarmPersonaMock.mock.calls[0]![2] as Record<
+      string,
+      unknown
+    >;
+    expect("serverAttachmentId" in args).toBe(false);
+  });
+
+  it("rejects a whitespace-only grounding id before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", environmentId: "   " },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body with BOTH grounding sources before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        environmentId: "env-1",
+      },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body with NEITHER grounding source before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmJourneysMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects generate-journeys without a persona", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmJourneysMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the backend 429 quota status and message through", async () => {
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        429,
+        JSON.stringify({ ok: false, code: "user_rate_limit" }),
+        "You've hit your usage limit for today."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      message?: string;
+      details?: { code?: string };
+    }>(response);
+    expect(status).toBe(429);
+    expect(data.message).toContain("You've hit your usage limit for today.");
+    // Code-based clients branch on this to reach standard rate-limit handling;
+    // a generic VALIDATION_ERROR would strand them on a 429.
+    expect(data.code).toBe("RATE_LIMITED");
+    // WHICH limit. `RATE_LIMITED` alone cannot tell the caller's own allowance
+    // (top-up offered) from MCPJam's exhausted budget (nothing to buy), and
+    // the browser was reading the backend's code out of a JSON blob glued to
+    // the message.
+    expect(data.details?.code).toBe("user_rate_limit");
+  });
+
+  it("forwards a platform_capacity 429 with its code and its Retry-After", async () => {
+    // MCPJam's OWN daily budget for the feature, not the customer's: there is
+    // nothing to top up, and the window lifts when the UTC day rolls.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        429,
+        JSON.stringify({
+          ok: false,
+          code: "platform_capacity",
+          error: "MCPJam's daily generation budget is used up.",
+          isRetryable: true,
+          retryAfterMs: 3_600_000,
+          canTopUp: false,
+        }),
+        "MCPJam's daily generation budget is used up.",
+        "1800"
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      details?: { code?: string; canTopUp?: boolean };
+    }>(response);
+    expect(status).toBe(429);
+    expect(data.code).toBe("RATE_LIMITED");
+    expect(response.headers.get("Retry-After")).toBe("1800");
+    expect(data.details?.code).toBe("platform_capacity");
+    expect(data.details?.canTopUp).toBe(false);
+  });
+
+  it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {
+    generateSwarmJourneysMock.mockRejectedValue(
+      new SwarmAgentError(502, "", "swarm-generate upstream failed (502)")
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+    // Exactly 500 — a 5xx SwarmAgentError must NOT be rethrown at its own
+    // status the way the 4xx branch forwards one.
+    const { status, data } = await expectJson<Record<string, unknown>>(
+      response
+    );
+    expect(status).toBe(500);
+    expect(JSON.stringify(data)).not.toContain(
+      "swarm-generate upstream failed"
+    );
+  });
+
+  /**
+   * The mask is deliberate, so the diagnosability it removes has to come back
+   * some other way: the correlation id in the message is the ONLY thing a user
+   * can hand over (a screenshot of the error card) that resolves to the log
+   * row carrying the upstream code. Assert the two ids are the same string —
+   * asserting each side alone would pass while they drifted apart, which is
+   * exactly the failure this guards.
+   */
+  it("correlates the masked 5xx message with its log row, still redacting the upstream detail", async () => {
+    generateSwarmJourneysMock.mockRejectedValue(
+      new SwarmAgentError(
+        500,
+        JSON.stringify({
+          ok: false,
+          code: "mcpjam_config_error",
+          error: "MCPJam configuration error.",
+          details:
+            "Neither AI_GATEWAY_API_KEY (for an eligible model) nor OPENROUTER_API_KEY is set.",
+        }),
+        "MCPJam configuration error."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+    const requestId = response.headers.get("x-request-id");
+    const { status, data } = await expectJson<{
+      message?: string;
+      details?: { requestId?: string };
+    }>(response);
+
+    expect(status).toBe(500);
+    expect(requestId).toBeTruthy();
+    expect(data.message).toContain(`(reference: ${requestId})`);
+    expect(data.details?.requestId).toBe(requestId);
+    // The redaction is not relaxed to make room for the reference.
+    expect(JSON.stringify(data)).not.toContain("OPENROUTER_API_KEY");
+
+    const upstreamEvent = loggerEventMock.mock.calls.find(
+      (call) => call[0] === "swarm.generation.upstream_failed"
+    );
+    expect(upstreamEvent).toBeDefined();
+    expect(upstreamEvent![1]).toMatchObject({ requestId });
+    expect(upstreamEvent![2]).toMatchObject({
+      statusCode: 500,
+      // The backend's own code, not the old constant: it is what separates a
+      // misconfigured deployment from a provider outage.
+      errorCode: "mcpjam_config_error",
+    });
+  });
+
+  it("falls back to the generic error code when the upstream body is not the backend envelope", async () => {
+    generateSwarmJourneysMock.mockRejectedValue(
+      new SwarmAgentError(502, "<html>Bad Gateway</html>", "upstream failed")
+    );
+
+    await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+
+    const upstreamEvent = loggerEventMock.mock.calls.find(
+      (call) => call[0] === "swarm.generation.upstream_failed"
+    );
+    expect(upstreamEvent![2]).toMatchObject({
+      errorCode: "upstream_server_error",
+    });
+  });
+
+  it("requires a bearer token", async () => {
+    const response = await postJson(app, "/api/web/swarm/generate/persona", {
+      projectId: "proj-1",
+      serverAttachmentId: "att-1",
+    });
+    expect(response.status).toBe(401);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+  });
+});

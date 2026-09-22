@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./telemetry-redaction.js";
 import type {
   StructuredCaseResult,
   StructuredRunReport,
@@ -268,7 +268,7 @@ export function buildToolCallValidationReport(
       ...(options.rawResult === undefined
         ? {}
         : {
-            redactedRawResult: redactSensitiveValue(
+            redactedRawResult: redactForTelemetry(
               summarizeToolCallResultForReport(options.rawResult)
             ),
           }),

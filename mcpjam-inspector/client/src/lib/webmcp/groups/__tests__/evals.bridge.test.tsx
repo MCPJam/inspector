@@ -7,10 +7,6 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import { useUiToolsRegistry } from "../../ui-tools-registry";
 import { waitForUiToolNames } from "../../ui-tools-readiness";
 import { useSurfaceAgentBridge } from "../../use-surface-agent-bridge";
@@ -25,6 +21,7 @@ const EVALS_TOOL_NAMES = [
   "ui_run_eval_suite",
   "ui_cancel_eval_run",
   "ui_generate_eval_tests",
+  "ui_edit_eval_case_draft",
   "ui_delete_eval_suite",
 ];
 
@@ -32,7 +29,6 @@ describe("evals group through useSurfaceAgentBridge", () => {
   beforeEach(() => {
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       globalNames: new Set(),
       shippedNames: new Set(),
     });
@@ -43,7 +39,7 @@ describe("evals group through useSurfaceAgentBridge", () => {
     expect(listSurfaceGroupToolNames("evals")).toEqual(EVALS_TOOL_NAMES);
   });
 
-  it("mount registers all five tools surface-scoped; unmount removes them", () => {
+  it("mount registers all six tools surface-scoped; unmount removes them", () => {
     const { unmount } = renderHook(() =>
       useSurfaceAgentBridge({
         surfaceId: "evals",

@@ -9,7 +9,7 @@ import {
   usageError,
   type OutputFormat,
 } from "./output.js";
-import { redactSensitiveValue } from "./redaction.js";
+import { redactForTelemetry } from "./redaction.js";
 
 export type OAuthOutputFormat = OutputFormat;
 
@@ -80,7 +80,7 @@ function redactOAuthConformanceResult(
     ) as ConformanceResult & { credentialsFile?: string };
   }
 
-  return redactSensitiveValue(result) as ConformanceResult & {
+  return redactForTelemetry(result) as ConformanceResult & {
     credentialsFile?: string;
   };
 }
@@ -89,7 +89,7 @@ function redactOAuthConformanceSuiteResult(
   result: OAuthConformanceSuiteResult,
   options: OAuthConformanceSuiteRenderOptions,
 ): OAuthConformanceSuiteResult & { credentialsFile?: string } {
-  const redacted = redactSensitiveValue(result) as OAuthConformanceSuiteResult & {
+  const redacted = redactForTelemetry(result) as OAuthConformanceSuiteResult & {
     credentialsFile?: string;
   };
 

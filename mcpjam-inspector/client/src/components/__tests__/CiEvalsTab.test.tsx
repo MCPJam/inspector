@@ -12,7 +12,12 @@ const mocks = vi.hoisted(() => ({
     current: { type: "list" as const } as any,
   },
   useEvalQueries: vi.fn(),
+  useEvalHandlers: vi.fn(),
+  evalTabContext: { organizationId: "org-1" as string | null },
   deleteSuiteMutation: vi.fn(),
+  suiteView: vi.fn(),
+  runSidebar: vi.fn(),
+  toTestEdit: vi.fn(),
   directDeleteRun: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -30,6 +35,15 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({}),
   useQuery: () => undefined,
   useMutation: () => async () => undefined,
+  // The list route now renders `ProjectRunsTable`, which paginates. Every
+  // test here defaults to that route, so without this stub the whole file
+  // throws on an undefined export rather than failing one assertion.
+  usePaginatedQuery: () => ({
+    results: [],
+    status: "Exhausted",
+    isLoading: false,
+    loadMore: vi.fn(),
+  }),
 }));
 
 vi.mock("@/state/app-state-context", () => ({
@@ -41,7 +55,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/lib/eval-route-url", () => ({
-  useCiEvalsRouteFromUrl: () => mocks.route.current,
+  useEvalsRunsRouteFromUrl: () => mocks.route.current,
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
@@ -83,18 +97,21 @@ vi.mock("../evals/use-eval-queries", () => ({
 }));
 
 vi.mock("../evals/use-eval-handlers", () => ({
-  useEvalHandlers: () => ({
-    handleRerun: vi.fn(),
-    handleReplayRun: vi.fn(),
-    handleCancelRun: vi.fn(),
-    directDeleteRun: mocks.directDeleteRun,
-    rerunningSuiteId: null,
-    replayingRunId: null,
-    cancellingRunId: null,
-    handleCreateTestCase: vi.fn(),
-    handleDuplicateTestCase: vi.fn(),
-    handleGenerateTests: vi.fn(),
-  }),
+  useEvalHandlers: (props: unknown) => {
+    mocks.useEvalHandlers(props);
+    return {
+      handleRerun: vi.fn(),
+      handleReplayRun: vi.fn(),
+      handleCancelRun: vi.fn(),
+      directDeleteRun: mocks.directDeleteRun,
+      rerunningSuiteId: null,
+      replayingRunId: null,
+      cancellingRunId: null,
+      handleCreateTestCase: vi.fn(),
+      handleDuplicateTestCase: vi.fn(),
+      handleGenerateTests: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("../evals/use-suite-data", () => ({
@@ -108,13 +125,33 @@ vi.mock("../evals/create-suite-navigation", () => ({
     toSuiteOverview: vi.fn(),
     toRunDetail: vi.fn(),
     toTestDetail: vi.fn(),
-    toTestEdit: vi.fn(),
+    toTestEdit: mocks.toTestEdit,
     toSuiteEdit: vi.fn(),
   }),
 }));
 
 vi.mock("../evals/EvalTabGate", () => ({
-  EvalTabGate: ({ children }: { children: ReactNode }) => <>{children}</>,
+  // Mirror the real gate's `header` slot: the Suites | Runs switcher and the
+  // breadcrumb render there, above whichever gate state is active.
+  EvalTabGate: ({
+    header,
+    children,
+  }: {
+    header?: ReactNode;
+    children: ReactNode;
+  }) => (
+    <>
+      {header}
+      {children}
+    </>
+  ),
+}));
+
+vi.mock("../evals/run-detail-view", () => ({
+  RunIterationsSidebar: (props: { onSelectIteration: (id: string) => void }) => {
+    mocks.runSidebar(props);
+    return <div data-testid="run-iterations-sidebar" />;
+  },
 }));
 
 vi.mock("../evals/ci-suite-list-sidebar", () => ({
@@ -125,8 +162,12 @@ vi.mock("../evals/commit-detail-view", () => ({
   CommitDetailView: () => <div data-testid="commit-detail-view" />,
 }));
 
+vi.mock("../evals/project-runs-table", () => ({
+  ProjectRunsTable: () => <div data-testid="project-runs-table" />,
+}));
+
 vi.mock("../evals/suite-iterations-view", () => ({
-  SuiteIterationsView: () => <div data-testid="suite-iterations-view" />,
+  SuiteIterationsView: (props: unknown) => { mocks.suiteView(props); return <div data-testid="suite-iterations-view" />; },
 }));
 
 vi.mock("../evals/sdk-eval-quickstart", () => ({
@@ -139,9 +180,11 @@ vi.mock("../evals/trace-viewer", () => ({
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
   useEvalTabContext: () => ({
+    organizationId: mocks.evalTabContext.organizationId,
     connectedServerNames: new Set(),
     userMap: new Map(),
-    canDeleteSuite: false,
+    canManageEvalArtifacts: false,
+    canDeleteArtifact: () => false,
     canDeleteRuns: false,
     availableModels: [],
   }),
@@ -187,7 +230,7 @@ function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
 }
 
 function makeEntry(
-  overrides: Partial<EvalSuiteOverviewEntry> = {},
+  overrides: Partial<EvalSuiteOverviewEntry> = {}
 ): EvalSuiteOverviewEntry {
   const latestRun =
     overrides.latestRun === undefined ? null : overrides.latestRun;
@@ -206,7 +249,7 @@ function makeEntry(
 }
 
 function makeQueries(
-  overrides: Partial<ReturnType<typeof baseQueries>> = {},
+  overrides: Partial<ReturnType<typeof baseQueries>> = {}
 ): ReturnType<typeof baseQueries> {
   return {
     ...baseQueries(),
@@ -237,6 +280,7 @@ describe("CiEvalsTab first-run NUX", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.route.current = { type: "list" };
+    mocks.evalTabContext.organizationId = "org-1";
     mocks.useEvalQueries.mockReturnValue(baseQueries());
   });
 
@@ -244,7 +288,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         isOverviewLoading: true,
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -259,8 +303,33 @@ describe("CiEvalsTab first-run NUX", () => {
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
     expect(screen.getByTestId("sdk-eval-quickstart")).toBeInTheDocument();
     expect(
-      screen.queryByText("Select a suite or commit"),
+      screen.queryByText("Select a suite or commit")
     ).not.toBeInTheDocument();
+  });
+
+  it("opens a sidebar iteration in its case workspace with the selected trace", () => {
+    mocks.route.current = { type: "run-detail", suiteId: "suite-1", runId: "run-1" };
+    mocks.useEvalQueries.mockReturnValue(makeQueries({
+      sortedSuites: [makeEntry({ latestRun: makeRun() })],
+      sortedIterations: [{ _id: "iter-1", testCaseId: "case-1", suiteRunId: "run-1" }] as any,
+    }));
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+    expect(screen.getByTestId("run-iterations-sidebar")).toBeInTheDocument();
+    mocks.runSidebar.mock.calls.at(-1)![0].onSelectIteration("iter-1");
+    expect(mocks.toTestEdit).toHaveBeenCalledExactlyOnceWith("suite-1", "case-1", {
+      openCompare: true,
+      iteration: "iter-1",
+    });
+  });
+
+  it.each(["test-edit", "test-detail"])("opens the current read-only workspace from a CI %s link", type => {
+    mocks.route.current = {type, suiteId: "suite-1", testId: "case-1", iteration: "iter-1"};
+    mocks.useEvalQueries.mockReturnValue(makeQueries({sortedSuites: [makeEntry()]}));
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+    expect(mocks.suiteView).toHaveBeenCalledWith(expect.objectContaining({
+      evaluateCaseEditor: true, readOnlyConfig: true, projectId: "ws-1",
+      route: mocks.route.current,
+    }));
   });
 
   it("hides the first-run NUX when suites exist even before any runs", () => {
@@ -268,7 +337,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry()],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -283,7 +352,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry({ latestRun: run, recentRuns: [run] })],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -296,7 +365,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry({ suite: makeSuite({ source: "ui" }) })],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -304,6 +373,48 @@ describe("CiEvalsTab first-run NUX", () => {
     // The only suite is playground-only, so the CI tab treats the project
     // as having no CI evals yet.
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
+  });
+
+  it("shows existing non-CI runs in the project-wide table", () => {
+    const run = makeRun({ source: "ui" });
+    mocks.useEvalQueries.mockReturnValue(
+      makeQueries({
+        sortedSuites: [
+          makeEntry({
+            suite: makeSuite({ source: "ui" }),
+            latestRun: run,
+            recentRuns: [run],
+          }),
+        ],
+      })
+    );
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
+    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+  });
+
+  it("passes the project's organizationId to the eval handlers", () => {
+    // Without it, `openEvalIterationWall` bails out and a server-side cap
+    // rejection from this lens falls back to the dead-end toast.
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(mocks.useEvalHandlers).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: "org-1" })
+    );
+  });
+
+  it("passes null through when the project has no organization", () => {
+    // A personal/local project has none. The handlers must receive the real
+    // absence rather than a stale id from a previously scoped project.
+    mocks.evalTabContext.organizationId = null;
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(mocks.useEvalHandlers).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: null })
+    );
   });
 
   it("includes ui-created suites that CI has reported into", () => {
@@ -315,7 +426,7 @@ describe("CiEvalsTab first-run NUX", () => {
             suite: makeSuite({ source: "ui", lastSdkRunAt: 123 }),
           }),
         ],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);

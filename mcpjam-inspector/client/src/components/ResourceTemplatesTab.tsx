@@ -19,6 +19,10 @@ import type {
 } from "@mcpjam/sdk/browser";
 import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
 import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 import { LoggerView } from "./logger-view";
 import { parseTemplate } from "url-template";
 
@@ -99,6 +103,9 @@ export function ResourceTemplatesTab({
     useState<MCPReadResourceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingTemplates, setFetchingTemplates] = useState(false);
+  const [templatesServedFromCache, setTemplatesServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
   const [error, setError] = useState<string>("");
 
   const selectedTemplateData = useMemo(() => {
@@ -126,7 +133,7 @@ export function ResourceTemplatesTab({
     }
   }, [selectedTemplateData?.uriTemplate, templateOverrides]);
 
-  async function fetchTemplates() {
+  async function fetchTemplates(forceRefresh = false) {
     if (!serverName) return;
 
     setFetchingTemplates(true);
@@ -135,10 +142,16 @@ export function ResourceTemplatesTab({
     setTemplates([]);
     setSelectedTemplate("");
     setResourceContent(null);
+    // Clear stale provenance at the start of a (re)fetch so a failed or
+    // in-flight refresh cannot keep showing the previous badge.
+    setTemplatesServedFromCache(undefined);
 
     try {
-      const serverTemplates = await listResourceTemplatesApi(serverName);
+      const serverTemplates = await listResourceTemplatesApi(serverName, {
+        refresh: forceRefresh,
+      });
       setTemplates(serverTemplates);
+      setTemplatesServedFromCache(serverTemplates.servedFromCache);
 
       if (serverTemplates.length === 0) {
         setSelectedTemplate("");
@@ -168,9 +181,11 @@ export function ResourceTemplatesTab({
     }
   }, [serverConfig, serverName]);
 
-  // Register refresh function for parent component
+  // Register refresh function for parent component. The parent's explicit
+  // "Refresh" action forces a live re-fetch (cacheMode: "refresh") rather
+  // than silently reusing a still-fresh cached entry.
   useEffect(() => {
-    onRegisterRefresh?.(fetchTemplates);
+    onRegisterRefresh?.(() => fetchTemplates(true));
   }, [onRegisterRefresh, fetchTemplates]);
 
   const updateParamValue = (paramName: string, value: string) => {
@@ -261,6 +276,13 @@ export function ResourceTemplatesTab({
             {/* Left Panel - Templates List */}
             <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
               <div className="h-full flex flex-col border-r border-border bg-background">
+                {templatesServedFromCache && (
+                  <div className="px-2 py-1.5 border-b border-border flex-shrink-0">
+                    <CacheProvenanceBadge
+                      servedFromCache={templatesServedFromCache}
+                    />
+                  </div>
+                )}
                 {/* Templates List */}
                 <div className="flex-1 overflow-hidden">
                   <ScrollArea className="h-full">

@@ -6,14 +6,20 @@ vi.mock("@/lib/session-token", () => ({
 }));
 
 import {
+  groupSwarmSessionsByGoal,
+  groupSwarmSessionsByRun,
+  journeySessionRowToThread,
   launchJourneyRun,
   LaunchJourneyRunError,
+  generateSwarmPersonaBatch,
+  SwarmGenerateError,
 } from "@/lib/swarm-api";
 import type {
   PersonaTrackRecord,
   JourneyRollup,
   JourneySessionRow,
 } from "@/lib/swarm-api";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -50,6 +56,41 @@ describe("launchJourneyRun", () => {
       projectId: "proj-1",
       launchKey: "lk-abc",
     });
+  });
+
+  it("puts the per-run iterations override on the wire", async () => {
+    // The whole chain — confirm step, launchJourney, this function, the REST
+    // route, the backend validator — is spread across two repos and four
+    // hops, and a field dropped at any of them fails silently: the run just
+    // uses the journey's own fan-out. Assert the body, not the call.
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-3" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+
+    expect(JSON.parse(authFetchMock.mock.calls[0]![1].body)).toEqual({
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+  });
+
+  it("omits the override when the caller did not choose one", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-4" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-plain",
+    });
+
+    expect(
+      JSON.parse(authFetchMock.mock.calls[0]![1].body)
+    ).not.toHaveProperty("sessionsPerTarget");
   });
 
   it("url-encodes the journeyId path segment", async () => {
@@ -165,24 +206,300 @@ describe("swarm rollup DTO contracts", () => {
     expect(rollup).not.toHaveProperty("totalRuns");
   });
 
-  it("JourneySessionRow (JourneySessionDto) is keyed by `id`, with no personaLabel/messageCount", () => {
+  it("JourneySessionRow (JourneySessionDto) is keyed by `id` and carries Sessions-tab list fields", () => {
     const row: JourneySessionRow = {
       id: "thread-1",
       chatSessionId: "synth_run_host_0",
       projectId: "proj-1",
       hostId: "host-1",
       personaRefId: "persona-1",
+      journeyRunId: "run-1",
+      journeyRefId: "journey-1",
       status: "completed",
       modelId: "anthropic/claude-haiku-4.5",
       startedAt: 1,
       lastActivityAt: 2,
+      messageCount: 4,
+      firstMessagePreview: "hello",
+      personaLabel: "Persona One",
+      visitorDisplayName: "Persona One",
+      synthetic: true,
       readiness: { status: "completed", verdict: "ready", issueCount: 0 },
     };
     // The identifier the viewer + deep-link consume is `id`.
     expect(row.id).toBe("thread-1");
     expect(row).not.toHaveProperty("_id");
-    expect(row).not.toHaveProperty("personaLabel");
-    expect(row).not.toHaveProperty("messageCount");
     expect(row).not.toHaveProperty("personaId");
+    expect(row.messageCount).toBe(4);
+    expect(row.personaLabel).toBe("Persona One");
+    expect(row.journeyRunId).toBe("run-1");
+  });
+
+  it("journeySessionRowToThread maps list rows into ShareUsageThreadList shape", () => {
+    const thread = journeySessionRowToThread(
+      {
+        id: "thread-1",
+        chatSessionId: "synth_1",
+        projectId: "proj-1",
+        hostId: "host-1",
+        personaRefId: "persona-1",
+        startedAt: 10,
+        messageCount: 3,
+        firstMessagePreview: "hi",
+      },
+      "Fallback Name",
+    );
+    expect(thread).toMatchObject({
+      _id: "thread-1",
+      sourceType: "swarm",
+      visitorDisplayName: "Fallback Name",
+      synthetic: true,
+      messageCount: 3,
+      personaLabel: "Fallback Name",
+    });
+  });
+
+  it("groupSwarmSessionsByRun clusters rows by journeyRunId, newest run first", () => {
+    const row = (
+      id: string,
+      runId: string | undefined,
+      lastActivityAt: number,
+    ): JourneySessionRow =>
+      ({
+        id,
+        chatSessionId: `synth_${id}`,
+        projectId: "proj-1",
+        journeyRunId: runId,
+        startedAt: lastActivityAt - 100,
+        lastActivityAt,
+        messageCount: 1,
+      }) as JourneySessionRow;
+
+    const groups = groupSwarmSessionsByRun([
+      row("a", "run-old", 100),
+      row("b", "run-new", 300),
+      row("c", "run-new", 200),
+      row("d", undefined, 50),
+    ]);
+
+    expect(groups.map((g) => g.runId)).toEqual(["run-new", "run-old", null]);
+    expect(groups[0].rows.map((r) => r.id)).toEqual(["b", "c"]);
+    expect(groups[2].rows.map((r) => r.id)).toEqual(["d"]);
+  });
+
+  it("groupSwarmSessionsByGoal clusters rows by journeyRefId, newest first", () => {
+    const row = (
+      id: string,
+      journeyRefId: string | undefined,
+      lastActivityAt: number,
+    ): JourneySessionRow =>
+      ({
+        id,
+        chatSessionId: `synth_${id}`,
+        projectId: "proj-1",
+        journeyRefId,
+        startedAt: lastActivityAt - 100,
+        lastActivityAt,
+        messageCount: 1,
+      }) as JourneySessionRow;
+
+    const groups = groupSwarmSessionsByGoal([
+      row("a", "goal-old", 100),
+      row("b", "goal-new", 300),
+      row("c", "goal-new", 200),
+      row("d", undefined, 50),
+    ]);
+
+    expect(groups.map((g) => g.runId)).toEqual(["goal-new", "goal-old", null]);
+    expect(groups[0].rows.map((r) => r.id)).toEqual(["b", "c"]);
+    expect(groups[2].rows.map((r) => r.id)).toEqual(["d"]);
+  });
+});
+
+/**
+ * The MCPJam cap during persona GENERATION — the surface BB-151 was reported
+ * from, which is the Describe step and not a running swarm.
+ *
+ * `SwarmGenerateError` keeps only status + message, so a limit recognized any
+ * later than this reads as an unclassified failure and renders as the error
+ * catalog's "Unknown error". Raising it here also covers every other
+ * generation call, which share this one helper.
+ */
+describe("generateSwarmPersonaBatch — MCPJam limit", () => {
+  beforeEach(() => {
+    useMCPJamLimitDialogStore.setState({
+      isOpen: false,
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+      surface: null,
+      // Not incidental: `notifyLimitHit` only reaches `isOpen` once an auth
+      // status is known. Left at the store's default `"loading"` these tests
+      // would pass on the pending branch without the dialog ever opening.
+      authStatus: "signedIn",
+    });
+  });
+
+  const generate = () =>
+    generateSwarmPersonaBatch({
+      projectId: "proj-1",
+      environmentId: "env-1",
+      personaCount: 3,
+      journeyCount: 5,
+    });
+
+  it("raises the top-up dialog on the daily cap, and still throws", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message: "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      })
+    );
+
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    // The create flow reads this to stay out of the dialog's way: the modal
+    // carries the same sentence plus the actions, so a card under the form
+    // would repeat it with nothing to act on.
+    expect((err as SwarmGenerateError).limitDialogRaised).toBe(true);
+    // The dialog is OPEN, not merely flagged — the whole point is that the
+    // user gets a way out without leaving the create flow.
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    // Drives which actions the dialog offers: no swarm screen mounts the
+    // model picker the BYOK link drives, so it must not be shown one.
+    expect(state.surface).toBe("swarm");
+    // Read off the message through the SDK catalog, the same classifier the
+    // error card uses — so the modal can't tell a Free org its allowance
+    // renews with the billing period.
+    expect(state.period).toBe("daily");
+  });
+
+  it("carries the monthly period through for a Team org", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Monthly MCPJam model limit reached. Buy credits or wait for the next billing period.",
+      })
+    );
+
+    await expect(generate()).rejects.toBeInstanceOf(SwarmGenerateError);
+    // Telling this org to wait for tomorrow would be plain wrong — a monthly
+    // allowance can be weeks from renewing.
+    expect(useMCPJamLimitDialogStore.getState().period).toBe("monthly");
+  });
+
+  it("leaves an ordinary generation failure alone", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(500, { message: "Generation backend is unavailable." })
+    );
+
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    // Nothing took this one over, so the create flow still cards it.
+    expect((err as SwarmGenerateError).limitDialogRaised).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});
+
+/**
+ * Launching a goal run spends model budget exactly like generation does, so it
+ * gets the same wall. Before this it threw a bare message that each caller
+ * printed raw.
+ */
+describe("launchJourneyRun — MCPJam limit", () => {
+  beforeEach(() => {
+    useMCPJamLimitDialogStore.setState({
+      isOpen: false,
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+      surface: null,
+      // Without a known auth status `notifyLimitHit` stops on the pending
+      // branch and the dialog never opens — the assertions below would pass
+      // vacuously.
+      authStatus: "signedIn",
+    });
+  });
+
+  it("raises the top-up dialog on the daily cap, and still throws", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      })
+    );
+
+    let err: unknown;
+    try {
+      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LaunchJourneyRunError);
+    // Every launch caller reads this to stay out of the dialog's way.
+    expect((err as LaunchJourneyRunError).limitDialogRaised).toBe(true);
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    // No swarm screen mounts the model picker the BYOK link drives.
+    expect(state.surface).toBe("swarm");
+  });
+
+  it("classifies a body that names the limit only under `error`", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        error: "user_rate_limit",
+      })
+    );
+
+    await expect(
+      launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" })
+    ).rejects.toBeInstanceOf(LaunchJourneyRunError);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("leaves an ordinary launch rejection to the caller", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(409, { ok: false, message: "This goal is already running." })
+    );
+
+    let err: unknown;
+    try {
+      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as LaunchJourneyRunError).limitDialogRaised).toBe(false);
+    expect((err as LaunchJourneyRunError).message).toBe(
+      "This goal is already running."
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });

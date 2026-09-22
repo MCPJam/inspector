@@ -1,33 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
+import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
   closeTunnelOperation,
   createEvalSuiteOperation,
+  createHostOperation,
   cancelEvalRunOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createTunnelOperation,
   diagnoseServerOperation,
-  getChatboxOperation,
+  getScenarioOperation,
   runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getPluginVersionOperation,
+  getRegistryDirectoryServerOperation,
   getServerPromptOperation,
-  listChatboxesOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  searchRegistryDirectoryOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
+  listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
-  listServerPromptsOperation,
-  listServerResourcesOperation,
   listServerToolsOperation,
   PlatformApiClient,
   PlatformApiError,
+  ALL_OPERATIONS,
+  publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
   showServersOperation,
-  type PlatformOperation,
 } from "../../src/platform/index.js";
 
 const PROJECTS = [
@@ -176,7 +187,70 @@ const STEPS = [
   },
 ];
 
-const CHATBOXES = [
+const ENVIRONMENTS = [
+  {
+    id: "env-stg",
+    projectId: "project-new",
+    name: "Staging",
+    hostId: "host-1",
+    revision: 7,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
+const PLUGINS = [
+  {
+    id: "plugin-1",
+    projectId: "project-new",
+    name: "linear-tools",
+    displayName: "Linear Tools",
+    enabled: true,
+    activeVersionId: "pv-1",
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
+const PLUGIN_VERSION = {
+  id: "pv-1",
+  pluginId: "plugin-1",
+  declaredVersion: "1.2.0",
+  bundleHash: "hash-abc",
+  manifestHash: "hash-manifest",
+  status: "ready",
+  componentCounts: {
+    skills: 1,
+    servers: 1,
+    apps: 0,
+    assets: 0,
+    unsupported: 0,
+  },
+  servers: [
+    {
+      componentId: "psc-1",
+      componentKey: "server:linear",
+      declaredName: "linear",
+      placement: "remote",
+      authenticationPolicy: "on_use",
+      materializedServerId: "server-1",
+    },
+  ],
+  skills: [
+    {
+      componentId: "pskc-1",
+      componentKey: "skill:triage",
+      declaredName: "triage",
+      modelRef: "linear-tools/triage",
+      materializedSkillId: "skill-1",
+    },
+  ],
+  createdAt: 1,
+  readyAt: 2,
+};
+
+const SCENARIOS = [
   {
     id: "box-1",
     projectId: "project-new",
@@ -194,8 +268,8 @@ const CHATBOXES = [
   },
 ];
 
-const CHATBOX_DETAIL = {
-  ...CHATBOXES[0],
+const SCENARIO_DETAIL = {
+  ...SCENARIOS[0],
   modelId: "anthropic/claude-haiku-4.5",
   systemPrompt: "Be helpful.",
   temperature: 0.3,
@@ -222,9 +296,70 @@ const SESSIONS = [
   },
 ];
 
+/** One unified-feed row, as `GET /projects/{p}/sessions` returns it. */
+const SESSION_SUMMARIES = [
+  {
+    id: "k57abc",
+    chatSessionId: "wire-uuid-1",
+    projectId: "project-new",
+    sourceType: "direct",
+    origin: null,
+    status: "active",
+    synthetic: false,
+    lockReason: null,
+    title: "Refund flow",
+    firstMessagePreview: "how do refunds work",
+    visibility: "private",
+    ownedByViewer: true,
+    startedAt: 10,
+    lastActivityAt: 50,
+    modelId: "claude-opus-4-8",
+    messageCount: 4,
+    parentRef: null,
+    link: {
+      path: "/playground?conversation=wire-uuid-1&project=project-new",
+      url: "https://app.mcpjam.com/playground?conversation=wire-uuid-1&project=project-new",
+    },
+  },
+];
+
 type FixtureOverrides = {
   servers?: unknown[];
   suites?: unknown[];
+  /**
+   * Replaces the sessions envelope wholesale, so a test can model an OLD
+   * backend: one that ignored the unknown `scope` param, ran a title search,
+   * and answered without the echo marker.
+   */
+  sessionsEnvelope?: Record<string, unknown>;
+  /**
+   * The suite DETAIL the run ops read to compute their targets. Default: a
+   * suite with NOTHING attached, which is the bare-rerun shape most of these
+   * tests are about. Override it to model an attached-environment or
+   * attached-host suite.
+   */
+  suiteDetail?: Record<string, unknown>;
+  /** Per-target failure injection for the grouped-launch endpoint, keyed by
+   *  target id. A present entry makes that target's entry a failure. */
+  groupTargetFailures?: Record<string, { code: string; message: string }>;
+  /** Model an API deployment with no grouped-launch endpoint at all. */
+  noRunGroupEndpoint?: boolean;
+};
+
+/** A suite with nothing attached — the shape a bare rerun expects. */
+const BARE_SUITE_DETAIL: Record<string, unknown> = {
+  id: "suite-1",
+  name: "Smoke",
+  description: null,
+  projectId: "project-new",
+  environment: { servers: [] },
+  executionConfig: null,
+  hosts: [],
+  environmentIds: [],
+  settings: {},
+  schedule: {},
+  createdAt: 1,
+  updatedAt: 1,
 };
 
 function makeClient(overrides: FixtureOverrides = {}): {
@@ -260,8 +395,79 @@ function makeClient(overrides: FixtureOverrides = {}): {
         { status: 201 }
       );
     }
+    if (/^\/api\/v1\/projects\/[^/]+\/sessions$/.test(path)) {
+      return Response.json(
+        overrides.sessionsEnvelope ?? {
+          items: SESSION_SUMMARIES,
+          scope: url.searchParams.get("scope") ?? "titles",
+          nextCursor: "cursor-2",
+        }
+      );
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
       return Response.json({ items: suites });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-run-groups$/.test(path) &&
+      init?.method === "POST"
+    ) {
+      if (overrides.noRunGroupEndpoint) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "No route" },
+          { status: 404 }
+        );
+      }
+      const requestBody = JSON.parse(String(init?.body)) as {
+        suiteId: string;
+        targets: Array<{ environmentId?: string; namedHostId?: string }>;
+      };
+      let started = 0;
+      let failed = 0;
+      const entries = requestBody.targets.map((target, index) => {
+        const id = target.environmentId ?? target.namedHostId ?? "";
+        const failure = overrides.groupTargetFailures?.[id];
+        if (failure) {
+          failed += 1;
+          return { target, status: "failed", error: failure };
+        }
+        started += 1;
+        return {
+          target,
+          status: "started",
+          runId: `run-group-${index + 1}`,
+          runStatus: "running",
+          servers: [{ id: "server-saved", name: "Saved" }],
+          environment: target.environmentId
+            ? { id: target.environmentId, name: "Staging", revision: 7 }
+            : null,
+          caseUpsert: { committed: [], failed: [] },
+        };
+      });
+      const firstStarted = entries.find((entry) => entry.status === "started");
+      return Response.json(
+        {
+          runGroupId: "group-1",
+          suiteId: requestBody.suiteId,
+          outcome:
+            started === 0 ? "failed" : failed > 0 ? "partial" : "started",
+          startedCount: started,
+          failedCount: failed,
+          targets: entries,
+          ...(firstStarted
+            ? {
+                runId: (firstStarted as { runId: string }).runId,
+                status: "running",
+              }
+            : {}),
+        },
+        { status: 202 }
+      );
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+      (init?.method ?? "GET") === "GET"
+    ) {
+      return Response.json(overrides.suiteDetail ?? BARE_SUITE_DETAIL);
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/.test(path)) {
       return Response.json({ items: [RUN] });
@@ -272,11 +478,21 @@ function makeClient(overrides: FixtureOverrides = {}): {
     ) {
       return Response.json({ items: EVAL_CASES });
     }
+    if (/^\/api\/v1\/projects\/[^/]+\/environments$/.test(path)) {
+      return Response.json({ items: ENVIRONMENTS });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/plugins$/.test(path)) {
+      return Response.json({ items: PLUGINS });
+    }
+    if (/^\/api\/v1\/plugin-versions\/[^/]+$/.test(path)) {
+      return Response.json(PLUGIN_VERSION);
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-runs$/.test(path)) {
       expect(init?.method).toBe("POST");
       const requestBody = JSON.parse(String(init?.body)) as {
         serverIds?: string[];
         caseIds?: string[];
+        environmentId?: string;
       };
       return Response.json(
         {
@@ -289,6 +505,10 @@ function makeClient(overrides: FixtureOverrides = {}): {
           servers: requestBody.serverIds
             ? requestBody.serverIds.map((id) => ({ id }))
             : [{ id: "server-saved", name: "Saved" }],
+          // The API always echoes the environment triple, null for a legacy run.
+          environment: requestBody.environmentId
+            ? { id: requestBody.environmentId, name: "Staging", revision: 7 }
+            : null,
         },
         { status: 202 }
       );
@@ -315,11 +535,13 @@ function makeClient(overrides: FixtureOverrides = {}): {
     ) {
       return Response.json({ items: STEPS });
     }
-    if (
-      /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/.test(path)
-    ) {
+    if (/^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/.test(path)) {
       expect(init?.method).toBe("POST");
-      return Response.json({ ...RUN, status: "cancelled", result: "cancelled" });
+      return Response.json({
+        ...RUN,
+        status: "cancelled",
+        result: "cancelled",
+      });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/tunnels$/.test(path)) {
       expect(init?.method).toBe("POST");
@@ -346,11 +568,41 @@ function makeClient(overrides: FixtureOverrides = {}): {
       const serverId = decodeURIComponent(path.split("/")[6] ?? "");
       return Response.json({ serverId, status: "closed" });
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/chatboxes$/.test(path)) {
-      return Response.json({ items: CHATBOXES });
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/scenario$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      // `env-existing` is already published: the route ignores create-time
+      // overrides and says so, exactly as the real API does.
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "scenario-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/chatboxes\/[^/]+$/.test(path)) {
-      return Response.json(CHATBOX_DETAIL);
+    if (/^\/api\/v1\/projects\/[^/]+\/scenarios$/.test(path)) {
+      return Response.json({ items: SCENARIOS });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/scenarios\/[^/]+$/.test(path)) {
+      return Response.json(SCENARIO_DETAIL);
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
@@ -365,15 +617,22 @@ function makeClient(overrides: FixtureOverrides = {}): {
       };
       return Response.json({
         items: [{ name: "echo", cursorSeen: requestBody.cursor ?? null }],
-        nextCursor: "tools-page-2",
+        // The `""` sentinel lets one test exercise an empty-string nextCursor
+        // coming back off the MCP passthrough; every other cursor is unchanged.
+        nextCursor: requestBody.cursor === "penultimate" ? "" : "tools-page-2",
       });
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/.test(path)) {
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/.test(path)
+    ) {
       const requestBody = JSON.parse(String(init?.body)) as Record<
         string,
         unknown
       >;
-      return Response.json({ content: [{ type: "text", text: "ok" }], requestBody });
+      return Response.json({
+        content: [{ type: "text", text: "ok" }],
+        requestBody,
+      });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/prompts$/.test(path)) {
       return Response.json({ items: [{ name: "summarize" }] });
@@ -466,6 +725,79 @@ describe("listProjectServersOperation", () => {
   });
 });
 
+describe("GitHub Checks operations", () => {
+  /**
+   * A client whose only project belongs to NO organization — the personal-
+   * project case. `PlatformProject.organizationId` is nullable, and GitHub
+   * Checks is configured per organization, so this is the one branch in these
+   * two operations that throws before any request.
+   */
+  function personalProjectClient(): {
+    client: PlatformApiClient;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({
+          items: [
+            {
+              id: "project-personal",
+              name: "Personal",
+              description: null,
+              icon: null,
+              organizationId: null,
+              visibility: null,
+              createdAt: 1,
+              updatedAt: 100,
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("refuses to list for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await listEvalCheckReposOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // The reason, not just a refusal: GitHub Checks is per organization.
+    expect((error as PlatformApiError).message).toContain("organization");
+    // An empty organizationId would have built `/organizations//eval-check-repos`
+    // and come back as a flat not-found. Nothing is sent at all.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+
+  it("refuses to connect for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await connectEvalCheckRepoOperation
+      .execute(
+        { suite: "s", repo: "acme/widgets", outagePolicy: "fail_open" },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // It reaches a shared repository — the refusal must land before the write,
+    // and before the suite lookup that would otherwise run first.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+});
+
 describe("showServersOperation", () => {
   it("assembles a payload without doctor calls for skip-only projects", async () => {
     const { client, fetchMock } = makeClient();
@@ -527,6 +859,98 @@ describe("listEvalSuiteRunsOperation", () => {
   });
 });
 
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  /**
+   * The suite's attachment list is CLIENTS. The wire body still names it
+   * `hosts`, so `clients` folds onto it entry by entry — and both at once is a
+   * refusal, because two replace-all lists describe two different suites.
+   */
+  it("folds `clients` onto the wire's `hosts`", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      {
+        suite: "smoke",
+        clients: [{ client: "Claude" }, { client: "ChatGPT", servers: ["a"] }],
+      },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { hosts: [{ host: "Claude" }, { host: "ChatGPT", servers: ["a"] }] },
+    ]);
+  });
+
+  it("refuses `clients` and `hosts` together", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    const error = await updateEvalSuiteOperation
+      .execute(
+        {
+          suite: "smoke",
+          clients: [{ client: "Claude" }],
+          hosts: [{ host: "ChatGPT" }],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("not both");
+    expect(patchBodies).toEqual([]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
+  });
+});
+
 describe("runEvalSuiteOperation", () => {
   it("omits serverIds so the platform connects the suite's saved selection", async () => {
     const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
@@ -567,9 +991,14 @@ describe("runEvalSuiteOperation", () => {
     const createCall = fetchMock.mock.calls.find(([target]) =>
       String(target).endsWith("/eval-runs")
     );
+    // `serverNames` rides along PAIRED WITH `serverIds` by index. A launch
+    // that re-authors the suite's saved selection persists these names; when
+    // they were missing the platform stored the raw ids, and every surface
+    // that lists the suite showed an opaque id where the server name belongs.
     expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
       suiteId: "suite-1",
       serverIds: ["server-http", "server-disabled"],
+      serverNames: ["Echo", "Retired"],
     });
   });
 
@@ -604,6 +1033,65 @@ describe("runEvalSuiteOperation", () => {
       'Server "ghost" was not found'
     );
     expect((error as PlatformApiError).message).toContain("Echo");
+  });
+
+  it("resolves an environment name and echoes the pinned triple", async () => {
+    // ATTACHED, because the op now checks attachment client-side: a fan-out
+    // issues one request per target, so an unattached one has to fail before
+    // its siblings start spending rather than after.
+    const { client, fetchMock } = makeClient({
+      servers: HTTP_SERVERS,
+      suiteDetail: { ...BARE_SUITE_DETAIL, environmentIds: ["env-stg"] },
+    });
+
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", environment: "staging" },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(([target]) =>
+      String(target).endsWith("/eval-runs")
+    );
+    expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
+      suiteId: "suite-1",
+      environmentId: "env-stg",
+    });
+    expect(result.environment).toEqual({
+      id: "env-stg",
+      name: "Staging",
+      revision: 7,
+    });
+  });
+
+  it("reports null attribution for a legacy run", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      { client }
+    );
+
+    expect(result.environment).toBeNull();
+  });
+
+  it("rejects environment together with servers, before any request", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", environment: "Staging", servers: ["echo"] },
+        {
+          client,
+        }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain(
+      "either environment or servers"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects ambiguous suite names with the candidate ids", async () => {
@@ -645,6 +1133,54 @@ describe("runEvalCaseOperation", () => {
     expect(body.caseIds).toEqual(["case-1"]);
   });
 
+  it("sends the resolved environmentId alongside caseIds", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalCaseOperation.execute(
+      {
+        project: "new",
+        suite: "Smoke",
+        case: "echo works",
+        environment: "Staging",
+      },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    expect(JSON.parse(String((runCall?.[1] as RequestInit).body))).toEqual({
+      suiteId: "suite-1",
+      caseIds: ["case-1"],
+      environmentId: "env-stg",
+    });
+    expect(result.environment).toEqual({
+      id: "env-stg",
+      name: "Staging",
+      revision: 7,
+    });
+  });
+
+  it("pairs serverNames with an explicit server override", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", servers: ["echo"] },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((runCall?.[1] as RequestInit).body));
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+  });
+
   it("requires a suite and a case", () => {
     expect(
       runEvalCaseOperation.inputSchema.safeParse({ suite: "Smoke" }).success
@@ -668,6 +1204,7 @@ describe("createEvalSuiteOperation", () => {
         cases: [
           {
             title: "echo works",
+            intent: "greeting",
             steps: [
               { id: "s1", kind: "prompt", prompt: "say hi" },
               {
@@ -686,7 +1223,10 @@ describe("createEvalSuiteOperation", () => {
       { client }
     );
 
-    expect(result.suite).toEqual({ id: "suite-created", name: "Authored smoke" });
+    expect(result.suite).toEqual({
+      id: "suite-created",
+      name: "Authored smoke",
+    });
     expect(result.servers).toEqual([{ id: "server-http", name: "Echo" }]);
     expect(result.caseUpsert.committed).toEqual([{ name: "case-1" }]);
 
@@ -704,11 +1244,144 @@ describe("createEvalSuiteOperation", () => {
     expect(body.tests).toHaveLength(1);
     expect(body.tests[0]).toMatchObject({
       title: "echo works",
+      intent: "greeting",
       steps: [
         { id: "s1", kind: "prompt", prompt: "say hi" },
         expect.objectContaining({ kind: "assert" }),
       ],
     });
+  });
+
+  /**
+   * A case's grading rule is a CHECK. This operation called the same field
+   * `predicates` while the API, the UI and `create_eval_case` all called it
+   * `checks` — so an agent authored a suite in one word and then edited one of
+   * its own cases in another.
+   */
+  it("folds a case's `checks` onto the wire's `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = {
+      mode: "replace",
+      list: [{ type: "toolCalledAtLeastOnce", toolName: "echo" }],
+    };
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+            checks: gate,
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.tests[0].predicates).toEqual(gate);
+    expect(body.tests[0]).not.toHaveProperty("checks");
+  });
+
+  it("refuses a case that sets both `checks` and `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = { mode: "replace", list: [] };
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Authored smoke",
+          servers: ["echo"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [
+            {
+              title: "echo works",
+              steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+              checks: gate,
+              predicates: gate,
+            },
+          ],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("echo works");
+    expect(
+      fetchMock.mock.calls.some(
+        ([target, init]) =>
+          String(target).endsWith("/eval-suites") &&
+          (init as RequestInit | undefined)?.method === "POST"
+      )
+    ).toBe(false);
+  });
+
+  it("attaches the named clients so the suite is not authored without one", async () => {
+    // An API-authored suite had no way to name its client: it read back with
+    // an empty Client everywhere it was listed, and `run_eval_suite`'s host
+    // selector — which only runs hosts ATTACHED to the suite — had nothing to
+    // select.
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        hosts: ["Claude", "host-chatgpt"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.hosts).toEqual([{ host: "Claude" }, { host: "host-chatgpt" }]);
+  });
+
+  it("omits hosts entirely when no client is named", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body).not.toHaveProperty("hosts");
   });
 
   it("rejects stdio servers before creating the suite", async () => {
@@ -759,9 +1432,7 @@ describe("createEvalSuiteOperation", () => {
       cases: Array<Record<string, unknown>>;
     };
     const authored = parsed.cases[0]!;
-    expect(authored.steps).toEqual([
-      { id: "s1", kind: "prompt", prompt: "q" },
-    ]);
+    expect(authored.steps).toEqual([{ id: "s1", kind: "prompt", prompt: "q" }]);
     expect(authored.advancedConfig).toEqual({
       system: "be terse",
       temperature: 0.2,
@@ -816,6 +1487,23 @@ describe("createEvalSuiteOperation", () => {
     ).toBe(true);
   });
 
+  it("rejects an unknown top-level key rather than stripping it", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.safeParse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
+      hostz: [],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(
+      parsed.error.issues.some((issue) => /hostz/.test(issue.message))
+    ).toBe(true);
+  });
+
   it("requires a name, at least one server, and at least one case", () => {
     expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
       false
@@ -842,6 +1530,43 @@ describe("createEvalSuiteOperation", () => {
 });
 
 describe("eval run polling operations", () => {
+  it("defines the chain vocabulary IN BAND, not by reference", () => {
+    // An MCP client sees the tool description and nothing else. The stage
+    // order, the three-way chain discriminant and the five states used to live
+    // only in the hosted agent's promptNotes, so every other MCP surface — the
+    // public worker included — handed a model ~36 bare enum members with no
+    // definitions and no way to look them up mid-turn.
+    const description = getEvalRunOperation.description;
+
+    // The order is normative: `notReached` is derived from position.
+    expect(description).toContain(
+      "connection → discovery → selection → call → response → userValue"
+    );
+    // The discriminant, and which of the three carries rows.
+    for (const status of ["verified", "unverified", "absent"]) {
+      expect(description).toContain(`\`${status}\``);
+    }
+    // Every state, each said as its own fact.
+    for (const state of DECISION_LABEL_VOCABULARIES.stageStates) {
+      expect(description).toContain(`\`${state}\``);
+    }
+    // THE claim this whole vocabulary exists to protect.
+    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain(
+      "authorizes proposing a change to the server under test"
+    );
+    // The full 29-reason vocabulary does not belong in a tool description; it
+    // belongs where an agent already fetches reference material. Named here so
+    // the pointer cannot be dropped while the skill stays served.
+    expect(description).toContain("user-value-chain-glossary");
+    // And the phrase that would make a client render a spend warning on a
+    // read-only operation (mcp/tests/platformTools.test.ts ties it to
+    // `risk: "spend"`, which a read must never declare).
+    expect(description).not.toContain("COSTS MONEY");
+    expect(getEvalRunOperation.risk).toBeUndefined();
+    expect(getEvalRunOperation.readOnly).toBe(true);
+  });
+
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -959,41 +1684,147 @@ describe("eval run polling operations", () => {
   });
 });
 
-describe("chatbox operations", () => {
-  it("lists the project's chatboxes", async () => {
+describe("scenario operations", () => {
+  it("lists the project's scenarios", async () => {
     const { client } = makeClient();
 
-    const result = await listChatboxesOperation.execute({}, { client });
+    const result = await listScenariosOperation.execute({}, { client });
 
     expect(result.project.id).toBe("project-new");
-    expect(result.items).toEqual(CHATBOXES);
+    expect(result.items).toEqual(SCENARIOS);
   });
 
-  it("resolves a chatbox by name and fetches its detail", async () => {
+  it("resolves a scenario by name and fetches its detail", async () => {
     const { client, fetchMock } = makeClient();
 
-    const result = await getChatboxOperation.execute(
-      { chatbox: "support" },
+    const result = await getScenarioOperation.execute(
+      { scenario: "support" },
       { client }
     );
 
-    expect(result.chatbox).toEqual(CHATBOX_DETAIL);
-    expect(callsTo(fetchMock, "/chatboxes/box-1")[0]?.pathname).toBe(
-      "/api/v1/projects/project-new/chatboxes/box-1"
+    expect(result.scenario).toEqual(SCENARIO_DETAIL);
+    expect(callsTo(fetchMock, "/scenarios/box-1")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/scenarios/box-1"
     );
   });
 
-  it("lists the available chatboxes when the selector misses", async () => {
+  it("lists the available scenarios when the selector misses", async () => {
     const { client } = makeClient();
 
-    const error = await getChatboxOperation
-      .execute({ chatbox: "missing" }, { client })
+    const error = await getScenarioOperation
+      .execute({ scenario: "missing" }, { client })
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(PlatformApiError);
     expect((error as PlatformApiError).message).toContain(
       "Support (id: box-1)"
     );
+  });
+});
+
+describe("publishScenarioOperation", () => {
+  it("forwards the create-time overrides verbatim in the PUT body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-1",
+        name: "Checkout flow",
+        description: "Guided checkout walkthrough",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect(new URL(String(request?.[0])).pathname).toBe(
+      "/api/v1/projects/project-new/environments/env-1/scenario"
+    );
+    expect(JSON.parse(String((request?.[1] as RequestInit).body))).toEqual({
+      name: "Checkout flow",
+      description: "Guided checkout walkthrough",
+      mode: "invited_only",
+    });
+    expect(result.scenario.created).toBe(true);
+    expect(result.scenario.mode).toBe("invited_only");
+    expect(result.overridesIgnored).toBeUndefined();
+  });
+
+  it("sends no body at all when there are no overrides", async () => {
+    // The pre-override wire shape, preserved: a bodyless PUT is the common
+    // case and what existing callers already produce.
+    const { client, fetchMock } = makeClient();
+
+    await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({ environment: "env-1" }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect((request?.[1] as RequestInit).body).toBeUndefined();
+  });
+
+  it("hoists overridesIgnored when a republish discarded the overrides", async () => {
+    const { client } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-existing",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    // The response's mode is the real one — the caller asked for
+    // `invited_only` and must learn the link is NOT restricted.
+    expect(result.scenario.created).toBe(false);
+    expect(result.scenario.mode).toBe("anyone_with_link");
+    expect(result.overridesIgnored).toBe(true);
+  });
+
+  it("rejects a mode outside the enum before any request", async () => {
+    const { fetchMock } = makeClient();
+
+    expect(
+      publishScenarioOperation.inputSchema.safeParse({
+        environment: "env-1",
+        mode: "everyone",
+      }).success
+    ).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("plugin operations", () => {
+  it("lists the project's live plugins with the project resolved by selector", async () => {
+    const { client } = makeClient();
+
+    const result = await listProjectPluginsOperation.execute(
+      { project: "new" },
+      { client }
+    );
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.items).toEqual(PLUGINS);
+  });
+
+  it("fetches a plugin version by raw id, no project resolution round-trip", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getPluginVersionOperation.execute(
+      { pluginVersionId: "pv-1" },
+      { client }
+    );
+
+    expect(result).toEqual(PLUGIN_VERSION);
+    const paths = fetchMock.mock.calls.map(
+      (call) => new URL(String(call[0])).pathname
+    );
+    expect(paths).toEqual(["/api/v1/plugin-versions/pv-1"]);
   });
 });
 
@@ -1117,80 +1948,499 @@ describe("closeTunnelOperation", () => {
   });
 });
 
-describe("operation catalog consistency", () => {
-  const ALL_OPERATIONS: Array<{
-    operation: PlatformOperation<any, any>;
-    minimalInput: Record<string, unknown>;
-  }> = [
-    { operation: listProjectsOperation, minimalInput: {} },
-    { operation: listProjectServersOperation, minimalInput: {} },
-    { operation: showServersOperation, minimalInput: {} },
-    { operation: listEvalSuitesOperation, minimalInput: {} },
-    { operation: listEvalSuiteRunsOperation, minimalInput: { suite: "s" } },
-    { operation: runEvalSuiteOperation, minimalInput: { suite: "s" } },
-    {
-      operation: runEvalCaseOperation,
-      minimalInput: { suite: "s", case: "c" },
-    },
-    {
-      operation: createEvalSuiteOperation,
-      minimalInput: {
-        name: "s",
-        model: "anthropic/claude-haiku-4.5",
-        servers: ["echo"],
-        cases: [
-          {
-            title: "t",
-            steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
-          },
-        ],
+describe("searchSessionsOperation", () => {
+  it("puts the query, scope, and CSV sourceTypes on the wire", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await searchSessionsOperation.execute(
+      {
+        query: "refund",
+        scope: "transcripts",
+        project: "new",
+        sourceTypes: ["direct", "eval"],
+        status: "archived",
+        limit: 25,
+        cursor: "cursor-1",
       },
+      { client }
+    );
+
+    const url = callsTo(fetchMock, "/sessions")[0];
+    expect(url?.pathname).toBe("/api/v1/projects/project-new/sessions");
+    expect(url?.searchParams.get("q")).toBe("refund");
+    expect(url?.searchParams.get("scope")).toBe("transcripts");
+    // ONE comma-joined param, not repeated keys — that is what the endpoint
+    // parses.
+    expect(url?.searchParams.get("sourceType")).toBe("direct,eval");
+    expect(url?.searchParams.get("status")).toBe("archived");
+    expect(url?.searchParams.get("limit")).toBe("25");
+    // The cursor passes through unrenamed; it is opaque.
+    expect(url?.searchParams.get("cursor")).toBe("cursor-1");
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.scope).toBe("transcripts");
+    expect(result.items).toEqual(SESSION_SUMMARIES);
+    expect(result.nextCursor).toBe("cursor-2");
+  });
+
+  it("defaults to the titles scope and sends no sourceType filter", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+
+    const url = callsTo(fetchMock, "/sessions")[0];
+    expect(url?.searchParams.get("scope")).toBe("titles");
+    expect(url?.searchParams.has("sourceType")).toBe(false);
+    expect(result.scope).toBe("titles");
+  });
+
+  it("requires a query — this operation searches, it does not list", async () => {
+    expect(searchSessionsOperation.inputSchema.safeParse({}).success).toBe(
+      false
+    );
+    expect(
+      searchSessionsOperation.inputSchema.safeParse({ query: "   " }).success
+    ).toBe(false);
+  });
+
+  it("rejects an EMPTY sourceTypes array rather than reading it as 'all'", async () => {
+    // `[]` is the dangerous spelling: without `.min(1)` it serializes to no
+    // filter, silently widening a deliberately narrowed search back to every
+    // surface.
+    expect(
+      searchSessionsOperation.inputSchema.safeParse({
+        query: "refund",
+        sourceTypes: [],
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a blank query inside execute(), not only in the schema", async () => {
+    // The CLI binding and other raw callers reach `execute` without parsing
+    // the schema, and the endpoint reads a blank `q` as an EMPTY SEARCH — so
+    // an unguarded blank would return the project's recency feed from an
+    // operation that promises never to list.
+    const { client, fetchMock } = makeClient();
+
+    await expect(
+      searchSessionsOperation.execute({ query: "   " }, { client })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(callsTo(fetchMock, "/sessions")).toHaveLength(0);
+  });
+
+  it("omits nextCursor entirely on the last page", async () => {
+    // Absent, not `undefined`: callers that test with `in` or serialize the
+    // result can tell the difference.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES, scope: "titles" },
+    });
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect("nextCursor" in result).toBe(false);
+  });
+
+  it("rejects an unknown scope", async () => {
+    expect(
+      searchSessionsOperation.inputSchema.safeParse({
+        query: "refund",
+        scope: "bodies",
+      }).success
+    ).toBe(false);
+  });
+
+  it("fails CLOSED when an old backend answers a transcript search with no scope marker", async () => {
+    // The skew case: a deployment that predates `scope` ignores the unknown
+    // param, runs a TITLE search, and returns 200. Handing those rows back as
+    // transcript results would be an answer the caller cannot tell is wrong.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES },
+    });
+
+    await expect(
+      searchSessionsOperation.execute(
+        { query: "refund", scope: "transcripts" },
+        { client }
+      )
+    ).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      message: expect.stringContaining("scope=titles"),
+    });
+  });
+
+  it("also fails closed when the backend echoes a DIFFERENT scope", async () => {
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES, scope: "titles" },
+    });
+
+    await expect(
+      searchSessionsOperation.execute(
+        { query: "refund", scope: "transcripts" },
+        { client }
+      )
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  });
+
+  it("does NOT require the marker for a titles search", async () => {
+    // An old backend runs a title search anyway, so its unmarked answer is
+    // correct. Demanding the marker here would break every current caller
+    // against an older deployment for no safety gain.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES },
+    });
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect(result.scope).toBe("titles");
+    expect(result.items).toEqual(SESSION_SUMMARIES);
+  });
+
+  it("returns each item's link so a caller can open what it found", async () => {
+    const { client } = makeClient();
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect(result.items[0]?.link.path).toContain("/playground?conversation=");
+    expect(result.items[0]?.link.url).toContain("https://");
+  });
+});
+
+describe("operation catalog consistency", () => {
+  const MINIMAL_INPUTS: Record<string, Record<string, unknown>> = {
+    get_me: {},
+    list_models: {},
+    list_organizations: {},
+    list_projects: {},
+    create_project: { name: "p" },
+    update_project: { project: "p", name: "renamed" },
+    delete_project: { project: "p" },
+    list_project_servers: {},
+    create_project_server: {
+      body: { name: "s", enabled: true, transportType: "http" },
     },
-    {
-      operation: getEvalRunOperation,
-      minimalInput: { project: "p", runId: "r" },
+    get_project_server: { serverId: "s" },
+    update_project_server: { serverId: "s", body: { name: "renamed" } },
+    delete_project_server: { serverId: "s" },
+    show_servers: {},
+    connect_project_server: { url: "https://example.com/mcp" },
+    get_project_server_connection_status: { connectionRequestId: "scr_abc" },
+    cancel_project_server_connection: { connectionRequestId: "scr_abc" },
+    diagnose_server: { server: "s" },
+    validate_server: { server: "s" },
+    export_server: { server: "s" },
+    list_server_tools: { server: "s" },
+    list_server_prompts: { server: "s" },
+    list_server_resources: { server: "s" },
+    call_server_tool: { server: "s", toolName: "t" },
+    get_server_prompt: { server: "s", promptName: "p" },
+    read_server_resource: { server: "s", uri: "u" },
+    list_server_skills: { server: "s" },
+    get_server_skill: { server: "s", uri: "u" },
+    read_server_skill_file: { server: "s", skillUri: "u", resourceUri: "r" },
+    check_host_compatibility: { server: "s" },
+    start_claude_readiness_run: { server: "s" },
+    start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    get_readiness_run: { run: "r" },
+    list_readiness_runs: {},
+    cancel_readiness_run: { run: "r" },
+    get_readiness_report: { run: "r" },
+    start_conformance_run: { server: "s" },
+    get_conformance_run: { run: "r" },
+    list_conformance_runs: {},
+    get_conformance_report: { run: "r" },
+    list_eval_suites: {},
+    list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
+    run_eval_suite: { suite: "s" },
+    run_eval_case: { suite: "s", case: "c" },
+    create_eval_suite: {
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
     },
-    {
-      operation: listEvalRunIterationsOperation,
-      minimalInput: { project: "p", runId: "r" },
+    get_eval_suite: { suite: "s" },
+    get_eval_run_disclosure: { suite: "s" },
+    update_eval_suite: { suite: "s", name: "renamed" },
+    delete_eval_suite: { suite: "s" },
+    set_eval_suite_schedule: { suite: "s", enabled: false },
+    set_eval_suite_environments: { suite: "s", environments: ["e"] },
+    list_eval_cases: { suite: "s" },
+    get_eval_case: { suite: "s", case: "c" },
+    create_eval_case: {
+      suite: "s",
+      title: "c",
+      steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
     },
-    {
-      operation: getEvalIterationTraceOperation,
-      minimalInput: { project: "p", runId: "r", iterationId: "i" },
+    create_eval_cases: {
+      suite: "s",
+      cases: [
+        { title: "c", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
     },
-    {
-      operation: getEvalRunStepsOperation,
-      minimalInput: { project: "p", runId: "r", iterationId: "i" },
+    update_eval_case: { suite: "s", case: "c", title: "renamed" },
+    delete_eval_case: { suite: "s", case: "c" },
+    generate_eval_cases: { suite: "s", prompt: "q" },
+    get_eval_run: { project: "p", runId: "r" },
+    get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_gate: { project: "p", runId: "r" },
+    get_eval_run_route_facts: { project: "p", runId: "r" },
+    get_eval_run_server_facts: { project: "p", runId: "r" },
+    propose_eval_description_rewrite: {
+      project: "p",
+      runId: "r",
+      toolName: "t",
     },
-    {
-      operation: cancelEvalRunOperation,
-      minimalInput: { project: "p", runId: "r" },
+    start_eval_description_experiment: { project: "p", experiment: "e" },
+    get_eval_description_experiment: { project: "p", experiment: "e" },
+    list_eval_suite_stage_analytics: { project: "p", suite: "s" },
+    // baseRunId is deliberately absent from the minimal input: omitting it is
+    // the common path (compare against the nearest completed predecessor).
+    compare_eval_run: { project: "p", runId: "r" },
+    list_eval_run_iterations: { project: "p", runId: "r" },
+    get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
+    cancel_eval_run: { project: "p", runId: "r" },
+    waive_eval_gate: {
+      project: "p",
+      runId: "r",
+      reason: "shipping the hotfix; tracked in ENG-1",
+      expiresAt: 1_700_000_000_000,
     },
-    { operation: listChatboxesOperation, minimalInput: {} },
-    { operation: getChatboxOperation, minimalInput: { chatbox: "c" } },
-    { operation: listChatSessionsOperation, minimalInput: {} },
-    { operation: diagnoseServerOperation, minimalInput: { server: "s" } },
-    { operation: listServerToolsOperation, minimalInput: { server: "s" } },
-    {
-      operation: callServerToolOperation,
-      minimalInput: { server: "s", toolName: "t" },
+    get_eval_gate_waiver: { project: "p", runId: "r" },
+    revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
+    backtest_eval_run_judge: { project: "p", runId: "r", rubric: null },
+    backtest_eval_run: {
+      project: "p",
+      runId: "r",
+      draft: { assertions: { mode: "replace", list: [] } },
     },
-    { operation: listServerPromptsOperation, minimalInput: { server: "s" } },
-    {
-      operation: getServerPromptOperation,
-      minimalInput: { server: "s", promptName: "p" },
+    request_eval_run_judge: { project: "p", runId: "r" },
+    list_eval_github_repos: {},
+    connect_eval_github_repo: {
+      suite: "s",
+      repo: "acme/widgets",
+      // No default: the policy decides what other people's pull requests
+      // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
     },
-    { operation: listServerResourcesOperation, minimalInput: { server: "s" } },
-    {
-      operation: readServerResourceOperation,
-      minimalInput: { server: "s", uri: "u" },
+    // The pre-rename spellings of the two above. Still advertised, so an agent
+    // already calling one keeps its tool; same inputs, same implementation.
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
+      outagePolicy: "fail_open",
     },
-    { operation: createTunnelOperation, minimalInput: { name: "t" } },
-    { operation: closeTunnelOperation, minimalInput: { serverId: "s" } },
-  ];
+    get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
+    create_tunnel: { name: "t" },
+    close_tunnel: { serverId: "s" },
+    list_scenarios: {},
+    get_scenario: { scenario: "c" },
+    list_chat_sessions: {},
+    list_journeys: {},
+    list_journey_runs: { journey: "j" },
+    get_journey_run: { run: "r" },
+    list_journey_run_sessions: { run: "r" },
+    launch_journey_run: { journey: "j" },
+    cancel_journey_run: { run: "r" },
+    publish_scenario: { environment: "e" },
+    unpublish_scenario: { environment: "e" },
+    get_capabilities: {},
+    list_personas: {},
+    get_persona: { persona: "pe" },
+    create_persona: { name: "Ada", role: "buyer" },
+    update_persona: { persona: "pe", name: "Ada" },
+    delete_persona: { persona: "pe" },
+    list_secrets: {},
+    get_secret: { secret: "sec" },
+    // `delivery` is REQUIRED with no default, which is the point: a caller who
+    // has not said whether the value ends up inside the sandbox has not made
+    // the decision this operation exists to make.
+    create_secret: {
+      name: "STRIPE_API_KEY",
+      value: "sk_live_example_value",
+      delivery: "materialized",
+    },
+    update_secret: { secret: "sec", value: "sk_live_rotated_value" },
+    delete_secret: { secret: "sec" },
+    list_trace_destinations: { organization: "org" },
+    get_trace_destination: { organization: "org", destination: "td" },
+    create_trace_destination: {
+      organization: "org",
+      name: "Coralogix",
+      endpointUrl: "https://ingress.eu2.coralogix.com:443",
+    },
+    update_trace_destination: {
+      organization: "org",
+      destination: "td",
+      name: "Coralogix (production)",
+    },
+    delete_trace_destination: { organization: "org", destination: "td" },
+    test_trace_destination: { organization: "org", destination: "td" },
+    pause_trace_destination: { organization: "org", destination: "td" },
+    resume_trace_destination: { organization: "org", destination: "td" },
+    backfill_trace_destination: {
+      organization: "org",
+      destination: "td",
+      days: 7,
+    },
+    list_trace_destination_backfills: {
+      organization: "org",
+      destination: "td",
+    },
+    generate_personas: { environmentId: "e" },
+    get_journey: { journey: "j" },
+    create_journey: {
+      goal: "buy a thing",
+      persona: "pe",
+      sessionsPerTarget: 1,
+      maxTurns: 8,
+    },
+    update_journey: { journey: "j", goal: "buy two things" },
+    archive_journey: { journey: "j" },
+    generate_journeys: {
+      environmentId: "e",
+      persona: { name: "Ada", role: "buyer" },
+    },
+    list_swarms: {},
+    get_swarm: { swarm: "sw" },
+    create_swarm: { name: "checkout", sessionsPerTarget: 1, maxTurns: 8 },
+    update_swarm: { swarm: "sw", name: "checkout v2" },
+    archive_swarm: { swarm: "sw" },
+    get_swarms_overview: {},
+    get_journey_run_scorecard: { run: "r" },
+    list_swarm_findings: {},
+    dismiss_swarm_finding: { finding: "f" },
+    undismiss_swarm_finding: { finding: "f" },
+    get_wave_insights: { wave: "w" },
+    request_wave_insights: { wave: "w" },
+    cancel_wave_insights: { wave: "w" },
+    get_user_testing_scenario: { scenario: "cb" },
+    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
+    list_user_testing_sessions: { scenario: "cb" },
+    get_user_testing_session: { scenario: "cb", session: "s" },
+    get_user_testing_metrics: { scenario: "cb" },
+    get_user_testing_usage: { scenario: "cb" },
+    list_user_testing_findings: { scenario: "cb" },
+    get_user_testing_signals: { scenario: "cb" },
+    get_user_testing_insights: { scenario: "cb", window: "w" },
+    request_user_testing_insights: { scenario: "cb" },
+    cancel_user_testing_insights: { scenario: "cb", window: "w" },
+    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    set_user_testing_guest_execution: {
+      scenario: "cb",
+      enabled: true,
+      computerEnabled: false,
+      sharedSkillsEnabled: false,
+      dailyCreditCap: 100,
+      dailyComputerStartCap: 0,
+      maxConcurrentComputers: 0,
+    },
+    rotate_user_testing_link: { scenario: "cb" },
+    get_share_settings: { resourceType: "scenario", resourceId: "cb" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "cb",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "cb" },
+    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
+    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
+    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
+    get_share_settings: { resourceType: "scenario", resourceId: "s1" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "s1",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
+    list_clients: {},
+    get_client: { client: "c" },
+    set_client_servers: {
+      client: "c",
+      serverIds: [],
+      expectedConfigId: "hc_1",
+    },
+    duplicate_client: { client: "c" },
+    create_client: { name: "c", template: "claude" },
+    update_client: { client: "c", name: "renamed", expectedName: "c" },
+    delete_client: { client: "c" },
+    list_project_environments: {},
+    get_project_environment_capabilities: {},
+    list_project_plugins: {},
+    get_plugin_version: { pluginVersionId: "pv" },
+    list_project_skills: {},
+    get_project_skill: { skillId: "sk" },
+    get_project_environment: { environment: "e" },
+    resolve_project_environment: { environment: "e" },
+    create_project_environment: { name: "e", hostId: "h" },
+    ensure_adhoc_environment: { host: "h" },
+    name_environment: { environment: "e", expectedRevision: 0, name: "n" },
+    update_project_environment: {
+      environment: "e",
+      expectedRevision: 0,
+      name: "renamed",
+    },
+    archive_project_environment: { environment: "e", expectedRevision: 0 },
+    restore_project_environment: { environment: "e", expectedRevision: 0 },
+    list_sandbox_images: {},
+    get_sandbox_image: { image: "i" },
+    create_sandbox_image: { name: "i", blueprint: "base: ubuntu@sha256:abc" },
+    update_sandbox_image: { image: "i", name: "renamed" },
+    validate_sandbox_image_blueprint: { blueprint: "base: ubuntu@sha256:abc" },
+    build_sandbox_image: { image: "i" },
+    list_sandbox_image_builds: { image: "i" },
+    promote_sandbox_image: { image: "i" },
+    use_sandbox_image: { image: "i" },
+    reset_computer: {},
+    search_sessions: { query: "q" },
+    send_chat_message: {
+      idempotencyKey: "k",
+      message: "hi",
+      project: "p",
+      modelId: "anthropic/claude-sonnet-5",
+      serverIds: ["srv"],
+    },
+    drive_chat_session_browser: { op: "close", sessionId: "cs_1" },
+    observe_chat_session_browser: { op: "trace", sessionId: "cs_1" },
+    get_chat_session: { sessionId: "cs_1" },
+    get_chat_session_trace: { sessionId: "cs_1" },
+    render_server_widget: { server: "srv", toolName: "show_map" },
+    delete_sandbox_image: { image: "i" },
+    search_registry_directory: {},
+    get_registry_directory_server: { catalogServerId: "cs" },
+    list_registry_directory_sources: {},
+    list_registry_servers: {},
+    list_registry_connections: {},
+    install_registry_directory_server: { catalogServerId: "cs" },
+    install_registry_server: { registryServerId: "rs" },
+    uninstall_registry_server: { registryServerId: "rs" },
+  };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
-    for (const { operation, minimalInput } of ALL_OPERATIONS) {
+    expect(Object.keys(MINIMAL_INPUTS).sort()).toEqual(
+      ALL_OPERATIONS.map((operation) => operation.name).sort()
+    );
+    expect(
+      new Set(ALL_OPERATIONS.map((operation) => operation.name)).size
+    ).toBe(ALL_OPERATIONS.length);
+    for (const operation of ALL_OPERATIONS) {
+      const minimalInput = MINIMAL_INPUTS[operation.name];
+      expect(
+        minimalInput,
+        `missing fixture for ${operation.name}`
+      ).toBeDefined();
       expect(operation.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
       expect(operation.inputSchema.safeParse(minimalInput).success).toBe(true);
     }
@@ -1204,25 +2454,212 @@ describe("operation catalog consistency", () => {
     ).toBe(false);
   });
 
+  it("declares the frozen card-install shape, so a strict re-validation keeps it", () => {
+    // The inspector's proposal freeze injects a display-only `endpointUrl`
+    // (resolved from the card) next to the `expectedUpdatedAt` pin. Both must
+    // be schema-declared: a future strict re-validation at the execute seam
+    // would otherwise reject every approved card install.
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "https://mcp.example.com/mcp",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(true);
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "file:///etc/passwd",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(false);
+    expect(
+      installRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        endpointUrl: "javascript:alert(1)",
+      }).success
+    ).toBe(false);
+  });
+
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
+      // Creates a durable run that dials a third party's server, and — with
+      // the opt-in — spends the organization's credits.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "start_conformance_run",
+      // Stops one. A write because it changes the row, spending nothing.
+      "cancel_readiness_run",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Stops a pending connection, releasing the slot it holds.
+      "cancel_project_server_connection",
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
+      "request_eval_run_judge",
+      // Description-rewrite experiment. Propose spends a small model budget
+      // to draft the rewrite; start launches two replay arms and spends
+      // eval-iteration credits. `get_eval_description_experiment` stays a
+      // read — it only polls the receipt.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "connect_eval_github_repo",
+      "connect_eval_check_repo",
       "create_eval_suite",
+      "set_eval_suite_environments",
       "call_server_tool",
       "create_tunnel",
       "close_tunnel",
+      "create_project_server",
+      "update_project_server",
+      // Creates a connection request, and possibly a disabled server row.
+      "connect_project_server",
+      "delete_project_server",
+      "create_project",
+      "update_project",
+      "delete_project",
+      "archive_project_environment",
+      "update_eval_suite",
+      "delete_eval_suite",
+      "set_eval_suite_schedule",
+      "create_eval_case",
+      "create_eval_cases",
+      "update_eval_case",
+      "delete_eval_case",
+      "generate_eval_cases",
+      "create_client",
+      "update_client",
+      "delete_client",
+      "set_client_servers",
+      "duplicate_client",
+      "create_project_environment",
+      "ensure_adhoc_environment",
+      "name_environment",
+      // Launching starts a fan-out that SPENDS model credits — the most
+      // consequential write on this surface.
+      "launch_journey_run",
+      // Cancelling settles a run's attempts — a state change, not a read.
+      "cancel_journey_run",
+      // Scenarios: publishing exposes an environment to people outside the
+      // project, unpublishing tears that down. Both are writes.
+      "publish_scenario",
+      "unpublish_scenario",
+      "update_project_environment",
+      "restore_project_environment",
+      "create_sandbox_image",
+      "update_sandbox_image",
+      "build_sandbox_image",
+      "promote_sandbox_image",
+      "use_sandbox_image",
+      "reset_computer",
+      "delete_sandbox_image",
+      // Swarms authoring. Creating a persona or a journey persists but starts
+      // nothing and spends nothing — `launch_journey_run` above is the call
+      // that costs.
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      // Secret writes. `create_secret` and `update_secret` carry a credential
+      // in their INPUT (risk: exposure); `delete_secret` revokes one.
+      "create_secret",
+      "update_secret",
+      "delete_secret",
+      // Trace-destination writes. `create` and `update` carry vendor
+      // credentials in their INPUT and decide whether customer content leaves
+      // the platform (risk: exposure); `resume` is exposure too, because it
+      // restarts an export someone stopped. `test` and `pause` persist but
+      // expose nothing, and `backfill` is `spend` — it can queue a month of an
+      // organization's history at a vendor that bills on ingest.
+      "create_trace_destination",
+      "update_trace_destination",
+      "delete_trace_destination",
+      "test_trace_destination",
+      "pause_trace_destination",
+      "resume_trace_destination",
+      "backfill_trace_destination",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      // Generation persists NOTHING — it returns drafts — but it runs a model
+      // on the organization's account, and a read that spends is a lie about
+      // what calling it costs.
+      "generate_personas",
+      "generate_journeys",
+      // Insights: dismissal is a judgement someone recorded, and requesting a
+      // pass spends against the org's shared daily budget.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      // User testing writes. The exposure controls are the reason `risk`
+      // exists as a separate axis from `readOnly`: rotating a link and
+      // dismissing a finding are both writes, and only one of them can lock
+      // people out of a live scenario.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "set_share_mode",
+      "rotate_share_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
+      "set_share_mode",
+      "rotate_share_link",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
+      // Executes the tool, then renders its widget. A write for the same
+      // reason `call_server_tool` is: the tool runs.
+      "render_server_widget",
+      // One agent Playground turn. A write because it appends to a durable
+      // transcript, and `risk: "spend"` because it runs a model — the two
+      // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
+      "send_chat_message",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
+      // Gate waivers. Both are writes because both persist an audited record
+      // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
+      // deliberately NOT here — reading whether a gate is waived is available
+      // to anyone who can view the run, and a waiver its readers cannot see
+      // is not a visible waiver.
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
     ]);
-    for (const { operation } of ALL_OPERATIONS) {
+    for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
     }
+    expect(
+      [...writes].filter(
+        (name) => !ALL_OPERATIONS.some((op) => op.name === name)
+      )
+    ).toEqual([]);
   });
 
-  it("flags only call_server_tool as may-be-destructive", () => {
-    for (const { operation } of ALL_OPERATIONS) {
+  it("flags only operations with unknowable side effects as may-be-destructive", () => {
+    const destructive = new Set([
+      "call_server_tool",
+      "archive_project_environment",
+      // It IS a tool call — the render is what happens afterwards — so it
+      // inherits `call_server_tool`'s unknowability exactly.
+      "render_server_widget",
+      // Under `toolMode: "auto"` this executes arbitrary third-party tools,
+      // which is `call_server_tool`'s unknowability with a model choosing the
+      // arguments. Softening the destructive default would claim a safety the
+      // host cannot verify, since `readOnlyHint` is server-asserted.
+      "send_chat_message",
+      "drive_chat_session_browser",
+    ]);
+    for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(
-        operation.name === "call_server_tool"
+        destructive.has(operation.name)
       );
     }
   });
@@ -1268,6 +2705,42 @@ describe("server live operations", () => {
     expect(result.nextCursor).toBe("tools-page-2");
   });
 
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results". These listings
+  // are a PASSTHROUGH of the MCP server's cursor, so the rule reaches them.
+  it("accepts an empty-string cursor and puts it on the wire", () => {
+    const parsed = listServerToolsOperation.inputSchema.safeParse({
+      project: "new",
+      server: "Echo",
+      cursor: "",
+    });
+    // A `.min(1)` here would refuse to page a conforming server.
+    expect(parsed.success).toBe(true);
+  });
+
+  it("list_server_tools forwards an empty-string cursor verbatim", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "" },
+      { client }
+    );
+
+    expect(result.items).toEqual([{ name: "echo", cursorSeen: "" }]);
+  });
+
+  it("list_server_tools surfaces an empty-string nextCursor instead of dropping it", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "penultimate" },
+      { client }
+    );
+
+    expect(result.nextCursor).toBe("");
+    expect("nextCursor" in result).toBe(true);
+  });
+
   it("call_server_tool defaults parameters and posts the call body", async () => {
     const { client } = makeClient({ servers: HTTP_SERVERS });
 
@@ -1304,5 +2777,232 @@ describe("server live operations", () => {
       { client }
     );
     expect(resource.result.requestBody).toEqual({ uri: "file:///a" });
+  });
+});
+
+describe("createHostOperation input", () => {
+  const CONFIG = { hostStyle: "claude", systemPrompt: "" } as const;
+
+  it("requires a pinned model on the config branch", () => {
+    // The forward-client invariant: a client minted without a model cannot back
+    // a headless environment, and the failure would surface at LAUNCH rather
+    // than here. Checked in the schema so an SDK caller is told by the contract
+    // instead of by a 400 it never predicted.
+    expect(
+      createHostOperation.inputSchema.safeParse({ name: "h", config: CONFIG })
+        .success
+    ).toBe(false);
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        config: { ...CONFIG, modelId: "   " },
+      }).success
+    ).toBe(false);
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        config: { ...CONFIG, modelId: "anthropic/claude-sonnet-4-5" },
+      }).success
+    ).toBe(true);
+  });
+
+  it("reports a degenerate `config: {}` the way the ROUTE does", () => {
+    // `{}` is truthy but picks neither branch. The route answers "provide
+    // exactly one of template or a non-empty config", and that 400 is the one a
+    // caller actually receives — a schema that instead complained about the
+    // missing model would predict an error the surface never returns.
+    const result = createHostOperation.inputSchema.safeParse({
+      name: "h",
+      config: {},
+    });
+    expect(result.success).toBe(false);
+    const messages = result.success
+      ? []
+      : result.error.issues.map((issue) => issue.message);
+    expect(messages).toEqual([
+      "Provide exactly one of `template` or a non-empty `config`.",
+    ]);
+  });
+
+  it("keeps the template branch model-free", () => {
+    // A template carries its own model; the guard is on the config the caller
+    // hands over verbatim.
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        template: "claude",
+      }).success
+    ).toBe(true);
+  });
+});
+
+describe("registry operations", () => {
+  /**
+   * A client for the install flow: install → getProjectServer → mint link.
+   * `connectionResponse` overrides the POST /server-connections answer;
+   * `outcome` is what the install route reports.
+   */
+  function registryClient(options?: {
+    outcome?: "created" | "reconnected";
+    connectionResponse?: () => Response | Promise<Response>;
+  }): { client: PlatformApiClient; fetchMock: ReturnType<typeof vi.fn> } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({ items: PROJECTS });
+      }
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)
+      ) {
+        return Response.json({
+          serverId: "server-installed",
+          serverName: "Installed",
+          outcome: options?.outcome ?? "created",
+        });
+      }
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)
+      ) {
+        return Response.json({
+          id: "server-installed",
+          projectId: "project-new",
+          name: "Installed",
+          enabled: true,
+          transportType: "http",
+          url: "https://mcp.example.com/mcp",
+          useOAuth: true,
+          hasClientSecret: false,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      }
+      if (path === "/api/v1/server-connections") {
+        if (options?.connectionResponse) return options.connectionResponse();
+        return Response.json({
+          connectionRequestId: "conn-1",
+          status: "pending",
+          handoffUrl: "https://app.example.com/connect/tok",
+        });
+      }
+      if (path === "/api/v1/registry/directory-servers") {
+        return Response.json({ items: [] });
+      }
+      return Response.json(
+        { code: "NOT_FOUND", message: `No route for ${path}` },
+        { status: 404 }
+      );
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("mints a connect link for a first-time OAuth install", async () => {
+    const { client, fetchMock } = registryClient();
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    expect(result.outcome).toBe("created");
+    expect(result.nextSteps.connectLinkUrl).toBe(
+      "https://app.example.com/connect/tok"
+    );
+    expect(result.nextSteps.connectLinkError).toBeUndefined();
+    expect(callsTo(fetchMock, "/server-connections")).toHaveLength(1);
+  });
+
+  it("does NOT mint a connect link on a repeat install (reconnected)", async () => {
+    // The server row — and possibly a completed OAuth grant — already
+    // existed. Minting here would orphan a single-use handoff token on every
+    // repeat install; the status op tells the caller whether a new link is
+    // even needed.
+    const { client, fetchMock } = registryClient({ outcome: "reconnected" });
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    expect(result.outcome).toBe("reconnected");
+    expect(result.nextSteps.connectLinkUrl).toBeUndefined();
+    expect(result.nextSteps.connectLinkError).toBeUndefined();
+    expect(callsTo(fetchMock, "/server-connections")).toHaveLength(0);
+  });
+
+  it("reports a failed link mint instead of silently omitting the link", async () => {
+    const { client } = registryClient({
+      connectionResponse: () =>
+        Response.json(
+          { code: "RATE_LIMITED", message: "Too many connection requests" },
+          { status: 429 }
+        ),
+    });
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    // The install itself succeeded and stays a success…
+    expect(result.serverId).toBe("server-installed");
+    expect(result.nextSteps.connectLinkUrl).toBeUndefined();
+    // …but the degradation is visible, not silent.
+    expect(result.nextSteps.connectLinkError).toContain(
+      "Too many connection requests"
+    );
+  });
+
+  it("propagates the caller's abort instead of reporting success", async () => {
+    const controller = new AbortController();
+    const { client } = registryClient({
+      connectionResponse: () => {
+        controller.abort();
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        throw error;
+      },
+    });
+
+    const error = await installRegistryDirectoryServerOperation
+      .execute(
+        { project: "new", catalogServerId: "cs" },
+        { client, signal: controller.signal }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("AbortError");
+  });
+
+  it("forwards verifiedTier to the directory search", async () => {
+    const { client, fetchMock } = registryClient();
+    const input = searchRegistryDirectoryOperation.inputSchema.parse({
+      verifiedTier: "verified",
+    });
+
+    await searchRegistryDirectoryOperation.execute(input, { client });
+
+    const call = callsTo(fetchMock, "/registry/directory-servers")[0]!;
+    expect(call.searchParams.get("verifiedTier")).toBe("verified");
+  });
+
+  it("refuses catalogServerId + source together rather than ignoring source", () => {
+    expect(
+      getRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        source: "claude",
+      }).success
+    ).toBe(false);
+    expect(
+      getRegistryDirectoryServerOperation.inputSchema.safeParse({
+        name: "linear",
+        source: "claude",
+      }).success
+    ).toBe(true);
   });
 });

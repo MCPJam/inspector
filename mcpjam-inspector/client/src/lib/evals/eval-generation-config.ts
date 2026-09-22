@@ -16,6 +16,8 @@ export type GenerateCasesConfig = {
   complex: number;
   negative: number;
   varyUserStyles: boolean;
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
 };
 
 export const GENERATE_BUCKET_KEYS = [
@@ -82,6 +84,15 @@ export function loadGenerateConfig(suiteId: string): GenerateCasesConfig {
     if (typeof parsed?.varyUserStyles === "boolean") {
       next.varyUserStyles = parsed.varyUserStyles;
     }
+    if (parsed?.testSet === "quick" || parsed?.testSet === "comprehensive") {
+      next.testSet = parsed.testSet;
+    }
+    if (
+      parsed?.toolCoverage === "read-only" ||
+      parsed?.toolCoverage === "read-write"
+    ) {
+      next.toolCoverage = parsed.toolCoverage;
+    }
     // Per-bucket clamping above doesn't bound the aggregate; a stale/tampered
     // entry could exceed MAX_TOTAL. Fall back to defaults rather than forward an
     // out-of-range mix the backend would reject.
@@ -94,7 +105,7 @@ export function loadGenerateConfig(suiteId: string): GenerateCasesConfig {
 
 export function saveGenerateConfig(
   suiteId: string,
-  config: GenerateCasesConfig
+  config: GenerateCasesConfig,
 ): void {
   if (typeof window === "undefined") return;
   try {
@@ -109,8 +120,17 @@ export function saveGenerateConfig(
  * caseMix (the popover is authoritative once touched) plus the toggle.
  */
 export function toGenerationOptions(
-  config: GenerateCasesConfig
+  config: GenerateCasesConfig,
 ): GenerationOptions {
+  // Presets let the generator choose a count from the discovered workflows.
+  // Explicit bucket configuration remains available to legacy callers.
+  if (config.testSet) {
+    return {
+      testSet: config.testSet,
+      varyUserStyles: config.varyUserStyles,
+      ...(config.toolCoverage ? { toolCoverage: config.toolCoverage } : {}),
+    };
+  }
   return {
     caseMix: {
       simple: config.simple,
@@ -120,5 +140,21 @@ export function toGenerationOptions(
       negative: config.negative,
     },
     varyUserStyles: config.varyUserStyles,
+    ...(config.toolCoverage ? { toolCoverage: config.toolCoverage } : {}),
+  };
+}
+
+/** Bucket values are fallbacks for older consumers; presets send a range via testSet. */
+export function generationPreset(
+  testSet: "quick" | "comprehensive",
+  toolCoverage: "read-only" | "read-write",
+): GenerateCasesConfig {
+  return {
+    ...DEFAULT_GENERATE_CONFIG,
+    ...(testSet === "comprehensive"
+      ? { simple: 5, multiTool: 5, multiTurn: 3, complex: 3, negative: 4 }
+      : {}),
+    testSet,
+    toolCoverage,
   };
 }

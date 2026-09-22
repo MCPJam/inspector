@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 import { track } from "@/lib/analytics";
 import type { ConvexReactClient } from "convex/react";
 import {
@@ -7,6 +8,7 @@ import {
 } from "@/lib/excalidraw-quick-connect";
 import { QUICKSTART_SUITE_TAG } from "@/components/evals/constants";
 import { navigatePlaygroundEvalsRoute } from "@/components/evals/create-suite-navigation";
+import type { EvalRoute } from "@/lib/eval-route-types";
 import { EXCALIDRAW_QUICKSTART_CASES } from "./excalidraw-quickstart-cases";
 import type { ServerFormData } from "@/shared/types.js";
 import {
@@ -73,6 +75,12 @@ export type RunExcalidrawQuickstartOptions = {
    * user is already working with, instead of just `hosts[0]`.
    */
   previewedHostId: string | null;
+  /**
+   * Where to land once the suite exists. Defaults to the shipped Evals tab;
+   * Evaluate (New) passes its own so the quickstart does not drop the reader
+   * into the other surface's copy of the same suite.
+   */
+  navigate?: (route: EvalRoute) => void;
 };
 
 const SERVER_WAIT_TIMEOUT_MS = 15_000;
@@ -176,6 +184,7 @@ export async function runExcalidrawQuickstart(
     isExcalidrawConnected,
     existingQuickstartSuiteId,
     previewedHostId,
+    navigate = navigatePlaygroundEvalsRoute,
   } = options;
 
   track("eval_excalidraw_quickstart_clicked", {
@@ -186,7 +195,7 @@ export async function runExcalidrawQuickstart(
   });
 
   if (existingQuickstartSuiteId) {
-    navigatePlaygroundEvalsRoute({
+    navigate({
       type: "suite-overview",
       suiteId: existingQuickstartSuiteId,
     });
@@ -200,10 +209,7 @@ export async function runExcalidrawQuickstart(
   // The Convex projectServers row lags the local connect dispatch; without
   // an id we can't build a server attachment, so the chip would render
   // "pick one" on the new suite. Poll until the row materializes.
-  const excalidrawServerId = await waitForExcalidrawServerId(
-    convex,
-    projectId,
-  );
+  const excalidrawServerId = await waitForExcalidrawServerId(convex, projectId);
   if (!excalidrawServerId) {
     toast.error(
       "Could not connect to the Excalidraw server in time. Try again in a moment.",
@@ -260,6 +266,10 @@ export async function runExcalidrawQuickstart(
       await createTestCase({
         ...caseDraft,
         suiteId: createdSuiteId,
+        // Minted per case, not per curated draft: the drafts are a module-level
+        // constant, so an id baked into one would be reused by every quickstart
+        // ever run and collide on the second suite.
+        caseId: mintCaseId(),
         // The Convex mutation rejects `promptTurns`; describe the curated
         // case as unified `steps` derived from its query + expected calls.
         steps: buildStepsForCaseInput(caseDraft),
@@ -284,14 +294,12 @@ export async function runExcalidrawQuickstart(
       `Created ${createdCases} of ${EXCALIDRAW_QUICKSTART_CASES.length} cases. The suite is ready — you can fill in the rest manually.`,
     );
   } else if (hostAttachments.length === 0) {
-    toast.success(
-      "Excalidraw quickstart ready. Attach a client to run it.",
-    );
+    toast.success("Excalidraw quickstart ready. Attach a client to run it.");
   } else {
     toast.success("Excalidraw quickstart ready. Connect, then run.");
   }
 
-  navigatePlaygroundEvalsRoute({
+  navigate({
     type: "suite-overview",
     suiteId: createdSuiteId,
   });

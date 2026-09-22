@@ -15,6 +15,8 @@ import {
   useEffect,
   useLayoutEffect,
 } from "react";
+import { applyToolResultPolicy } from "@mcpjam/sdk/widget-runtime";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 // Re-exported from the WidgetHost contract module so this cluster file stays
 // free of `@/lib/client-styles` (Tier-B guard).
@@ -475,12 +477,28 @@ export function useToolInputStreaming({
     const outputKey = `${toolCallId}:${serialized}`;
     if (lastToolOutputRef.current === outputKey) return;
     lastToolOutputRef.current = outputKey;
+    // Same host policy the widget's OWN tool calls go through
+    // (host-app-bridge `oncalltool`): a host that strips `structuredContent`
+    // strips it from the result the widget is born with too, not just from
+    // results it fetches later.
+    const shaped = applyToolResultPolicy(
+      toolOutput as Partial<CallToolResult>,
+      mcpAppsCapabilitiesRef.current?.toolResult,
+    );
     // Apps-compat seam (§1D): cast to the bridge's own CallToolResult
     // (ext-apps v1-sdk peer) rather than the v2 client's nominal type.
     bridge.sendToolResult(
-      toolOutput as Parameters<typeof bridge.sendToolResult>[0],
+      shaped as Parameters<typeof bridge.sendToolResult>[0],
     );
-  }, [isReady, toolCallId, toolOutput, toolState, bridgeRef, reinitCount]);
+  }, [
+    isReady,
+    toolCallId,
+    toolOutput,
+    toolState,
+    bridgeRef,
+    reinitCount,
+    mcpAppsCapabilitiesRef,
+  ]);
 
   // 7. Tool error/cancellation delivery
   useEffect(() => {

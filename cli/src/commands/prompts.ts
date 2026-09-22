@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { listPrompts, getPrompt } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral.js";
+import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
@@ -15,7 +16,7 @@ import {
   resolveAliasedStringOption,
 } from "../lib/server-config.js";
 import { resolveHostFromOptions } from "../lib/host-resolve.js";
-import { writeResult } from "../lib/output.js";
+import { usageError, writeResult } from "../lib/output.js";
 
 export function registerPromptCommands(program: Command): void {
   const prompts = program
@@ -73,6 +74,14 @@ export function registerPromptCommands(program: Command): void {
         .option(
           "--prompt-args <json>",
           "Prompt arguments as JSON, @path, or - for stdin",
+        )
+        .option(
+          "--interactive",
+          "Drive the modern input_required (multi-round-trip) loop: render embedded elicitations to the terminal and collect responses from stdin",
+        )
+        .option(
+          "--yes",
+          "With --interactive, run non-interactively: decline every embedded input request instead of prompting",
         ),
     ),
     ),
@@ -97,6 +106,15 @@ export function registerPromptCommands(program: Command): void {
       ...options,
       timeout: globalOptions.timeout,
     });
+    if (options.interactive && options.promptArgs === "-") {
+      // `-` drains `process.stdin` for the argument JSON, which is the same
+      // stream the interactive collector reads its answers from.
+      throw usageError(
+        "--interactive cannot be used together with --prompt-args -: " +
+          "interactive answers are read from stdin too. Pass the arguments as " +
+          "JSON or @path.",
+      );
+    }
     const promptArguments = parsePromptArguments(options.promptArgs);
 
     const result = await withEphemeralManager(
@@ -112,6 +130,8 @@ export function registerPromptCommands(program: Command): void {
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
         host: host?.connection,
+        beforeConnect: buildMrtrBeforeConnect(options),
+        interactiveElicitation: options.interactive === true,
       },
     );
 

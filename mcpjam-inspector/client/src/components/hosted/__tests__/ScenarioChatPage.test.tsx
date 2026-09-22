@@ -1,0 +1,2953 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ScenarioChatPage } from "../ScenarioChatPage";
+import { scenarioIntroDismissedStorageKey } from "../useScenarioHostIntroGate";
+import {
+  SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+  clearScenarioSession,
+  readScenarioSession,
+  writeScenarioSession,
+} from "@/lib/scenario-session";
+import {
+  readScenarioChatTranscript,
+  writeScenarioChatTranscript,
+} from "@/lib/scenario-chat-transcript";
+import {
+  clearHostedOAuthResumeMarker,
+  writeHostedOAuthResumeMarker,
+} from "@/lib/hosted-oauth-resume";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
+
+const {
+  mockConvexAuthState,
+  mockWorkOsAuthState,
+  mockGetAccessToken,
+  mockSignIn,
+  mockSignUp,
+  mockSignOut,
+  mockGetStoredTokens,
+  mockInitiateOAuth,
+  mockValidateHostedServer,
+  mockCheckHostedServerOAuthRequirement,
+  mockChatTabV2,
+  mockUseApiContext,
+  mockAuthFetch,
+  mockPosthogCapture,
+  mockIsEmbeddedPreview,
+} = vi.hoisted(() => ({
+  mockConvexAuthState: {
+    isAuthenticated: true,
+    isLoading: false,
+  },
+  mockWorkOsAuthState: {
+    user: { id: "user_123" },
+    isLoading: false,
+  },
+  mockGetAccessToken: vi.fn(),
+  mockSignIn: vi.fn(),
+  mockSignUp: vi.fn(),
+  mockSignOut: vi.fn(),
+  mockGetStoredTokens: vi.fn(),
+  mockInitiateOAuth: vi.fn(async () => ({ success: false })),
+  mockValidateHostedServer: vi.fn(),
+  mockCheckHostedServerOAuthRequirement: vi.fn(),
+  mockChatTabV2: vi.fn(),
+  mockUseApiContext: vi.fn(),
+  mockAuthFetch: vi.fn(),
+  mockPosthogCapture: vi.fn(),
+  mockIsEmbeddedPreview: vi.fn<() => boolean>(() => false),
+}));
+
+vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
+  useConvexAuth: () => mockConvexAuthState,
+  // `useScenarioTurnRating` runs unconditionally (hooks rule) even when the
+  // scenario has per-turn ratings off, so the double has to answer both.
+  useMutation: () => vi.fn().mockResolvedValue({ status: "ok" }),
+  useQuery: () => undefined,
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    getAccessToken: mockGetAccessToken,
+    signIn: mockSignIn,
+    signUp: mockSignUp,
+    signOut: mockSignOut,
+    user: mockWorkOsAuthState.user,
+    isLoading: mockWorkOsAuthState.isLoading,
+  }),
+}));
+
+vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
+  useApiContext: mockUseApiContext,
+}));
+
+vi.mock("@/lib/session-token", () => ({
+  authFetch: mockAuthFetch,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({
+    capture: mockPosthogCapture,
+  }),
+  useFeatureFlagEnabled: () => false,
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockPosthogCapture(...args),
+}));
+
+vi.mock("@/lib/apis/web/servers-api", () => ({
+  validateHostedServer: mockValidateHostedServer,
+  checkHostedServerOAuthRequirement: mockCheckHostedServerOAuthRequirement,
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
+
+vi.mock("@/components/ChatTabV2", () => ({
+  ChatTabV2: (props: {
+    onOAuthRequired?: (details?: {
+      serverUrl?: string | null;
+      serverId?: string | null;
+      serverName?: string | null;
+    }) => void;
+    reasoningDisplayMode?: string;
+    loadingIndicatorVariant?: string;
+  }) => {
+    mockChatTabV2(props);
+    const { onOAuthRequired } = props;
+    return (
+      <div>
+        <div data-testid="scenario-chat-tab" />
+        {onOAuthRequired ? (
+          <>
+            <button type="button" onClick={() => onOAuthRequired()}>
+              Trigger OAuth
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onOAuthRequired({
+                  serverId: "srv_asana",
+                  serverName: "asana",
+                  serverUrl: "https://mcp.asana.com/sse",
+                })
+              }
+            >
+              Trigger targeted OAuth
+            </button>
+          </>
+        ) : null}
+      </div>
+    );
+  },
+}));
+
+vi.mock("@/lib/oauth/mcp-oauth", () => ({
+  getStoredTokens: mockGetStoredTokens,
+  initiateOAuth: mockInitiateOAuth,
+}));
+
+// jsdom can't put the page inside a real same-origin iframe, so stub the
+// embed detector; the hash-sync helpers keep their real implementations.
+vi.mock("@/lib/embedded-preview", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/embedded-preview")
+  >();
+  return {
+    ...actual,
+    isEmbeddedPreview: () => mockIsEmbeddedPreview(),
+  };
+});
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+describe("ScenarioChatPage", () => {
+  function createFetchResponse(
+    body: unknown,
+    overrides: Partial<{
+      ok: boolean;
+      status: number;
+      statusText: string;
+    }> = {},
+  ) {
+    return {
+      ok: overrides.ok ?? true,
+      status: overrides.status ?? 200,
+      statusText: overrides.statusText ?? "OK",
+      json: async () => body,
+      text: async () =>
+        typeof body === "string" ? body : JSON.stringify(body),
+      headers: new Headers(),
+    } as Response;
+  }
+
+  /**
+   * Marks the recording notice as already answered for this study (BB-176).
+   *
+   * The notice is unconditional on first land and blocks the composer, so a
+   * test about anything ELSE — the OAuth gate, access recovery, the header —
+   * has to get past it first. Seeding the latch is how a test says "this is a
+   * tester who already consented", which keeps its assertions about the thing
+   * actually under test. The consent tests below deliberately do not call it.
+   */
+  function consentAlreadyGiven(scenarioId = "sbx_1") {
+    sessionStorage.setItem(scenarioIntroDismissedStorageKey(scenarioId), "1");
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    clearScenarioSession();
+    clearHostedOAuthResumeMarker();
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = { id: "user_123" };
+    mockWorkOsAuthState.isLoading = false;
+    mockGetAccessToken.mockReset();
+    mockSignIn.mockReset();
+    mockSignUp.mockReset();
+    mockSignOut.mockReset();
+    mockGetStoredTokens.mockReset();
+    mockInitiateOAuth.mockReset();
+    mockValidateHostedServer.mockReset();
+    mockCheckHostedServerOAuthRequirement.mockReset();
+    mockChatTabV2.mockReset();
+    mockUseApiContext.mockReset();
+    mockAuthFetch.mockReset();
+    mockPosthogCapture.mockReset();
+    mockIsEmbeddedPreview.mockReset();
+    mockIsEmbeddedPreview.mockReturnValue(false);
+
+    mockGetAccessToken.mockResolvedValue("workos-token");
+    mockGetStoredTokens.mockReturnValue(null);
+    mockInitiateOAuth.mockResolvedValue({ success: false });
+    mockValidateHostedServer.mockResolvedValue({
+      success: true,
+      status: "connected",
+      initInfo: null,
+    });
+    // These fixtures model genuinely OAuth-backed servers (asana, linear), so
+    // the requirement probe says "yes" unless a test overrides it. The gate now
+    // asks this instead of trusting the payload's `useOAuth` compat mirror.
+    mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+      useOAuth: true,
+      requiresAuthorization: true,
+      effectiveAuthMethod: "oauth",
+      serverUrl: null,
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        bootstrap: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Resolved Scenario",
+          description: "Hosted scenario",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("gates account-required links on the backend guest-bearer refusal without loading a preview", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null as any;
+    mockAuthFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "SCENARIO_SIGN_IN_REQUIRED",
+          error: "Sign in to preview this scenario.",
+        }),
+        { status: 401 },
+      ),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/private-token?surface=preview",
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
+    expect(mockSignUp).toHaveBeenCalledOnce();
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/private-token?surface=preview",
+    );
+    expect(
+      mockPosthogCapture.mock.calls.flat().map(String).join(" "),
+    ).not.toContain("private-token");
+  });
+
+  it("keeps account-required iframe previews free of authentication actions", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    mockAuthFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create an account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" }),
+    ).toBeInTheDocument();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(mockSignUp).not.toHaveBeenCalled();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "?surface=preview"])(
+    "preserves the return surface through switching accounts and signing in: %s",
+    async (query) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/switch-token${query}`,
+      );
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "FORBIDDEN",
+            details: { code: "SCENARIO_INVITE_ONLY" },
+            message:
+              "This scenario is invite-only - ask the owner to invite you.",
+          },
+          { ok: false, status: 403 },
+        ),
+      );
+      const view = render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Switch accounts" }),
+      );
+      const returnTo = mockSignOut.mock.calls[0][0].returnTo;
+      const destination = new URL(returnTo);
+      expect(destination.pathname).toBe("/user-testing/scenario/switch-token");
+      expect(destination.search).toBe(query);
+      view.unmount();
+
+      // Follow the logout return as a signed-out visitor, then choose sign-in.
+      window.history.replaceState(
+        {},
+        "",
+        destination.pathname + destination.search,
+      );
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      mockAuthFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+          status: 401,
+        }),
+      );
+      render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe(`/user-testing/scenario/switch-token${query}`);
+    },
+  );
+
+  it.each(["", "?surface=preview"])(
+    "returns from sign-in and redeems with the account bearer: %s",
+    async (query) => {
+      const bootstrap = await (await mockAuthFetch()).json();
+      mockAuthFetch.mockClear();
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "UNAUTHORIZED",
+            details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+          },
+          { ok: false, status: 401 },
+        ),
+      );
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/return-token${query}`,
+      );
+      const view = render(<ScenarioChatPage pathToken="return-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      const destination = localStorage.getItem(
+        SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+      )!;
+      expect(destination).toBe(`/user-testing/scenario/return-token${query}`);
+      expect(mockChatTabV2).not.toHaveBeenCalled();
+      view.unmount();
+      // App's callback suite verifies restoring this destination after AuthKit.
+      window.history.replaceState({}, "", destination);
+      mockWorkOsAuthState.user = { id: "signed-in-tester" };
+      mockConvexAuthState.isAuthenticated = true;
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          ...bootstrap,
+          bootstrap: { ...bootstrap.bootstrap, requiresSignIn: true },
+        }),
+      );
+      render(<ScenarioChatPage pathToken="return-token" />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe(
+          "signed-in-tester",
+        ),
+      );
+      expect(mockAuthFetch).toHaveBeenLastCalledWith(
+        "/api/web/scenarios/redeem",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer workos-token",
+          }),
+          body: JSON.stringify({ scenarioToken: "return-token" }),
+        }),
+      );
+      expect(readScenarioSession()?.surface).toBe(
+        query ? "preview" : "share_link",
+      );
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("opens guest-permitted links without an anonymous probe or account sign-in", async () => {
+    const bootstrap = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockClear();
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...bootstrap,
+        bootstrap: {
+          ...bootstrap.bootstrap,
+          mode: "anyone_with_link",
+          requiresSignIn: false,
+          allowGuestAccess: true,
+        },
+      }),
+    );
+    consentAlreadyGiven();
+    render(<ScenarioChatPage pathToken="guest-link" />);
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(
+      new Headers(mockAuthFetch.mock.calls[0][1].headers).has("Authorization"),
+    ).toBe(false);
+    expect(readScenarioSession()?.payload.allowGuestAccess).toBe(true);
+    expect(mockGetAccessToken).not.toHaveBeenCalled();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.anything(),
+    );
+  });
+
+  it("does not carry the account requirement to a different guest-permitted link", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    const view = render(<ScenarioChatPage pathToken="restricted-link" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.payload.requiresSignIn).toBe(true),
+    );
+    mockWorkOsAuthState.user = null;
+    mockConvexAuthState.isAuthenticated = false;
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: false,
+          allowGuestAccess: true,
+          mode: "anyone_with_link",
+        },
+      }),
+    );
+    view.rerender(<ScenarioChatPage pathToken="guest-link" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.shareToken).toBe("guest-link"),
+    );
+    expect(readScenarioSession()?.payload.allowGuestAccess).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("preserves preview return after the URL is stripped and the account logs out", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/preview-token?surface=preview",
+    );
+    const view = render(<ScenarioChatPage pathToken="preview-token" />);
+    await waitFor(() => expect(readScenarioSession()?.surface).toBe("preview"));
+    view.rerender(<ScenarioChatPage />);
+    await waitFor(() => expect(readScenarioSession()?.surface).toBe("preview"));
+    mockWorkOsAuthState.user = null;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/preview-token?surface=preview",
+    );
+    expect(readScenarioSession()).toBeNull();
+  });
+
+  it("clears protected preview data on logout and re-redeems after account changes", async () => {
+    const base = await mockAuthFetch();
+    const body = await base.json();
+    const response = () =>
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: true,
+          allowGuestAccess: false,
+        },
+      });
+    mockAuthFetch.mockClear();
+    mockAuthFetch.mockImplementation(async () => response());
+    const view = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+    );
+    mockWorkOsAuthState.user = null as any;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(readScenarioSession()).toBeNull();
+    const callsAtLogout = mockAuthFetch.mock.calls.length;
+    mockWorkOsAuthState.user = { id: "different-account" };
+    mockConvexAuthState.isAuthenticated = true;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe(
+        "different-account",
+      ),
+    );
+    expect(mockAuthFetch.mock.calls.length).toBeGreaterThan(callsAtLogout);
+  });
+
+  it("never falls back to guests when the account token expires", async () => {
+    mockGetAccessToken.mockRejectedValue(new Error("Login required"));
+    render(<ScenarioChatPage pathToken="expired-account" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("applies scenario host style data attributes while keeping MCPJam branding", async () => {
+    writeScenarioSession({
+      scenarioId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_1",
+        name: "ChatGPT Scenario",
+        description: "Hosted scenario",
+        hostStyle: "chatgpt",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+
+    const { container } = render(<ScenarioChatPage />);
+
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="chatgpt"]'),
+    ).toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasoningDisplayMode: "hidden",
+      }),
+    );
+  });
+
+  it("does not brand the shell as Claude while the link is still redeeming", async () => {
+    // Reported by testers on an org-invited scenario: the header showed the
+    // Claude mark and the word "Claude" for the whole load, on a scenario that
+    // wasn't a Claude host at all. The redeem is held open here so the
+    // bootstrapping frame is the one under assertion.
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_loading" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]'),
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]'),
+    ).toBeInTheDocument();
+    // No host identity is claimed until the redeem says which host this is —
+    // painting one brand and swapping to another reads as a glitch.
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+    // The visible placeholder is decorative, so the heading has to carry the
+    // shell's name for a screen reader in the meantime.
+    expect(
+      screen.getByRole("heading", { name: "Loading scenario" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not wear the previous scenario's brand while a new link redeems", async () => {
+    // sessionStorage outlives the page, so a tester opening a second link still
+    // holds the first scenario's session. Dressing the redemption in that
+    // scenario's host is the same impersonation as seeding one — the stored
+    // session simply supplies the wrong vendor instead of a hardcoded one.
+    writeScenarioSession({
+      scenarioId: "sbx_previous",
+      accessVersion: 1,
+      shareToken: "tok_previous",
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_previous",
+        name: "Previous Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_new" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]'),
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+  });
+
+  it("does not lend the previous scenario's checklist to a redeeming link", async () => {
+    // Same rule as the brand above, and the same reason: the stored session
+    // outlives the page, so a tester opening a second link still holds the
+    // first study's tasks. Ticking them off would be checking items off a
+    // list that belongs to a study they are no longer in.
+    writeScenarioSession({
+      scenarioId: "sbx_previous",
+      accessVersion: 1,
+      shareToken: "tok_previous",
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_previous",
+        name: "Previous Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+        chatUi: {
+          surfaces: { tasks: { items: [{ id: "t1", title: "Old task" }] } },
+        },
+      },
+    });
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    render(<ScenarioChatPage pathToken="tok_new" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      screen.queryByTestId("scenario-tasks-trigger"),
+    ).not.toBeInTheDocument();
+  });
+
+  // Removed: "uses the Claude loading indicator variant for Claude-style
+  // hosted scenarios". The indicator no longer flows through a
+  // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
+  // it from `ScenarioHostStyleProvider` context. Behavior is covered in
+  // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
+
+  it("shows curated copy for an invalid or expired scenario link", async () => {
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "NOT_FOUND",
+          message:
+            "Uncaught Error: This scenario link is invalid or has expired. at resolveScenarioBootstrapForUser (../../convex/scenarios.ts:309:14) at async handler (../../convex/scenarios.ts:1088:6)",
+        },
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="stale-token" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Link Unavailable" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This link is invalid or expired. Ask whoever shared it for a new one if you still need access.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Uncaught Error:/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/resolveScenarioBootstrapForUser/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says a scenario was archived, rather than showing the generic failure", async () => {
+    // The link redeemed fine and the access check passed — its environment was
+    // archived on purpose. The backend authored the visitor-facing copy and
+    // sends the reason in `details.code`; showing "we couldn't open this"
+    // instead makes a deliberate retirement look like an outage.
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "CONFLICT",
+          message:
+            "This link has been archived by its owner and can no longer be opened.",
+          details: { code: "ENV_ARCHIVED" },
+        },
+        { ok: false, status: 410, statusText: "Gone" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="archived-token" />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "This link has been archived",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This link has been archived by its owner and can no longer be opened.",
+      ),
+    ).toBeInTheDocument();
+    // Signing in cannot un-archive an environment, so no sign-in CTA.
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the not-archived copy for other environment failures", async () => {
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "CONFLICT",
+          message:
+            "This link isn't available right now — the setup behind it can't be loaded.",
+          details: { code: "ENV_PLUGIN_UNAVAILABLE" },
+        },
+        { ok: false, status: 409, statusText: "Conflict" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="unresolvable-token" />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "This link isn't available right now",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("persists the redeemed session to sessionStorage when standalone", async () => {
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readScenarioSession()?.scenarioId).toBe("sbx_1");
+    });
+  });
+
+  it("keeps the embedded Preview iframe out of the tab-shared session", async () => {
+    // The Preview pane iframe is same-origin, so it shares sessionStorage
+    // with the outer dashboard. The embed must boot purely from its URL
+    // token: never adopt the outer app's stored session, and never write
+    // its own (a stored session makes the outer App render the scenario
+    // runtime instead of the dashboard on the next reload).
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    const outerSession = {
+      scenarioId: "sbx_outer",
+      accessVersion: 7,
+      payload: {
+        projectId: "ws_outer",
+        scenarioId: "sbx_outer",
+        name: "Outer Dashboard Scenario",
+        description: "Hosted scenario",
+        hostStyle: "chatgpt" as const,
+        mode: "invited_only" as const,
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    };
+    writeScenarioSession(outerSession);
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    // Booted by redeeming the URL token, not by adopting the stored session.
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.objectContaining({
+        body: JSON.stringify({ scenarioToken: "scenario-token" }),
+      }),
+    );
+    // The outer app's session survives the embed untouched.
+    expect(readScenarioSession()).toMatchObject({
+      scenarioId: "sbx_outer",
+      accessVersion: 7,
+    });
+  });
+
+  it("drops the stored transcript when the link no longer redeems", async () => {
+    // The other half of the teardown: a redeem that fails is just as terminal
+    // as a revocation, and the resume must not outlive the grant.
+    writeScenarioSession({
+      scenarioId: "sbx_stale",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_stale",
+        scenarioId: "sbx_stale",
+        name: "Stored Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude" as const,
+        mode: "invited_only" as const,
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+    writeScenarioChatTranscript("sbx_stale", {
+      chatSessionId: "chat-stale",
+      messages: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any[],
+    });
+    writeScenarioChatTranscript("sbx_other", {
+      chatSessionId: "chat-other",
+      messages: [
+        { id: "user-2", role: "user", parts: [{ type: "text", text: "yo" }] },
+      ] as any[],
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse(
+        { error: "Scenario link is no longer valid" },
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
+    );
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    await waitFor(() => expect(readScenarioSession()).toBeNull());
+    expect(readScenarioChatTranscript("sbx_stale")).toBeNull();
+    // A different scenario the same tab happens to hold is left alone.
+    expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
+      "chat-other",
+    );
+  });
+
+  it("leaves the tab-shared transcript alone inside the Preview embed", async () => {
+    // Same rule as the session itself: the embed shares sessionStorage with the
+    // outer dashboard, so it must neither read nor delete what lives there.
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    writeScenarioChatTranscript("sbx_outer", {
+      chatSessionId: "chat-outer",
+      messages: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any[],
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse(
+        { error: "Scenario link is no longer valid" },
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
+    );
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    expect(readScenarioChatTranscript("sbx_outer")?.chatSessionId).toBe(
+      "chat-outer",
+    );
+  });
+
+  it("survives a teardown with no scenario id to clear", async () => {
+    // No stored session, so the failing redeem has no scenario to name. The
+    // clear must be a no-op rather than a crash — and must not sweep the tab.
+    clearScenarioSession();
+    writeScenarioChatTranscript("sbx_other", {
+      chatSessionId: "chat-other",
+      messages: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any[],
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse(
+        { error: "Scenario link is no longer valid" },
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
+    );
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    expect(readScenarioSession()).toBeNull();
+    expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
+      "chat-other",
+    );
+  });
+
+  it("waits for active WorkOS and Convex loading to settle before bootstrapping the link", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+    mockWorkOsAuthState.user = { id: "user_settling" };
+    mockWorkOsAuthState.isLoading = true;
+
+    const { rerender } = render(<ScenarioChatPage pathToken="token-workos" />);
+
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      }),
+    ).not.toBeInTheDocument();
+    expect(mockUseApiContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: null,
+        serverIdsByName: {},
+        scenarioId: undefined,
+        accessVersion: undefined,
+        isAuthenticated: true,
+        hasSession: true,
+      }),
+    );
+
+    mockWorkOsAuthState.isLoading = false;
+    mockConvexAuthState.isLoading = false;
+    mockConvexAuthState.isAuthenticated = true;
+    rerender(<ScenarioChatPage pathToken="token-workos" />);
+
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.objectContaining({
+        body: JSON.stringify({ scenarioToken: "token-workos" }),
+      }),
+    );
+    expect(mockPosthogCapture).toHaveBeenCalledWith(
+      "scenario_bootstrap_started",
+      expect.objectContaining({
+        surface: "scenario",
+        auth_mode: "workos",
+        status: "started",
+      }),
+    );
+  });
+
+  it("does not stay stuck resolving auth when WorkOS is hydrated but Convex remains unauthenticated", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = { id: "user_stalled_convex" };
+    mockWorkOsAuthState.isLoading = false;
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="token-stalled-convex" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.objectContaining({
+        body: JSON.stringify({ scenarioToken: "token-stalled-convex" }),
+      }),
+    );
+  });
+
+  describe("guest refused a frontier model", () => {
+    function renderGuestLinkScenario() {
+      mockWorkOsAuthState.user = null;
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/user-testing/test/token-guest");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({
+          scenarioId: "sbx_1",
+          accessVersion: 1,
+          bootstrap: {
+            projectId: "ws_1",
+            scenarioId: "sbx_1",
+            name: "Guest Scenario",
+            hostStyle: "claude",
+            mode: "anyone_with_link",
+            allowGuestAccess: true,
+            viewerIsProjectMember: false,
+            systemPrompt: "",
+            modelId: "anthropic/claude-sonnet-4.5",
+            temperature: 0.7,
+            requireToolApproval: false,
+            servers: [],
+          },
+        }),
+      );
+      return render(<ScenarioChatPage pathToken="token-guest" />);
+    }
+
+    afterEach(() => {
+      useFrontierSignInDialogStore.setState({ isOpen: false, override: null });
+    });
+
+    it("shows the scenario sign-in gate instead of the model dialog", async () => {
+      renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(
+        await screen.findByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).toBeInTheDocument();
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe("/user-testing/scenario/token-guest");
+    });
+
+    it("hands the dialog back once the page unmounts", async () => {
+      const { unmount } = renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      unmount();
+
+      useFrontierSignInDialogStore.getState().open();
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+    });
+
+    it("leaves a signed-in visitor on the model dialog", async () => {
+      consentAlreadyGiven();
+      render(<ScenarioChatPage pathToken="token-signed-in" />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the access denied sign-in path intact", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    window.history.replaceState({}, "", "/user-testing/test/token-denied");
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="token-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Sign in",
+      }),
+    );
+
+    expect(mockSignIn).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/token-denied",
+    );
+  });
+
+  /**
+   * SUTB-6. The author's Preview embed must never be told to sign in: the
+   * only sign-in the frame can perform returns to `/oauth/callback`, outside
+   * the `main.tsx` self-embed exemption, so the frame lands on
+   * `IframeRouterError`. The denial itself still shows — it's the honest
+   * answer — minus the CTA that cannot work.
+   */
+  it("offers no sign-in CTA when the denial lands inside the preview embed", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/test/token-denied?surface=preview",
+    );
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="token-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the sign-in CTA for guest-blocked links only after bootstrap denies access", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "Guests cannot access Test Scenario. This scenario does not allow guest access.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="token-guest-blocked" />);
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      }),
+    ).not.toBeInTheDocument();
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Sign in",
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockPosthogCapture).toHaveBeenCalledWith(
+        "interactive_signin_required",
+        expect.objectContaining({
+          surface: "scenario",
+          auth_mode: "guest",
+          status: "required",
+          error_kind: "guest_blocked",
+        }),
+      ),
+    );
+  });
+
+  it("does not show the sign-in CTA when an authenticated viewer is denied", async () => {
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = { id: "user_denied" };
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="token-auth-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a generic fallback for unexpected scenario bootstrap failures", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "INTERNAL_ERROR",
+          message:
+            "Uncaught Error: Internal database exploded at handler (../../convex/scenarios.ts:1088:6)",
+        },
+        { ok: false, status: 500, statusText: "Internal Server Error" },
+      ),
+    );
+
+    render(<ScenarioChatPage pathToken="broken-token" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Link Unavailable" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "We couldn't open this link right now. Please try again or open MCPJam.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Internal database exploded/),
+    ).not.toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[ScenarioChatPage] Failed to bootstrap scenario",
+      expect.objectContaining({
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "Internal database exploded",
+      }),
+    );
+  });
+
+  it("auto-resumes scenario OAuth after callback completion", async () => {
+    // A resuming tester consented before the redirect, in this tab. Seeded
+    // because the notice is no longer suppressed while OAuth is busy — the
+    // suppression let a NEW tab (shared `localStorage` resume marker, empty
+    // per-tab consent latch) authorize before being told it was recorded.
+    consentAlreadyGiven();
+    vi.useFakeTimers();
+    let hasToken = false;
+    mockGetStoredTokens.mockImplementation(() =>
+      hasToken ? { access_token: "scenario-token" } : null,
+    );
+    // Held open so the in-flight verification frame is observable: the
+    // requirement probe now resolves before the gate reacts, so an immediately
+    // resolving validation would settle in the same flush and the "Finishing
+    // authorization" layer would never be rendered.
+    let resolveValidation: ((value: unknown) => void) | null = null;
+    mockValidateHostedServer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveValidation = resolve;
+        }),
+    );
+
+    writeScenarioSession({
+      scenarioId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_1",
+        name: "Asana Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+    writeHostedOAuthResumeMarker({
+      surface: "scenario",
+      serverName: "Asana Production",
+      serverUrl: "https://mcp.asana.com/sse",
+    });
+
+    render(<ScenarioChatPage />);
+
+    // The gate admits a server only once the authorization requirement probe
+    // has answered for it, so let that settle before asserting on the overlay.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Finishing authorization" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Authorize" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      hasToken = true;
+      resolveValidation?.({
+        success: true,
+        status: "connected",
+        initInfo: null,
+      });
+      await vi.runAllTimersAsync();
+    });
+
+    expect(screen.getByTestId("scenario-chat-tab")).toBeInTheDocument();
+    expect(mockValidateHostedServer).toHaveBeenCalledWith(
+      "srv_asana",
+      undefined,
+      undefined,
+      expect.objectContaining({
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        accessScope: "chat_v2",
+        scenarioId: "sbx_1",
+      }),
+    );
+    expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds guest scenario OAuth behind the recording notice", async () => {
+    // Consent comes BEFORE authorization: the tester is agreeing to the
+    // session being read at all, which is a precondition for it, not one step
+    // among several. Nothing may be validated against a server first.
+    mockConvexAuthState.isAuthenticated = false;
+    writeScenarioSession({
+      scenarioId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_1",
+        name: "Asana Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: true,
+        viewerIsProjectMember: false,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<ScenarioChatPage />);
+
+    expect(
+      await screen.findByText("This session will be recorded"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Continue" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Finishing authorization" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+  });
+
+  it("shows curated copy instead of transport details when scenario OAuth validation fails", async () => {
+    consentAlreadyGiven();
+    vi.useFakeTimers();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
+    mockValidateHostedServer.mockRejectedValue(
+      new Error(
+        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)',
+      ),
+    );
+
+    writeScenarioSession({
+      scenarioId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_1",
+        name: "Asana Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<ScenarioChatPage />);
+
+    // See above: the requirement probe resolves before the gate reacts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Finishing authorization" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Your authorization expired or was rejected. Authorize again to continue.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/SSE error/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Non-200 status code/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Authorize again" }),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[useHostedOAuthGate] OAuth validation failed",
+      expect.objectContaining({
+        surface: "scenario",
+        serverId: "srv_asana",
+        serverName: "asana",
+      }),
+    );
+  });
+
+  it("re-enters the scenario OAuth gate when chat reports OAuth is required", async () => {
+    consentAlreadyGiven();
+    mockGetStoredTokens.mockReturnValue({ access_token: "scenario-token" });
+
+    writeScenarioSession({
+      scenarioId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_1",
+        name: "Asana Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<ScenarioChatPage />);
+
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+
+    // Settle the gate before reporting the 401. A server joins the authorizable
+    // set only once the requirement probe has answered for it, and it verifies
+    // its stored credential after that — so clicking earlier races both, and
+    // the resulting state depends on which promise won. An unblocked composer
+    // is the observable "everything has settled" signal.
+    await waitFor(() =>
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scenarioComposerBlocked: false }),
+      ),
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trigger OAuth" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("You'll return here automatically after consent."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Authorize" }),
+    ).toBeInTheDocument();
+  });
+
+  it("re-opens auth only for the matching scenario server when chat includes server details", async () => {
+    consentAlreadyGiven();
+    mockGetStoredTokens.mockImplementation((serverName: string) => {
+      if (serverName === "asana") {
+        return { access_token: "asana-token" };
+      }
+      if (serverName === "linear") {
+        return { access_token: "linear-token" };
+      }
+      return null;
+    });
+
+    writeScenarioSession({
+      scenarioId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_1",
+        name: "Asana Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+          {
+            serverId: "srv_linear",
+            serverName: "linear",
+            useOAuth: true,
+            serverUrl: "https://mcp.linear.app/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<ScenarioChatPage />);
+
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+
+    // See above: let the probe answer and the credentials verify before the 401.
+    await waitFor(() =>
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scenarioComposerBlocked: false }),
+      ),
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("asana")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Authorize again" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("linear")).not.toBeInTheDocument();
+  });
+
+  /**
+   * BB-176: the recording notice replaced the creator-authored welcome
+   * overlay. It is product-owned, unconditional on first land, and asked
+   * before authorization — see `useScenarioHostIntroGate`. Nothing here reads
+   * `chatUi.surfaces.welcome` any more.
+   */
+  describe("recording consent", () => {
+    function nonOAuthServer() {
+      return {
+        serverId: "srv_tool",
+        serverName: "tool",
+        useOAuth: false,
+        serverUrl: "https://mcp.example.com/sse",
+        clientId: null,
+        oauthScopes: null,
+      };
+    }
+
+    function writeStudy(scenarioId: string, chatUi?: Record<string, unknown>) {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        payload: {
+          projectId: "ws_1",
+          scenarioId,
+          name: "Consent Scenario",
+          description: "",
+          hostStyle: "claude",
+          mode: "anyone_with_link",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [nonOAuthServer()],
+          ...(chatUi ? { chatUi } : {}),
+        },
+      });
+    }
+
+    it("asks every tester, even a study whose creator wrote no welcome copy", async () => {
+      // The overlay this replaces appeared only when someone had typed a body,
+      // so whether a tester learned their session is read came down to whether
+      // the creator remembered to say it.
+      writeStudy("sbx_plain");
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByText("This session will be recorded"),
+      ).toBeInTheDocument();
+      // The composer is held until they answer.
+      expect(mockChatTabV2).toHaveBeenCalledWith(
+        expect.objectContaining({ scenarioComposerBlocked: true }),
+      );
+    });
+
+    it("ignores creator welcome copy rather than showing it alongside", async () => {
+      // Recording must not be buried in copy that says something else.
+      writeStudy("sbx_ignores_welcome", {
+        surfaces: {
+          welcome: { enabled: true, body: "Connect Asana before chatting." },
+        },
+      });
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByText("This session will be recorded"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Connect Asana before chatting."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Get Started" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("releases the chat on Continue and does not ask again this session", async () => {
+      writeStudy("sbx_continue");
+
+      render(<ScenarioChatPage />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Continue" }),
+      );
+
+      expect(
+        screen.queryByText("This session will be recorded"),
+      ).not.toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
+    });
+
+    it("unmounts the chat on Leave, and re-asks on rejoin", async () => {
+      // Someone who declined being recorded should not be sitting in the thing
+      // they declined — a disabled composer over a live transcript is not that.
+      writeStudy("sbx_leave");
+
+      render(<ScenarioChatPage />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(
+        await screen.findByTestId("scenario-recording-declined"),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("scenario-chat-tab")).not.toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByTestId("scenario-recording-declined-rejoin"),
+      );
+
+      expect(
+        await screen.findByText("This session will be recorded"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * BB-176: "what to try" — an always-available header control beside Copy
+   * link, holding a checklist the tester works in any order.
+   */
+  describe("what to try", () => {
+    function writeStudyWithTasks(
+      scenarioId: string,
+      items: Array<{ id: string; title: string; hint?: string }> | undefined,
+    ) {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        payload: {
+          projectId: "ws_1",
+          scenarioId,
+          name: "Tasks Scenario",
+          description: "",
+          hostStyle: "claude",
+          mode: "anyone_with_link",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [
+            {
+              serverId: "srv_tool",
+              serverName: "tool",
+              useOAuth: false,
+              serverUrl: "https://mcp.example.com/sse",
+              clientId: null,
+              oauthScopes: null,
+            },
+          ],
+          ...(items ? { chatUi: { surfaces: { tasks: { items } } } } : {}),
+        },
+      });
+      sessionStorage.setItem(scenarioIntroDismissedStorageKey(scenarioId), "1");
+    }
+
+    it("counts what is LEFT, and ticks items off locally", async () => {
+      writeStudyWithTasks("sbx_tasks", [
+        { id: "t1", title: "Find unpaid invoices" },
+        { id: "t2", title: "Draft a reminder", hint: "Any customer" },
+        { id: "t3", title: "Check the refund" },
+      ]);
+
+      render(<ScenarioChatPage />);
+
+      const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // The accessible name must keep "What to try": the consent dialog tells
+      // every tester to look for that name, and a voice-control user says it.
+      expect(screen.getByRole("button", { name: /What to try/ })).toBe(trigger);
+      expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
+        "3 unchecked",
+      );
+
+      await userEvent.click(trigger);
+      await userEvent.click(
+        await screen.findByTestId("scenario-tasks-item-t1"),
+      );
+
+      expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
+        "2 unchecked",
+      );
+      // Check state is the tester's own bookkeeping — kept in their tab and
+      // sent nowhere.
+      expect(
+        JSON.parse(
+          sessionStorage.getItem("scenario-tasks-checked-sbx_tasks") ?? "[]",
+        ),
+      ).toEqual(["t1"]);
+    });
+
+    it("says What to try once, and does not call it optional", async () => {
+      // The popover used to open on "Optional things to try" over a footnote
+      // leading with "Try any, in any order" — telling a tester the list was
+      // skippable, every single time they opened it. The list still IS
+      // optional (nothing gates the composer, nothing reports completion); it
+      // is just not what the heading should say.
+      writeStudyWithTasks("sbx_copy", [{ id: "t1", title: "Only task" }]);
+
+      render(<ScenarioChatPage />);
+
+      const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // Read the attribute rather than passing an asymmetric matcher to
+      // `toHaveAccessibleName`: that overload takes a string or a regex, and a
+      // matcher object there can pass without ever comparing anything.
+      expect(trigger.getAttribute("aria-label")).toMatch(/^What to try — /);
+      expect(trigger.getAttribute("aria-label")).not.toMatch(/optional/i);
+
+      await userEvent.click(trigger);
+      expect(
+        await screen.findByTestId("scenario-tasks-item-t1"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Optional things to try/i)).toBeNull();
+      expect(screen.queryByText(/in any order/i)).toBeNull();
+      // The footnote's other half stays. It is not framing — it is the one
+      // thing about this control a tester cannot work out by looking at it.
+      expect(
+        screen.getByText("This checklist is only for you."),
+      ).toBeInTheDocument();
+      // The heading is the trigger's name, so both now read "What to try".
+      expect(screen.getAllByText("What to try").length).toBeGreaterThan(1);
+    });
+
+    it("reads All checked rather than 0 unchecked once everything is ticked", async () => {
+      writeStudyWithTasks("sbx_done", [{ id: "t1", title: "Only task" }]);
+      sessionStorage.setItem(
+        "scenario-tasks-checked-sbx_done",
+        JSON.stringify(["t1"]),
+      );
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-tasks-remaining"),
+      ).toHaveTextContent("All checked");
+    });
+
+    it("hides the control for a study with no tasks", async () => {
+      writeStudyWithTasks("sbx_no_tasks", []);
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("scenario-tasks-trigger"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides the control on a backend that never sends the surface", async () => {
+      // Additive field: absent and empty must behave the same way.
+      writeStudyWithTasks("sbx_legacy", undefined);
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("scenario-tasks-trigger"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("never blocks the composer — it is a list, not a gate", async () => {
+      writeStudyWithTasks("sbx_not_a_gate", [
+        { id: "t1", title: "Something to try" },
+      ]);
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-tasks-trigger")).toBeVisible();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
+    });
+  });
+
+  describe("access recovery", () => {
+    function bootstrapPayload(overrides: Record<string, unknown> = {}) {
+      return {
+        projectId: "ws_1",
+        scenarioId: "sbx_recover",
+        name: "Recoverable Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "anyone_with_link",
+        allowGuestAccess: true,
+        viewerIsProjectMember: false,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: false,
+        servers: [],
+        ...overrides,
+      };
+    }
+
+    function latestHostedContext() {
+      const calls = mockChatTabV2.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | { hostedContext?: Record<string, unknown> }
+        | undefined;
+      return last?.hostedContext;
+    }
+
+    /**
+     * Mounts with the share token in the path, lets the mount redeem settle,
+     * then re-renders with no `pathToken` — which is exactly what the real App
+     * does once `syncScenarioBootstrapHash` has stripped the token out of the
+     * URL. Everything after this point has ONLY the persisted session's
+     * `shareToken` to recover from.
+     */
+    async function renderPostStrip() {
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 1,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+
+      const view = render(<ScenarioChatPage pathToken="tok_recover" />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() => expect(latestHostedContext()?.accessVersion).toBe(1));
+      mockAuthFetch.mockClear();
+      return view;
+    }
+
+    it("re-redeems with the persisted share token after the URL strip", async () => {
+      // The regression this whole path exists for: the old helper keyed off
+      // the URL token, which is gone by now, so it early-returned forever and
+      // no session could ever recover.
+      await renderPostStrip();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 9,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        accessVersion?: number;
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result).toEqual({ ok: true, accessVersion: 9 });
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/web/scenarios/redeem",
+        expect.objectContaining({
+          body: JSON.stringify({ scenarioToken: "tok_recover" }),
+        }),
+      );
+      expect(readScenarioSession()?.accessVersion).toBe(9);
+      await waitFor(() => expect(latestHostedContext()?.accessVersion).toBe(9));
+    });
+
+    it("coalesces concurrent refreshes onto one redeem round trip", async () => {
+      // N chat lanes plus the widget-capture backoff must not each mint a
+      // grant and race to write the session.
+      await renderPostStrip();
+
+      let releaseRedeem: (() => void) | undefined;
+      mockAuthFetch.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseRedeem = resolve;
+        });
+        return createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 4,
+          bootstrap: bootstrapPayload(),
+        });
+      });
+
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        accessVersion?: number;
+      }>;
+
+      const results = await act(async () => {
+        const pending = Promise.all([refresh(), refresh(), refresh()]);
+        await waitFor(() => expect(releaseRedeem).toBeDefined());
+        releaseRedeem?.();
+        return pending;
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+      expect(results).toEqual([
+        { ok: true, accessVersion: 4 },
+        { ok: true, accessVersion: 4 },
+        { ok: true, accessVersion: 4 },
+      ]);
+    });
+
+    it("reports a definitively refused redeem as denied and leaves the session mounted", async () => {
+      await renderPostStrip();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse(
+          {
+            code: "SCENARIO_MEMBERS_ONLY",
+            message: "You don't have access to Recoverable Scenario.",
+          },
+          { ok: false, status: 403, statusText: "Forbidden" },
+        ),
+      );
+
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        reason?: string;
+        error?: { status: number };
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("denied");
+      expect(result.error?.status).toBe(403);
+      // Reporting is NOT tearing down: the caller decides, and a lane that
+      // never sends again should keep its transcript.
+      expect(readScenarioSession()?.accessVersion).toBe(1);
+      expect(screen.getByTestId("scenario-chat-tab")).toBeInTheDocument();
+    });
+
+    it("treats a rate-limited redeem as transient, not terminal", async () => {
+      // Recovering on `denied` costs one extra /redeem per denied send; a 429
+      // from the backend's redeem limiter must not read as a revocation.
+      await renderPostStrip();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse(
+          { code: "RATE_LIMITED", message: "Slow down." },
+          { ok: false, status: 429, statusText: "Too Many Requests" },
+        ),
+      );
+
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        reason?: string;
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result).toMatchObject({ ok: false, reason: "transient" });
+      expect(screen.getByTestId("scenario-chat-tab")).toBeInTheDocument();
+    });
+
+    it("discards a refresh that resolves after navigating to a different scenario", async () => {
+      // The staleness guard: a token swap while the redeem is in flight must
+      // not install scenario A's freshly-minted session over scenario B's.
+      const view = await renderPostStrip();
+
+      // Only the FIRST redeem (the refresh under test) is held open; the
+      // navigation's own mount redeem resolves immediately with a different
+      // version so the two commits are distinguishable.
+      let releaseFirstRedeem: (() => void) | undefined;
+      let redeemCalls = 0;
+      mockAuthFetch.mockImplementation(async () => {
+        redeemCalls += 1;
+        if (redeemCalls === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstRedeem = resolve;
+          });
+          return createFetchResponse({
+            scenarioId: "sbx_recover",
+            accessVersion: 8,
+            bootstrap: bootstrapPayload(),
+          });
+        }
+        return createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 3,
+          bootstrap: bootstrapPayload(),
+        });
+      });
+
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        reason?: string;
+      }>;
+
+      const pending = refresh();
+      await waitFor(() => expect(releaseFirstRedeem).toBeDefined());
+
+      // Navigate to a DIFFERENT scenario while the redeem is in flight, and
+      // let its effects flush so the live token is the new one.
+      window.history.replaceState({}, "", "/user-testing/other/tok_other");
+      view.rerender(<ScenarioChatPage pathToken="tok_other" />);
+      await waitFor(() => expect(redeemCalls).toBeGreaterThanOrEqual(2));
+
+      const result = await act(async () => {
+        releaseFirstRedeem?.();
+        return pending;
+      });
+
+      expect(result).toMatchObject({ ok: false, reason: "transient" });
+      // The committed session is the navigation's (version 3), never the
+      // resolved-but-stale refresh's (version 8).
+      await waitFor(() => expect(readScenarioSession()?.accessVersion).toBe(3));
+    });
+
+    it("ignores an old account refusal and preserves the new account refresh latch", async () => {
+      const view = await renderPostStrip();
+      let refuseOld!: (response: Response) => void;
+      let finishNew!: (response: Response) => void;
+      mockAuthFetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            refuseOld = resolve;
+          }),
+      );
+      const oldRefresh = latestHostedContext()!
+        .refreshAccessSession as () => Promise<unknown>;
+      const oldPending = oldRefresh();
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledOnce());
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 2,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+      mockWorkOsAuthState.user = { id: "new-account" };
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe("new-account"),
+      );
+      mockAuthFetch.mockClear();
+      mockAuthFetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishNew = resolve;
+          }),
+      );
+      const newRefresh = latestHostedContext()!
+        .refreshAccessSession as () => Promise<unknown>;
+      const newPending = newRefresh();
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledOnce());
+      let oldResult: unknown;
+      await act(async () => {
+        refuseOld(
+          createFetchResponse(
+            { code: "SCENARIO_SIGN_IN_REQUIRED" },
+            { ok: false, status: 401 },
+          ),
+        );
+        oldResult = await oldPending;
+      });
+      expect(oldResult).toEqual({ ok: false, reason: "transient" });
+      expect(readScenarioSession()?.authenticatedUserId).toBe("new-account");
+      await act(async () => {
+        const coalesced = newRefresh();
+        finishNew(
+          createFetchResponse({
+            scenarioId: "sbx_recover",
+            accessVersion: 3,
+            bootstrap: bootstrapPayload(),
+          }),
+        );
+        await Promise.all([newPending, coalesced]);
+      });
+      expect(mockAuthFetch).toHaveBeenCalledOnce();
+      expect(readScenarioSession()?.accessVersion).toBe(3);
+    });
+
+    it("tears down to the denied landing when onAccessRevoked fires", async () => {
+      await renderPostStrip();
+
+      const onAccessRevoked = latestHostedContext()
+        ?.onAccessRevoked as (error: {
+        status: number;
+        code?: string;
+        message: string;
+      }) => void;
+
+      act(() => {
+        onAccessRevoked({
+          status: 403,
+          code: "SCENARIO_ACCESS_DENIED",
+          message: "You don't have access to Recoverable Scenario.",
+        });
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "Access Denied" }),
+      ).toBeInTheDocument();
+      expect(readScenarioSession()).toBeNull();
+    });
+
+    it("drops only the revoked scenario's transcript when access is lost", async () => {
+      // Terminal access loss: the resume must go with the grant, or the tester
+      // is offered a conversation for a scenario they can no longer open. Any
+      // OTHER scenario's row in the same tab is none of this teardown's
+      // business.
+      await renderPostStrip();
+      writeScenarioChatTranscript("sbx_recover", {
+        chatSessionId: "chat-revoked",
+        messages: [
+          { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ] as any[],
+      });
+      writeScenarioChatTranscript("sbx_other", {
+        chatSessionId: "chat-other",
+        messages: [
+          { id: "user-2", role: "user", parts: [{ type: "text", text: "yo" }] },
+        ] as any[],
+      });
+
+      const onAccessRevoked = latestHostedContext()
+        ?.onAccessRevoked as (error: {
+        status: number;
+        code?: string;
+        message: string;
+      }) => void;
+
+      act(() => {
+        onAccessRevoked({
+          status: 403,
+          code: "SCENARIO_ACCESS_DENIED",
+          message: "You don't have access to Recoverable Scenario.",
+        });
+      });
+
+      await waitFor(() => expect(readScenarioSession()).toBeNull());
+      expect(readScenarioChatTranscript("sbx_recover")).toBeNull();
+      expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
+        "chat-other",
+      );
+    });
+
+    it("in an embedded preview, refresh updates React state but never writes sessionStorage", async () => {
+      // The embed shares the tab's sessionStorage with the outer dashboard;
+      // writing there would hijack it on the next reload.
+      mockIsEmbeddedPreview.mockReturnValue(true);
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 1,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+
+      render(<ScenarioChatPage pathToken="tok_embed" />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      mockAuthFetch.mockClear();
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 5,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
+        ok: boolean;
+        accessVersion?: number;
+      }>;
+      const result = await act(async () => refresh());
+
+      expect(result).toEqual({ ok: true, accessVersion: 5 });
+      await waitFor(() => expect(latestHostedContext()?.accessVersion).toBe(5));
+      expect(readScenarioSession()).toBeNull();
+    });
+
+    it("renders the denied landing for a SCENARIO_ACCESS_DENIED bootstrap failure", async () => {
+      // The code is authoritative — no message-substring match required.
+      window.history.replaceState({}, "", "/user-testing/test/tok_code_denied");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "SCENARIO_ACCESS_DENIED",
+            message: "This scenario could not be opened.",
+          },
+          { ok: false, status: 403, statusText: "Forbidden" },
+        ),
+      );
+
+      render(<ScenarioChatPage pathToken="tok_code_denied" />);
+
+      expect(
+        await screen.findByRole("heading", { name: "Access Denied" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("authorization is demanded only when the server needs it", () => {
+    // Every case here is about the OAuth gate, so the tester has consented.
+    beforeEach(() => consentAlreadyGiven());
+
+    // SUTB-9: a shared scenario asked its recipient to authorize a server with
+    // no OAuth at all. The bootstrap payload carries `useOAuth`, a derived
+    // mirror that is true for a discover-mode (`authMethod: "auto"`) row too, so
+    // gating on it prompts for servers that have nothing to authorize against —
+    // and the only offered action, "Authorize again", can never succeed.
+    function writeSharedScenario() {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Rabona Scenario",
+          description: "Hosted scenario",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [
+            {
+              serverId: "srv_rabona",
+              serverName: "rabona",
+              // The mirror the redeem payload actually sends for this row.
+              useOAuth: true,
+              serverUrl:
+                "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+              clientId: null,
+              oauthScopes: null,
+            },
+          ],
+        },
+      });
+    }
+
+    it("lets the recipient chat immediately when the server does not require authorization", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: false,
+        effectiveAuthMethod: "discover",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // A server with no OAuth has no credential to verify, so any attempt to
+      // verify one fails — that failure is what used to render the dead-end
+      // "Authorization could not be completed. Try again." card.
+      mockValidateHostedServer.mockRejectedValue(
+        new Error(
+          'Authentication failed for MCP server "rabona": invalid_token (401)',
+        ),
+      );
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockCheckHostedServerOAuthRequirement).toHaveBeenCalledWith(
+          "srv_rabona",
+        ),
+      );
+      expect(mockValidateHostedServer).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" }),
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
+    });
+
+    it("still escalates that server to the auth gate on a real 401 at runtime", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: false,
+        effectiveAuthMethod: "discover",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" }),
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Authorization Required" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Authorize" }),
+      ).toBeInTheDocument();
+    });
+
+    it("still prompts when the 401 beats the requirement probe", async () => {
+      // A server joins the authorizable set only once the probe answers for it,
+      // and the probe retries — so a real 401 can arrive while the set is still
+      // empty. That escalation used to be dropped on the floor: it matched no
+      // server and returned silently. For a `discover` row this is the whole
+      // ballgame, because a runtime 401 is its only route to a prompt.
+      let resolveProbe: (value: unknown) => void = () => {};
+      mockCheckHostedServerOAuthRequirement.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveProbe = resolve;
+          }),
+      );
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" }),
+      );
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" }),
+      ).not.toBeInTheDocument();
+
+      await act(async () => {
+        resolveProbe({
+          useOAuth: true,
+          requiresAuthorization: false,
+          effectiveAuthMethod: "discover",
+          serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+        });
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "Authorization Required" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Authorize" }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the runtime prompt when a late probe answer rebuilds the gate", async () => {
+      // The probe answering flips `authorizationRequiredUpfront`, which rebuilds
+      // the status map from the descriptors. That rebuild must not retract a
+      // prompt the wire already proved is needed. It used to: the ids meant to
+      // survive it were collected inside a `setState` updater, which React runs
+      // lazily during render, so the guarding set was still empty when read.
+      let resolveProbe: (value: unknown) => void = () => {};
+      mockCheckHostedServerOAuthRequirement.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveProbe = resolve;
+          }),
+      );
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" }),
+      );
+
+      // "No authorization needed" is the weakest possible answer, and still not
+      // enough to overturn a 401 already observed on the wire.
+      await act(async () => {
+        resolveProbe({
+          useOAuth: true,
+          requiresAuthorization: false,
+          effectiveAuthMethod: "discover",
+          serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+        });
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "Authorization Required" }),
+      ).toBeInTheDocument();
+    });
+
+    it("does not let a verification that started earlier erase a newer 401", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // Hold the credential check open so the 401 lands while it is in flight.
+      let resolveValidation: (value: unknown) => void = () => {};
+      mockValidateHostedServer.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveValidation = resolve;
+          }),
+      );
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      await waitFor(() => expect(mockValidateHostedServer).toHaveBeenCalled());
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Trigger OAuth" }),
+      );
+      expect(
+        await screen.findByRole("heading", { name: "Authorization Required" }),
+      ).toBeInTheDocument();
+
+      // The verification now succeeds — but it was asking about a credential the
+      // 401 has since disproved, so its answer is stale and must not stand.
+      await act(async () => {
+        resolveValidation({
+          success: true,
+          status: "connected",
+          initInfo: null,
+        });
+      });
+
+      expect(
+        screen.getByRole("heading", { name: "Authorization Required" }),
+      ).toBeInTheDocument();
+    });
+
+    it("prompts the recipient when the server does require authorization", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // No usable credential for the recipient yet.
+      mockValidateHostedServer.mockRejectedValue(
+        new Error(
+          'Authentication failed for MCP server "rabona": invalid_token (401)',
+        ),
+      );
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+
+      // Settle on the terminal state: the row passes through needs_auth and
+      // verifying on the way here, and only "error" stays put.
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Authorize again" }),
+        ).toBeInTheDocument(),
+      );
+      expect(
+        screen.getByRole("heading", { name: "Authorization Required" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Authorize the required servers to continue."),
+      ).toBeInTheDocument();
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scenarioComposerBlocked: true }),
+      );
+    });
+
+    it("lets an authorized recipient chat once the credential verifies", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("releases the composer when the offered authorization cannot succeed", async () => {
+      mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+        useOAuth: true,
+        requiresAuthorization: true,
+        effectiveAuthMethod: "oauth",
+        serverUrl: "https://rabona.ignaciojimenezrocabado.workers.dev/mcp",
+      });
+      // The reported dead end: the card's only action cannot complete.
+      mockValidateHostedServer.mockRejectedValue(
+        new Error(
+          'Authentication failed for MCP server "rabona": invalid_token (401)',
+        ),
+      );
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      writeSharedScenario();
+
+      render(<ScenarioChatPage />);
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Authorize again" }),
+        ).toBeInTheDocument(),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Continue without authorizing" }),
+      );
+
+      expect(
+        screen.queryByRole("heading", { name: "Authorization Required" }),
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
+    });
+  });
+
+  describe("preview surface", () => {
+    it("keeps surface=preview on the session after the URL collapses to /#slug", async () => {
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+
+      const view = render(<ScenarioChatPage pathToken="scenario-token" />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(window.location.hash).toBe("#resolved-scenario");
+      });
+      expect(window.location.search).toBe("");
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(readScenarioSession()?.surface).toBe("preview"),
+      );
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          hostedContext: expect.objectContaining({
+            scenarioSurface: "preview",
+          }),
+        }),
+      );
+    });
+
+    function writeSurfaceSession(surface: "preview" | "share_link") {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        surface,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Surface Scenario",
+          description: "",
+          hostStyle: "claude",
+          mode: "anyone_with_link",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [],
+        },
+      });
+    }
+
+    it("shows a labelled Back to study control after consent on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Continue" }),
+      );
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(window.location.hash).toBe("");
+    });
+
+    it("keeps the header free of Back to study for a share-link tester", async () => {
+      writeSurfaceSession("share_link");
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/#surface-scenario");
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Back to study" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    it("routes consent Leave back to the study on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(
+        screen.queryByTestId("scenario-recording-declined"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the terminal declined panel for a share-link tester who Leaves", async () => {
+      writeSurfaceSession("share_link");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(
+        await screen.findByTestId("scenario-recording-declined"),
+      ).toBeInTheDocument();
+      expect(onExit).not.toHaveBeenCalled();
+      expect(readScenarioSession()?.scenarioId).toBe("sbx_1");
+      expect(window.location.pathname).toBe("/");
+    });
+
+    it("never clears the host tab's stored session when exiting from inside the embed", async () => {
+      mockIsEmbeddedPreview.mockReturnValue(true);
+      const outerSession = {
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+        payload: {
+          projectId: "ws_outer",
+          scenarioId: "sbx_outer",
+          name: "Outer Dashboard Scenario",
+          description: "Hosted scenario",
+          hostStyle: "chatgpt" as const,
+          mode: "invited_only" as const,
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      };
+      writeScenarioSession(outerSession);
+      consentAlreadyGiven();
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+      const onExit = vi.fn();
+
+      render(
+        <ScenarioChatPage
+          pathToken="scenario-token"
+          onExitScenarioChat={onExit}
+        />,
+      );
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toMatchObject({
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+      });
+    });
+  });
+});

@@ -2,8 +2,10 @@
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
+import type { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
 import {
   generateText,
+  asSchema,
   hasToolCall,
   stepCountIs,
   dynamicTool,
@@ -17,9 +19,30 @@ import type {
   StepResult,
 } from "ai";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+
+/**
+ * The registered custom-provider names, as `parseLLMString` wants them.
+ *
+ * Every parse of a model string on this class passes these. Since a vendor
+ * path with an unknown leading segment now resolves to OpenRouter rather than
+ * throwing, omitting them silently reclassifies a custom provider's model as a
+ * hosted-catalog one.
+ */
+function customProviderNameSet(
+  customProviders:
+    Map<string, CustomProvider> | Record<string, CustomProvider> | undefined
+): Set<string> | undefined {
+  if (!customProviders) return undefined;
+  return new Set(
+    customProviders instanceof Map
+      ? customProviders.keys()
+      : Object.keys(customProviders)
+  );
+}
 import type { CreateModelOptions } from "./model-factory.js";
+import { modelRejectsTemperature } from "./model-sampling-support.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
@@ -47,7 +70,9 @@ import type { HostSource } from "./host-config/host.js";
 import type { ModelVisibleMcpToolResults } from "./host-config/types.js";
 import type { HostJson } from "./host-config/public-types.js";
 import {
+  applyToolDescriptionOverrides,
   extractHostExecutionPolicy,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
   resolveOpenAiCompatForHostConfig,
   type HostExecutionPolicy,
 } from "./host-config/internal.js";
@@ -59,6 +84,10 @@ import {
  * string (legacy path with no host-derived defaults).
  */
 interface HostRunnerBaseConfig {
+  /** @internal Lease ownership inherited by iteration clones. */
+  mcpjamLeaseScope?: McpjamModelLeaseScope;
+  mcpjamProject?: string;
+  baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
   /** API key for the LLM provider */
@@ -87,6 +116,12 @@ interface HostRunnerBaseConfig {
    * host would have produced.
    */
   injectOpenAiCompat?: boolean;
+  /**
+   * Rewrite `description` on named tools after visibility filtering.
+   * Description ONLY — name, input schema, and `_meta` stay byte-identical.
+   * Re-applied by `withOptions` unless the clone supplies a new map.
+   */
+  toolDescriptionOverrides?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -201,6 +236,28 @@ type StartedToolCall = {
  * console.log(result.text); // "The result of adding 2 and 3 is 5."
  * ```
  */
+/**
+ * The `AiSdkTool` record form already went through `getToolsForAiSdk`, which
+ * applies its own overrides when the caller passed them there. A caller that
+ * hands the record straight to `HostRunner` with overrides still expects the
+ * rewrite to land, so the record is copied with the descriptions replaced —
+ * only `description`, never name, schema or execute.
+ */
+function applyToolDescriptionOverridesToRecord<
+  T extends Record<string, { description?: string }>,
+>(tools: T, overrides: Readonly<Record<string, string>> | undefined): T {
+  if (!overrides || Object.keys(overrides).length === 0) return tools;
+  const next: Record<string, { description?: string }> = { ...tools };
+  for (const [name, description] of Object.entries(overrides)) {
+    // Own properties only: `next` is a plain object, so an override named
+    // `toString` or `constructor` would otherwise find Object.prototype's
+    // member and fabricate a "tool" out of it.
+    const tool = Object.hasOwn(next, name) ? next[name] : undefined;
+    if (tool) next[name] = { ...tool, description };
+  }
+  return next as T;
+}
+
 export class HostRunner implements HostExecutor {
   private readonly tools: ToolSet;
   /**
@@ -215,6 +272,9 @@ export class HostRunner implements HostExecutor {
   private readonly rawTools: Tool[] | AiSdkTool;
   private readonly model: string;
   private readonly apiKey: string;
+  private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
+  private readonly mcpjamProject?: string;
+  private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
   private readonly maxSteps: number;
@@ -223,6 +283,16 @@ export class HostRunner implements HostExecutor {
     | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
+  /**
+   * Per-method `window.openai.*` surface the injected shim should expose,
+   * from the host's `apps.compatRuntime.openaiAppsOverrides`. `undefined`
+   * when the host declares none — the injector then omits the field and the
+   * runtime keeps its full-surface default, so snapshots for those hosts are
+   * byte-identical to before this was wired up.
+   */
+  private readonly openAiCompatCapabilities:
+    | Record<string, unknown>
+    | undefined;
 
   /**
    * Immutable host snapshot driving this runner, if constructed with a
@@ -238,6 +308,13 @@ export class HostRunner implements HostExecutor {
    * when no host was supplied (legacy explicit-model path).
    */
   private readonly hostPolicy: HostExecutionPolicy | undefined;
+  /**
+   * Description rewrites applied after visibility filtering. Stored so
+   * `withOptions` re-runs them against the raw `Tool[]` under a new host.
+   */
+  private readonly toolDescriptionOverrides:
+    | Readonly<Record<string, string>>
+    | undefined;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -289,11 +366,16 @@ export class HostRunner implements HostExecutor {
     // host policy into that flag, so by the time tools land here they have
     // already been gated correctly — re-filtering would be a double-gate.
     const respectVisibility = this.hostPolicy?.respectToolVisibility !== false;
+    this.toolDescriptionOverrides = config.toolDescriptionOverrides;
     const preparedTools = isToolArray(config.tools)
-      ? respectVisibility
-        ? dropAppOnlyTools(config.tools)
-        : config.tools
-      : config.tools;
+      ? applyToolDescriptionOverrides(
+          respectVisibility ? dropAppOnlyTools(config.tools) : config.tools,
+          config.toolDescriptionOverrides
+        ).tools
+      : applyToolDescriptionOverridesToRecord(
+          config.tools,
+          config.toolDescriptionOverrides
+        );
 
     this.tools = isToolArray(preparedTools)
       ? convertToToolSet(preparedTools, {
@@ -311,8 +393,16 @@ export class HostRunner implements HostExecutor {
       : config.tools;
     this.model = resolvedModel;
     this.apiKey = config.apiKey;
+    this.mcpjamLeaseScope = config.mcpjamLeaseScope;
+    this.mcpjamProject = config.mcpjamProject;
+    this.baseUrls = config.baseUrls;
+    // An EMPTY system prompt is treated as "none given", the same as the
+    // snapshot branch below already does. Anthropic refuses an empty system
+    // block outright ("system: text content blocks must be non-empty"), so a
+    // caller that passes `""` — a saved client with no system prompt, read by
+    // `runWithClient` — would otherwise 400 on every generation.
     this.systemPrompt =
-      config.systemPrompt ??
+      (config.systemPrompt ? config.systemPrompt : undefined) ??
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
         ? this.hostSnapshot.systemPrompt
         : "You are a helpful assistant.");
@@ -325,10 +415,21 @@ export class HostRunner implements HostExecutor {
       (this.hostSnapshot
         ? resolveOpenAiCompatForHostConfig(this.hostSnapshot) === true
         : false);
+    this.openAiCompatCapabilities = this.hostSnapshot
+      ? resolveOpenAiCompatCapabilitiesForHostConfig(this.hostSnapshot)
+      : undefined;
 
-    // Parse the model string once to extract provider/model metadata
+    // Parse the model string once to extract provider/model metadata.
+    //
+    // WITH the registered custom provider names: without them a
+    // `my-litellm/gpt-4` no longer throws (a vendor path resolves to
+    // OpenRouter), so this would report the provider as `openrouter` and the
+    // model as the whole id instead of falling through to the split below.
     try {
-      const parsed = parseLLMString(resolvedModel);
+      const parsed = parseLLMString(
+        resolvedModel,
+        customProviderNameSet(this.customProviders)
+      );
       this._parsedProvider =
         parsed.type === "builtin" ? parsed.provider : parsed.providerName;
       this._parsedModel = parsed.model;
@@ -413,20 +514,12 @@ export class HostRunner implements HostExecutor {
       return;
     }
 
-    // `getToolMetadata` returns the tool's `_meta` contents, so wrap it back
-    // into a `_meta` carrier for the SDK helper — which resolves the nested
-    // `_meta.ui.resourceUri` AND the deprecated flat `_meta["ui/resourceUri"]`
-    // key (legacy servers still emit the latter). The helper throws on a
-    // malformed URI; swallow that here so a misbehaving server can't crash the
-    // passive widget-snapshot capture.
-    let resourceUri: string | undefined;
-    try {
-      resourceUri = getToolUiResourceUri({
-        _meta: toolMetadata,
-      } as Parameters<typeof getToolUiResourceUri>[0]);
-    } catch {
-      return;
-    }
+    // `getToolMetadata` returns the tool's `_meta` contents, which the resolver
+    // takes directly — it reads the nested `_meta.ui.resourceUri` AND the
+    // deprecated flat `_meta["ui/resourceUri"]` key (legacy servers still emit
+    // the latter), and answers null on a malformed URI so a misbehaving server
+    // can't crash the passive widget-snapshot capture.
+    const resourceUri = resolveToolUiResourceUri(toolMetadata);
     if (!resourceUri) {
       return;
     }
@@ -476,6 +569,11 @@ export class HostRunner implements HostExecutor {
           theme: "dark",
           viewMode: "inline",
           viewParams: {},
+          // Omitted when the host declares no overrides, which keeps the
+          // runtime on its full-surface default and the config byte-identical.
+          ...(this.openAiCompatCapabilities
+            ? { capabilities: this.openAiCompatCapabilities }
+            : {}),
         });
       }
       snapshot.injectedOpenAiCompat = this.injectOpenAiCompat;
@@ -651,6 +749,31 @@ export class HostRunner implements HostExecutor {
    */
   async run(message: string, options?: PromptOptions): Promise<PromptResult> {
     const startTime = Date.now();
+    const unavailable: string[] = [];
+    const toolDefinitions = Object.entries(this.tools).map(([name, tool]) => {
+      try {
+        const rawTool = isToolArray(this.rawTools)
+          ? this.rawTools.find((candidate) => candidate.name === name)
+          : undefined;
+        const { execute: _execute, ...metadata } = rawTool ?? {};
+        return {
+          ...metadata,
+          name,
+          description: tool.description,
+          inputSchema: asSchema(tool.inputSchema).jsonSchema,
+        };
+      } catch {
+        unavailable.push(`toolDefinitions.${name}.inputSchema`);
+        return { name, description: tool.description };
+      }
+    });
+    const recordedContext = {
+      toolDefinitions,
+      systemPrompt: this.systemPrompt,
+      model: this.model,
+      temperature: this.temperature,
+      ...(unavailable.length ? { unavailable } : {}),
+    };
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
     let totalLlmMs = 0;
@@ -678,14 +801,10 @@ export class HostRunner implements HostExecutor {
     // capture (the model itself is constructed below and will surface errors).
     let spanProvider: string | undefined;
     try {
-      const customNames = this.customProviders
-        ? new Set(
-            this.customProviders instanceof Map
-              ? this.customProviders.keys()
-              : Object.keys(this.customProviders)
-          )
-        : undefined;
-      const parsed = parseLLMString(this.model, customNames);
+      const parsed = parseLLMString(
+        this.model,
+        customProviderNameSet(this.customProviders)
+      );
       spanProvider =
         parsed.type === "custom" ? parsed.providerName : parsed.provider;
     } catch {
@@ -701,6 +820,9 @@ export class HostRunner implements HostExecutor {
     try {
       const modelOptions: CreateModelOptions = {
         apiKey: this.apiKey,
+        mcpjamLeaseScope: this.mcpjamLeaseScope,
+        mcpjamProject: this.mcpjamProject,
+        baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
       const model = createModelFromString(this.model, modelOptions);
@@ -732,10 +854,13 @@ export class HostRunner implements HostExecutor {
         ...(contextMessages.length > 0
           ? { messages: [...contextMessages, userMessage] }
           : { prompt: message }),
-        // Only include temperature if explicitly set (some models like reasoning models don't support it)
-        ...(this.temperature !== undefined && {
-          temperature: this.temperature,
-        }),
+        // Only include temperature if explicitly set (some models like reasoning
+        // models don't support it), and never for a model that 400s on the field
+        // being present at all — the key has to be absent, not undefined.
+        ...(this.temperature !== undefined &&
+          !modelRejectsTemperature(this.model) && {
+            temperature: this.temperature,
+          }),
         ...(options?.abortSignal !== undefined && {
           abortSignal: options.abortSignal,
         }),
@@ -808,6 +933,7 @@ export class HostRunner implements HostExecutor {
       );
 
       this.lastResult = PromptResult.from({
+        recordedContext,
         prompt: message,
         messages,
         text: result.text,
@@ -855,6 +981,7 @@ export class HostRunner implements HostExecutor {
       const totalTokens = partialInputTokens + partialOutputTokens;
 
       this.lastResult = PromptResult.from({
+        recordedContext,
         prompt: message,
         messages: partialMessages,
         text: lastCompletedStepText,
@@ -942,12 +1069,17 @@ export class HostRunner implements HostExecutor {
     const base = {
       tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
+      mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
+      mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
+      baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
       systemPrompt: nextSystemPrompt,
       temperature: nextTemperature,
       injectOpenAiCompat: nextInjectOpenAiCompat,
+      toolDescriptionOverrides:
+        options.toolDescriptionOverrides ?? this.toolDescriptionOverrides,
     };
 
     if (nextHost) {
@@ -1112,6 +1244,7 @@ export class HostRunner implements HostExecutor {
    * );
    *
    * const test = new EvalTest({
+   *   id: "c_my_test",
    *   name: "my-test",
    *   test: async (executor) => {
    *     const r = await executor.run("test");

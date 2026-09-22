@@ -7,6 +7,7 @@ import {
   type OAuthTraceStepSnapshot,
   type OAuthTraceStepStatus,
 } from "@mcpjam/sdk/browser";
+import { traceOAuthErrorMessage } from "./trace-redaction";
 
 export type OAuthTraceSource =
   | "interactive_connect"
@@ -440,8 +441,17 @@ export function failOAuthTraceStep(
     details?: Record<string, unknown>;
   } = {},
 ): void {
-  const errorMessage =
-    error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
+  // Error strings interpolate whatever the authorization server put in
+  // `error`/`error_description`. This is the only redaction boundary the
+  // refresh flow has — it builds a client-side trace and never projects an SDK
+  // snapshot, so `projectOAuthTraceSnapshot({ sanitize })` never runs over it.
+  const errorMessage = traceOAuthErrorMessage(
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : String(error),
+  );
   const existing = [...trace.steps]
     .reverse()
     .find((entry) => entry.step === step && entry.status === "pending");

@@ -1,19 +1,11 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import { Loader2 } from "lucide-react";
 
-export type HostedShellGateState =
-  | "ready"
-  | "auth-loading"
-  | "project-loading"
-  | "logged-out"
-  | "restricted";
+export type HostedShellGateState = "ready" | "auth-loading" | "project-loading";
 
 interface HostedShellGateProps {
   state: HostedShellGateState;
   loadingMessage?: string;
-  onSignIn?: () => void;
-  onSignOut?: () => void;
   children: ReactNode;
 }
 
@@ -21,20 +13,12 @@ function getGateCopy(state: HostedShellGateState): string {
   if (state === "auth-loading") {
     return "Checking authentication...";
   }
-  if (state === "project-loading") {
-    return "Preparing project...";
-  }
-  if (state === "restricted") {
-    return "This environment is limited to MCPJam employees.";
-  }
-  return "Sign in to MCPJam to continue";
+  return "Preparing project...";
 }
 
 export function HostedShellGate({
   state,
   loadingMessage,
-  onSignIn,
-  onSignOut,
   children,
 }: HostedShellGateProps) {
   const isBlocked = state !== "ready" && state !== "auth-loading";
@@ -61,39 +45,8 @@ export function HostedShellGate({
           className="absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm px-4"
         >
           <div className="flex max-w-md flex-col items-center rounded-lg border border-border bg-card/90 p-6 text-center shadow-sm">
-            {state === "logged-out" ? (
-              <img
-                src="/mcp_jam.svg"
-                alt="MCPJam"
-                className="mb-4 h-12 w-auto"
-              />
-            ) : state === "restricted" ? (
-              <AlertTriangle className="mb-4 h-5 w-5 text-amber-600" />
-            ) : (
-              <Loader2 className="mb-4 h-5 w-5 animate-spin text-muted-foreground" />
-            )}
+            <Loader2 className="mb-4 h-5 w-5 animate-spin text-muted-foreground" />
             <p className="text-sm text-foreground">{copy}</p>
-            {state === "logged-out" && (
-              <Button
-                type="button"
-                size="sm"
-                className="mt-4"
-                onClick={() => onSignIn?.()}
-              >
-                Sign in
-              </Button>
-            )}
-            {state === "restricted" && onSignOut ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="mt-4"
-                onClick={() => onSignOut()}
-              >
-                Use another account
-              </Button>
-            ) : null}
           </div>
         </div>
       )}

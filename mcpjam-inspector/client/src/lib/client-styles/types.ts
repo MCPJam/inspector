@@ -116,14 +116,19 @@ export interface HostMcpProfile {
   mcpAppsCapabilities: ResolvedMcpAppsCapabilities;
   /**
    * Preset-only advertisement nuances merged into the matrix-derived
-   * `HostCapabilities` by `buildHostCapabilities`. Currently used by
-   * Cursor to set `serverTools.listChanged: false` /
-   * `serverResources.listChanged: false` — sub-field detail the M365-grain
-   * matrix doesn't model. NOT user-editable; presets carry their own
-   * quirks here and the resolver applies them only to keys the matrix
-   * already advertised.
+   * `HostCapabilities` by `buildHostCapabilities`. Used for sub-field detail
+   * the M365-grain matrix doesn't model, such as Cursor/VS Code listChanged
+   * values. NOT user-editable; presets carry their own quirks here and the
+   * resolver applies them only to keys the matrix already advertised.
    */
   hostCapabilitiesAugment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>;
+  /**
+   * Preset-only exact replacements applied after `hostCapabilitiesAugment`.
+   * Use when a host advertises a typed sub-capability set that must replace,
+   * rather than extend, the matrix-derived default (for example VS Code's
+   * updateModelContext set, which deliberately omits `text`).
+   */
+  hostCapabilitiesReplacement?: Partial<Omit<McpUiHostCapabilities, "sandbox">>;
   resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
   /** Inline @font-face / @import CSS injected into MCP App iframes. */
   fontCss: string;
@@ -245,6 +250,38 @@ export type EffectiveCompatRuntime =
  *   - `resourcePrefersBorder` — gate whether the renderer honors
  *     `_meta.ui.prefersBorder` when rendering the iframe chrome.
  */
+export type McpAppsCspConnectDomains = {
+  fetch?: boolean;
+  xhr?: boolean;
+  websocket?: boolean;
+};
+
+export type McpAppsCspResourceDomains = {
+  script?: boolean;
+  stylesheet?: boolean;
+  image?: boolean;
+  font?: boolean;
+  media?: boolean;
+};
+
+/**
+ * Which halves of an MCP Tool Result the host relays to a widget that called
+ * a tool. Named (not inlined) because BOTH the authoring surface
+ * (`McpAppsCapabilities`) and the resolved surface
+ * (`ResolvedMcpAppsCapabilities`) carry it, and the merge function converts
+ * one into the other — inlining it twice is how they drift apart.
+ */
+export type McpAppsToolResultPolicy = {
+  structuredContent?: boolean;
+  content?: {
+    text?: boolean;
+    image?: boolean;
+    audio?: boolean;
+    resource?: boolean;
+    resourceLink?: boolean;
+  };
+};
+
 export type McpAppsCapabilities = {
   /** Allow-list of display modes advertised in HostContext. */
   availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
@@ -262,9 +299,25 @@ export type McpAppsCapabilities = {
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
+  /**
+   * Whether the host sends `hostContext.safeAreaInsets` at all. Optional
+   * under SEP-1865, and hosts split: Claude reports 12px on every edge,
+   * while Slackbot, Cursor, VS Code, Codex and Le Chat omit the key, so a
+   * widget reading `insets.top` gets `undefined` rather than a zero.
+   */
+  safeAreaInsets?: boolean;
+  /**
+   * Probe-measured MCP Tool Result relay behavior for widget-initiated tool
+   * calls. Shares storage with the app bridge overrides but is not an
+   * `app.*` capability — it shapes the VALUE a live handler returns rather
+   * than gating whether a handler exists.
+   */
+  toolResult?: McpAppsToolResultPolicy;
   /**
    * Host policy for `ui/request-display-mode` originating from the widget.
    * SEP-1865 permits the host to decline these requests; this row exposes
@@ -279,7 +332,8 @@ export type McpAppsCapabilities = {
 
 /**
  * Fully-resolved per-dimension matrix — preset merged with user overrides,
- * no undefineds. Returned by `resolveEffectiveMcpAppsCapabilities`.
+ * no undefineds except the optional probe-derived CSP subtype leaves.
+ * Returned by `resolveEffectiveMcpAppsCapabilities`.
  * `availableDisplayModes` is non-empty (resolver coerces to `["inline"]`
  * if a user override would otherwise empty it).
  *
@@ -318,10 +372,19 @@ export type ResolvedMcpAppsCapabilities = {
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
+  safeAreaInsets: boolean;
   widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
+  /**
+   * Optional like the CSP subtype records above: absent means the host
+   * forwards the whole tool result. `mergeMcpAppsCapabilities` resolves it
+   * and `host-app-bridge` enforces it on every result relayed to a widget.
+   */
+  toolResult?: McpAppsToolResultPolicy;
 };
 
 /**
@@ -330,12 +393,12 @@ export type ResolvedMcpAppsCapabilities = {
  * loading indicator art, etc.
  *
  * The name `chatUi` deliberately mirrors the backend envelope on
- * `chatboxes.chatUi` (see `mcpjam-backend/convex/lib/chatboxUxValidators.ts`,
- * `chatUiValidator`). Backend stores per-chatbox overrides for this same
+ * `scenarios.chatUi` (see `mcpjam-backend/convex/lib/scenarioUxValidators.ts`,
+ * `chatUiValidator`). Backend stores per-scenario overrides for this same
  * conceptual category; the client uses the same name for per-host defaults
- * so the vocabulary lines up across the stack. A future per-chatbox
+ * so the vocabulary lines up across the stack. A future per-scenario
  * indicator override would land as `chatUi.indicator: string` on the
- * chatbox row, mirroring how `chatUi.welcome` works today.
+ * scenario row, mirroring how `chatUi.welcome` works today.
  */
 export interface HostChatUi {
   /** Brand label, e.g. "Claude". */
@@ -361,7 +424,7 @@ export interface HostChatUi {
 
 /**
  * Single source of truth for one host style. Registered in
- * `@/lib/client-styles` and consumed by chatbox bootstrap, builder pickers,
+ * `@/lib/client-styles` and consumed by scenario bootstrap, builder pickers,
  * shell theming, and the MCP Apps iframe bridge.
  *
  * Adding a new built-in host is a matter of authoring `mcp` + `chatUi`
@@ -369,7 +432,7 @@ export interface HostChatUi {
  * same shape once a scoped host layer exists.
  *
  * Only `id` is persisted to the DB (as `'claude' | 'chatgpt' | 'direct'`
- * on `hostConfigs.hostStyle` / `chatboxes.hostStyle`); both `mcp` and
+ * on `hostConfigs.hostStyle` / `scenarios.hostStyle`); both `mcp` and
  * `chatUi` are reconstituted client-side from the id at runtime.
  */
 export interface HostStyleDefinition {

@@ -245,6 +245,45 @@ describe("OAuthFlowTab", () => {
     );
   });
 
+  it("passes a client secret's leading/trailing whitespace through unchanged", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+
+    const serverConfigs = {
+      "prereg-server": createServer({
+        name: "prereg-server",
+        useOAuth: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "https://example.com/mcp",
+          clientId: "client_prereg",
+          clientSecret: " prereg-secret ",
+          scopes: "openid profile email",
+          customHeaders: [],
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="prereg-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    // Trimming here would silently authenticate the live token exchange
+    // with a different secret than the one the user entered.
+    expect(createInspectorOAuthStateMachine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preregisteredClientSecret: " prereg-secret ",
+      }),
+    );
+  });
+
   it("passes hasClientSecret to the state machine for confidential clients", () => {
     vi.mocked(createInspectorOAuthStateMachine).mockClear();
     const serverConfigs = {

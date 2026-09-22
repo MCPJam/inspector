@@ -13,7 +13,8 @@ import type {
   ScriptedStep,
   StepAssertion,
 } from "@/shared/scripted-steps";
-import { MAX_SCRIPTED_STEPS } from "@/shared/scripted-steps";
+import { MAX_SCRIPTED_STEPS, trimmedField } from "@/shared/scripted-steps";
+import { WIDGET_ASSERTION_LABELS } from "@/shared/steps";
 
 /**
  * Authoring UI for "Widget interaction checks" — the model-free scripted steps
@@ -35,13 +36,17 @@ const STEP_KIND_LABELS: Record<ScriptedStep["kind"], string> = {
   assert: "Assert",
 };
 
-const ASSERTION_LABELS: Record<StepAssertion["type"], string> = {
-  textVisible: "Text visible",
-  elementVisible: "Element visible",
-  elementHidden: "Element hidden",
-  inputValue: "Input value equals",
-  widgetToolCalled: "Widget called tool",
-};
+/**
+ * The shared widget-assertion names, re-exposed under this file's local type.
+ *
+ * `StepAssertion` (keyed on `type`) and `WidgetAssertion` (keyed on `kind`) are
+ * separate unions over the SAME five kind names, so one label map serves both.
+ * This file used to keep its own copy, and it had already drifted —
+ * `widgetToolCalled` read "Widget called tool" here and "View called tool" in
+ * the step-list editor, two names for one assertion on two screens.
+ */
+const ASSERTION_LABELS: Record<StepAssertion["type"], string> =
+  WIDGET_ASSERTION_LABELS;
 
 function locatorBy(loc: ElementLocator): LocatorBy {
   if (loc.testId !== undefined) return "testId";
@@ -98,11 +103,23 @@ function defaultAssertion(type: StepAssertion["type"]): StepAssertion {
 export function LocatorFields({
   value,
   onChange,
+  readOnly = false,
 }: {
   value: ElementLocator;
   onChange: (next: ElementLocator) => void;
+  readOnly?: boolean;
 }) {
   const by = locatorBy(value);
+  // Every mode seeds an EMPTY field (`emptyLocatorFor`), and a locator with no
+  // reference point is rejected at the write boundary — so flag the gap on the
+  // field, not only in the blocked-Save tooltip. `aria-invalid` is enough: the
+  // design-system Input carries the destructive outline for it. Read through
+  // `trimmedField`: stored locators are cast, not parsed, so a leaf the type
+  // promises can still arrive missing and crash this render-time check. A
+  // read-only render is a snapshot of what ran — nothing there is authorable,
+  // so an incomplete locator reads as-is instead of asking to be fixed.
+  const invalid =
+    !readOnly && !trimmedField(by === "role" ? value.role?.role : value[by]);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Select
@@ -129,6 +146,7 @@ export function LocatorFields({
               })
             }
             placeholder="button"
+            aria-invalid={invalid}
             className="h-7 w-[110px] text-[11px]"
           />
           <Input
@@ -147,6 +165,7 @@ export function LocatorFields({
           value={value[by] ?? ""}
           onChange={(e) => onChange({ [by]: e.target.value })}
           placeholder={by === "css" ? ".my-button" : `${by}…`}
+          aria-invalid={invalid}
           className="h-7 flex-1 text-[11px]"
         />
       )}
@@ -425,7 +444,7 @@ export function StepList({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 text-muted-foreground hover:text-red-500"
+                className="h-6 w-6 text-muted-foreground hover:text-destructive"
                 onClick={() => remove(index)}
                 aria-label="Remove step"
               >

@@ -21,7 +21,7 @@ import {
   Shell,
   useMcpAppHost,
 } from "./shared/app-shell.js";
-import { ChatboxesView, ChatboxView } from "./views/chatboxes.js";
+import { ScenariosView, ScenarioView } from "./views/scenarios.js";
 import {
   EvalRunIterationsView,
   EvalRunView,
@@ -137,19 +137,19 @@ function WidgetContent({
           isDark={isDark}
         />
       );
-    case "chatboxes":
+    case "scenarios":
       return (
-        <ChatboxesView
+        <ScenariosView
           app={app}
-          payload={payload as PlatformWidgetPayloadMap["chatboxes"]}
+          payload={payload as PlatformWidgetPayloadMap["scenarios"]}
           isDark={isDark}
         />
       );
-    case "chatbox":
+    case "scenario":
       return (
-        <ChatboxView
+        <ScenarioView
           app={app}
-          payload={payload as PlatformWidgetPayloadMap["chatbox"]}
+          payload={payload as PlatformWidgetPayloadMap["scenario"]}
           isDark={isDark}
         />
       );

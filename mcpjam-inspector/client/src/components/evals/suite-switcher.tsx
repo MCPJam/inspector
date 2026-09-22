@@ -21,6 +21,13 @@ interface SuiteSwitcherProps {
   onSelectSuite: (suiteId: string) => void;
   onCreateSuite: () => void;
   onDeleteSuite?: (suite: EvalSuite) => void;
+  /**
+   * Per ROW, because the answer differs per row: deleting a suite takes the
+   * project manage tier OR authorship of that particular suite. Omitted means
+   * every listed suite may be deleted — the local/playground case, where there
+   * is no membership to rank.
+   */
+  canDeleteSuite?: (suite: EvalSuite) => boolean;
 }
 
 /**
@@ -33,6 +40,7 @@ export function SuiteSwitcher({
   onSelectSuite,
   onCreateSuite,
   onDeleteSuite,
+  canDeleteSuite,
 }: SuiteSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -131,7 +139,7 @@ export function SuiteSwitcher({
                         <span className="truncate text-[13px] font-medium text-foreground">
                           {name}
                         </span>
-                        <SuiteSourceBadge source={entry.suite.source} />
+                        <SuiteSourceBadge suite={entry.suite} />
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {entry.latestRun
@@ -151,7 +159,7 @@ export function SuiteSwitcher({
                           ? "text-success"
                           : counts.passed === 0
                             ? "text-destructive"
-                            : "text-amber-600 dark:text-amber-400",
+                            : "text-warning",
                       )}
                     >
                       {counts.passed}/{counts.total}
@@ -160,13 +168,14 @@ export function SuiteSwitcher({
                   {isActive ? (
                     <Check className="h-4 w-4 shrink-0 text-primary" />
                   ) : null}
-                  {/* CI-active suites (created by CI, or reported into by
-                      CI) can't be deleted from the switcher: their history
-                      is CI's record, and the next report would recreate the
-                      suite anyway. */}
-                  {onDeleteSuite &&
-                  entry.suite.source !== "sdk" &&
-                  entry.suite.lastSdkRunAt == null ? (
+                  {/* Delete used to be hidden here for any CI-touched suite
+                      — CI-owned, or merely reported INTO via `lastSdkRunAt`.
+                      Both clauses are gone. Their history being CI's record is
+                      a reason to CONFIRM, which the dialog now does, not a
+                      reason to withhold the only way to remove a row the SDK
+                      mints fresh on every `suiteName` change (issue #5381).
+                      Role is the gate, and `canDeleteSuite` carries it. */}
+                  {onDeleteSuite && (canDeleteSuite?.(entry.suite) ?? true) ? (
                     <button
                       type="button"
                       onClick={(e) => {

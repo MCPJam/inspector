@@ -43,11 +43,13 @@ export type InspectorCommandType =
   | "connectRegistryServer"
   | "disconnectRegistryServer"
   | "toggleRegistryStar"
+  | "searchRegistryDirectory"
   | "openEvalSuiteForm"
   | "runEvalSuite"
   | "cancelEvalRun"
   | "generateEvalTests"
   | "deleteEvalSuite"
+  | "editEvalCaseDraft"
   | "createPersona"
   | "openJourneyForm"
   | "launchSwarmRun"
@@ -60,14 +62,17 @@ export type InspectorCommandType =
   | "hibernateComputer"
   | "resetComputer"
   | "deleteComputer"
-  | "publishChatbox"
-  | "deleteChatbox"
+  | "publishScenario"
+  | "deleteScenario"
   | "selectModel"
   | "setSystemPrompt"
   | "resetChat"
   | "stopGeneration"
   | "readResource"
-  | "getPrompt";
+  | "getPrompt"
+  | "openOauthServerConfig"
+  | "advanceOauthFlow"
+  | "resetOauthFlow";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -86,11 +91,13 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "connectRegistryServer",
   "disconnectRegistryServer",
   "toggleRegistryStar",
+  "searchRegistryDirectory",
   "openEvalSuiteForm",
   "runEvalSuite",
   "cancelEvalRun",
   "generateEvalTests",
   "deleteEvalSuite",
+  "editEvalCaseDraft",
   "createPersona",
   "openJourneyForm",
   "launchSwarmRun",
@@ -103,14 +110,17 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "hibernateComputer",
   "resetComputer",
   "deleteComputer",
-  "publishChatbox",
-  "deleteChatbox",
+  "publishScenario",
+  "deleteScenario",
   "selectModel",
   "setSystemPrompt",
   "resetChat",
   "stopGeneration",
   "readResource",
   "getPrompt",
+  "openOauthServerConfig",
+  "advanceOauthFlow",
+  "resetOauthFlow",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -309,6 +319,26 @@ export interface ToggleRegistryStarInspectorCommand {
 }
 
 /**
+ * Search a mirrored connector directory shown on the Registry screen.
+ *
+ * Read-only, and deliberately narrow: it DRIVES the screen's own controls, so
+ * what the model sees is what the person sees. `query` is optional because an
+ * absent one is a real request — browse the directory — not an error, and a
+ * blank one means the same thing (see `searchCatalogServers`).
+ *
+ * `source` picks WHICH directory (`anthropic-directory` or
+ * `chatgpt-directory`); omitted leaves the one already on screen, so a model
+ * that does not know there are two cannot silently switch the user's view.
+ * `tier` only exists on the Claude source, and switching source clears it.
+ */
+export interface SearchRegistryDirectoryInspectorCommand {
+  id: string;
+  type: "searchRegistryDirectory";
+  payload: { query?: string; tier?: string; source?: string };
+  timeoutMs?: number;
+}
+
+/**
  * Evals-screen commands, handled by `EvalsTab` while `/evals` is mounted.
  *
  * `suite` is how the model addresses a suite: its id or its name as shown in
@@ -359,6 +389,35 @@ export interface DeleteEvalSuiteInspectorCommand {
   id: string;
   type: "deleteEvalSuite";
   payload: { suite: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Writes into the test case CURRENTLY OPEN in the editor — the "Describe a
+ * case" workspace, or any other in-progress case edit. There is no suite/case
+ * addressing in the payload: it always targets whatever draft is on screen,
+ * and errors as `unsupported_in_mode` when no case editor is mounted (the
+ * bus's normal fall-through, so the model gets "open a case first" rather
+ * than acting on the wrong one).
+ *
+ * A deliberate subset of what the case form can express — the prompt and a
+ * single "tool called with these arguments" assertion — mirroring the
+ * Describe workspace's own scope rather than the full step editor.
+ */
+export interface EditEvalCaseDraftInspectorCommand {
+  id: string;
+  type: "editEvalCaseDraft";
+  payload: {
+    /** Replaces the case's user-turn prompt. */
+    prompt?: string;
+    /** Adds a "tool called with these arguments" assertion. */
+    addToolAssertion?: {
+      toolName: string;
+      arguments?: Record<string, unknown>;
+    };
+    /** Marks the case as expecting no tool call at all. */
+    noTool?: boolean;
+  };
   timeoutMs?: number;
 }
 
@@ -551,17 +610,18 @@ export interface DeleteComputerInspectorCommand {
 }
 
 /**
- * Chatboxes-screen commands, handled by `ChatboxesTab` while `/chatboxes` is
- * mounted. A chatbox is the shareable publish surface bound 1:1 to a host.
+ * User Testing commands, handled by `UserTestingTab` while `/user-testing` is
+ * mounted. A scenario (a "scenario" in the UI) is the shareable surface bound
+ * 1:1 to a host.
  *
  * Publish and delete are HOST-ANCHORED: `host` is a host name or id as the
  * client picker shows it. Handlers resolve it against the loaded host list and
  * reject anything else as `invalid_request` (ambiguous → ask for the id) — never
  * a fuzzy guess. Two deliberate postures mirror the eval/swarm/host groups:
  * - **The Swarms-owned dead-end.** A standalone Journeys-owned host has NO
- *   publish surface. `publishChatbox` refuses it with `unsupported_in_mode`
+ *   publish surface. `publishScenario` refuses it with `unsupported_in_mode`
  *   carrying the same reason the UI's "Managed by Swarms" notice shows — it
- *   never back-mints a chatbox for such a host.
+ *   never back-mints a scenario for such a host.
  *
  * Reviewing sessions and copying the share link are READ-ONLY human actions —
  * exposed in the snapshot, not as commands. The share TOKEN never crosses the
@@ -569,32 +629,45 @@ export interface DeleteComputerInspectorCommand {
  */
 
 /**
- * Publish (provision-on-first-use) the chatbox for a host, then select that
- * host so the publish surface follows. Idempotent — calling `ensureChatboxForHost`
- * the way the publish flow does, so a host that already has a chatbox converges.
- * Refuses a Swarms-owned host (no publish surface).
+ * Publish an ENVIRONMENT as a User Testing scenario, then open it.
+ *
+ * The environment carries the client, servers and skills a tester will meet, so
+ * this addresses one by name or id. `access` and `name` are applied in the same
+ * mutation as the publish, so the scenario is never briefly live in a mode
+ * nobody asked for. Idempotent — an environment that is already published is
+ * returned and opened UNCHANGED, so a second call can never re-mode or rename
+ * a live scenario.
  */
-export interface PublishChatboxInspectorCommand {
+export interface PublishScenarioInspectorCommand {
   id: string;
-  type: "publishChatbox";
-  payload: { host: string };
+  type: "publishScenario";
+  payload: {
+    environment: string;
+    access?: "invited_only" | "link_guests" | "project";
+    name?: string;
+  };
   timeoutMs?: number;
 }
 
 /**
  * Generate AI personas and run synthetic sessions against the on-screen
- * chatbox. Low-entropy counts only (personaCount / sessionsPerPersona /
+ * scenario. Low-entropy counts only (personaCount / sessionsPerPersona /
  * maxTurns); the backend generates the personas. SPENDS MONEY, so it is
  * destructive (approval pill) and open-world. No target — it acts on the
- * currently-selected chatbox, like the computer commands act on the one
+ * currently-selected scenario, like the computer commands act on the one
  * computer.
  */
 
-/** Permanently delete a host's chatbox — its hosted link and usage history. */
-export interface DeleteChatboxInspectorCommand {
+/**
+ * Permanently delete a User Testing scenario — its share link and its saved
+ * tester-session history. Addressed by scenario name or id, exactly as the
+ * scenario list shows it; deleting an environment-backed scenario leaves the
+ * environment itself untouched.
+ */
+export interface DeleteScenarioInspectorCommand {
   id: string;
-  type: "deleteChatbox";
-  payload: { host: string };
+  type: "deleteScenario";
+  payload: { scenario: string };
   timeoutMs?: number;
 }
 
@@ -664,7 +737,7 @@ export interface StopGenerationInspectorCommand {
  * Server-primitive READ commands, handled by the Resources and Prompts screens
  * while `/resources` / `/prompts` are mounted. Both act on the currently
  * SELECTED server (resolved from the surface, never from the agent) — there is
- * no `serverName` in the payload, mirroring the computer/chatbox "no target"
+ * no `serverName` in the payload, mirroring the computer/scenario "no target"
  * shape. Both call the SAME api the screen's Read/Run buttons use.
  *
  * Read-only reads (a GET against the server), so both stay side-effect-free
@@ -702,6 +775,51 @@ export interface GetPromptInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * OAuth-debugger commands, handled by `OAuthFlowTab` while `/oauth-flow` is
+ * mounted.
+ *
+ * Two deliberate postures:
+ * - **Prefill-over-commit for config.** `openOauthServerConfig` only opens the
+ *   Configure-Server modal for the USER to finish and save. The payload can
+ *   never carry credentials (no clientId/clientSecret fields — the no-env /
+ *   no-headers precedent): the human types those into the modal.
+ * - **One protocol step per dispatch.** `advanceOauthFlow` mirrors the
+ *   Continue button exactly: it runs a single state-machine step. At the
+ *   authorization step it opens the human sign-in popup instead of advancing —
+ *   consent always happens on the third party's page, never in the agent.
+ */
+export interface OpenOauthServerConfigInspectorCommand {
+  id: string;
+  type: "openOauthServerConfig";
+  payload: {
+    /**
+     * Server to configure. Omitted → edit the selected server (or open blank
+     * when none is selected). A name matching a DIFFERENT existing server is
+     * rejected — select it first instead of silently editing it.
+     */
+    serverName?: string;
+    serverUrl?: string;
+    registrationMode?: "preregistered" | "dcr" | "cimd";
+  };
+  timeoutMs?: number;
+}
+
+export interface AdvanceOauthFlowInspectorCommand {
+  id: string;
+  type: "advanceOauthFlow";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
+/** Reset the debugger's local flow state (re-runnable; nothing external). */
+export interface ResetOauthFlowInspectorCommand {
+  id: string;
+  type: "resetOauthFlow";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -718,12 +836,14 @@ export type InspectorCommand =
   | RemoveServerInspectorCommand
   | ConnectRegistryServerInspectorCommand
   | DisconnectRegistryServerInspectorCommand
+  | SearchRegistryDirectoryInspectorCommand
   | ToggleRegistryStarInspectorCommand
   | OpenEvalSuiteFormInspectorCommand
   | RunEvalSuiteInspectorCommand
   | CancelEvalRunInspectorCommand
   | GenerateEvalTestsInspectorCommand
   | DeleteEvalSuiteInspectorCommand
+  | EditEvalCaseDraftInspectorCommand
   | CreatePersonaInspectorCommand
   | OpenJourneyFormInspectorCommand
   | LaunchSwarmRunInspectorCommand
@@ -736,14 +856,17 @@ export type InspectorCommand =
   | HibernateComputerInspectorCommand
   | ResetComputerInspectorCommand
   | DeleteComputerInspectorCommand
-  | PublishChatboxInspectorCommand
-  | DeleteChatboxInspectorCommand
+  | PublishScenarioInspectorCommand
+  | DeleteScenarioInspectorCommand
   | SelectModelInspectorCommand
   | SetSystemPromptInspectorCommand
   | ResetChatInspectorCommand
   | StopGenerationInspectorCommand
   | ReadResourceInspectorCommand
-  | GetPromptInspectorCommand;
+  | GetPromptInspectorCommand
+  | OpenOauthServerConfigInspectorCommand
+  | AdvanceOauthFlowInspectorCommand
+  | ResetOauthFlowInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

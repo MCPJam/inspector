@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -24,8 +26,13 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
-import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { useCiEvalsRouteFromUrl } from "@/lib/eval-route-url";
+import {
+  buildEvalsRunsPath,
+  buildEvalsPath,
+  navigateApp,
+} from "@/lib/app-navigation";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useEvalsRunsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
   aggregateSuite,
@@ -42,8 +49,10 @@ import {
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
 import { CommitDetailView } from "./evals/commit-detail-view";
+import { ProjectRunsTable } from "./evals/project-runs-table";
 import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
 import { EvalTabGate } from "./evals/EvalTabGate";
+import { EvalsHeader } from "./evals/evals-header";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
 import {
@@ -66,7 +75,7 @@ function navigateToCiEvalsPath(
   route: EvalRoute,
   options?: { replace?: boolean },
 ) {
-  navigateApp(buildCiEvalsPath(route), options);
+  navigateApp(buildEvalsRunsPath(route), options);
 }
 
 interface CiEvalsTabProps {
@@ -82,7 +91,7 @@ export function CiEvalsTab({
 }: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
-  const route = useCiEvalsRouteFromUrl();
+  const route = useEvalsRunsRouteFromUrl();
   const mutations = useEvalMutations();
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
@@ -108,9 +117,10 @@ export function CiEvalsTab({
       : null;
 
   const {
+    organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
@@ -143,12 +153,18 @@ export function CiEvalsTab({
       queries.sortedSuites.filter(
         (entry) =>
           !isExploreSuite(entry.suite) &&
-          (entry.suite.source === "sdk" ||
-            entry.suite.lastSdkRunAt != null),
+          (entry.suite.source === "sdk" || entry.suite.lastSdkRunAt != null),
       ),
     [queries.sortedSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
+  // `visibleSuites` is intentionally CI-only, but the project-wide runs table
+  // includes playground/API/scheduled/GitHub runs too. Keep the first-run NUX
+  // only for genuinely empty projects; otherwise a project with runs in an
+  // excluded suite would hide the only surface that can show those runs.
+  const hasProjectRuns = queries.sortedSuites.some(
+    (entry) => entry.latestRun !== null || entry.recentRuns.length > 0,
+  );
 
   // Commit rail groups CI runs only — playground runs on mixed suites would
   // otherwise flood it as "manual" pseudo-commit groups.
@@ -163,7 +179,7 @@ export function CiEvalsTab({
     [visibleSuites],
   );
 
-  // CI/CD: suite config and tests are defined in code (SDK); close edit URLs.
+  // Suite settings remain code-owned. Case URLs open the read-only workspace.
   useEffect(() => {
     if (route.type === "suite-edit") {
       navigateToCiEvalsPath(
@@ -171,16 +187,6 @@ export function CiEvalsTab({
         { replace: true },
       );
       return;
-    }
-    if (route.type === "test-edit") {
-      navigateToCiEvalsPath(
-        {
-          type: "test-detail",
-          suiteId: route.suiteId,
-          testId: route.testId,
-        },
-        { replace: true },
-      );
     }
   }, [route]);
 
@@ -306,6 +312,13 @@ export function CiEvalsTab({
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    // Cancel goes through the platform route, which is addressed by project —
+    // without this the Runs lens would be the one surface still cancelling
+    // through the raw Convex mutation.
+    projectId: convexProjectId,
+    // Without this the Runs lens can't open the upgrade wall on a server-side
+    // cap rejection and falls back to the dead-end toast.
+    organizationId,
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
@@ -353,6 +366,28 @@ export function CiEvalsTab({
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigateToCiEvalsPath({ type: "suite-overview", suiteId });
   }, []);
+
+  /**
+   * Open a run picked from the all-runs table.
+   *
+   * The table lists EVERY run in the project, but this tab's drilldown only
+   * resolves CI-visible suites — and the guard below
+   * (`!selectedSuiteEntry` → back to `list`) would bounce a playground suite's
+   * run straight back here, making the row click look broken. Send those to
+   * the Evaluate tab instead, which is that suite's actual home.
+   */
+  const handleSelectRunFromAllRuns = useCallback(
+    ({ suiteId, runId }: { suiteId: string; runId: string }) => {
+      const target = { type: "run-detail", suiteId, runId } as const;
+      const isCiVisible = visibleSuites.some(
+        (entry) => entry.suite._id === suiteId,
+      );
+      navigateApp(
+        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target)
+      );
+    },
+    [visibleSuites],
+  );
 
   const handleSelectCommit = useCallback((commitSha: string) => {
     navigateToCiEvalsPath({ type: "commit-detail", commitSha });
@@ -468,7 +503,7 @@ export function CiEvalsTab({
   // would register under the wrong surface. Redacted STATE only: suite names,
   // commit SHAs, and pass/fail COUNTS — never a test's prompt or model output.
   useSurfaceAgentBridge({
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
     snapshot: () =>
       buildCiEvalsSnapshot({
         routeType: route.type,
@@ -494,86 +529,88 @@ export function CiEvalsTab({
       }),
   });
 
-  return (
+  return createElement(
+    ModelDisplayNamesContext.Provider,
+    { value: availableModels },
     <EvalTabGate
       variant="ci"
       isLoading={isLoading}
       isAuthenticated={isAuthenticated}
       user={user}
       projectId={convexProjectId}
-    >
-      <>
-        <div className="h-full flex flex-col overflow-hidden">
+      header={
+        <EvalsHeader mode="runs">
           {showCiSuiteDrilldownSidebar && selectedSuite ? (
-            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                <Breadcrumb className="min-w-0 flex-1">
-                  <BreadcrumbList className="min-w-0 flex-nowrap">
-                    <BreadcrumbItem>
+            <Breadcrumb className="min-w-0 flex-1">
+              <BreadcrumbList className="min-w-0 flex-nowrap">
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      type="button"
+                      onClick={handleCiBreadcrumbToSuiteList}
+                      className="inline-flex border-0 bg-transparent p-0 font-medium"
+                    >
+                      Suites
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                {commitBreadcrumbContext ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
                       <BreadcrumbLink asChild>
                         <button
                           type="button"
-                          onClick={handleCiBreadcrumbToSuiteList}
-                          className="inline-flex border-0 bg-transparent p-0 font-medium"
+                          onClick={handleCiBreadcrumbToCommit}
+                          title="Back to commit"
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
                         >
-                          Suites
+                          {commitBreadcrumbContext.label}
                         </button>
                       </BreadcrumbLink>
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
-                    {commitBreadcrumbContext ? (
-                      <>
-                        <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
-                          <BreadcrumbLink asChild>
-                            <button
-                              type="button"
-                              onClick={handleCiBreadcrumbToCommit}
-                              title="Back to commit"
-                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
-                            >
-                              {commitBreadcrumbContext.label}
-                            </button>
-                          </BreadcrumbLink>
-                        </BreadcrumbItem>
-                        <BreadcrumbSeparator />
-                      </>
-                    ) : null}
-                    {route.type === "run-detail" ? (
-                      <>
-                        <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
-                          <BreadcrumbLink asChild>
-                            <button
-                              type="button"
-                              onClick={handleCiBreadcrumbToSuiteOverview}
-                              title={selectedSuite.name}
-                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
-                            >
-                              {selectedSuite.name}
-                            </button>
-                          </BreadcrumbLink>
-                        </BreadcrumbItem>
-                        <BreadcrumbSeparator />
-                        <BreadcrumbItem>
-                          <BreadcrumbPage className="truncate font-medium">
-                            Run {formatRunId(route.runId)}
-                          </BreadcrumbPage>
-                        </BreadcrumbItem>
-                      </>
-                    ) : (
-                      <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
-                        <BreadcrumbPage
-                          className="truncate font-medium"
+                  </>
+                ) : null}
+                {route.type === "run-detail" ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToSuiteOverview}
                           title={selectedSuite.name}
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
                         >
                           {selectedSuite.name}
-                        </BreadcrumbPage>
-                      </BreadcrumbItem>
-                    )}
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </div>
-            </div>
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage className="truncate font-medium">
+                        Run {formatRunId(route.runId)}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                ) : (
+                  <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                    <BreadcrumbPage
+                      className="truncate font-medium"
+                      title={selectedSuite.name}
+                    >
+                      {selectedSuite.name}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                )}
+              </BreadcrumbList>
+            </Breadcrumb>
           ) : null}
+        </EvalsHeader>
+      }
+    >
+      <>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ResizablePanelGroup
             direction="horizontal"
             className="flex-1 overflow-hidden"
@@ -592,15 +629,20 @@ export function CiEvalsTab({
                   selectedTestCaseId={route.testCaseId ?? null}
                   onSelectTestCase={(group) => {
                     if (!group.testCaseId) return;
-                    navigateToCiEvalsPath({
-                      type: "run-detail",
-                      suiteId: route.suiteId,
-                      runId: route.runId,
-                      testCaseId: group.testCaseId,
-                    });
+                    ciNavigation.toTestEdit(route.suiteId, group.testCaseId);
                   }}
                   selectedIterationId={route.iteration ?? null}
                   onSelectIteration={(iterationId) => {
+                    const testCaseId = queries.sortedIterations.find(
+                      (iteration) => iteration._id === iterationId,
+                    )?.testCaseId;
+                    if (testCaseId) {
+                      ciNavigation.toTestEdit(route.suiteId, testCaseId, {
+                        openCompare: true,
+                        iteration: iterationId,
+                      });
+                      return;
+                    }
                     navigateToCiEvalsPath({
                       type: "run-detail",
                       suiteId: route.suiteId,
@@ -625,8 +667,8 @@ export function CiEvalsTab({
                     route.type === "run-detail"
                       ? Boolean(
                           route.insightsFocus &&
-                            !route.iteration &&
-                            !route.testCaseId,
+                          !route.iteration &&
+                          !route.testCaseId,
                         )
                       : false
                   }
@@ -668,7 +710,7 @@ export function CiEvalsTab({
                     </p>
                   </div>
                 </div>
-              ) : !hasVisibleSuites ? (
+              ) : !hasVisibleSuites && !hasProjectRuns ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
                     <div className="mb-6 flex gap-6 items-center rounded-xl border border-border bg-muted/60 px-6 py-5">
@@ -712,6 +754,21 @@ export function CiEvalsTab({
                 <CommitDetailView
                   commitGroup={selectedCommitGroup}
                   route={route}
+                />
+              ) : (route.type === "list" || !selectedSuite) &&
+                shouldQueryProjectId(convexProjectId) ? (
+                // Both disjuncts land here on purpose. `list` is the landing
+                // route; `!selectedSuite` is an unresolved or deleted suite id
+                // in the URL, and the all-runs table is a better answer to
+                // that than an empty "select something" placeholder — the run
+                // the reader was after is still in this list.
+                //
+                // Gated on `shouldQueryProjectId`, not truthiness: a local or
+                // placeholder project id would mount a `listProjectRuns`
+                // subscription Convex cannot resolve.
+                <ProjectRunsTable
+                  projectId={convexProjectId as string}
+                  onSelectRun={handleSelectRunFromAllRuns}
                 />
               ) : route.type === "list" || !selectedSuite ? (
                 <div className="flex flex-1 items-center justify-center">
@@ -766,7 +823,7 @@ export function CiEvalsTab({
                     onDeleteRun={handleDeleteRun}
                     onDirectDeleteRun={handlers.directDeleteRun}
                     connectedServerNames={connectedServerNames}
-                    canDeleteSuite={canDeleteSuite}
+                    canDeleteSuite={canDeleteArtifact(selectedSuite?.createdBy)}
                     rerunningSuiteId={handlers.rerunningSuiteId}
                     replayingRunId={handlers.replayingRunId}
                     cancellingRunId={handlers.cancellingRunId}
@@ -777,7 +834,10 @@ export function CiEvalsTab({
                     userMap={userMap}
                     navigation={ciNavigation}
                     canDeleteRuns={canDeleteRuns}
+                    canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
                     readOnlyConfig
+                    evaluateCaseEditor
+                    projectId={convexProjectId}
                     omitSuiteHeader
                     onRunTestCase={
                       selectedSuite
@@ -834,6 +894,6 @@ export function CiEvalsTab({
           </DialogContent>
         </Dialog>
       </>
-    </EvalTabGate>
+    </EvalTabGate>,
   );
 }

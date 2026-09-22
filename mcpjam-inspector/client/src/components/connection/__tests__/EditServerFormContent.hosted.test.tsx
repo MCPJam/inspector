@@ -5,7 +5,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -20,12 +20,38 @@ vi.mock("@/components/connection/shared/AuthenticationSection", () => ({
   AuthenticationSection: () => <div data-testid="auth-section" />,
 }));
 
+/** Records what the real section would have been handed, and exposes the
+ * "section was opened" callback as a button so the fetch can be driven. */
+const sectionProps = vi.hoisted(() => ({
+  advanced: null as Record<string, unknown> | null,
+  env: null as Record<string, unknown> | null,
+}));
+
+const secretKeysApi = vi.hoisted(() => ({
+  fetchServerSecretKeys: vi.fn(),
+  fetchServerSecrets: vi.fn(),
+}));
+
+vi.mock("@/lib/apis/server-secrets-api", () => secretKeysApi);
+
 vi.mock(
   "@/components/connection/shared/AdvancedConnectionSettingsSection",
   () => ({
-    AdvancedConnectionSettingsSection: () => (
-      <div data-testid="advanced-settings-section" />
-    ),
+    AdvancedConnectionSettingsSection: (props: Record<string, unknown>) => {
+      sectionProps.advanced = props;
+      return (
+        <div data-testid="advanced-settings-section">
+          <button
+            type="button"
+            onClick={() =>
+              (props.onRequestStoredKeys as (() => void) | undefined)?.()
+            }
+          >
+            open headers
+          </button>
+        </div>
+      );
+    },
   }),
 );
 
@@ -34,7 +60,21 @@ vi.mock("@/components/connection/shared/CustomHeadersSection", () => ({
 }));
 
 vi.mock("@/components/connection/shared/EnvVarsSection", () => ({
-  EnvVarsSection: () => <div data-testid="env-section" />,
+  EnvVarsSection: (props: Record<string, unknown>) => {
+    sectionProps.env = props;
+    return (
+      <div data-testid="env-section">
+        <button
+          type="button"
+          onClick={() =>
+            (props.onRequestStoredKeys as (() => void) | undefined)?.()
+          }
+        >
+          open env
+        </button>
+      </div>
+    );
+  },
 }));
 
 import { EditServerFormContent } from "../EditServerFormContent";
@@ -60,6 +100,15 @@ function createFormState(overrides: Record<string, unknown> = {}) {
     setOauthProtocolMode: vi.fn(),
     registrationMode: "auto",
     setOauthRegistrationMode: vi.fn(),
+    xaaClientAuth: "none",
+    setXaaClientAuth: vi.fn(),
+    confidentialCimdCapability: {
+      status: "unavailable",
+      clientIdMetadataUrl: null,
+      error: null,
+      retry: vi.fn(),
+    },
+    confidentialCimdBlockReason: null,
     useCustomClientId: false,
     setUseCustomClientId: vi.fn(),
     clientId: "",
@@ -155,5 +204,85 @@ describe("EditServerFormContent hosted mode", () => {
     expect(within(menu).getAllByTitle(HOSTED_LOCAL_ONLY_TOOLTIP)).toHaveLength(
       2,
     );
+  });
+});
+
+describe("EditServerFormContent stored key names", () => {
+  beforeEach(() => {
+    sectionProps.advanced = null;
+    sectionProps.env = null;
+    secretKeysApi.fetchServerSecretKeys.mockReset();
+    secretKeysApi.fetchServerSecrets.mockReset();
+    secretKeysApi.fetchServerSecretKeys.mockResolvedValue({
+      envKeys: ["OPENAI_API_KEY"],
+      headerKeys: ["Authorization", "X-Tenant"],
+    });
+  });
+
+  async function openHeaders(formStateOverrides: Record<string, unknown>) {
+    render(
+      <EditServerFormContent
+        formState={createFormState({
+          type: "http",
+          hasStoredHeaders: true,
+          showConfiguration: true,
+          ...formStateOverrides,
+        })}
+        isDuplicateServerName={false}
+        projectId="proj_1"
+        hostedServerId="srv_1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "open headers" }));
+    await waitFor(() =>
+      expect(secretKeysApi.fetchServerSecretKeys).toHaveBeenCalledTimes(1),
+    );
+  }
+
+  it("keeps a stored Authorization header as a row when it isn't the bearer token", async () => {
+    // An OAuth/none server can carry its own Authorization header (Basic auth,
+    // say). `revealStoredHeaders` leaves that as a custom header row, so
+    // dropping it from the names would hide a row that reappears the moment
+    // the values land.
+    await openHeaders({ authType: "none", hasStoredBearerToken: false });
+
+    await waitFor(() =>
+      expect(sectionProps.advanced?.storedHeaderKeys).toEqual([
+        "Authorization",
+        "X-Tenant",
+      ]),
+    );
+  });
+
+  it("drops Authorization from the names when the reveal would make it the bearer token", async () => {
+    await openHeaders({ authType: "bearer", hasStoredBearerToken: true });
+
+    await waitFor(() =>
+      expect(sectionProps.advanced?.storedHeaderKeys).toEqual(["X-Tenant"]),
+    );
+  });
+
+  it("fetches names once for both sections and never the values", async () => {
+    render(
+      <EditServerFormContent
+        formState={createFormState({
+          type: "stdio",
+          hasStoredEnv: true,
+          showEnvVars: true,
+        })}
+        isDuplicateServerName={false}
+        projectId="proj_1"
+        hostedServerId="srv_1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "open env" }));
+
+    await waitFor(() =>
+      expect(sectionProps.env?.storedEnvKeys).toEqual(["OPENAI_API_KEY"]),
+    );
+    // Opening a disclosure asks which keys exist. Reading one is the eye's job.
+    expect(secretKeysApi.fetchServerSecrets).not.toHaveBeenCalled();
   });
 });

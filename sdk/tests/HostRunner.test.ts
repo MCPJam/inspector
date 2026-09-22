@@ -1,3 +1,4 @@
+import { McpjamModelLeaseScope } from "../src/mcpjam-model-lease.js";
 import { HostRunner } from "../src/HostRunner";
 import { PromptResult } from "../src/PromptResult";
 import { Host } from "../src/host-config/host";
@@ -17,6 +18,7 @@ vi.mock("ai", () => ({
     type: "dynamic",
   })),
   jsonSchema: vi.fn((schema: any) => schema),
+  asSchema: vi.fn((schema: any) => ({ jsonSchema: schema })),
 }));
 
 // Mock the model factory
@@ -39,8 +41,7 @@ const telemetryEventBase = {
 
 /** Replays `experimental_telemetry.integrations` like real `generateText` (Jest mocks `ai` only). */
 async function replayEvalSpanStepFinish(params: any, stepResult: any) {
-  for (const integration of params.experimental_telemetry?.integrations ??
-    []) {
+  for (const integration of params.experimental_telemetry?.integrations ?? []) {
     await integration.onStepFinish?.(stepResult);
   }
 }
@@ -283,6 +284,17 @@ describe("HostRunner", () => {
 
       expect(result).toBeInstanceOf(PromptResult);
       expect(result.text).toBe("The result is 5");
+      expect(result.recordedContext?.toolDefinitions).toEqual(
+        Object.entries(mockToolSet).map(([name, tool]) => ({
+          name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        }))
+      );
+      expect(result.recordedContext?.systemPrompt).toBe(
+        "You are a helpful assistant."
+      );
+      expect(result.recordedContext?.unavailable).toBeUndefined();
       expect(result.toolsCalled()).toEqual(["add"]);
       expect(result.hasError()).toBe(false);
       expect(result.inputTokens()).toBe(10);
@@ -682,7 +694,7 @@ describe("HostRunner", () => {
           {
             toolCallId: "call-default",
             abortSignal: { throwIfAborted: vi.fn() },
-          },
+          }
         );
         params.onStepFinish?.();
         return {
@@ -971,6 +983,30 @@ describe("HostRunner", () => {
 
       // Verify onStepFinish callback is provided for latency tracking
       expect(callArgs.onStepFinish).toBeInstanceOf(Function);
+    });
+
+    it("omits temperature entirely for a model that rejects the field", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: mockToolSet,
+        // A Bedrock inference profile for an affected family — the shape the
+        // original report came in under.
+        model: "bedrock/us.anthropic.claude-opus-4-7-20260205-v1:0",
+        apiKey: "test-key",
+        temperature: 0.3,
+      });
+
+      await agent.run("What is 2+2?");
+
+      // Not a falsy check: `temperature: undefined` still serializes the key,
+      // and the key being present at all is what Anthropic 400s on.
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs).not.toHaveProperty("temperature");
     });
 
     it("should handle empty usage data", async () => {
@@ -1853,10 +1889,119 @@ describe("HostRunner", () => {
         })
       ).toEqual({
         type: "content",
-        value: [
-          { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
-        ],
+        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
       });
     });
   });
+
+  describe("tool description overrides", () => {
+    const createMockTool = (
+      name: string,
+      visibility?: Array<"model" | "app">
+    ): Tool => ({
+      name,
+      description: `Mock ${name} tool`,
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+      _meta: visibility
+        ? { _serverId: "test", ui: { visibility } }
+        : { _serverId: "test" },
+    });
+
+    it("rewrites description on the Tool[] branch after visibility drop", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [
+        createMockTool("search", ["model"]),
+        createMockTool("appOnlyTool", ["app"]),
+      ];
+      const agent = new HostRunner({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: { search: "Look up a user by email" },
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.tools.search.description).toBe("Look up a user by email");
+      expect(Object.keys(callArgs.tools)).not.toContain("appOnlyTool");
+    });
+
+    it("re-applies overrides through withOptions", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [createMockTool("search", ["model"])];
+      const agent = new HostRunner({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: { search: "Look up a user by email" },
+      });
+      const clone = agent.withOptions({});
+
+      await clone.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.tools.search.description).toBe("Look up a user by email");
+    });
+
+    it("rewrites own tools only on the record form, never Object.prototype members", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: {
+          add: "Sum two numbers",
+          toString: "not a tool",
+          constructor: "not a tool",
+        },
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(Object.keys(callArgs.tools).sort()).toEqual(["add", "subtract"]);
+      expect(callArgs.tools.add.description).toBe("Sum two numbers");
+      expect(callArgs.tools.subtract.description).toBe("Subtract two numbers");
+    });
+  });
+});
+
+it("carries suite lease ownership through iteration clones into the model", async () => {
+  const scope = new McpjamModelLeaseScope();
+  const runner = new HostRunner({
+    tools: {},
+    apiKey: "sk_test",
+    mcpjamProject: "selected-project",
+    baseUrls: { mcpjam: "https://custom.test" },
+    model: "mcpjam/anthropic/claude-haiku-4.5",
+  });
+  const iteration = runner
+    .withOptions({ mcpjamLeaseScope: scope })
+    .withOptions({});
+  await iteration.run("hello");
+  expect(createModelFromString).toHaveBeenLastCalledWith(
+    "mcpjam/anthropic/claude-haiku-4.5",
+    expect.objectContaining({
+      mcpjamLeaseScope: scope,
+      mcpjamProject: "selected-project",
+      baseUrls: { mcpjam: "https://custom.test" },
+    })
+  );
 });

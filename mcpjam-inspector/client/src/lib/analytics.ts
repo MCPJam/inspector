@@ -17,15 +17,36 @@ import { standardEventProps } from "./PosthogUtils";
  *
  * The posthog-js singleton is the same instance PostHogProvider initializes
  * (the provider is given an apiKey, which inits the global instance), and it
- * already honors VITE_DISABLE_POSTHOG_LOCAL via opt_out_capturing_by_default
- * — no disabled-state branching needed here.
+ * inherits the rich person created by usePostHogIdentify (WorkOS id, email,
+ * name, occupation, and deployment). Keep PII on that person profile instead
+ * of copying it onto every event payload.
+ * The client also honors VITE_DISABLE_POSTHOG_LOCAL via
+ * opt_out_capturing_by_default — no disabled-state branching needed here.
  */
 export function track(
   event: ClientAnalyticsEventName,
-  props: Record<string, unknown> & { location?: string } = {},
+  props: Record<string, unknown> & { location?: string } = {}
 ): void {
-  const { location = "unknown", ...rest } = props;
-  // Standard props spread LAST so location/platform/environment stay
-  // authoritative even if a caller passes them in `rest`.
-  posthog.capture(event, { ...rest, ...standardEventProps(location) });
+  // Drop platform/environment from the caller's props rather than relying
+  // on spread order alone: standardEventProps() OMITS `environment` when
+  // VITE_ENVIRONMENT is unset (so the registered super-property can win),
+  // and an omitted key can't override anything on the spread below — a
+  // caller-supplied `environment: undefined` would otherwise survive into
+  // the captured event and reintroduce the exact clobber bug this guards
+  // against.
+  const {
+    location = "unknown",
+    platform: _platform,
+    environment: _environment,
+    ...rest
+  } = props;
+  try {
+    posthog.capture(event, { ...rest, ...standardEventProps(location) });
+  } catch (error) {
+    // Product analytics is best-effort. Ad blockers, initialization races, or
+    // an SDK failure must never stop the user action that emitted the event.
+    // Keep the failure observable without including event props, which may
+    // contain sensitive product data.
+    console.warn(`[analytics] Failed to capture ${event}`, error);
+  }
 }

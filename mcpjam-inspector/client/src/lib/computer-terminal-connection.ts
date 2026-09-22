@@ -43,7 +43,18 @@ export interface OpenTerminalOptions {
   cwd?: string;
   /** WebSocket factory override for tests. */
   wsFactory?: (url: string, protocols: string[]) => WebSocket;
+  /**
+   * Route to connect to. Defaults to the CLOUD terminal
+   * (`/api/web/computers/terminal`); the local ("This machine") pane passes
+   * `/api/web/computers/local-terminal`. Everything else about the protocol
+   * — subprotocol auth, framing, control messages — is identical, which is
+   * why the two panes share this client.
+   */
+  path?: string;
 }
+
+export const CLOUD_TERMINAL_WS_PATH = "/api/web/computers/terminal";
+export const LOCAL_TERMINAL_WS_PATH = "/api/web/computers/local-terminal";
 
 /**
  * Convert a data-plane HTTP(S) origin into the `ws(s)://host` base expected
@@ -136,6 +147,8 @@ export function buildTerminalWsUrl(args: {
   rows: number;
   baseUrl?: string;
   cwd?: string;
+  /** Defaults to the cloud terminal route; see `OpenTerminalOptions.path`. */
+  path?: string;
 }): string {
   const origin =
     args.baseUrl ??
@@ -147,7 +160,7 @@ export function buildTerminalWsUrl(args: {
     rows: String(args.rows),
   });
   if (args.cwd) params.set("cwd", args.cwd);
-  return `${origin}/api/web/computers/terminal?${params.toString()}`;
+  return `${origin}${args.path ?? CLOUD_TERMINAL_WS_PATH}?${params.toString()}`;
 }
 
 export function openTerminalConnection(

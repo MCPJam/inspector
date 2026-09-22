@@ -13,13 +13,13 @@
  * `HostStyleId`) stay client-owned: the editor enforces invariants the
  * storage layer leaves optional (required `serverIds`/`optionalServerIds`/
  * `respectToolVisibility`, structured `ChatUiOverride`, closed
- * `ChatboxHostStyle` union). Single client-side source of truth so all four
- * editors (Project Settings, Chatbox Editor/Builder, Eval Suite Settings,
+ * `ScenarioHostStyle` union). Single client-side source of truth so all four
+ * editors (Project Settings, Scenario Editor/Builder, Eval Suite Settings,
  * Connection Settings) speak one shape.
  */
 
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import { stableStringifyJson } from "@/lib/client-config";
 import type { ThemeMode } from "@/types/preferences/theme";
 import {
@@ -53,6 +53,7 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import type {
   CspDomainSet,
+  Harness,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   McpToolResultImageRenderPlacement,
@@ -76,31 +77,61 @@ export type {
   ModelVisibleMcpToolResults,
 };
 
-export type HostStyleId = ChatboxHostStyle;
+export type HostStyleId = ScenarioHostStyle;
 
 /**
- * Personal cloud workstation attached to a host (Project Computers). The
- * resource attachment only; capabilities (e.g. `bash`) ride `builtInToolIds`.
- * Mirrors the SDK's resource shape — the legacy `toolset` key is dropped from
- * the client model (the backend still persists it vestigially while pinned to
- * the published SDK, and strips it on read into this shape).
+ * Computer attached to a host. The resource attachment only; capabilities
+ * (e.g. `bash`) ride `builtInToolIds`. Mirrors the SDK's resource shape — the
+ * legacy `toolset` key is dropped from the client model (the backend still
+ * persists it vestigially while pinned to the published SDK, and strips it on
+ * read into this shape).
+ *
+ * `kind` is a closed union:
+ *   - `"personal"` — the per-(project, user) cloud workstation, and the only
+ *     kind anything in this app can AUTHOR. Every editor writes this.
+ *   - `"ephemeral"` — a per-run box the platform mints at a run-snapshot
+ *     boundary (an eval run pins one per iteration, booted from the run's
+ *     frozen environment image). READ-ONLY snapshot data: it can appear when
+ *     reading a run's pinned config back, and must never be routed through a
+ *     host-save flow.
+ *
+ * The read path deliberately does NOT normalize an unknown kind to
+ * `"personal"`. Doing so would let a run's pinned config be read, laundered
+ * into a personal attachment, and saved onto a live host — turning a
+ * disposable per-run box into a claim on somebody's actual machine.
  */
+export type HostConfigComputerKindV2 = "personal" | "ephemeral";
+
 export type HostConfigComputerV2 = {
-  kind: "personal";
-  /** Optional initial working directory for shell/terminal sessions. */
+  kind: HostConfigComputerKindV2;
+  /** Optional initial working directory for shell/terminal sessions. Present
+   *  only on the personal kind; provisioning supplies an ephemeral box's cwd. */
   workdir?: string;
 };
+
+/** True when this attachment is platform-minted and therefore not editable. */
+export function isReadOnlyHostComputer(
+  computer: HostConfigComputerV2 | undefined,
+): boolean {
+  return computer !== undefined && computer.kind !== "personal";
+}
 
 export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
- * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
- * runtime (the `@ai-sdk/harness-claude-code` / `@ai-sdk/harness-codex` adapter)
- * inside the attached personal computer instead of MCPJam's emulated engine.
- * Absent ⇒ emulated. Mirrors the SDK's `Harness` type; the backend enforces
- * `harness ⇒ computer`.
+ * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` run
+ * the real CLI runtime (the `@ai-sdk/harness-claude-code` /
+ * `@ai-sdk/harness-codex` / `@ai-sdk/harness-cursor` adapter) inside the
+ * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
+ * emulated. The backend enforces `harness ⇒ computer`.
+ *
+ * ALIASED, not re-listed. This was a hand-copied union that had to be edited
+ * in lockstep with `HARNESS_IDS`, and the dangerous direction is narrow drift:
+ * the editor would reject a harness the API and the backend validator both
+ * accept, which reads as "that host cannot be built" rather than as a stale
+ * type. The name stays because 60+ files import it from here.
  */
-export type HostConfigHarnessV2 = "claude-code" | "codex";
+export type HostConfigHarnessV2 = Harness;
 
 /**
  * Mutable input shape. All fields are required at write time so the editor
@@ -116,6 +147,8 @@ export type HostConfigHarnessV2 = "claude-code" | "codex";
  * write path stops sending server fields.
  */
 export type HostConfigInputV2 = {
+  /** Editor-only metadata, saved on the client rather than its immutable config. */
+  localBrowserEnabled?: boolean;
   hostStyle: HostStyleId;
   modelId: string;
   systemPrompt: string;
@@ -167,6 +200,8 @@ export type HostConfigInputV2 = {
    * is the only shape; `workdir` optionally pins the initial shell cwd.
    */
   computer?: HostConfigComputerV2;
+  /** Optional saved browser profile selected for hosted browser sessions. */
+  browserProfileId?: string;
   /**
    * Real agent harness (see {@link HostConfigHarnessV2}). `"claude-code"` runs
    * the real Claude Code runtime on the attached computer; absent ⇒ MCPJam's
@@ -228,6 +263,8 @@ export type HostConfigInputV2 = {
  * can detect "no change" vs "modified" and skip unnecessary writes.
  */
 export type HostConfigDtoV2 = {
+  /** Effective shared local setting (client override or project default). */
+  localBrowserEnabled?: boolean;
   id: string;
   schemaVersion: number;
   hostStyle: HostStyleId;
@@ -261,6 +298,8 @@ export type HostConfigDtoV2 = {
    * wire — `hostConfigDtoToInput` reads only `kind`/`workdir`.
    */
   computer?: HostConfigComputerV2 & { toolset?: string };
+  /** Optional saved browser profile selected for hosted browser sessions. */
+  browserProfileId?: string;
   /**
    * Real agent harness (see HostConfigInputV2.harness). Optional; pre-feature
    * rows and non-harness hosts omit it.
@@ -306,12 +345,35 @@ export const DEFAULT_SEEDED_HOST_MODEL_ID = "anthropic/claude-haiku-4.5";
 // CLI. Cast to the strict client aggregate — the runtime object is
 // field-identical (guarded by host-template-seed-parity.test.ts).
 export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
-  partial?: Partial<HostConfigInputV2>
+  partial?: Partial<HostConfigInputV2>,
 ) => HostConfigInputV2;
+
+/**
+ * Strip a platform-minted computer from a config about to become an EDITABLE
+ * draft.
+ *
+ * `kind: "ephemeral"` names a per-run box the platform provisioned for one
+ * eval iteration. It is meaningful only inside that run, and the public write
+ * path cannot express it anyway (the backend's exported arg validator is
+ * `v.literal('personal')`), so a draft carrying one would be rejected on save
+ * at best — and at worst, if it were laundered to `"personal"` first, would
+ * turn a disposable box into a claim on the member's own machine.
+ *
+ * Dropping the attachment rather than converting it is the honest answer: the
+ * draft starts with no computer, which the editor already renders as
+ * "attach one", instead of silently claiming a box the user never attached.
+ */
+export function withoutReadOnlyComputer(
+  input: HostConfigInputV2,
+): HostConfigInputV2 {
+  if (!isReadOnlyHostComputer(input.computer)) return input;
+  const { computer: _dropped, ...rest } = input;
+  return rest as HostConfigInputV2;
+}
 
 export function cloneHostTemplateInput(
   value: unknown,
-  options: { themeMode?: ThemeMode } = {}
+  options: { themeMode?: ThemeMode } = {},
 ): HostConfigInputV2 {
   const input = deepCloneJsonValue(value) as HostConfigInputV2;
   if (options.themeMode !== undefined) {
@@ -320,7 +382,9 @@ export function cloneHostTemplateInput(
       theme: options.themeMode,
     };
   }
-  return input;
+  // Every editor draft starts here, so this is the one place a platform-minted
+  // computer has to be dropped — see `withoutReadOnlyComputer`.
+  return withoutReadOnlyComputer(input);
 }
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
@@ -351,12 +415,20 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
     // Read only the resource shape; the backend may carry a vestigial
     // `toolset` on the wire (legacy key) which the client model omits.
+    //
+    // `kind` is CARRIED, not rewritten. This used to hardcode `"personal"`,
+    // which meant any kind the backend sent came back as a personal
+    // attachment — so reading a run's pinned config and saving it would
+    // convert a disposable per-run box into a claim on the member's own
+    // machine. A non-personal kind is read-only snapshot data
+    // (`isReadOnlyHostComputer`); surfaces must not route it through a save.
     computer: dto.computer
       ? {
-          kind: "personal",
+          kind: dto.computer.kind,
           ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
         }
       : undefined,
+    browserProfileId: dto.browserProfileId,
     // String literal pass-through; absent ⇒ emulated engine.
     harness: dto.harness,
     connectionDefaults: {
@@ -387,7 +459,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
                 ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
-          ])
+          ]),
         )
       : undefined,
   };
@@ -441,8 +513,12 @@ export function resolveEffectiveHostCapabilities(args: {
       profile: args.profile,
       hostStyle: args.hostStyle,
     });
-    const augment = findHostStyle(args.hostStyle)?.mcp.hostCapabilitiesAugment;
-    return buildHostCapabilities(matrix, augment);
+    const style = findHostStyle(args.hostStyle)?.mcp;
+    return buildHostCapabilities(
+      matrix,
+      style?.hostCapabilitiesAugment,
+      style?.hostCapabilitiesReplacement,
+    );
   }
   // 2. Legacy override path — strip-then-return semantics preserved from
   // pre-matrix behavior so configs with `hostCapabilitiesOverride` set but
@@ -473,7 +549,7 @@ export function resolveEffectiveHostCapabilities(args: {
  * stays one-grep-able.
  */
 export function resolveClientInfo(
-  profile: HostConfigMcpProfileV1 | undefined
+  profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
   return profile?.initialize?.clientInfo;
 }
@@ -487,7 +563,7 @@ export function resolveClientInfo(
  * callers never see it here.
  */
 export function resolveSupportedProtocolVersions(
-  profile: HostConfigMcpProfileV1 | undefined
+  profile: HostConfigMcpProfileV1 | undefined,
 ): string[] | undefined {
   return profile?.initialize?.supportedProtocolVersions;
 }
@@ -502,7 +578,7 @@ export function resolveSupportedProtocolVersions(
  * layer (base-protocol `initialize` vs. MCP Apps `ui/initialize`).
  */
 export function resolveHostInfo(
-  profile: HostConfigMcpProfileV1 | undefined
+  profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
   return profile?.apps?.uiInitialize?.hostInfo;
 }
@@ -530,7 +606,7 @@ export function resolveHostInfo(
  */
 export function resolveEffectiveCompatRuntime(args: {
   profile: HostConfigMcpProfileV1 | undefined;
-  hostStyle: ChatboxHostStyle | string | null | undefined;
+  hostStyle: ScenarioHostStyle | string | null | undefined;
 }): EffectiveCompatRuntime {
   const preset = getCompatRuntimeForStyle(args.hostStyle);
   const override = args.profile?.apps?.compatRuntime;
@@ -556,7 +632,7 @@ export function resolveEffectiveCompatRuntime(args: {
     injected: true,
     capabilities: mergeOpenAiAppsCapabilities(
       baseCapabilities,
-      override?.openaiAppsOverrides
+      override?.openaiAppsOverrides,
     ),
   };
 }
@@ -573,7 +649,7 @@ export function resolveEffectiveCompatRuntime(args: {
  */
 export function mergeOpenAiAppsCapabilities(
   base: ResolvedOpenAiAppsCapabilities,
-  override: OpenAiAppsCapabilities | undefined
+  override: OpenAiAppsCapabilities | undefined,
 ): ResolvedOpenAiAppsCapabilities {
   if (!override) return base;
   return {
@@ -609,7 +685,7 @@ export function mergeOpenAiAppsCapabilities(
  */
 export function mergeMcpAppsCapabilities(
   base: ResolvedMcpAppsCapabilities,
-  override: McpAppsCapabilities | undefined
+  override: McpAppsCapabilities | undefined,
 ): ResolvedMcpAppsCapabilities {
   if (!override) return base;
   const modesOverride = override.availableDisplayModes;
@@ -619,6 +695,31 @@ export function mergeMcpAppsCapabilities(
         ? modesOverride
         : (["inline"] as ResolvedMcpAppsCapabilities["availableDisplayModes"])
       : base.availableDisplayModes;
+  const cspConnectDomains =
+    base.cspConnectDomains || override.cspConnectDomains
+      ? { ...base.cspConnectDomains, ...override.cspConnectDomains }
+      : undefined;
+  const cspResourceDomains =
+    base.cspResourceDomains || override.cspResourceDomains
+      ? { ...base.cspResourceDomains, ...override.cspResourceDomains }
+      : undefined;
+  // Two levels deep, so a shallow spread would let an override that names
+  // only `structuredContent` erase the preset's per-block-kind answers.
+  const toolResult =
+    base.toolResult || override.toolResult
+      ? {
+          ...base.toolResult,
+          ...override.toolResult,
+          ...(base.toolResult?.content || override.toolResult?.content
+            ? {
+                content: {
+                  ...base.toolResult?.content,
+                  ...override.toolResult?.content,
+                },
+              }
+            : {}),
+        }
+      : undefined;
   return {
     availableDisplayModes,
     toolInputPartial: override.toolInputPartial ?? base.toolInputPartial,
@@ -635,10 +736,14 @@ export function mergeMcpAppsCapabilities(
     sandboxPermissions: override.sandboxPermissions ?? base.sandboxPermissions,
     cspFrameDomains: override.cspFrameDomains ?? base.cspFrameDomains,
     cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
+    cspConnectDomains,
+    cspResourceDomains,
+    toolResult,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
     requestTeardown: override.requestTeardown ?? base.requestTeardown,
+    safeAreaInsets: override.safeAreaInsets ?? base.safeAreaInsets,
     widgetDisplayModeRequests:
       override.widgetDisplayModeRequests ?? base.widgetDisplayModeRequests,
   };
@@ -657,7 +762,7 @@ export function mergeMcpAppsCapabilities(
  */
 export function resolveEffectiveMcpAppsCapabilities(args: {
   profile: HostConfigMcpProfileV1 | undefined;
-  hostStyle: ChatboxHostStyle | string | null | undefined;
+  hostStyle: ScenarioHostStyle | string | null | undefined;
 }): ResolvedMcpAppsCapabilities {
   const hostStylePreset = findHostStyle(args.hostStyle)?.mcp
     .mcpAppsCapabilities;
@@ -709,7 +814,7 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
  * `resolveEffectiveHostCapabilities`.
  */
 export function hostCapabilitiesOverrideToMatrix(
-  legacy: Record<string, unknown> | undefined
+  legacy: Record<string, unknown> | undefined,
 ): McpAppsCapabilities | undefined {
   if (legacy === undefined) return undefined;
   return {
@@ -728,9 +833,55 @@ export function hostCapabilitiesOverrideToMatrix(
  * Preserves sibling `mcpProfile.apps` fields and collapses an otherwise empty
  * profile back to `undefined`, matching the JSON editor's draft cleanup.
  */
+/**
+ * True when an `mcpProfile` carries nothing worth persisting, so a write
+ * collapses it to `undefined` and an untouched host keeps its canonical hash
+ * (host configs are content-addressed, so a spurious profile mints a row).
+ *
+ * ONE definition for every write path — the host editor's three sites and the
+ * apps-override clear below. It used to be inlined at each, which meant every
+ * new profile field had to be added in four places; miss one and a profile
+ * carrying only that field silently collapses, losing the user's setting on
+ * save with no error.
+ *
+ * `initialize` counts as carrying nothing unless it actually holds a
+ * `clientInfo` or a non-empty `supportedProtocolVersions`: an empty envelope
+ * is dropped by the canonicalizer anyway, so treating it as content would
+ * persist a profile that hashes identically to no profile at all.
+ */
+export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
+  const hasInitialize =
+    profile.initialize !== undefined &&
+    (profile.initialize.clientInfo !== undefined ||
+      (profile.initialize.supportedProtocolVersions !== undefined &&
+        profile.initialize.supportedProtocolVersions.length > 0));
+  return (
+    !hasInitialize &&
+    profile.mcpProtocolVersion === undefined &&
+    profile.toolParamHeaderMirroring === undefined &&
+    profile.paginationTraversal === undefined &&
+    profile.mrtrSupport === undefined &&
+    // A record, so emptiness is per-leaf: `{}` carries nothing (the
+    // canonicalizer drops it), but any boolean leaf is a real setting.
+    (profile.toolListChanged === undefined ||
+      Object.values(profile.toolListChanged).every(
+        (value) => value === undefined,
+      )) &&
+    // Same per-leaf emptiness as `toolListChanged`. Omitting this collapsed
+    // the whole profile the moment cancellation was the ONLY thing set, so
+    // turning an era off silently wrote nothing.
+    (profile.toolCallCancellation === undefined ||
+      Object.values(profile.toolCallCancellation).every(
+        (value) => value === undefined,
+      )) &&
+    !profile.apps &&
+    !profile.extensions
+  );
+}
+
 export function setMcpAppsOverridesOnDraft(
   prev: HostConfigInputV2,
-  next: McpAppsCapabilities | undefined
+  next: McpAppsCapabilities | undefined,
 ): HostConfigInputV2 {
   const hasKeys = next !== undefined && Object.keys(next).length > 0;
   const prevProfile = prev.mcpProfile;
@@ -753,21 +904,16 @@ export function setMcpAppsOverridesOnDraft(
   const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
     profileVersion: 1,
   };
-  const hasInitialize =
-    baseProfile.initialize !== undefined &&
-    (baseProfile.initialize.clientInfo !== undefined ||
-      (baseProfile.initialize.supportedProtocolVersions &&
-        baseProfile.initialize.supportedProtocolVersions.length > 0));
-  const hasMcpProtocolVersion = baseProfile.mcpProtocolVersion !== undefined;
-  const hasExtensions = baseProfile.extensions !== undefined;
-  const profileEmpty =
-    appsEmpty && !hasInitialize && !hasMcpProtocolVersion && !hasExtensions;
+  // Evaluate emptiness on the profile this write actually produces — the
+  // apps envelope has already been cleared when `appsEmpty`.
+  const nextProfile: HostConfigMcpProfileV1 = {
+    ...baseProfile,
+    apps: appsEmpty ? undefined : nextApps,
+  };
 
   return {
     ...prev,
-    mcpProfile: profileEmpty
-      ? undefined
-      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
+    mcpProfile: isMcpProfileEmpty(nextProfile) ? undefined : nextProfile,
   };
 }
 
@@ -777,7 +923,7 @@ export function setMcpAppsOverridesOnDraft(
  * `HostConfigMcpProfileV1` type at the boundary.
  */
 function cloneMcpProfile(
-  profile: HostConfigMcpProfileV1
+  profile: HostConfigMcpProfileV1,
 ): HostConfigMcpProfileV1 {
   return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
@@ -793,7 +939,7 @@ function cloneChatUiOverride(override: ChatUiOverride): ChatUiOverride {
 }
 
 function deepCloneJsonRecord(
-  value: Record<string, unknown>
+  value: Record<string, unknown>,
 ): Record<string, unknown> {
   return deepCloneJsonValue(value) as Record<string, unknown>;
 }
@@ -813,25 +959,25 @@ function deepCloneJsonValue(value: unknown): unknown {
 }
 
 export function cloneModelVisibleMcpToolResults(
-  value: ModelVisibleMcpToolResults
+  value: ModelVisibleMcpToolResults,
 ): ModelVisibleMcpToolResults {
   return deepCloneJsonValue(value) as ModelVisibleMcpToolResults;
 }
 
 export function cloneMcpToolResultImageRendering(
-  value: McpToolResultImageRenderingPolicy
+  value: McpToolResultImageRenderingPolicy,
 ): McpToolResultImageRenderingPolicy {
   return deepCloneJsonValue(value) as McpToolResultImageRenderingPolicy;
 }
 
 export function isMcpDirectContentImageVisible(
-  policy: ModelVisibleMcpToolResults | undefined
+  policy: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   return policy?.directContent?.image ?? true;
 }
 
 export function isMcpEmbeddedResourceBlobImageVisible(
-  policy: ModelVisibleMcpToolResults | undefined
+  policy: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   return (
     (policy?.embeddedResources?.blob?.enabled ?? true) &&
@@ -840,7 +986,7 @@ export function isMcpEmbeddedResourceBlobImageVisible(
 }
 
 export function isMcpLinkedResourceBlobImageVisible(
-  policy: ModelVisibleMcpToolResults | undefined
+  policy: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   return (
     (policy?.linkedResources?.blob?.enabled ?? true) &&
@@ -850,7 +996,7 @@ export function isMcpLinkedResourceBlobImageVisible(
 
 export function setMcpDirectContentImageVisible(
   policy: ModelVisibleMcpToolResults | undefined,
-  visible: boolean
+  visible: boolean,
 ): ModelVisibleMcpToolResults {
   return {
     ...policy,
@@ -863,7 +1009,7 @@ export function setMcpDirectContentImageVisible(
 
 export function setMcpEmbeddedResourceBlobImageVisible(
   policy: ModelVisibleMcpToolResults | undefined,
-  visible: boolean
+  visible: boolean,
 ): ModelVisibleMcpToolResults {
   return {
     ...policy,
@@ -879,7 +1025,7 @@ export function setMcpEmbeddedResourceBlobImageVisible(
 
 export function setMcpLinkedResourceBlobImageVisible(
   policy: ModelVisibleMcpToolResults | undefined,
-  visible: boolean
+  visible: boolean,
 ): ModelVisibleMcpToolResults {
   return {
     ...policy,
@@ -894,32 +1040,32 @@ export function setMcpLinkedResourceBlobImageVisible(
 }
 
 export function getMcpToolResultImageRenderPlacement(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): McpToolResultImageRenderPlacement {
   return policy?.placement ?? "inline";
 }
 
 export function isMcpDirectContentImageRendered(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   return policy?.directContent?.image ?? true;
 }
 
 export function isMcpEmbeddedResourceBlobImageRendered(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   return policy?.embeddedResources?.blob?.image ?? true;
 }
 
 export function isMcpLinkedResourceBlobImageRendered(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   return policy?.linkedResources?.blob?.image ?? true;
 }
 
 export function setMcpToolResultImageRenderPlacement(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  placement: McpToolResultImageRenderPlacement
+  placement: McpToolResultImageRenderPlacement,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -929,7 +1075,7 @@ export function setMcpToolResultImageRenderPlacement(
 
 export function setMcpDirectContentImageRendered(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  rendered: boolean
+  rendered: boolean,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -942,7 +1088,7 @@ export function setMcpDirectContentImageRendered(
 
 export function setMcpEmbeddedResourceBlobImageRendered(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  rendered: boolean
+  rendered: boolean,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -958,7 +1104,7 @@ export function setMcpEmbeddedResourceBlobImageRendered(
 
 export function setMcpLinkedResourceBlobImageRendered(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  rendered: boolean
+  rendered: boolean,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -974,7 +1120,7 @@ export function setMcpLinkedResourceBlobImageRendered(
 
 export function gateMcpToolResultImageRenderingByModelVisibility(
   renderingPolicy: McpToolResultImageRenderingPolicy | undefined,
-  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined
+  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined,
 ): McpToolResultImageRenderingPolicy | undefined {
   const directVisible = isMcpDirectContentImageVisible(modelVisiblePolicy);
   const embeddedVisible =
@@ -1009,7 +1155,7 @@ export function gateMcpToolResultImageRenderingByModelVisibility(
  */
 export function hostConfigInputsEqual(
   a: HostConfigInputV2,
-  b: HostConfigInputV2
+  b: HostConfigInputV2,
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
@@ -1024,14 +1170,14 @@ export function hostConfigInputsEqual(
   if (
     !optionalModelVisibleMcpToolResultsEq(
       a.modelVisibleMcpToolResults,
-      b.modelVisibleMcpToolResults
+      b.modelVisibleMcpToolResults,
     )
   )
     return false;
   if (
     !optionalMcpToolResultImageRenderingEq(
       a.mcpToolResultImageRendering,
-      b.mcpToolResultImageRendering
+      b.mcpToolResultImageRendering,
     )
   ) {
     return false;
@@ -1041,12 +1187,18 @@ export function hostConfigInputsEqual(
   // Order-insensitive, same semantics as server ids — toggling a built-in
   // marks the draft dirty in the host/project/eval editors.
   if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
-  // Personal computer: presence + workdir (kind is always 'personal').
-  // Attaching/detaching or changing the workdir marks the draft dirty.
+  if (a.localBrowserEnabled !== b.localBrowserEnabled) return false;
+  // Computer: presence, KIND and workdir. Attaching/detaching or changing the
+  // workdir marks the draft dirty. `kind` is compared because it is no longer
+  // always 'personal' — a run's pinned config can carry the platform-minted
+  // 'ephemeral' kind, and without this a personal and an ephemeral attachment
+  // with the same workdir would compare equal.
   if ((a.computer === undefined) !== (b.computer === undefined)) return false;
-  if (a.computer && b.computer && a.computer.workdir !== b.computer.workdir) {
-    return false;
+  if (a.computer && b.computer) {
+    if (a.computer.kind !== b.computer.kind) return false;
+    if (a.computer.workdir !== b.computer.workdir) return false;
   }
+  if (a.browserProfileId !== b.browserProfileId) return false;
   // Harness selector: undefined vs "claude-code" are distinct states (backend
   // hashes them distinctly). Switching engines marks the draft dirty.
   if (a.harness !== b.harness) return false;
@@ -1061,7 +1213,7 @@ export function hostConfigInputsEqual(
   if (
     !optionalJsonRecordEq(
       a.hostCapabilitiesOverride,
-      b.hostCapabilitiesOverride
+      b.hostCapabilitiesOverride,
     )
   )
     return false;
@@ -1071,7 +1223,7 @@ export function hostConfigInputsEqual(
   if (
     !serverConnectionOverridesEqual(
       a.serverConnectionOverrides,
-      b.serverConnectionOverrides
+      b.serverConnectionOverrides,
     )
   )
     return false;
@@ -1085,10 +1237,10 @@ export function hostConfigInputsEqual(
  */
 export function serverConnectionOverridesEqual(
   a: HostConfigInputV2["serverConnectionOverrides"],
-  b: HostConfigInputV2["serverConnectionOverrides"]
+  b: HostConfigInputV2["serverConnectionOverrides"],
 ): boolean {
   const normalize = (
-    overrides: HostConfigInputV2["serverConnectionOverrides"]
+    overrides: HostConfigInputV2["serverConnectionOverrides"],
   ): Record<
     string,
     {
@@ -1134,7 +1286,7 @@ export function serverConnectionOverridesEqual(
 
 function optionalMcpProfileEq(
   a: HostConfigMcpProfileV1 | undefined,
-  b: HostConfigMcpProfileV1 | undefined
+  b: HostConfigMcpProfileV1 | undefined,
 ): boolean {
   // Same undefined-vs-empty rule as optionalJsonRecordEq: backend hashes
   // `undefined` and `{ profileVersion: 1 }` distinctly, so flipping
@@ -1150,7 +1302,7 @@ function optionalMcpProfileEq(
 
 function optionalModelVisibleMcpToolResultsEq(
   a: ModelVisibleMcpToolResults | undefined,
-  b: ModelVisibleMcpToolResults | undefined
+  b: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -1159,7 +1311,7 @@ function optionalModelVisibleMcpToolResultsEq(
 
 function optionalMcpToolResultImageRenderingEq(
   a: McpToolResultImageRenderingPolicy | undefined,
-  b: McpToolResultImageRenderingPolicy | undefined
+  b: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -1168,7 +1320,7 @@ function optionalMcpToolResultImageRenderingEq(
 
 function optionalJsonRecordEq(
   a: Record<string, unknown> | undefined,
-  b: Record<string, unknown> | undefined
+  b: Record<string, unknown> | undefined,
 ): boolean {
   // Treat `undefined` (use profile preset) and `{}` (explicit empty override)
   // as distinct values — flipping between them changes the resolved blob and
@@ -1186,7 +1338,7 @@ function optionalJsonRecordEq(
  */
 function optionalChatUiOverrideEq(
   a: ChatUiOverride | undefined,
-  b: ChatUiOverride | undefined
+  b: ChatUiOverride | undefined,
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -1205,7 +1357,7 @@ function stringArrayEq(a: string[], b: string[]): boolean {
 
 function jsonRecordEq(
   a: Record<string, unknown>,
-  b: Record<string, unknown>
+  b: Record<string, unknown>,
 ): boolean {
   // Use the shared canonicalizer so nested object key order doesn't make
   // semantically equal records compare unequal — e.g.

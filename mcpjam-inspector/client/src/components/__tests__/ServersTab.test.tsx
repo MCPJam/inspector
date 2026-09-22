@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  render,
+  render as rtlRender,
   screen,
   fireEvent,
   waitFor,
   within,
+  type RenderOptions,
 } from "@testing-library/react";
 import { HostsConnectAddServerSlotContext } from "@/components/hosts/HostsConnectAddServerSlotContext";
-import { useState, type ReactNode } from "react";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import { useState, type ReactElement, type ReactNode } from "react";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
 import type { Project } from "@/state/app-types";
 import type { ServerFormData } from "@/shared/types.js";
-import { mergeProjectClientCapabilities } from "@/lib/client-config";
 import {
   captureServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
@@ -21,6 +21,18 @@ import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
+
+// The header Auto-connect switch reads the real preferences store, which
+// throws without a provider — wrap every render in one.
+function PreferencesWrapper({ children }: { children: ReactNode }) {
+  return (
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      {children}
+    </PreferencesStoreProvider>
+  );
+}
+const render = (ui: ReactElement, options?: RenderOptions) =>
+  rtlRender(ui, { wrapper: PreferencesWrapper, ...options });
 
 function createLinearCatalogCard(): EnrichedRegistryCatalogCard {
   const server = {
@@ -156,9 +168,11 @@ vi.mock("@/hooks/use-app-ready", () => ({
   useAppReadyMessage: () => mockUseAppReadyMessage(),
 }));
 
+const mockResetAutoConnectAttempts = vi.hoisted(() => vi.fn());
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => ({ enabled: true, lastResult: null }),
-  resetAutoConnectAttempts: vi.fn(),
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
+  resetAutoConnectAttempts: mockResetAutoConnectAttempts,
 }));
 
 vi.mock("@/lib/billing-gates", async (importOriginal) => {
@@ -257,7 +271,6 @@ vi.mock("@/hooks/useViews", () => ({
 vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
     server,
-    needsReconnect,
     onReconnect,
     onOpenDetailModal,
     moveTargets,
@@ -265,7 +278,6 @@ vi.mock("../connection/ServerConnectionCard", () => ({
     isMovingToProject,
   }: {
     server: ServerWithName;
-    needsReconnect?: boolean;
     onReconnect?: (
       serverName: string,
       options?: {
@@ -285,9 +297,6 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <button onClick={() => void onReconnect?.(server.name)}>
         Reconnect {server.name}
       </button>
-      {needsReconnect ? (
-        <span aria-label="Connection settings changed" />
-      ) : null}
       {moveTargets?.map((target) => (
         <button
           key={target.id}
@@ -369,10 +378,6 @@ vi.mock("../connection/AddServerModal", () => ({
 
 vi.mock("../connection/JsonImportModal", () => ({
   JsonImportModal: () => null,
-}));
-
-vi.mock("../connection/ProjectSelector", () => ({
-  ProjectSelector: () => <div>Project Selector</div>,
 }));
 
 vi.mock("../project/ProjectShareButton", () => ({
@@ -561,6 +566,14 @@ describe("ServersTab shared detail modal", () => {
     );
     expect(screen.getByTestId("modal-default-tab")).toHaveTextContent(
       "configuration"
+    );
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<ServersTab {...defaultProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
     );
   });
 
@@ -1089,211 +1102,6 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("surfaces connection settings update indicators when a per-server clientCapabilities override drifts from initialize payload", () => {
-    // The indicator only fires for per-server overrides — host-driven
-    // capability changes are handled by the auto-reconciler (which
-    // disconnect/reconnects affected servers on host switch), so comparing
-    // against host-blended caps here just produced false positives.
-    const initializedCapabilities = getDefaultClientCapabilities() as Record<
-      string,
-      unknown
-    >;
-    const driftedOverride = {
-      ...initializedCapabilities,
-      experimental: { perServerOverride: true },
-    } as Record<string, unknown>;
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            config: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-test"],
-              clientCapabilities: driftedOverride,
-            },
-            initializationInfo: {
-              clientCapabilities: initializedCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": createProject({
-            "test-server": createServer({
-              config: {
-                command: "npx",
-                args: ["-y", "@modelcontextprotocol/server-test"],
-                clientCapabilities: driftedOverride,
-              },
-              initializationInfo: {
-                clientCapabilities: initializedCapabilities,
-              } as any,
-            }),
-          }),
-        }}
-      />
-    );
-
-    expect(
-      screen.getByLabelText("Connection settings changed")
-    ).toBeInTheDocument();
-  });
-
-  it("does not surface the indicator when project client capabilities change but no per-server override is set", () => {
-    // Host-driven caps changes are handled by the auto-reconciler. The
-    // indicator must stay quiet for servers without their own override so
-    // host switches don't paint stale-handshake warnings across the board.
-    const initializedCapabilities = getDefaultClientCapabilities() as Record<
-      string,
-      unknown
-    >;
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            initializationInfo: {
-              clientCapabilities: initializedCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": {
-            ...createProject({
-              "test-server": createServer({
-                initializationInfo: {
-                  clientCapabilities: initializedCapabilities,
-                } as any,
-              }),
-            }),
-            clientConfig: {
-              version: 1,
-              clientCapabilities: {
-                elicitation: {},
-                experimental: { inspectorProfile: true },
-              },
-              hostContext: {},
-            },
-          },
-        }}
-      />
-    );
-
-    expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
-  });
-
-  it("does not surface connection settings update indicators when server capability overrides already match initialize payload", () => {
-    const serverCapabilities = {
-      experimental: {
-        serverOverride: { enabled: true },
-      },
-    };
-    const initializedCapabilities = mergeProjectClientCapabilities(
-      getDefaultClientCapabilities() as Record<string, unknown>,
-      serverCapabilities
-    );
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            config: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-test"],
-              capabilities: serverCapabilities,
-            },
-            initializationInfo: {
-              clientCapabilities: initializedCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": createProject({
-            "test-server": createServer({
-              config: {
-                command: "npx",
-                args: ["-y", "@modelcontextprotocol/server-test"],
-                capabilities: serverCapabilities,
-              },
-              initializationInfo: {
-                clientCapabilities: initializedCapabilities,
-              } as any,
-            }),
-          }),
-        }}
-      />
-    );
-
-    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
-  });
-
-  it("does not surface connection settings update indicators when a per-server clientCapabilities override matches initialize payload", () => {
-    // Regression: the warning previously recomputed "desired" from the
-    // project config + `server.config.capabilities` only, ignoring the
-    // per-server `clientCapabilities` override that the connect path
-    // actually ships to the SDK. Result: any server with an explicit
-    // override lit up the icon on every render, even though nothing
-    // had changed.
-    const overrideCapabilities = {
-      experimental: { perServerOverride: true },
-    } as Record<string, unknown>;
-
-    render(
-      <ServersTab
-        {...defaultProps}
-        projectServers={{
-          "test-server": createServer({
-            config: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-test"],
-              clientCapabilities: overrideCapabilities,
-            },
-            initializationInfo: {
-              clientCapabilities: overrideCapabilities,
-            } as any,
-          }),
-        }}
-        projects={{
-          "project-1": {
-            ...createProject({
-              "test-server": createServer({
-                config: {
-                  command: "npx",
-                  args: ["-y", "@modelcontextprotocol/server-test"],
-                  clientCapabilities: overrideCapabilities,
-                },
-                initializationInfo: {
-                  clientCapabilities: overrideCapabilities,
-                } as any,
-              }),
-            }),
-            clientConfig: {
-              version: 1,
-              clientCapabilities: {
-                elicitation: {},
-                experimental: { projectLevel: true },
-              },
-              hostContext: {},
-            },
-          },
-        }}
-      />
-    );
-
-    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
-  });
-
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
@@ -1692,7 +1500,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: true,
+        enabled: false,
         projectId: "ws_shared_123",
       })
     );
@@ -1713,7 +1521,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: true,
+        enabled: false,
         projectId: null,
       })
     );
@@ -1771,5 +1579,82 @@ describe("ServersTab shared detail modal", () => {
     expect(
       screen.queryByTestId("servers-quick-connect-section")
     ).not.toBeInTheDocument();
+  });
+
+  describe("ServersTab auto-connect switch", () => {
+    const sharedProject = {
+      "project-1": {
+        ...createProject({}),
+        sharedProjectId: "ws_shared_123",
+      },
+    };
+    const catalog = [
+      {
+        _id: "server-1",
+        projectId: "ws_shared_123",
+        name: "alpha",
+        enabled: true,
+        transportType: "http",
+        url: "https://alpha.example.com/mcp",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      localStorage.clear();
+      mockIsAuthenticated = true;
+      mockViewProjectServers = catalog;
+    });
+
+    it("renders for any signed-in member without the project config DTO or admin rights", () => {
+      // `useQuery` is stubbed to `undefined` above, so the config DTO never
+      // hydrates and no admin check runs — the switch must still be usable.
+      render(<ServersTab {...defaultProps} projects={sharedProject} />);
+      const toggle = screen.getByRole("switch", {
+        name: "Auto-connect servers on this device",
+      });
+      expect(toggle).not.toBeDisabled();
+      expect(toggle).toHaveAttribute("data-state", "checked");
+    });
+
+    it("stays hidden when the project has no servers to connect", () => {
+      mockViewProjectServers = [];
+      render(<ServersTab {...defaultProps} projects={sharedProject} />);
+      expect(
+        screen.queryByRole("switch", {
+          name: "Auto-connect servers on this device",
+        })
+      ).not.toBeInTheDocument();
+    });
+
+    it("clears the attempt log when flipped ON so servers connect now", () => {
+      localStorage.setItem("mcpjam-auto-connect-servers", "false");
+      render(<ServersTab {...defaultProps} projects={sharedProject} />);
+      const toggle = screen.getByRole("switch", {
+        name: "Auto-connect servers on this device",
+      });
+      expect(toggle).toHaveAttribute("data-state", "unchecked");
+
+      fireEvent.click(toggle);
+
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe("true");
+      expect(mockResetAutoConnectAttempts).toHaveBeenCalledWith("project-1");
+      expect(mockResetAutoConnectAttempts).toHaveBeenCalledWith(
+        "ws_shared_123"
+      );
+    });
+
+    it("does not touch the attempt log when flipped OFF", () => {
+      render(<ServersTab {...defaultProps} projects={sharedProject} />);
+      fireEvent.click(
+        screen.getByRole("switch", {
+          name: "Auto-connect servers on this device",
+        })
+      );
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe("false");
+      expect(mockResetAutoConnectAttempts).not.toHaveBeenCalled();
+    });
   });
 });

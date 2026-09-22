@@ -5,20 +5,34 @@ import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
 import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
+import {
+  handleSlackServiceAuth,
+  isSlackServiceToken,
+} from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
+import { setRequestLogContext } from "../utils/request-logger.js";
+import {
+  handleSurfaceServiceAuth,
+  isDiscordServiceToken,
+} from "./surface-service-auth.js";
 
 /**
  * Reusable Hono middleware that:
  * 1. Requires a Bearer token in the Authorization header (401 if missing).
- * 2. If the token starts with `sk_`, validates it as a WorkOS API key
+ * 2. If the token starts with `slk_`, handles it as the Slack bot's service
+ *    credential (see slack-service-auth.ts) — allowlisted paths only.
+ * 3. If the token starts with `sk_`, validates it as a WorkOS API key
  *    (memoized per request) and resolves the owning MCPJam user.
- * 3. Otherwise attempts to validate it as a guest JWT.
- * 4. If valid guest token, sets `c.set("guestId", guestId)`.
- * 5. If not a guest token, assumes WorkOS JWT and passes through.
+ * 4. Otherwise attempts to validate it as a guest JWT.
+ * 5. If valid guest token, sets `c.set("guestId", guestId)`.
+ * 6. If not a guest token, assumes WorkOS JWT and passes through.
  *
  * Prefix discrimination is sound: real WorkOS JWTs start with `eyJ`
- * (base64 `{"`), so an `sk_` prefix is unambiguous and the branch
- * never falls through to JWT validation.
+ * (base64 `{"`), so `sk_`/`slk_` prefixes are unambiguous and those
+ * branches never fall through to JWT validation. `slk_` is checked FIRST
+ * because `startsWith("sk_")` would not match it, but the ordering is made
+ * explicit so a future prefix change cannot silently route a Slack token
+ * into the WorkOS-key branch — which mints delegated tokens.
  */
 
 /**
@@ -73,7 +87,7 @@ function consumeWorkOSToken(keyId: string): number | null {
   const elapsed = now - existing.lastRefill;
   const refilled = Math.min(
     WORKOS_RATE_BURST,
-    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS,
+    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS
   );
   if (refilled < 1) {
     existing.tokens = refilled;
@@ -101,17 +115,49 @@ type ValidateApiKeyResult = {
 
 export async function bearerAuthMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   const authHeader = c.req.header("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Label the 401 before returning it. Every branch below rejects a caller
+    // who at least presented something; this one rejects a caller who
+    // presented nothing, and that is the only 4xx class that carries no
+    // signal about our own health. Scanners and crawlers generate it in
+    // bulk against the public API, so the storm monitor has to be able to
+    // exclude it — see `credentialPresented` in `log-events.ts`.
+    setRequestLogContext(c, { credentialPresented: false });
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-      401,
+      401
     );
   }
 
+  // Set once, here, rather than per-branch: everything past this point had a
+  // bearer, so every 401 it produces is somebody's credential failing —
+  // invalid key, unknown user, orphaned key alike.
+  setRequestLogContext(c, { credentialPresented: true });
+
   const token = authHeader.slice("Bearer ".length);
+
+  // Slack bot service credential. Terminal either way: it authorizes the
+  // request (returns null) or answers it (401/429/503). It must never fall
+  // through to the WorkOS-key or JWT branches.
+  if (isSlackServiceToken(token)) {
+    const denied = await handleSlackServiceAuth(c, token);
+    if (denied) return denied;
+    return next();
+  }
+
+  if (isDiscordServiceToken(token)) {
+    // Account-link minting is intentionally usable before an account link
+    // exists. The route authenticates the bot credential itself and creates a
+    // short-lived pending session; the normal agent paths still require the
+    // linked surface identity below.
+    if (c.req.path === "/api/surface-link/session") return next();
+    const denied = await handleSurfaceServiceAuth(c, token, "discord");
+    if (denied) return denied;
+    return next();
+  }
 
   // WorkOS API key branch. Real WorkOS JWTs begin with `eyJ`, so an
   // `sk_` prefix is unambiguous; this branch never falls through.
@@ -136,7 +182,7 @@ export async function bearerAuthMiddleware(
         });
         return c.json(
           { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-          401,
+          401
         );
       }
       setRequestLocal(c, "workosApiKeyValidation", validation);
@@ -145,7 +191,7 @@ export async function bearerAuthMiddleware(
     if (!validation.apiKey) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-        401,
+        401
       );
     }
 
@@ -165,7 +211,7 @@ export async function bearerAuthMiddleware(
             message: "API key rate limit exceeded. Slow down and retry.",
           },
           429,
-          { "Retry-After": String(Math.ceil(waitMs / 1000)) },
+          { "Retry-After": String(Math.ceil(waitMs / 1000)) }
         );
       }
       setRequestLocal(c, "workosRateLimitConsumed", true);
@@ -181,13 +227,13 @@ export async function bearerAuthMiddleware(
       });
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
-        500,
+        500
       );
     }
     if (!mcpjamUser) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Unknown user" },
-        401,
+        401
       );
     }
 
@@ -211,7 +257,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.INTERNAL_ERROR,
             message: "Org binding lookup failed",
           },
-          500,
+          500
         );
       }
       setRequestLocal(c, "workosApiKeyBinding", binding);
@@ -232,7 +278,7 @@ export async function bearerAuthMiddleware(
             "This API key is not bound to an organization. Re-create it from Settings → API keys.",
           details: { reason: "ORPHANED_KEY" },
         },
-        401,
+        401
       );
     }
 
@@ -241,6 +287,13 @@ export async function bearerAuthMiddleware(
     c.set("workosUserId", workosUserId);
     c.set("mcpjamUserId", mcpjamUser._id);
     c.set("mcpjamOrganizationId", binding.mcpjamOrganizationId);
+    // Onto the LOG context as well, not just the request vars. `/api/v1/*`
+    // rows reached Axiom with no `orgId` at all, which structurally disabled
+    // the error-class-spike monitor's "affects >= 3 organizations" rule for
+    // the entire public API — the rule cannot fire on a field that is never
+    // populated, so a v1 error class spiking across every customer counted as
+    // one org forever. This is the only place the API-key path knows the org.
+    setRequestLogContext(c, { orgId: binding.mcpjamOrganizationId });
 
     logger.info("WorkOS API key request", {
       event: "auth.workos_api_key",
@@ -257,22 +310,33 @@ export async function bearerAuthMiddleware(
   try {
     const result = await validateGuestTokenDetailedAsync(token);
     if (result.valid && result.guestId) {
-      if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-        return c.json(
-          {
-            code: ErrorCode.FORBIDDEN,
-            message: "Guest access is disabled in this environment.",
-          },
-          403,
-        );
-      }
       c.set("guestId", result.guestId);
+      c.set("authMethod", "guest");
       return next();
     }
   } catch {
     // Guest token service not initialized — treat as non-guest token
   }
 
-  // Not a guest token — assume WorkOS token, allow through
+  // Not a guest token — assume a WorkOS AuthKit JWT and let it through
+  // WITHOUT verifying it here.
+  //
+  // That is legitimate for the routes this middleware normally fronts: every
+  // one of them forwards the bearer to Convex, which verifies it against
+  // AuthKit's JWKS before doing anything. Verifying twice would add a JWKS
+  // round trip to the hot path to reach the same answer, and a token that
+  // fails downstream fails the request.
+  //
+  // It is NOT legitimate for a v1 route that does not forward the bearer.
+  // Such a route treats "reached the handler" as "authenticated", and nothing
+  // downstream ever contradicts it — so `Authorization: Bearer whatever`
+  // reads it. THE RULE, therefore:
+  //
+  //   A v1 route that does not forward the bearer to Convex MUST mount
+  //   `middleware/require-verified-auth.ts`.
+  //
+  // The label below is what lets that middleware tell the two apart: a
+  // request that got here carries an ASSERTED identity, not a verified one.
+  c.set("authMethod", "unverified_passthrough");
   return next();
 }

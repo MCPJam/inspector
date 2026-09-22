@@ -30,7 +30,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const PERSONA_PROPERTY = {
   type: "string",
@@ -41,7 +46,7 @@ const PERSONA_PROPERTY = {
 const JOURNEY_PROPERTY = {
   type: "string",
   description:
-    "Journey as its card shows it: the goal text (e.g. 'Book a flight to Tokyo') or the journey id. Must belong to the currently selected persona.",
+    "Goal as its card shows it: the goal text (e.g. 'Book a flight to Tokyo') or the goal id. Must belong to the currently selected persona.",
 } as const;
 
 export function buildSwarmsUiTools(): UiToolDefinition[] {
@@ -49,7 +54,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
     {
       name: "ui_create_persona",
       description:
-        "Create a persona on the Swarms screen — a simulated user a journey runs as. Takes a short name and a role (e.g. 'QA tester', 'first-time customer'), plus optional free-text notes describing personality. Low-entropy, so this creates the persona directly and selects it. Journeys and runs for the persona are added afterward.",
+        "Create a persona on the Swarms screen — a simulated user a goal runs as. Takes a short name and a role (e.g. 'QA tester', 'first-time customer'), plus optional free-text notes describing personality. Low-entropy, so this creates the persona directly and selects it. Goals and runs for the persona are added afterward.",
       inputSchema: {
         type: "object",
         properties: {
@@ -77,6 +82,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const name = asOptionalString(args.name);
         const role = asOptionalString(args.role);
@@ -100,7 +106,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
     {
       name: "ui_open_journey_form",
       description:
-        "Open the new-journey form on the Swarms screen for the user to fill in and submit. A journey picks which HOSTS it runs against and how many sessions per host — high-entropy choices, so this only prepares the form; it never creates the journey. Optionally selects a persona and prefills the goal text. To START a journey that already exists, use ui_launch_swarm_run instead.",
+        "Open the new-goal form on the Swarms screen for the user to fill in and submit. A goal picks which HOSTS it runs against and how many sessions per host — high-entropy choices, so this only prepares the form; it never creates the goal. Optionally selects a persona and prefills the goal text. To START a goal that already exists, use ui_launch_swarm_run instead.",
       inputSchema: {
         type: "object",
         properties: {
@@ -121,6 +127,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const persona = asOptionalString(args.persona);
         if (args.persona !== undefined && persona === undefined) {
@@ -145,7 +152,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
     {
       name: "ui_launch_swarm_run",
       description:
-        "Launch a run of an existing journey — fans out one simulated session per (host × sessions-per-host) that make REAL model and MCP tool calls and SPEND the organization's quota (same gate as the Run journey button; a quota/billing rejection is reported as an error and the run is refused). The journey must belong to the currently selected persona. The run continues in the background; observe progress with ui_snapshot_app.",
+        "Launch a run of an existing goal — fans out one simulated session per (host × sessions-per-host) that make REAL model and MCP tool calls and SPEND the organization's quota (same gate as the Run goal button; a quota/billing rejection is reported as an error and the run is refused). The goal must belong to the currently selected persona. The run continues in the background; observe progress with ui_snapshot_app.",
       inputSchema: {
         type: "object",
         properties: { journey: JOURNEY_PROPERTY },
@@ -162,6 +169,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const journey = asOptionalString(args.journey);
         if (!journey) {

@@ -1,6 +1,18 @@
+import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
+import { checkRole } from "@mcpjam/sdk/predicates";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
+import {
+  PREDICATE_KIND_LABELS,
+  isKnownPredicateKind,
+  labelForInlineAssert,
+} from "@/shared/predicate-kinds";
 import type { EvalTraceWidgetRenderObservationView } from "@/shared/eval-trace";
 import { RenderObservationCard } from "./browser-artifacts-view";
+import {
+  EVAL_FAILED_BADGE_STRONG_CLASS,
+  EVAL_PASSED_BADGE_STRONG_CLASS,
+  EVAL_WARN_BADGE_STRONG_CLASS,
+} from "./constants";
 import type { EvalIteration } from "./types";
 
 /**
@@ -101,8 +113,14 @@ export function PredicatesList({
   observations?: EvalTraceWidgetRenderObservationView[];
 }) {
   if (predicates.length === 0) return null;
-  const failed = predicates.filter((r) => !r.passed).length;
-  const passed = predicates.length - failed;
+  // Advisory (Warn/Report) rows are reported, never decisive: the runner's
+  // own verdict skips them, so counting their failures here would paint a
+  // red "2 / 3 assertions passed" badge on an iteration the runner passed.
+  const gating = predicates.filter(
+    (r) => checkRole(r.predicate) !== "advisory"
+  );
+  const failed = gating.filter((r) => !r.passed).length;
+  const passed = gating.length - failed;
   const allPassed = failed === 0;
   const caseLevel = predicates.filter((r) => !r.scope);
   const stepScoped = predicates.filter((r) => r.scope?.kind === "turn");
@@ -134,32 +152,46 @@ export function PredicatesList({
   return (
     <div
       role="region"
-      aria-label="Checks"
+      aria-label="Assertions"
       className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-3"
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Checks
+          Assertions
         </div>
         <div
-          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed
-              ? "bg-success/50 text-foreground"
-              : "bg-destructive/50 text-foreground"
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+            allPassed ? EVAL_PASSED_BADGE_STRONG_CLASS : EVAL_FAILED_BADGE_STRONG_CLASS
           }`}
         >
+          {allPassed ? (
+            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
+          ) : (
+            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
+          )}
           {allPassed
-            ? `${predicates.length} / ${predicates.length} checks passed`
-            : `${passed} / ${predicates.length} checks passed`}
+            ? `${gating.length} / ${gating.length} assertions passed`
+            : `${passed} / ${gating.length} assertions passed`}
         </div>
       </div>
 
-      {renderGroup("Global gates", caseLevel, "case")}
-      {renderGroup("Step checks", stepScoped, "step")}
+      {renderGroup("Whole-run assertions", caseLevel, "case")}
+      {renderGroup("Step assertions", stepScoped, "step")}
     </div>
   );
 }
 
+/**
+ * A single check, rendered as a native `<details>` disclosure — clickable
+ * (and keyboard/screen-reader accessible for free, unlike a `div onClick`)
+ * regardless of predicate type. Previously only widget-render predicates got
+ * an expand affordance (for their evidence cards); every other predicate
+ * (`responseContains`, `toolCalledWith`, …) rendered as static, unclickable
+ * markup. Failed rows start expanded — the reason stays "impossible to
+ * miss" inline, per PUR-24 — while passed rows start collapsed to keep a
+ * long checks list scannable; either can be toggled by clicking anywhere on
+ * the summary row.
+ */
 function PredicateRow({
   row,
   observations,
@@ -170,49 +202,63 @@ function PredicateRow({
   const evidence = evidenceObservations(row.predicate, observations);
   return (
     <li
-      className={`rounded border p-2 ${
+      className={`rounded border ${
         row.passed
-          ? "border-success/50 bg-success/50"
-          : "border-destructive/50 bg-destructive/50"
+          ? "border-border/40 bg-background/40"
+          : "border-destructive/40 bg-destructive/5"
       }`}
     >
-      <div className="flex items-start gap-2">
-        <span
-          className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            row.passed
-              ? "bg-success/50 text-foreground"
-              : "bg-destructive/50 text-foreground"
-          }`}
-          aria-label={row.passed ? "passed" : "failed"}
-        >
-          {row.passed ? "PASS" : "FAIL"}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="font-mono text-xs font-medium">
-              {row.predicate.type}
+      <details className="group" open={!row.passed}>
+        <summary className="flex cursor-pointer list-none items-start gap-2 p-2 [&::-webkit-details-marker]:hidden">
+          <span
+            className={`mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              row.passed
+                ? EVAL_PASSED_BADGE_STRONG_CLASS
+                : EVAL_FAILED_BADGE_STRONG_CLASS
+            }`}
+          >
+            {row.passed ? (
+              <CheckCircle2 className="h-3 w-3" aria-hidden />
+            ) : (
+              <XCircle className="h-3 w-3" aria-hidden />
+            )}
+            {row.passed ? "PASS" : "FAIL"}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="text-xs font-medium">
+                {predicateRowTitle(row)}
+              </span>
+              {row.predicate.severity === "warn" ? (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${EVAL_WARN_BADGE_STRONG_CLASS}`}
+                >
+                  Warn
+                </span>
+              ) : null}
+              <span className="truncate text-[11px] text-muted-foreground">
+                {summarizePredicate(row.predicate)}
+              </span>
             </span>
-            <span className="truncate text-[11px] text-muted-foreground">
-              {summarizePredicate(row.predicate)}
-            </span>
-          </div>
+          </span>
+          <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground group-open:hidden" />
+          <ChevronDown className="mt-0.5 hidden h-3.5 w-3.5 shrink-0 text-muted-foreground group-open:block" />
+        </summary>
+        <div className="space-y-1.5 px-2 pb-2 pl-[26px]">
           <div
-            className={`mt-1 whitespace-pre-wrap break-words text-[11px] leading-tight ${
-              row.passed ? "text-muted-foreground" : "text-foreground"
+            className={`whitespace-pre-wrap break-words text-[11px] leading-tight ${
+              row.passed ? "text-muted-foreground" : "text-destructive"
             }`}
           >
             {row.reason}
           </div>
           {evidence.length > 0 ? (
-            <details
-              className="mt-1.5"
-              data-testid="predicate-render-evidence"
-            >
-              <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+            <div data-testid="predicate-render-evidence">
+              <div className="text-[11px] text-muted-foreground">
                 {evidence.length === 1
                   ? "Rendered widget"
                   : `${evidence.length} rendered widgets`}
-              </summary>
+              </div>
               <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
                 {evidence.map((obs) => (
                   <RenderObservationCard
@@ -221,12 +267,40 @@ function PredicateRow({
                   />
                 ))}
               </div>
-            </details>
+            </div>
           ) : null}
         </div>
-      </div>
+      </details>
     </li>
   );
+}
+
+/**
+ * The row's title: the same human label every other checks surface uses.
+ *
+ * Never the raw discriminator (`widgetRendered`, `toolCalledAtLeastOnce`) —
+ * that is a code identifier, and printing it here made this the one surface
+ * speaking a different vocabulary from the authoring form, the scorecard and
+ * Insights. `summarizePredicate` still renders beside it as the args detail
+ * line; it carries argument specifics the kind label does not.
+ *
+ * SCOPE-AWARE. A step-scoped row was evaluated at one point in the flow, not
+ * over the finished transcript, and two kinds say something weaker there:
+ * `noToolErrors` means "no tool errors SO FAR". `labelForInlineAssert` holds
+ * those variants and falls through to the canonical label for every other
+ * kind, so a turn-scoped row never borrows a whole-run claim.
+ *
+ * Total by construction, for the same reason `summarizePredicate` is: a
+ * predicate type newer than this build must degrade to its raw type rather
+ * than render `undefined` — or, for a prototype-key discriminator, an
+ * inherited object that would throw on render.
+ */
+function predicateRowTitle(row: PredicateResult): string {
+  const type = row.predicate.type;
+  if (!isKnownPredicateKind(type)) return type;
+  return row.scope?.kind === "turn"
+    ? labelForInlineAssert(type)
+    : PREDICATE_KIND_LABELS[type];
 }
 
 /**
@@ -267,6 +341,8 @@ export function summarizePredicate(predicate: Predicate): string {
         return "final assistant message non-empty";
       case "tokenBudgetUnder":
         return `tokens < ${predicate.tokens.toLocaleString()}`;
+      case "turnCountUnder":
+        return `user turns < ${predicate.turns.toLocaleString()}`;
       case "widgetRendered":
         return `widget rendered${
           predicate.toolName ? ` for "${predicate.toolName}"` : ""
@@ -279,6 +355,50 @@ export function summarizePredicate(predicate: Predicate): string {
         return `no widget console errors${
           predicate.toolName ? ` for "${predicate.toolName}"` : ""
         }`;
+      case "noEndingQuestion":
+        return "final message does not end with a question";
+      case "toolLatencyUnder":
+        return `tool call < ${predicate.ms.toLocaleString()}ms${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolResultSizeUnder":
+        return `tool result < ${predicate.maxBytes.toLocaleString()} bytes${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolResultContains":
+        return `tool result contains "${truncate(predicate.needle, 60)}"${
+          predicate.caseSensitive ? " (case-sensitive)" : ""
+        }${predicate.toolName ? ` for "${predicate.toolName}"` : ""}`;
+      case "toolResultMatchesSchema":
+        return `tool result matches schema${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolErrorNamesInput":
+        return `tool errors name an input${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "fullPageHasContinuation":
+        return `full pages carry continuation metadata${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "argumentsMatchToolSchema":
+        return `arguments match the declared schema${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "noRepeatedIdenticalCall":
+        return `no identical call repeated back-to-back${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolCallCountUnder":
+        return `tool calls < ${predicate.count.toLocaleString()}${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolCalledBefore":
+        return `"${predicate.toolName}" before "${predicate.beforeToolName}"`;
+      case "noDeprecatedToolCalled":
+        return "no tool marked deprecated was called";
+      case "noDestructiveToolCalled":
+        return "no tool marked destructive was called";
     }
   } catch {
     // A row whose `type` is valid but whose payload is missing/wrong (corruption,

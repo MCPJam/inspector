@@ -1,5 +1,5 @@
 /**
- * McpjamAgentHero — "Ask anything…" composer for the MCPJam Agent surfaces.
+ * McpjamAgentHero — first-message composer for the MCPJam Agent surfaces.
  *
  * Renders a centered greeting-adjacent input plus suggested-prompt chips and
  * an optional "Recent chat" pill driven by a small localStorage registry.
@@ -27,10 +27,22 @@ import {
   type RecentMcpjamAgentSession,
 } from "@/components/mcpjam-agent/recent-sessions";
 
+/**
+ * Two actions and one question, deliberately in that order.
+ *
+ * The agent can act on the workspace — add servers, run suites, call tools —
+ * but an all-questions chip row teaches the opposite, so users never try. A
+ * chip the user clicks and watches execute is the cheapest demonstration we
+ * have, so the action chips lead.
+ *
+ * Both actions are chosen to survive an empty account: adding a server is the
+ * first thing a new project needs, and listing servers with their health is a
+ * read.
+ */
 const DEFAULT_SUGGESTED_PROMPTS: ReadonlyArray<string> = [
+  "Add a server to this project",
+  "Show my servers and check their health",
   "How do I run an eval?",
-  "What is progressive tool discovery?",
-  "What is cross client testing?",
 ];
 
 export interface McpjamAgentHeroProps {
@@ -168,7 +180,6 @@ export function McpjamAgentHero({
         onSubmit={() => handleSubmit(value, "input")}
         ready={ready}
         loadingMessage="Loading project…"
-        placeholder="Ask anything…"
         textareaRef={textareaRef}
         header={recentHeader}
       />

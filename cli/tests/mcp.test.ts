@@ -12,6 +12,9 @@ import {
 const TARGET_FIXTURE = fileURLToPath(
   new URL("./fixtures/notifying-target-server.mjs", import.meta.url),
 );
+const SKILLS_FIXTURE = fileURLToPath(
+  new URL("./fixtures/skills-target-server.mjs", import.meta.url),
+);
 
 type LinkedTransport = {
   onclose?: () => void;
@@ -154,16 +157,85 @@ test("mcp server exposes the debugging tool surface", async () => {
       "disconnect_server",
       "get_notifications",
       "get_prompt",
+      "get_skill",
       "list_prompts",
       "list_resources",
       "list_servers",
+      "list_skills",
       "list_tools",
       "ping_server",
       "probe_server",
       "read_resource",
+      "read_skill_file",
       "server_doctor",
       "server_info",
     ]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("skills tools verify, and refuse by kind when verification fails", async () => {
+  // The point of these tools over pointing an agent at `read_resource` and a
+  // `skill://` uri: a manifest, a digest check, and a refusal that says which
+  // check failed. A host that "verifies" but can be talked out of it has not
+  // verified anything, so the tampered and dynamic skills are as load-bearing
+  // as the good one.
+  const context = await startTestContext();
+  try {
+    const connected = await context.callTool("connect_server", {
+      name: "skills",
+      command: process.execPath,
+      args: [SKILLS_FIXTURE],
+    });
+    assert.equal(connected.isError, false, JSON.stringify(connected.payload));
+
+    const listed = await context.callTool("list_skills", { server: "skills" });
+    assert.equal(listed.isError, false, JSON.stringify(listed.payload));
+    const names = listed.payload.skills
+      .map((skill: { name: string }) => skill.name)
+      .sort();
+    assert.deepEqual(names, ["dynamic", "good", "tampered"]);
+
+    // A dynamic skill is REAL and stays visible; the refusal belongs to
+    // loading it, not to discovering it.
+    const dynamic = listed.payload.skills.find(
+      (skill: { name: string }) => skill.name === "dynamic",
+    );
+    assert.equal(dynamic.unloadable?.reason, "dynamic_resources");
+
+    const good = await context.callTool("get_skill", {
+      server: "skills",
+      uri: "skill://demo/good/SKILL.md",
+    });
+    assert.equal(good.isError, false, JSON.stringify(good.payload));
+    assert.equal(good.payload.skill.name, "good");
+    assert.match(good.payload.skill.content, /Do the thing/);
+
+    const tampered = await context.callTool("get_skill", {
+      server: "skills",
+      uri: "skill://demo/tampered/SKILL.md",
+    });
+    // A refusal is a RESULT carrying the violation, not a tool error.
+    assert.equal(tampered.isError, false, JSON.stringify(tampered.payload));
+    assert.equal(tampered.payload.refusal.kind, "digest_mismatch");
+
+    const file = await context.callTool("read_skill_file", {
+      server: "skills",
+      skillUri: "skill://demo/good/SKILL.md",
+      resourceUri: "skill://demo/good/references/notes.md",
+    });
+    assert.equal(file.isError, false, JSON.stringify(file.payload));
+    assert.match(file.payload.file.text, /supporting notes/);
+
+    // The manifest is the read allowlist: a uri the skill never listed is
+    // refused before any fetch, however willingly the server would serve it.
+    const unlisted = await context.callTool("read_skill_file", {
+      server: "skills",
+      skillUri: "skill://demo/good/SKILL.md",
+      resourceUri: "skill://demo/good/secrets.env",
+    });
+    assert.equal(unlisted.payload.refusal.kind, "unlisted_resource");
   } finally {
     await context.close();
   }

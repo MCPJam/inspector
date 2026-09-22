@@ -6,7 +6,7 @@
 //
 // It is a COMPOSITE HOOK, not a context provider: the renderer is always already
 // mounted inside whatever provider hierarchy its surface needs (chat /
-// playground / chatbox / trace), so calling the same hooks the renderer calls
+// playground / scenario / trace), so calling the same hooks the renderer calls
 // works on every surface with zero new mount points.
 //
 // This module — the boundary adapter — is allowed to import @/stores, @/contexts
@@ -15,23 +15,34 @@
 // reads through `environment`/`resolvers` while keeping its derivation in place;
 // pre-resolving them into `WidgetHost.resolveEnvironment` is the Phase-3 target.
 
-import { useMemo, useRef, type ReactNode } from "react";
-import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
+import { useCallback, useMemo, useRef, type ReactNode } from "react";
+import {
+  HOSTED_MODE,
+  SANDBOX_ORIGIN,
+  VIEW_MOUNT_MODE,
+  VIEW_SUBDOMAINS_ENABLED,
+} from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
-import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
+import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
-import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-client-capabilities-override-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
+import { useScenarioHostCapabilitiesOverride } from "@/contexts/scenario-client-capabilities-override-context";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import type { CspViolation } from "@/stores/widget-debug-store";
+import { compareCspPolicies } from "../csp-workbench/csp-header";
+import {
+  CspViolationTelemetryLimiter,
+  reportCspViolationToSentry,
+} from "@/lib/csp-violation-telemetry";
 import {
   resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
@@ -83,7 +94,12 @@ import type {
 // design-system <Dialog> and <CheckoutDialogV2>.
 
 /** WidgetModalProps → the inspector design-system <Dialog> (widget-modal sizing). */
-function WidgetModalChrome({ open, onClose, title, children }: WidgetModalProps) {
+function WidgetModalChrome({
+  open,
+  onClose,
+  title,
+  children,
+}: WidgetModalProps) {
   return (
     <Dialog
       open={open}
@@ -131,7 +147,7 @@ type WidgetHostImpl = Required<
 
 export function useWidgetHost(): WidgetHostImpl {
   // --- surface inputs --------------------------------------------------------
-  const isChatboxSurface = useIsChatboxSurface();
+  const isScenarioSurface = useIsScenarioSurface();
   const widgetSurface = useWidgetSurface();
   const webManagedServers = useWebManagedServers();
   // Mirrored into the surface bundle for completeness, but the
@@ -145,14 +161,14 @@ export function useWidgetHost(): WidgetHostImpl {
   const persistentSurfaceHost = usePersistentWidgetSurfaceHost();
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
 
-  // `isChatboxSurface` / `widgetSurface` are read ONLY for the renderer's CSP
+  // `isScenarioSurface` / `widgetSurface` are read ONLY for the renderer's CSP
   // mode derivation; collapsing them to one `kind` preserves it exactly
-  // (chatbox wins over playground, see mcp-apps-renderer.tsx:741-746).
-  const kind: WidgetSurfaceKind = isChatboxSurface
-    ? "chatbox"
+  // (scenario wins over playground, see mcp-apps-renderer.tsx:741-746).
+  const kind: WidgetSurfaceKind = isScenarioSurface
+    ? "scenario"
     : widgetSurface === "playground"
-      ? "playground"
-      : "chat";
+    ? "playground"
+    : "chat";
 
   // Read into a ref so the memoized `services` object stays stable while the
   // listResourceTemplates guard still observes the live value (mirrors the
@@ -189,6 +205,8 @@ export function useWidgetHost(): WidgetHostImpl {
       webManagedServers,
       hostedMode: HOSTED_MODE,
       sandboxOrigin: SANDBOX_ORIGIN ?? "",
+      viewMountMode: VIEW_MOUNT_MODE,
+      viewSubdomainsEnabled: VIEW_SUBDOMAINS_ENABLED,
       playgroundCspMode,
     }),
     [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],
@@ -203,9 +221,9 @@ export function useWidgetHost(): WidgetHostImpl {
   // derivation (memos, ternaries, deps) and just reads `host.environment.*`.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
-  const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
+  const hostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
   // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
   // the inspector as a typed object. Read into a ref so the resolver fns keep a
@@ -228,8 +246,8 @@ export function useWidgetHost(): WidgetHostImpl {
     () => ({
       themeMode,
       sharedHostStyle,
-      chatboxHostStyle,
-      chatboxHostTheme,
+      scenarioHostStyle,
+      scenarioHostTheme,
       hostCapabilitiesOverride,
       // Profile is bound in `resolvers`; expose only the reactivity hash + the
       // minimal projections the renderer inspects (no `HostConfigMcpProfileV1`).
@@ -248,8 +266,8 @@ export function useWidgetHost(): WidgetHostImpl {
     [
       themeMode,
       sharedHostStyle,
-      chatboxHostStyle,
-      chatboxHostTheme,
+      scenarioHostStyle,
+      scenarioHostTheme,
       hostCapabilitiesOverride,
       activeMcpProfile,
       draftHostContext,
@@ -280,7 +298,10 @@ export function useWidgetHost(): WidgetHostImpl {
           profile: activeMcpProfileRef.current,
           hostStyle,
         }),
-      resolveEffectiveHostCapabilities: ({ hostStyle, hostCapabilitiesOverride }) =>
+      resolveEffectiveHostCapabilities: ({
+        hostStyle,
+        hostCapabilitiesOverride,
+      }) =>
         resolveEffectiveHostCapabilities({
           hostStyle,
           profile: activeMcpProfileRef.current,
@@ -304,6 +325,7 @@ export function useWidgetHost(): WidgetHostImpl {
   const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
+  const setWidgetAppliedCsp = useWidgetDebugStore((s) => s.setWidgetAppliedCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
   const setWidgetModelContext = useWidgetDebugStore(
@@ -313,6 +335,45 @@ export function useWidgetHost(): WidgetHostImpl {
   const setSandboxApplied = useWidgetDebugStore((s) => s.setSandboxApplied);
   const appendLifecycle = useWidgetDebugStore((s) => s.appendLifecycle);
   const addTrafficLog = useTrafficLogStore((s) => s.addLog);
+  const cspTelemetryLimiterRef = useRef(new CspViolationTelemetryLimiter());
+  const reportCspViolation = useCallback(
+    (toolCallId: string, serverId: string, violation: CspViolation) => {
+      if (
+        !cspTelemetryLimiterRef.current.shouldReport(
+          toolCallId,
+          serverId,
+          violation,
+        )
+      ) {
+        return;
+      }
+      const applied =
+        violation.mountId === undefined
+          ? undefined
+          : useWidgetDebugStore.getState().widgets.get(toolCallId)?.csp
+              ?.appliedPoliciesByMount?.[String(violation.mountId)];
+      reportCspViolationToSentry({
+        toolCallId,
+        serverId,
+        violation,
+        appliedPolicy: applied?.headerString,
+        appliedMode: applied?.mode,
+        intent: applied?.intent,
+        comparison: compareCspPolicies(
+          applied?.headerString,
+          violation.originalPolicy,
+        ),
+      });
+    },
+    [],
+  );
+  const clearCspViolationsAndTelemetry = useCallback(
+    (toolCallId: string) => {
+      cspTelemetryLimiterRef.current.clearToolCall(toolCallId);
+      clearCspViolations(toolCallId);
+    },
+    [clearCspViolations],
+  );
 
   const debug = useMemo<WidgetDebugSink>(
     () => ({
@@ -321,8 +382,10 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
+      setWidgetAppliedCsp,
       addCspViolation,
-      clearCspViolations,
+      reportCspViolation,
+      clearCspViolations: clearCspViolationsAndTelemetry,
       setWidgetModelContext,
       setWidgetHtml,
       setSandboxApplied,
@@ -335,8 +398,10 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
+      setWidgetAppliedCsp,
       addCspViolation,
-      clearCspViolations,
+      reportCspViolation,
+      clearCspViolationsAndTelemetry,
       setWidgetModelContext,
       setWidgetHtml,
       setSandboxApplied,
@@ -367,7 +432,7 @@ export function useWidgetHost(): WidgetHostImpl {
  *
  * Mount it as close to each renderer surface as the renderer itself was — it
  * subscribes to the same ~14 stores/contexts, so it must sit inside the same
- * provider hierarchy (chat / playground / chatbox / trace) and only where a
+ * provider hierarchy (chat / playground / scenario / trace) and only where a
  * widget actually mounts (to avoid widening that subscription set).
  */
 export function InspectorWidgetHostProvider({

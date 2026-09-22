@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import servers from "../servers.js";
+import { rpcLogBus } from "../../../services/rpc-log-bus";
 
 // Mock rpc-log-bus module
 vi.mock("../../../services/rpc-log-bus", () => ({
   rpcLogBus: {
     getBuffer: vi.fn().mockReturnValue([]),
     subscribe: vi.fn().mockReturnValue(() => {}),
+    forgetServer: vi.fn(),
   },
 }));
 
@@ -228,6 +230,10 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
 
     expect(mcpClientManager.disconnectServer).toHaveBeenCalledWith("server-1");
     expect(mcpClientManager.removeServer).toHaveBeenCalledWith("server-1");
+    // A disconnect that left the server's frames in the replay buffer leaked
+    // them for the life of the process — the buffer is keyed by server id and
+    // has no other eviction.
+    expect(rpcLogBus.forgetServer).toHaveBeenCalledWith("server-1");
   });
 
   it("handles already disconnected server gracefully", async () => {
@@ -244,6 +250,10 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
     // Disconnect should not be called for already disconnected server
     expect(mcpClientManager.disconnectServer).not.toHaveBeenCalled();
     expect(mcpClientManager.removeServer).toHaveBeenCalled();
+    // A failed connect removes the entry down this path too, and its frames
+    // are the ones the Logs panel is open to show — so they are the ones most
+    // likely to be left behind.
+    expect(rpcLogBus.forgetServer).toHaveBeenCalledWith("disconnected-server");
   });
 
   it("continues removal even if disconnect fails", async () => {
@@ -261,6 +271,7 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
 
     // removeServer should still be called
     expect(mcpClientManager.removeServer).toHaveBeenCalledWith("server-1");
+    expect(rpcLogBus.forgetServer).toHaveBeenCalledWith("server-1");
   });
 });
 
@@ -496,12 +507,17 @@ describe("POST /api/mcp/servers/reconnect", () => {
       });
 
       expect(res.status).toBe(500);
-      const data = (await res.json()) as { success: boolean; error: string };
+      const data = (await res.json()) as {
+        success: boolean;
+        error: string;
+        serverName?: string;
+      };
       expect(data.success).toBe(false);
-      // Unified error wraps the underlying message with the server name —
-      // matches /api/mcp/connect's pre-existing wording.
-      expect(data.error).toContain("Connection refused");
-      expect(data.error).toContain(RECONNECT_SERVER_NAME);
+      // The underlying failure, unprefixed — same envelope as
+      // /api/mcp/connect. Which server it was rides on `serverName` rather
+      // than being pasted onto the front of the sentence a user reads.
+      expect(data.error).toBe("Connection refused");
+      expect(data.serverName).toBe(RECONNECT_SERVER_NAME);
     });
   });
 });

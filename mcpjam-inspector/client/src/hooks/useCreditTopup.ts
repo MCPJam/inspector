@@ -1,6 +1,7 @@
 import { useAction, useQuery } from "convex/react";
 import { useCallback, useMemo, useState } from "react";
 import { track } from "@/lib/analytics";
+import { toast } from "@/lib/toast";
 
 export interface CreditTopupPreset {
   packageId: string;
@@ -25,6 +26,10 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
  * `window.location.assign` would otherwise navigate the user anywhere.
  */
 const ALLOWED_CHECKOUT_URL_PREFIX = "https://checkout.stripe.com/";
+
+function isDesktopApp(): boolean {
+  return typeof window !== "undefined" && window.isElectron === true;
+}
 
 export function isAllowedCheckoutUrl(url: unknown): url is string {
   return typeof url === "string" && url.startsWith(ALLOWED_CHECKOUT_URL_PREFIX);
@@ -159,11 +164,16 @@ export type CreditTopupSource = "chat_banner" | "billing_page" | "limit_modal";
 interface StartCheckoutInput {
   organizationId: string;
   packageId: string;
-  priceCents: number;
+  priceCents: number | null;
   chatSessionId: string;
   lastUserMessage: string;
   returnUrl?: string;
   source: CreditTopupSource;
+}
+
+export interface StartCheckoutResult {
+  /** Desktop only: checkout opened elsewhere, so this window never navigates. */
+  handedOffToBrowser: boolean;
 }
 
 export interface UseCreditTopupPresetsOptions {
@@ -178,7 +188,7 @@ export function useCreditTopupPresets(options?: UseCreditTopupPresetsOptions): {
   const skip = options?.skip === true;
   const presetsRaw = useQuery(
     "billing:getCreditTopupPresets" as any,
-    skip ? "skip" : (undefined as any)
+    skip ? "skip" : (undefined as any),
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized array stays
@@ -193,7 +203,7 @@ export function useCreditTopup() {
   const { presets, isLoading: presetsLoading } = useCreditTopupPresets();
 
   const createCheckoutSession = useAction(
-    "billing:createCreditCheckoutSession" as any
+    "billing:createCreditCheckoutSession" as any,
   );
 
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
@@ -208,15 +218,9 @@ export function useCreditTopup() {
       lastUserMessage,
       returnUrl,
       source,
-    }: StartCheckoutInput): Promise<void> => {
+    }: StartCheckoutInput): Promise<StartCheckoutResult> => {
       setIsStartingCheckout(true);
       setError(null);
-      track("credit_topup_checkout_started", {
-        location: "credit_topup",
-        package_id: packageId,
-        price_cents: priceCents,
-        source,
-      });
       stashPendingTopup({ chatSessionId, message: lastUserMessage });
       // Track the most specific failure category we know about. Defaults to
       // `action_threw` (the fallback when the Convex action itself rejects)
@@ -224,11 +228,25 @@ export function useCreditTopup() {
       let errorKind: "missing_url" | "invalid_url" | "action_threw" =
         "action_threw";
       try {
-        const result = (await createCheckoutSession({
+        // Begin the real checkout action first. Product analytics is emitted
+        // without being awaited and cannot block or break the checkout.
+        const checkoutPromise = createCheckoutSession({
           organizationId,
           packageId,
           ...(returnUrl ? { returnUrl } : {}),
-        } as any)) as { checkoutUrl?: string } | null;
+        } as any);
+        track("credit_topup_checkout_started", {
+          location: "credit_topup",
+          organization_id: organizationId,
+          package_id: packageId,
+          price_cents: priceCents,
+          source,
+          has_resume_context: Boolean(chatSessionId && lastUserMessage),
+          has_return_url: Boolean(returnUrl),
+        });
+        const result = (await checkoutPromise) as {
+          checkoutUrl?: string;
+        } | null;
         const checkoutUrl = result?.checkoutUrl;
         if (typeof checkoutUrl !== "string" || checkoutUrl.length === 0) {
           errorKind = "missing_url";
@@ -240,26 +258,42 @@ export function useCreditTopup() {
           errorKind = "invalid_url";
           throw new Error("Refusing to redirect to non-Stripe checkout URL");
         }
+        if (isDesktopApp()) {
+          // The shell sends any cross-origin navigation to the system browser,
+          // so `location.assign` here would do nothing and the return URL would
+          // land in a different session. Hand checkout over explicitly and say
+          // so, rather than leaving the dialog open over a page that will never
+          // navigate. Credits land through the same Convex subscription the
+          // balance already reads, so the app updates without the return trip.
+          window.open(checkoutUrl, "_blank", "noopener,noreferrer");
+          toast.info(
+            "Finish checkout in your browser. Your credits appear here automatically.",
+          );
+          return { handedOffToBrowser: true };
+        }
         window.location.assign(checkoutUrl);
+        return { handedOffToBrowser: false };
       } catch (err) {
-        track("credit_topup_checkout_failed", {
-          location: "credit_topup",
-          package_id: packageId,
-          price_cents: priceCents,
-          error_kind: errorKind,
-          source,
-        });
         clearPendingTopup();
 
         const message =
           err instanceof Error ? err.message : "Failed to start checkout";
         setError(message);
+        track("credit_topup_checkout_failed", {
+          location: "credit_topup",
+          organization_id: organizationId,
+          package_id: packageId,
+          price_cents: priceCents,
+          error_kind: errorKind,
+          error_name: err instanceof Error ? err.name : "unknown",
+          source,
+        });
         throw err;
       } finally {
         setIsStartingCheckout(false);
       }
     },
-    [createCheckoutSession]
+    [createCheckoutSession],
   );
 
   return {

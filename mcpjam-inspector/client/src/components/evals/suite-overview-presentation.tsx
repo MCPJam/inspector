@@ -13,6 +13,10 @@ import {
   EVAL_FAIL_BAR_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
+import {
+  isCiOwnedSuite,
+  type CiOwnedSuiteInput,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Strip trailing timestamp suffixes from suite names for display. */
 export function stripTimestampSuffix(name: string): string {
@@ -70,6 +74,10 @@ export function computeSuitePassRateDelta(
 export function getSuitePassRatePercent(
   entry: EvalSuiteOverviewEntry,
 ): number | null {
+  // An inconclusive policy-2 run is not a failed run and, more importantly,
+  // its summary is not a measured pass-rate denominator. Keep the overview
+  // neutral instead of showing compatibility counts as a verdict.
+  if (entry.latestRun?.result === "inconclusive") return null;
   if (entry.latestRun?.summary) {
     const { passRate, passed, total } = entry.latestRun.summary;
     if (typeof passRate === "number") {
@@ -94,6 +102,7 @@ export function getSuitePassRateLabel(entry: EvalSuiteOverviewEntry): string {
 export function getSuitePassFailCounts(
   entry: EvalSuiteOverviewEntry,
 ): { passed: number; total: number } | null {
+  if (entry.latestRun?.result === "inconclusive") return null;
   if (entry.latestRun?.summary && entry.latestRun.summary.total > 0) {
     return {
       passed: entry.latestRun.summary.passed,
@@ -212,13 +221,30 @@ export function SuitePassRateDeltaChip({
   );
 }
 
-export function SuiteSourceBadge({ source }: { source?: "ui" | "sdk" }) {
-  if (source !== "sdk") return null;
+/**
+ * "CI" — this suite's configuration lives somewhere other than this app.
+ *
+ * The badge has read **CI** for a while; only the tooltip still said SDK, which
+ * was true when `source: 'sdk'` was the only way to get here and stopped being
+ * true when suite files landed. Both are now the same fact — the suite is
+ * managed elsewhere and refuses configuration edits here — so both light the
+ * same badge, and the tooltip says the thing that is actually shared.
+ *
+ * Takes the SUITE, not one field, because `isCiOwnedSuite` is a predicate over
+ * two of them and a caller passing only `source` would silently miss every
+ * file-owned suite.
+ */
+export function SuiteSourceBadge({
+  suite,
+}: {
+  suite: CiOwnedSuiteInput | null | undefined;
+}) {
+  if (!isCiOwnedSuite(suite)) return null;
   return (
     <Badge
       variant="outline"
       className="shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide"
-      title="Created via the MCPJam SDK"
+      title="Managed by CI (created from a test file or the MCPJam SDK)"
     >
       CI
     </Badge>

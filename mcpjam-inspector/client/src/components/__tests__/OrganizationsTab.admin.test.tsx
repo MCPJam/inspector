@@ -23,10 +23,29 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+  // `SettingsNav` reaches `useGithubChecksAvailability`, which queries Convex.
+  // Without this the mock is missing an export the tree now needs.
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
+}));
+
+// SettingsNav (rendered inside the members admin area) resolves GitHub
+// Checks tab availability itself via a hook that calls convex/react's
+// useQuery — which the blanket mock above doesn't provide. This suite
+// doesn't exercise that tab, so a stubbed "not available yet" is enough.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
 }));
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
+}));
+
+// SettingsNav asks the backend for GitHub Checks availability on every settings
+// surface, including this one. Stubbed to keep that query out of these tests.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
 }));
 
 vi.mock("@/hooks/useOrganizations", async () => {
@@ -57,6 +76,21 @@ vi.mock("../organization/OrganizationAuditLog", () => ({
   OrganizationAuditLog: () => (
     <div data-testid="organization-audit-log">Audit Log</div>
   ),
+}));
+
+vi.mock("@/hooks/useOrgSharePolicy", () => ({
+  useOrgSharePolicy: () => ({
+    policy: {
+      maxShareMode: "anyone_with_link",
+      inviteAudience: "anyone",
+      updatedAt: null,
+    },
+    isLoading: false,
+    error: null,
+    isSaving: false,
+    setPolicy: vi.fn(),
+  }),
+  useEffectiveSharePolicy: () => ({ policy: undefined, isLoading: false }),
 }));
 
 vi.mock("../organization/OrganizationMemberRow", () => ({
@@ -147,6 +181,21 @@ function createMember({
 }
 
 describe("OrganizationsTab member management", () => {
+  it("renders Data management instead of falling back to General", () => {
+    render(
+      <OrganizationsTab organizationId="org-1" section="data-management" />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Data management" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Contact us" })).toHaveAttribute(
+      "href",
+      "https://www.mcpjam.com/contact",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "General" }),
+    ).not.toBeInTheDocument();
+  });
   let currentUserEmail = "owner@example.com";
   let activeMembers = [
     createMember({ email: "owner@example.com", role: "owner", isOwner: true }),
@@ -244,11 +293,40 @@ describe("OrganizationsTab member management", () => {
     mockUpdateOrganizationLogo.mockResolvedValue({ success: true });
   });
 
-  it("shows members section for owners and allows role changes", async () => {
+  it("preserves organization branding and separates General from Members", () => {
     render(<OrganizationsTab organizationId="org-1" />);
+    expect(
+      screen.getByRole("button", { name: "Upload organization logo" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Danger Zone")).toBeInTheDocument();
+    expect(screen.queryByText("Members")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", {
+        name: "Organization settings sections",
+      }),
+    ).not.toBeInTheDocument();
+  });
 
-    expect(screen.getByText("Members")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Email address")).toHaveClass("sm:w-80");
+  it("keeps the sharing URL as an alias for members and sharing", () => {
+    render(<OrganizationsTab organizationId="org-1" section="sharing" />);
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Members & sharing" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("org-sharing-policy-card")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Sharing" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows members section for owners and allows role changes", async () => {
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Members & sharing" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Invite with email" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("change-role-member@example.com"));
 
@@ -262,7 +340,7 @@ describe("OrganizationsTab member management", () => {
   });
 
   it("allows ownership transfer for owners", async () => {
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
     fireEvent.click(screen.getByText("transfer-member@example.com"));
 
@@ -276,6 +354,64 @@ describe("OrganizationsTab member management", () => {
     });
   });
 
+  it("requires confirmation before removing a member and supports canceling", async () => {
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
+    fireEvent.click(screen.getByText("remove-member@example.com"));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "member@example.com",
+    );
+    expect(mockRemoveMember).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel", exact: true }),
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(mockRemoveMember).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("remove-member@example.com"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove member", exact: true }),
+    );
+    await waitFor(() =>
+      expect(mockRemoveMember).toHaveBeenCalledWith({
+        organizationId: "org-1",
+        email: "member@example.com",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps a failed removal open for retry and blocks repeated submissions", async () => {
+    let rejectRemoval!: (error: Error) => void;
+    mockRemoveMember.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRemoval = reject;
+        }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
+    fireEvent.click(screen.getByText("remove-member@example.com"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove member", exact: true }),
+    );
+    expect(screen.getByRole("button", { name: "Removing…" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Removing…" }));
+    expect(mockRemoveMember).toHaveBeenCalledTimes(1);
+    rejectRemoval(new Error("Network unavailable"));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove member", exact: true }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    expect(mockRemoveMember).toHaveBeenCalledTimes(2);
+  });
+
   it("shows members section for admins with read-only membership controls", () => {
     currentUserEmail = "admin@example.com";
     mockUseOrganizationQueries.mockReturnValue({
@@ -283,9 +419,11 @@ describe("OrganizationsTab member management", () => {
       isLoading: false,
     });
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
-    expect(screen.getByText("Members")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Members & sharing" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("change-role-member@example.com"),
     ).not.toBeInTheDocument();
@@ -350,7 +488,7 @@ describe("OrganizationsTab member management", () => {
       cancelSeatPayment: vi.fn(),
     });
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
     expect(screen.getByText("Access restricted")).toBeInTheDocument();
     expect(
@@ -361,6 +499,7 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByRole("button", { name: "Go to Servers" }),
     ).toBeInTheDocument();
+    expect(document.getElementById("settings-content")).toBeInTheDocument();
   });
 
   it("lets a non-admin member leave from the access restricted screen", async () => {
@@ -409,7 +548,7 @@ describe("OrganizationsTab member management", () => {
     ).toBeInTheDocument();
     expect(mockUseOrganizationBilling).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(signIn).toHaveBeenCalledTimes(1);
   });
 
@@ -479,7 +618,7 @@ describe("OrganizationsTab member management", () => {
       cancelSeatPayment,
     });
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
     expect(screen.getByTestId("pending-seat-payment-notice")).toHaveTextContent(
       "Finish payment to add new@example.com",
@@ -559,9 +698,11 @@ describe("OrganizationsTab member management", () => {
       cancelSeatPayment,
     });
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
-    expect(screen.getByRole("button", { name: "Finish payment" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Finish payment" }),
+    ).toBeDisabled();
     const cancelButton = screen.getByRole("button", { name: "Cancel" });
     expect(cancelButton).toBeEnabled();
 
@@ -633,7 +774,7 @@ describe("OrganizationsTab member management", () => {
       cancelSeatPayment: vi.fn(),
     });
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
@@ -694,12 +835,15 @@ describe("OrganizationsTab member management", () => {
       cancelSeatPayment: vi.fn(),
     });
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="members" />);
 
-    fireEvent.change(screen.getByPlaceholderText("Email address"), {
-      target: { value: "new@example.com" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Invite with email" }),
+      {
+        target: { value: "new@example.com" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
       expect(mockAddMember).toHaveBeenCalledWith({

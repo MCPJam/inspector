@@ -54,9 +54,41 @@ export const mcpAppsCapabilitiesSchema = z.object({
   sandboxPermissions: z.boolean().optional(),
   cspFrameDomains: z.boolean().optional(),
   cspBaseUriDomains: z.boolean().optional(),
+  cspConnectDomains: z
+    .object({
+      fetch: z.boolean().optional(),
+      xhr: z.boolean().optional(),
+      websocket: z.boolean().optional(),
+    })
+    .optional(),
+  cspResourceDomains: z
+    .object({
+      script: z.boolean().optional(),
+      stylesheet: z.boolean().optional(),
+      image: z.boolean().optional(),
+      font: z.boolean().optional(),
+      media: z.boolean().optional(),
+    })
+    .optional(),
+  resourceCacheTtl: z.boolean().optional(),
+  toolResult: z
+    .object({
+      structuredContent: z.boolean().optional(),
+      content: z
+        .object({
+          text: z.boolean().optional(),
+          image: z.boolean().optional(),
+          audio: z.boolean().optional(),
+          resource: z.boolean().optional(),
+          resourceLink: z.boolean().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   resourcePrefersBorder: z.boolean().optional(),
   downloadFile: z.boolean().optional(),
   requestTeardown: z.boolean().optional(),
+  safeAreaInsets: z.boolean().optional(),
   widgetDisplayModeRequests: z
     .enum(["accept", "user-initiated-only", "decline"])
     .optional()
@@ -88,6 +120,51 @@ const hostImageSupportSchema = z.object({
   placement: z.enum(["none", "collapsed", "inline"]).catch("none"),
 });
 
+const documentedCapabilitySchema = z.object({
+  status: z.enum(["supported", "unsupported", "limited"]),
+  mcpAppsEquivalent: z.string().optional(),
+  note: z.string().optional(),
+});
+
+const documentedCapabilityGroupSchema = z.record(
+  z.string(),
+  documentedCapabilitySchema
+);
+
+const hostCompatibilityEvidenceSchema = z.object({
+  profileLabel: z.string().min(1),
+  sourceUrl: z.string().min(1),
+  sourceUpdatedAt: z.number(),
+  componentBridge: documentedCapabilityGroupSchema,
+  toolDescriptorMeta: documentedCapabilityGroupSchema,
+  toolAnnotations: documentedCapabilityGroupSchema,
+  componentResourceMeta: documentedCapabilityGroupSchema,
+  cspProperties: documentedCapabilityGroupSchema,
+  hostProvidedToolResultMeta: documentedCapabilityGroupSchema,
+  clientProvidedMeta: documentedCapabilityGroupSchema,
+  deployment: z.object({
+    supportedUiStandards: z.array(z.string()),
+    productionAuthentication: z.array(z.string()),
+    developmentAuthentication: z.array(z.string()),
+    widgetHostPattern: z.string(),
+    oauthRedirectUris: z.array(
+      z.object({
+        surface: z.string(),
+        uri: z.string(),
+      })
+    ),
+    entraSsoRedirectUris: z.array(
+      z.object({
+        surface: z.string(),
+        uri: z.string(),
+      })
+    ),
+    minimumAgentsToolkitVersion: z.string(),
+    defaultToolDiscovery: z.string(),
+    notes: z.array(z.string()),
+  }),
+});
+
 const hostCatalogMetadataSchema = z.object({
   // Plain string by design — a new host on the backend must not require an
   // SDK release to parse.
@@ -104,6 +181,19 @@ const hostCatalogMetadataSchema = z.object({
   supportedProtocolVersions: z.array(z.string()).optional(),
   verifiedAt: z.number().optional(),
   imageSupport: hostImageSupportSchema.optional(),
+  compatibilityEvidence: hostCompatibilityEvidenceSchema.optional(),
+  // Both themes for a host that resolves its style tokens per theme and sends
+  // literals. Declared here because Zod strips unknown keys: without it a
+  // live-fetched catalog would lose the pair and only the bundled snapshot
+  // would carry it. Each theme is optional — a host with `light-dark(…)`
+  // values has nothing to split, and one probed in a single theme must not
+  // have the other invented.
+  styleVariablesByTheme: z
+    .object({
+      light: z.record(z.string(), z.string()).optional(),
+      dark: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
 });
 
 const hostConfigMcpProfileSchema = z
@@ -137,7 +227,7 @@ const hostConfigTemplateSchema = z.object({
       workdir: z.string().optional(),
     })
     .optional(),
-  harness: z.enum(["claude-code", "codex"]).optional(),
+  harness: z.enum(["claude-code", "codex", "cursor"]).optional(),
   connectionDefaults: z.object({
     headers: z.record(z.string(), z.string()),
     requestTimeout: z.number(),

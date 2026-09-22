@@ -13,9 +13,9 @@ import {
 } from "../../services/tunnel-grants";
 import { LOCAL_SERVER_ADDR } from "../../config";
 import "../../types/hono";
-import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyTunnelError } from "../../utils/error-classify";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const tunnels = new Hono();
 
@@ -106,8 +106,11 @@ tunnels.post("/create/:serverId", async (c) => {
           errorCode: classifyTunnelError(error, "relay_connect_failed"),
         }
       );
-      logger.error("Error creating server-specific tunnel", error, {
-        serverId,
+      reportRouteFailure("Error creating server-specific tunnel", error, {
+        // MCPJam's own tunnel service.
+        source: "mcp.tunnels.create",
+        hop: "mcpjam_internal",
+        context: { serverId },
       });
       return c.json(
         {
@@ -129,7 +132,7 @@ tunnels.post("/rotate/:serverId", async (c) => {
 
   let full = false;
   try {
-    const body = await c.req.json();
+    const body = await readRequestJson(c);
     full = body?.full === true;
   } catch {}
 
@@ -147,7 +150,11 @@ tunnels.post("/rotate/:serverId", async (c) => {
           errorCode: classifyTunnelError(error, "fetch_relay_grant_failed"),
         }
       );
-      logger.error("Error rotating tunnel secret", error, { serverId });
+      reportRouteFailure("Error rotating tunnel secret", error, {
+        source: "mcp.tunnels.rotate",
+        hop: "mcpjam_internal",
+        context: { serverId },
+      });
       return c.json({ error: error.message || "Failed to rotate tunnel" }, 500);
     }
 
@@ -172,7 +179,11 @@ tunnels.post("/rotate/:serverId", async (c) => {
           tunnelDomain: safeHostname(grant.url),
         }
       );
-      logger.error("Error reconnecting rotated tunnel", error, { serverId });
+      reportRouteFailure("Error reconnecting rotated tunnel", error, {
+        source: "mcp.tunnels.rotate.reconnect",
+        hop: "mcpjam_internal",
+        context: { serverId },
+      });
       return c.json(
         {
           error:
@@ -234,7 +245,11 @@ tunnels.delete("/server/:serverId", async (c) => {
       clearTunnelRequests(serverId);
       return c.json({ success: true, serverId });
     } catch (error: any) {
-      logger.error("Error closing server-specific tunnel", error, { serverId });
+      reportRouteFailure("Error closing server-specific tunnel", error, {
+        source: "mcp.tunnels.close",
+        hop: "mcpjam_internal",
+        context: { serverId },
+      });
       return c.json(
         {
           error: error.message || "Failed to close server-specific tunnel",

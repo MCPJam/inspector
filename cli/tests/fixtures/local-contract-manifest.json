@@ -1,0 +1,106 @@
+{
+  "frozenTopLevelCommands": [
+    "apps",
+    "compat",
+    "inspector",
+    "mcp",
+    "oauth",
+    "prompts",
+    "protocol",
+    "readiness",
+    "resources",
+    "server",
+    "subscriptions",
+    "tasks",
+    "telemetry",
+    "tools",
+    "xaa"
+  ],
+  "help": {
+    "apps": {
+      "usage": "Usage: mcpjam apps [options] [command]",
+      "subcommands": ["conformance", "render", "session", "conformance-suite"]
+    },
+    "compat": {
+      "usage": "Usage: mcpjam compat [options]",
+      "subcommands": []
+    },
+    "inspector": {
+      "usage": "Usage: mcpjam inspector [options] [command]",
+      "subcommands": ["open", "start", "stop"]
+    },
+    "mcp": {
+      "usage": "Usage: mcpjam mcp [options]",
+      "subcommands": []
+    },
+    "oauth": {
+      "usage": "Usage: mcpjam oauth [options] [command]",
+      "subcommands": [
+        "login",
+        "conformance",
+        "conformance-suite",
+        "metadata",
+        "proxy",
+        "debug-proxy"
+      ]
+    },
+    "prompts": {
+      "usage": "Usage: mcpjam prompts [options] [command]",
+      "subcommands": ["list", "get"]
+    },
+    "protocol": {
+      "usage": "Usage: mcpjam protocol [options] [command]",
+      "subcommands": ["conformance", "conformance-suite"]
+    },
+    "readiness": {
+      "usage": "Usage: mcpjam readiness [options] [command]",
+      "subcommands": ["check", "start", "status", "list", "cancel", "report"]
+    },
+    "resources": {
+      "usage": "Usage: mcpjam resources [options] [command]",
+      "subcommands": ["list", "read", "templates"]
+    },
+    "server": {
+      "usage": "Usage: mcpjam server [options] [command]",
+      "subcommands": [
+        "probe",
+        "doctor",
+        "info",
+        "validate",
+        "ping",
+        "capabilities",
+        "export",
+        "diff"
+      ]
+    },
+    "subscriptions": {
+      "usage": "Usage: mcpjam subscriptions [options] [command]",
+      "subcommands": ["listen"]
+    },
+    "tasks": {
+      "usage": "Usage: mcpjam tasks [options] [command]",
+      "subcommands": [
+        "capabilities",
+        "list",
+        "get",
+        "result",
+        "cancel",
+        "update",
+        "watch",
+        "conformance"
+      ]
+    },
+    "telemetry": {
+      "usage": "Usage: mcpjam telemetry [options] [command]",
+      "subcommands": ["status", "disable", "enable"]
+    },
+    "tools": {
+      "usage": "Usage: mcpjam tools [options] [command]",
+      "subcommands": ["list", "call"]
+    },
+    "xaa": {
+      "usage": "Usage: mcpjam xaa [options] [command]",
+      "subcommands": ["run"]
+    }
+  }
+}

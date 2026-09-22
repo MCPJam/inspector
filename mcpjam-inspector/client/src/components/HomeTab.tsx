@@ -11,14 +11,20 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
+import { SharedSlackChannelCard } from "./home/SharedSlackChannelCard";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
+import {
+  clearPendingAgentPrompt,
+  writePendingAgentPrompt,
+} from "@/lib/mcpjam-agent/pending-prompt";
 
 interface HomeTabProps {
   organizationId: string | null;
@@ -112,21 +118,6 @@ function McpjamAgentTakeoverFrame({
   );
 }
 
-// Mirrors the key handleSessionStart writes and McpjamAgentThread's autosubmit
-// effect removes; lives here so the takeover Back / New chat handlers can
-// clean up unconsumed payloads when the thread unmounts before its effect
-// runs.
-function clearPendingForSession(sessionId: string | null | undefined) {
-  if (!sessionId || typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(`mcpjam:agent-pending:${sessionId}`);
-  } catch {
-    // Quota/disabled storage — stale entry will be a no-op unless the user
-    // returns to this session, and even then the duplicate-send is the only
-    // visible regression. Not worth surfacing.
-  }
-}
-
 // Escape hatch: the loading signals feeding `isContextLoading` (notably the db
 // user bootstrap) can stick true indefinitely if a bootstrap mutation fails and
 // never retries. Without a cap, that strands the user on a permanent skeleton
@@ -154,7 +145,7 @@ export function HomeTab({
     }
     const timer = window.setTimeout(
       () => setLoadingTimedOut(true),
-      HOME_CONTEXT_LOADING_TIMEOUT_MS
+      HOME_CONTEXT_LOADING_TIMEOUT_MS,
     );
     return () => window.clearTimeout(timer);
   }, [isContextLoading]);
@@ -172,16 +163,7 @@ export function HomeTab({
       // Chat pill". Without it, the thread can't tell the two apart and
       // would replay the prompt against an already-hydrated transcript if
       // hydration hadn't committed yet on the first effect pass.
-      try {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(
-            `mcpjam:agent-pending:${id}`,
-            JSON.stringify({ text: firstMessage, fresh: true })
-          );
-        }
-      } catch {
-        // Ignore quota/disabled storage — worst case the user retypes.
-      }
+      writePendingAgentPrompt(id, firstMessage);
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -189,10 +171,10 @@ export function HomeTab({
           next.delete("compose");
           return next;
         },
-        { replace: false }
+        { replace: false },
       );
     },
-    [setSearchParams]
+    [setSearchParams],
   );
 
   const handleResumeSession = useCallback(
@@ -204,10 +186,10 @@ export function HomeTab({
           next.delete("compose");
           return next;
         },
-        { replace: false }
+        { replace: false },
       );
     },
-    [setSearchParams]
+    [setSearchParams],
   );
 
   const handleBackToHome = useCallback(() => {
@@ -216,7 +198,7 @@ export function HomeTab({
         // Drop any unconsumed pending payload for the session we're leaving;
         // otherwise a later resume of the same id replays the prompt and
         // re-renders the optimistic bubble over the hydrated transcript.
-        clearPendingForSession(prev.get("session"));
+        clearPendingAgentPrompt(prev.get("session"));
         track("mcpjam_agent_back", {
           location: "home",
           surface: "home",
@@ -227,20 +209,20 @@ export function HomeTab({
         next.delete("compose");
         return next;
       },
-      { replace: false }
+      { replace: false },
     );
   }, [setSearchParams]);
 
   // "New chat" inside the takeover keeps the user on the agent surface and
   // swaps the thread for an empty composer (Hero). A session id is minted
-  // only when they actually submit, mirroring the chatbox "Clear chat"
+  // only when they actually submit, mirroring the scenario "Clear chat"
   // affordance — fresh slate without bouncing back to the greeting.
   const handleNewChat = useCallback(() => {
     setSearchParams(
       (prev) => {
         // Same rationale as handleBackToHome — drop the leaving session's
         // unconsumed pending payload so a later resume doesn't double-send.
-        clearPendingForSession(prev.get("session"));
+        clearPendingAgentPrompt(prev.get("session"));
         track("mcpjam_agent_new_chat", {
           location: "home",
           surface: "home",
@@ -251,7 +233,7 @@ export function HomeTab({
         next.set("compose", "1");
         return next;
       },
-      { replace: false }
+      { replace: false },
     );
   }, [setSearchParams]);
   const { user } = useAuth();
@@ -261,7 +243,7 @@ export function HomeTab({
 
   const data = useQuery(
     "home:getOrgHomeData" as any,
-    organizationId ? ({ organizationId } as any) : "skip"
+    organizationId ? ({ organizationId } as any) : "skip",
   ) as
     | {
         memberCount: number;
@@ -291,14 +273,14 @@ export function HomeTab({
     "orgMetrics:getOrgMetric" as any,
     organizationId
       ? ({ organizationId, metric: "tool_executions_30d" } as any)
-      : "skip"
+      : "skip",
   ) as OrgMetricResult;
 
   const messagesSentCount = useQuery(
     "orgMetrics:getOrgMetric" as any,
     organizationId
       ? ({ organizationId, metric: "messages_sent_30d" } as any)
-      : "skip"
+      : "skip",
   ) as OrgMetricResult;
 
   const fullName =
@@ -385,14 +367,18 @@ export function HomeTab({
           />
         </header>
 
-        <McpjamAgentHero
-          surface="home"
-          onSessionStart={handleSessionStart}
-          onResumeSession={handleResumeSession}
-          ready={Boolean(projectId)}
-        />
+          <McpjamAgentHero
+            surface="home"
+            onSessionStart={handleSessionStart}
+            onResumeSession={handleResumeSession}
+            ready={Boolean(projectId)}
+          />
 
         <ProductUpdatesRow />
+
+        <ErrorBoundary name="home-shared-slack-channel" fallback={null}>
+          <SharedSlackChannelCard organizationId={organizationId} />
+        </ErrorBoundary>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <RecommendedServers

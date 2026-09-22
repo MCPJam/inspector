@@ -1,6 +1,7 @@
 /**
  * Inspector → Convex client for harness multi-turn continuity (the generic
- * `harnessSessions` lane). Mirrors `harness-model-credential.ts`.
+ * `harnessSessions` lane). Same bearer-authed fetch shape as
+ * `harness-proxy-token-client.ts` / `harness-model-broker.ts`.
  *
  * The lane is keyed server-side by (projectId, harnessId, ownerType, ownerKey);
  * the inspector supplies the owner-identifying fields and the signed-in userId
@@ -14,11 +15,11 @@ import type { HarnessResetReason } from "@/shared/harness-session";
 
 export type HarnessOwnerType =
   | "direct-chat"
-  | "chatbox-chat"
+  | "scenario-chat"
   | "eval-case"
   // Journey-runner multi-turn continuity (swarm). Keyed on the journey run +
   // pinned host + chatSessionId server-side (see backend `resolveHarnessOwner
-  // Scope`), so a swarm harness session never collides with a Direct/Chatbox
+  // Scope`), so a swarm harness session never collides with a Direct/Scenario
   // lane. Distinct from the reserved guest-execution `swarm-worker` owner.
   | "swarm-chat"
   | "swarm-worker";
@@ -33,7 +34,7 @@ export type HarnessOwnerRef = {
   harnessId: Harness;
   ownerType: HarnessOwnerType;
   chatSessionId?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   /** Swarm (`swarm-chat`) owner key dimensions: the journey run + pinned host.
    *  REQUIRED alongside `chatSessionId` when `ownerType === "swarm-chat"` — the
    *  backend `resolveHarnessOwnerScope` throws without them. Spread into every
@@ -68,9 +69,9 @@ export type HarnessSessionCommitPayload = {
   // `swarm-chat` = journey-runner continuity. The backend derives the lane's
   // journeyRunId/hostId from the ingest payload's top-level swarm attribution,
   // so they are NOT carried on the commit object itself.
-  ownerType: "direct-chat" | "chatbox-chat" | "swarm-chat";
+  ownerType: "direct-chat" | "scenario-chat" | "swarm-chat";
   chatSessionId: string;
-  chatboxId?: string;
+  scenarioId?: string;
   leaseId: string;
   expectedStateVersion: number;
   harnessId: Harness;
@@ -157,13 +158,13 @@ async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<
   { ok: true; payload: any } | { ok: false; status: number; error: string }
 > {
   const url = new URL(
     `/web/harness/session-state/${pathSuffix}`,
-    getConvexHttpUrl(),
+    getConvexHttpUrl()
   ).toString();
   const authorization = bearer.startsWith("Bearer ")
     ? bearer
@@ -230,7 +231,7 @@ export async function claimHarnessSessionState(args: {
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
     },
-    args.signal,
+    args.signal
   );
   if (!res.ok) return res;
   return {
@@ -276,11 +277,19 @@ export async function releaseHarnessSessionState(args: {
   owner: HarnessOwnerRef;
   leaseId: string;
   bearer: string;
+  /** Deadline. Release runs on the TERMINAL path, where an unbounded await
+   *  holds the whole turn open — see the teardown note in `run-harness-turn`. */
+  signal?: AbortSignal;
 }): Promise<void> {
-  const res = await postSessionState("release", args.bearer, {
-    ...args.owner,
-    leaseId: args.leaseId,
-  });
+  const res = await postSessionState(
+    "release",
+    args.bearer,
+    {
+      ...args.owner,
+      leaseId: args.leaseId,
+    },
+    args.signal
+  );
   if (!res.ok) {
     logger.warn("[harness-session-state] release failed", { error: res.error });
   }
@@ -298,18 +307,25 @@ export async function commitHarnessSessionState(args: {
   skillsHash?: string;
   awaitingApproval?: boolean;
   bearer: string;
+  /** Deadline — same terminal-path reasoning as `releaseHarnessSessionState`. */
+  signal?: AbortSignal;
 }): Promise<boolean> {
-  const res = await postSessionState("commit", args.bearer, {
-    ...args.owner,
-    leaseId: args.leaseId,
-    expectedStateVersion: args.expectedStateVersion,
-    harnessSessionId: args.harnessSessionId,
-    resumeState: args.resumeState,
-    computerId: args.computerId,
-    runtimeFingerprint: args.runtimeFingerprint,
-    ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
-    ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
-  });
+  const res = await postSessionState(
+    "commit",
+    args.bearer,
+    {
+      ...args.owner,
+      leaseId: args.leaseId,
+      expectedStateVersion: args.expectedStateVersion,
+      harnessSessionId: args.harnessSessionId,
+      resumeState: args.resumeState,
+      computerId: args.computerId,
+      runtimeFingerprint: args.runtimeFingerprint,
+      ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
+      ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
+    },
+    args.signal
+  );
   if (!res.ok) {
     logger.warn("[harness-session-state] commit failed", { error: res.error });
     return false;

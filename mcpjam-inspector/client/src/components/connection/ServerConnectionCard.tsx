@@ -1,3 +1,4 @@
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useState,
   useEffect,
@@ -5,6 +6,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import { Separator } from "@mcpjam/design-system/separator";
@@ -19,15 +21,9 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-import {
   MoreVertical,
   Link2Off,
   RefreshCw,
-  Power,
   Loader2,
   Copy,
   Download,
@@ -36,19 +32,25 @@ import {
   ExternalLink,
   Cable,
   Trash2,
-  AlertCircle,
   FileText,
   FolderInput,
+  Building2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
+  UNKNOWN_CONNECTION_STATUS,
   getConnectionStatusMeta,
+  isConnectionStatus,
   getServerCommandDisplay,
   getServerUrl,
 } from "./server-card-utils";
 import { track } from "@/lib/analytics";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
 import { generateAgentBrief } from "@/lib/generate-agent-brief";
@@ -66,10 +68,11 @@ import {
 } from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
-import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
+import { ClientSupportPill } from "@/components/compat/ClientSupportPill";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -95,12 +98,12 @@ function isContextMenuExemptTarget(target: EventTarget | null): boolean {
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -126,11 +129,19 @@ interface ServerConnectionCardProps {
   ) => void | Promise<void>;
   /** True while a move for this server is in flight. */
   isMovingToProject?: boolean;
+  /**
+   * Share this server on the organization's registry shelf. Injected the same
+   * way `onMoveToProject` is — the card knows the server, the parent owns the
+   * dialog and the mutation. When omitted (no organization, guest role, or a
+   * surface with no registry) the item is not rendered at all. Also hidden
+   * when the `registry-enabled` PostHog flag is off, even if a callback is
+   * provided — the flag is the rollout door, not the caller's permission.
+   */
+  onShareToOrgRegistry?: (server: ServerWithName) => void;
 }
 
 export function ServerConnectionCard({
   server,
-  needsReconnect = false,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -141,8 +152,46 @@ export function ServerConnectionCard({
   moveTargets,
   onMoveToProject,
   isMovingToProject = false,
+  onShareToOrgRegistry,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
+
+  // A pinned protocol version the server doesn't offer is the one connect
+  // failure with an exact, one-click fix, so the card offers it instead of
+  // leaving the user to find the dropdown. `usePreviewedHostId` is the shared
+  // subscription every host-aware surface reads — the pin comes from whichever
+  // client is being previewed, so that is the client to open.
+  const navigate = useAppNavigate();
+  const [previewedHostId] = usePreviewedHostId(projectId ?? null);
+  const isProtocolPinFailure = isProtocolVersionPinFailure(
+    server.lastNormalizedError,
+    server.lastError
+  );
+  const protocolPinAction = isProtocolPinFailure
+    ? {
+        label: "Change protocol version",
+        onClick: () => {
+          track("change_protocol_version_clicked", {
+            location: "server_connection_card",
+            has_host_id: Boolean(previewedHostId),
+          });
+          navigate(buildHostFocusTabPath(previewedHostId, "protocol"));
+        },
+      }
+    : undefined;
+
+  /**
+   * A consent-required state is one click from resolved, so the card offers
+   * that click directly instead of telling the user to go find Reconnect in
+   * the overflow menu.
+   *
+   * `allowInteractiveOAuthFlow: true` is the exact inverse of the condition
+   * that produced the state — the orchestrator returns `reauth_required`
+   * only when a caller asked it NOT to open the consent window.
+   */
+  const needsConsent =
+    server.lastNormalizedError?.slug === "auth/consent_required";
 
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -164,12 +213,20 @@ export function ServerConnectionCard({
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
+  /**
+   * A status outside the union means we cannot READ the state, which is not
+   * the same claim as "not connected" — and the helper's fallback makes the
+   * second one. Same distinction the header strip and the picker draw.
+   */
+  const known = isConnectionStatus(server.connectionStatus);
+  const meta = getConnectionStatusMeta(
+    known ? server.connectionStatus : "disconnected",
+  );
   const {
     label: connectionStatusLabel,
-    indicatorColor,
-    Icon: ConnectionStatusIcon,
-    iconClassName,
-  } = getConnectionStatusMeta(server.connectionStatus);
+    indicatorClassName,
+  } = known ? meta : { ...meta, ...UNKNOWN_CONNECTION_STATUS };
+  const { Icon: ConnectionStatusIcon, iconClassName } = meta;
   const commandDisplay = getServerCommandDisplay(server.config);
 
   const initializationInfo = server.initializationInfo;
@@ -320,6 +377,7 @@ export function ServerConnectionCard({
 
   const handleReconnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setIsReconnecting(true);
@@ -328,7 +386,7 @@ export function ServerConnectionCard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to reconnect to ${server.name}: ${errorMessage}`);
+      toastServerConnectionFailure(server.name, errorMessage);
     } finally {
       setIsReconnecting(false);
     }
@@ -568,21 +626,11 @@ export function ServerConnectionCard({
                 )}
               </div>
 
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {hasError && (
-                  <button
-                    data-server-card-context-menu-exempt
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsErrorExpanded(true);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-full border border-red-300/60 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-700 dark:text-red-300 cursor-pointer"
-                  >
-                    <AlertCircle className="h-3 w-3" />
-                    Error
-                  </button>
-                )}
-              </div>
+              {/* The red "Error" pill that used to sit here was the fourth
+                  red element announcing one failure — after the status dot,
+                  the "Failed" label and the error card itself — and it only
+                  opened a disclosure the card already owns. The card below is
+                  the affordance; this row stays for future status chips. */}
             </div>
 
             <div className="flex flex-col items-end gap-1.5">
@@ -595,35 +643,17 @@ export function ServerConnectionCard({
                     <ConnectionStatusIcon className={iconClassName} />
                   ) : (
                     <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: indicatorColor }}
+                      className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                     />
                   )}
                   <span>
-                    {server.connectionStatus === "failed"
+                    {/* "(0)" is not information. The count is only worth the
+                        parentheses once something has actually been retried. */}
+                    {server.connectionStatus === "failed" &&
+                    server.retryCount > 0
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
-                  {needsReconnect ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        type="button"
-                        aria-label="Connection settings changed"
-                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-600 outline-none transition-colors hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-amber-300 dark:hover:text-amber-200"
-                      >
-                        <Power className="h-3 w-3" />
-                      </TooltipTrigger>
-                      <TooltipContent
-                        side="top"
-                        sideOffset={4}
-                        variant="muted"
-                        className="max-w-48 px-2.5 text-left [text-wrap:normal]"
-                      >
-                        Turn the connection off and on to apply the new
-                        connection settings.
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
                 </span>
 
                 <Switch
@@ -674,9 +704,20 @@ export function ServerConnectionCard({
                         track("reconnect_server_clicked", {
                           location: "server_connection_card",
                         });
+                        // A tokenless Auto server carries `useOAuth: true` as
+                        // a derived mirror even when it connected
+                        // unauthenticated, so that flag alone can't force the
+                        // flow — it would redirect an open server into an
+                        // OAuth it has no authorization server for. Mirror the
+                        // orchestrator's Auto guard and let the normal
+                        // reconnect escalate on a real 401 instead.
+                        const isTokenlessAutoServer =
+                          server.authMethod === "auto" &&
+                          server.oauthTokens == null;
                         const shouldForceOAuth =
-                          server.useOAuth === true ||
-                          server.oauthTokens != null;
+                          !isTokenlessAutoServer &&
+                          (server.useOAuth === true ||
+                            server.oauthTokens != null);
                         void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }
@@ -782,6 +823,41 @@ export function ServerConnectionCard({
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
                     ) : null}
+                    {/*
+                      Remote HTTP only, and only while the registry rollout
+                      flag is on. An org entry carries an ADDRESS, and a
+                      stdio server's address is a command on one machine —
+                      there is nothing to share.
+                    */}
+                    {onShareToOrgRegistry &&
+                    registryEnabled &&
+                    server.config?.url ? (
+                      <DropdownMenuItem
+                        className="text-xs cursor-pointer"
+                        onClick={() => {
+                          track("share_server_to_org_registry_clicked", {
+                            location: "server_connection_card",
+                          });
+                          // Shown-then-refused rather than hidden. "Where did
+                          // the option go?" is a worse answer than a sentence
+                          // saying why, and the why is worth knowing: an org
+                          // entry deliberately carries no secret, and the
+                          // browser never holds these header values anyway —
+                          // a shared entry built from them would be broken as
+                          // well as unsafe.
+                          if (server.hasHeaders || server.hasBearerToken) {
+                            toast.error(
+                              "This server uses credentials that can't be shared. Organization entries carry only the address and how to sign in."
+                            );
+                            return;
+                          }
+                          onShareToOrgRegistry(server);
+                        }}
+                      >
+                        <Building2 className="h-3 w-3 mr-2" />
+                        Add to org registry
+                      </DropdownMenuItem>
+                    ) : null}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -821,10 +897,11 @@ export function ServerConnectionCard({
             </button>
           </div>
 
+
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
               {isConnected && (
-                <HostCompatStrip
+                <ClientSupportPill
                   server={server}
                   onOpenDetails={
                     isDetailModalEnabled
@@ -964,7 +1041,7 @@ export function ServerConnectionCard({
           {hasError && (
             <div className="mt-3" onClick={(e) => e.stopPropagation()}>
               {oauthFailureStep ? (
-                <div className="mb-1 text-xs font-medium text-red-700 dark:text-red-300">
+                <div className="mb-1 text-xs text-muted-foreground">
                   OAuth failed during {oauthFailureStep.title}
                 </div>
               ) : null}
@@ -972,11 +1049,26 @@ export function ServerConnectionCard({
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
-                // Controlled — the Error badge above toggles
+                // Same height as the support pill. The diagnostic rows
+                // sit behind the info glyph so a failed card does not
+                // grow a second status report under Failed.
+                density="row"
+                // Controlled — the status row above toggles
                 // `isErrorExpanded`; the card must reflect that on every
                 // change, not just at mount.
                 open={isErrorExpanded}
                 onOpenChange={setIsErrorExpanded}
+                action={
+                  needsConsent
+                    ? {
+                        label: "Reconnect",
+                        onClick: () =>
+                          void handleReconnect({
+                            allowInteractiveOAuthFlow: true,
+                          }),
+                      }
+                    : protocolPinAction
+                }
               />
               {server.retryCount > 0 && (
                 <div className="mt-1 text-xs text-muted-foreground">
@@ -987,7 +1079,11 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {server.connectionStatus === "failed" && (
+          {/* Only when there is no error card. The card carries its own
+              "Learn more", pointed at the specific error rather than the
+              generic index, so showing both offered two docs links for one
+              failure and the weaker one sat lower and looked more prominent. */}
+          {server.connectionStatus === "failed" && !hasError && (
             <div
               className="mt-2 text-xs text-muted-foreground"
               onClick={(e) => e.stopPropagation()}

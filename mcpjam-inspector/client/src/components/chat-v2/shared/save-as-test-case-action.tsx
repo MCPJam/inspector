@@ -25,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import { useProjectServerAttachments } from "@/hooks/useViews";
@@ -33,7 +34,9 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
-import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
+import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -70,6 +73,7 @@ export function SaveAsTestCaseAction({
   projectId,
 }: SaveAsTestCaseActionProps) {
   const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const isUserReady = useDbUserReady();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [caseTitle, setCaseTitle] = useState(() =>
@@ -91,7 +95,15 @@ export function SaveAsTestCaseAction({
   // `attachmentPickersEnabled` also gates the "new suite requires both a
   // server and a host attachment" requirement (see `newSuiteRequirementsMet`
   // below), so it stays scoped to authed sessions with a project.
-  const attachmentPickersEnabled = convexAuthed && Boolean(projectId);
+  const attachmentPickersEnabled =
+    convexAuthed && isUserReady && Boolean(projectId);
+  // Authed with a project, but the `users` row is still bootstrapping: the
+  // pickers DO apply to this session, their data just hasn't landed. Without
+  // this, `newSuiteRequirementsMet` short-circuits on the disabled pickers and
+  // saves a legacy-shaped suite with no server or host attached — the exact
+  // thing the requirement exists to prevent.
+  const attachmentPickersPending =
+    convexAuthed && !isUserReady && Boolean(projectId);
 
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({
@@ -105,7 +117,7 @@ export function SaveAsTestCaseAction({
 
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    open && projectId ? ({ projectId } as any) : "skip",
+    open && isUserReady && projectId ? ({ projectId } as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   const saveAsTestCase = useAction(
@@ -138,7 +150,7 @@ export function SaveAsTestCaseAction({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview],
   );
 
@@ -148,6 +160,7 @@ export function SaveAsTestCaseAction({
 
   const canSubmit =
     !submitting &&
+    !attachmentPickersPending &&
     caseTitle.trim().length > 0 &&
     (destinationMode === "existing"
       ? Boolean(selectedSuiteId)
@@ -190,8 +203,22 @@ export function SaveAsTestCaseAction({
                 : {}),
             }),
       })) as
-        | { addedServers?: string[]; updatedSuiteEnvironment?: boolean }
+        | {
+            suiteId?: string;
+            testCaseId?: string;
+            addedServers?: string[];
+            updatedSuiteEnvironment?: boolean;
+          }
         | undefined;
+      setOpen(false);
+      // Navigating is the primary follow-through (see
+      // `navigateToPromotedTestCase`); the toast stays for the environment
+      // note, which the destination doesn't show, and as the only feedback
+      // when the target can't be resolved.
+      const navigated = navigateToPromotedTestCase({
+        suiteId: result?.suiteId,
+        testCaseId: result?.testCaseId,
+      });
       const added = result?.addedServers ?? [];
       if (
         destinationMode === "existing" &&
@@ -201,10 +228,9 @@ export function SaveAsTestCaseAction({
         toast.success(
           `Saved as test case. Added ${added.join(", ")} to the suite.`,
         );
-      } else {
+      } else if (!navigated) {
         toast.success("Saved as test case");
       }
-      setOpen(false);
     } catch (error) {
       const message = getBillingErrorMessage(
         error,
@@ -243,9 +269,9 @@ export function SaveAsTestCaseAction({
           <DialogHeader>
             <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription>
-              Captures this prompt and the assistant's tool calls. Turns
-              with no observed tool calls can't be saved here — create a
-              negative test from the Evals suite instead.
+              Captures this prompt and the assistant's tool calls. Turns with no
+              observed tool calls can't be saved here — create a negative test
+              from the Evals suite instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -332,11 +358,15 @@ export function SaveAsTestCaseAction({
                         </p>
                       </div>
                       <div className="shrink-0">
-                        <ServerAttachmentPicker
+                        <ServerPicker
                           projectId={projectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
+                          // Required here, so no X; the callback still goes
+                          // down so a delete in the picker reaches this form.
                           onClearSelection={() => setServerAttachmentId(null)}
+                          offerClear={false}
+                          inModal
                           disabled={submitting}
                         />
                       </div>

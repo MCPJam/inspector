@@ -3,6 +3,8 @@
  */
 
 import http from "http";
+import path from "node:path";
+import { createRequire } from "node:module";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -16,6 +18,8 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Server as HttpServer } from "http";
 import type { AddressInfo } from "net";
+
+const requireFromTests = createRequire(import.meta.url);
 
 // Mock data
 export const MOCK_TOOLS = [
@@ -366,5 +370,33 @@ export function getStdioServerConfig() {
   return {
     command: "npx",
     args: ["ts-node", "--esm", `${__dirname}/mock-mcp-server.ts`],
+  };
+}
+
+/**
+ * `@modelcontextprotocol/server-everything` spawned directly rather than
+ * through `npx`.
+ *
+ * `npx -y` costs ~1150 ms to first byte because it re-resolves the package on
+ * every spawn; the same server started by path answers in ~120 ms. The package
+ * is a devDependency of this workspace (see sdk/package.json), so there is
+ * nothing for npx to fetch — the round trip bought only latency, and this
+ * suite pays it 23 times.
+ *
+ * The package declares `"bin": { "mcp-server-everything": "dist/index.js" }`,
+ * so this is the same entry `npx` would have run. Resolving through the
+ * package's own package.json rather than a hardcoded `node_modules/...` path
+ * keeps it correct wherever npm chose to hoist the dependency.
+ */
+export function everythingServerConfig<T extends Record<string, unknown>>(
+  overrides?: T
+) {
+  const packageJsonPath = requireFromTests.resolve(
+    "@modelcontextprotocol/server-everything/package.json"
+  );
+  return {
+    command: process.execPath,
+    args: [path.join(path.dirname(packageJsonPath), "dist", "index.js")],
+    ...(overrides ?? ({} as T)),
   };
 }

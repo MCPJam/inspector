@@ -4,14 +4,20 @@ import userEvent from "@testing-library/user-event";
 import { ClientSelector } from "../chat-input/client-selector";
 import type { HostListItem } from "@/hooks/useClients";
 
-const mockResolveHostLogoByDisplayName = vi.hoisted(() => vi.fn());
+const navigateMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", () => ({
+  navigateApp: navigateMock,
+  routePaths: { hosts: "/clients" },
+}));
+const mockResolveHostLogoByName = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
-  CreateHostDialog: () => null,
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
-vi.mock("@/lib/chatbox-client-style", () => ({
-  resolveHostLogoByDisplayName: mockResolveHostLogoByDisplayName,
+vi.mock("@/lib/host-logo", () => ({
+  resolveHostLogoByName: mockResolveHostLogoByName,
 }));
 
 const hosts: HostListItem[] = [
@@ -34,13 +40,11 @@ const hosts: HostListItem[] = [
 }));
 
 function renderClientSelector({
-  multiHostEnabled = false,
   selectedHostIds = ["host-0"],
   currentHostId = "host-0",
   themeMode,
   modalThemeMode,
 }: {
-  multiHostEnabled?: boolean;
   selectedHostIds?: string[];
   currentHostId?: string;
   themeMode?: "light" | "dark";
@@ -52,7 +56,6 @@ function renderClientSelector({
       projectId="project-1"
       currentHostId={currentHostId}
       selectedHostIds={selectedHostIds}
-      multiHostEnabled={multiHostEnabled}
       onHostChange={vi.fn()}
       onSelectedHostIdsChange={vi.fn()}
       onMultiHostEnabledChange={vi.fn()}
@@ -60,14 +63,14 @@ function renderClientSelector({
       enableMultiHost
       themeMode={themeMode}
       modalThemeMode={modalThemeMode}
-    />
+    />,
   );
 }
 
 describe("ClientSelector", () => {
   beforeEach(() => {
-    mockResolveHostLogoByDisplayName.mockReset();
-    mockResolveHostLogoByDisplayName.mockReturnValue(null);
+    mockResolveHostLogoByName.mockReset();
+    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
   });
 
   it("keeps Add host reachable by constraining the host list height", async () => {
@@ -77,24 +80,36 @@ describe("ClientSelector", () => {
     await user.click(screen.getByTestId("client-selector-trigger"));
 
     const list = container.ownerDocument.querySelector(
-      "[data-slot='command-list']"
+      "[data-slot='command-list']",
     ) as HTMLElement | null;
     expect(list).not.toBeNull();
     expect(list).toHaveStyle({ maxHeight: "220px", overflowY: "auto" });
     expect(screen.getByTestId("client-add-host")).toBeInTheDocument();
   });
 
+  it("shows a fallback badge wherever a client logo is unavailable", async () => {
+    const user = userEvent.setup();
+    renderClientSelector();
+
+    expect(
+      screen.getByTestId("client-selector-trigger").querySelector("img"),
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(
+      screen.getByTestId("client-row-host-0").querySelector("img"),
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
+  });
+
   it("uses a shorter scroll area when compare chips are visible", async () => {
     const user = userEvent.setup();
     const { container } = renderClientSelector({
-      multiHostEnabled: true,
       selectedHostIds: ["host-0", "host-1", "host-3"],
     });
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
     const list = container.ownerDocument.querySelector(
-      "[data-slot='command-list']"
+      "[data-slot='command-list']",
     ) as HTMLElement | null;
     expect(list).not.toBeNull();
     expect(list).toHaveStyle({ maxHeight: "160px", overflowY: "auto" });
@@ -114,7 +129,219 @@ describe("ClientSelector", () => {
         projectId="project-1"
         currentHostId="host-0"
         selectedHostIds={["host-0", "host-1"]}
-        multiHostEnabled
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />,
+    );
+
+    expect(screen.getByText("Global")).toBeInTheDocument();
+  });
+
+  // The lead ("Global") row must be uncheckable like any other. The
+  // selector only reports the shorter line-up; promoting the new slot 0
+  // is `usePersistedHost`'s job — see its "drops the lead" tests.
+  it("removes the lead host when its row is unchecked while comparing", async () => {
+    const user = userEvent.setup();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-3"]}
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />,
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(screen.getByText("Global")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("client-row-compare-host-0"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1", "host-3"]);
+  });
+
+  // PUR-11: no more "Multiple clients" switch to find and flip — ticking a
+  // second row's checkbox multi-selects immediately, from a single-host
+  // line-up and with no prior "enabled" state for the selector to consult.
+  // BB-135 moved that gesture off the row body onto the checkbox so the row
+  // body can switch clients; the "no toggle to find" property is unchanged.
+  it("has no 'Multiple clients' toggle — ticking a second checkbox multi-selects by default", async () => {
+    const user = userEvent.setup();
+    const onSelectedHostIdsChange = vi.fn();
+    const onMultiHostEnabledChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={onMultiHostEnabledChange}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />,
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+
+    expect(screen.queryByText("Multiple clients")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Compare multiple clients"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("client-row-compare-host-1"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    // No manual toggle exists anymore — the component keeps the parent's
+    // persisted "comparing" flag in sync with the selection count itself.
+    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
+  });
+
+  // BB-135: switching clients used to mean "tick the one you want, then untick
+  // the one you had" — the row body only ever multi-selected.
+  it("switches the lead client on a row click and leaves compare", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    const onMultiHostEnabledChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={onMultiHostEnabledChange}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-host-1"));
+
+    expect(onHostChange).toHaveBeenCalledWith("host-1");
+    // Clearing the lineup is not cosmetic: `usePersistedHost` preserves the
+    // column COUNT when only the lead changes, so leaving it alone would swap
+    // a compare column instead of leaving compare.
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1"]);
+    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(false);
+    // Switching is a terminal gesture — the list goes away with the choice.
+    expect(screen.queryByTestId("client-row-host-1")).not.toBeInTheDocument();
+  });
+
+  // cmdk's root keydown claims Enter for the highlighted row, so without the
+  // checkbox stopping it, Enter on a focused checkbox switched clients.
+  it("toggles compare when Enter lands on a focused checkbox", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    screen.getByTestId("client-row-compare-host-1").focus();
+    await user.keyboard("{Enter}");
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    expect(onHostChange).not.toHaveBeenCalled();
+  });
+
+  it("adds a compare column from the checkbox without switching the lead", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-compare-host-1"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    expect(onHostChange).not.toHaveBeenCalled();
+    // The popover stays open so the user can keep building the lineup.
+    expect(screen.getByTestId("client-row-host-1")).toBeInTheDocument();
+  });
+
+  // The cap belongs to the comparison, not to the client list: with three
+  // columns already up you can still switch to a fourth client.
+  it("keeps rows switchable when the compare lineup is full", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-2"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(screen.getByTestId("client-row-compare-host-3")).toBeDisabled();
+
+    await user.click(screen.getByTestId("client-row-host-3"));
+
+    expect(onHostChange).toHaveBeenCalledWith("host-3");
+  });
+
+  /**
+   * Two clients can carry the same stored name — `resolveClientDisplayNames`
+   * is what tells them apart, and it does so in `displayName` alone. Naming
+   * the button after the raw name gave both rows "Compare with Claude": one
+   * button announced twice, and unreachable by voice or by role query.
+   */
+  it("names the compare button after the client the row shows", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClientSelector
+        hosts={[
+          // The lead sits elsewhere so BOTH duplicates render the "Compare
+          // with" branch, which is where the collision showed.
+          { hostId: "host-lead", name: "Cursor", displayName: "Cursor" },
+          { hostId: "host-a", name: "Claude", displayName: "Claude" },
+          { hostId: "host-b", name: "Claude", displayName: "Claude #2" },
+        ]}
+        projectId="project-1"
+        currentHostId="host-lead"
+        selectedHostIds={["host-lead"]}
         onHostChange={vi.fn()}
         onSelectedHostIdsChange={vi.fn()}
         onMultiHostEnabledChange={vi.fn()}
@@ -123,7 +350,52 @@ describe("ClientSelector", () => {
       />
     );
 
-    expect(screen.getByText("Global")).toBeInTheDocument();
+    await user.click(screen.getByTestId("client-selector-trigger"));
+
+    expect(
+      screen.getByRole("button", { name: "Compare with Claude #2" })
+    ).toBeInTheDocument();
+    // Exact match, so the raw-name version fails here too: it produced two
+    // buttons with this name and the query cannot resolve them.
+    expect(
+      screen.getByRole("button", { name: "Compare with Claude" })
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The cap tooltip's only hover surface is the disabled checkbox, so the
+   * button drops pointer events and the wrapper takes them. The click has to
+   * stop there: falling through to the row would switch the client out from
+   * under someone who aimed at a checkbox.
+   */
+  it("does not switch the lead when the capped checkbox is clicked", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-2"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    const capped = screen.getByTestId("client-row-compare-host-3");
+    expect(capped).toBeDisabled();
+
+    // The wrapper is what a pointer actually lands on once the button stops
+    // taking events.
+    const wrapper = capped.parentElement;
+    expect(wrapper).not.toBeNull();
+    await user.click(wrapper as HTMLElement);
+
+    expect(onHostChange).not.toHaveBeenCalled();
   });
 
   it("uses app-surface logo variants inside the modal", async () => {
@@ -135,20 +407,39 @@ describe("ClientSelector", () => {
       modalThemeMode: "light",
     });
 
-    expect(mockResolveHostLogoByDisplayName).toHaveBeenCalledWith(
-      "Goose",
-      "dark"
-    );
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "dark");
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
-    expect(mockResolveHostLogoByDisplayName).toHaveBeenCalledWith(
-      "Goose",
-      "light"
-    );
-    expect(mockResolveHostLogoByDisplayName).toHaveBeenCalledWith(
-      "Cline",
-      "light"
-    );
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "light");
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Cline", "light");
   });
+});
+
+it("opens the New Client modal from Add clients when a project exists", async () => {
+  renderClientSelector();
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("client-selector-trigger"));
+  await user.click(screen.getByRole("button", { name: "Add clients" }));
+  expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
+  expect(navigateMock).not.toHaveBeenCalled();
+});
+
+it("sends Add clients to Connect when the picker has no creation project", async () => {
+  render(
+    <ClientSelector
+      hosts={hosts}
+      projectId={null}
+      currentHostId="host-0"
+      selectedHostIds={["host-0"]}
+      onHostChange={vi.fn()}
+      onSelectedHostIdsChange={vi.fn()}
+      onMultiHostEnabledChange={vi.fn()}
+      onPromoteLead={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("client-selector-trigger"));
+  await user.click(screen.getByRole("button", { name: "Add clients" }));
+  expect(navigateMock).toHaveBeenCalledWith("/clients");
 });

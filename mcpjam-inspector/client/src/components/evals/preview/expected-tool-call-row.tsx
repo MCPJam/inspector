@@ -55,8 +55,8 @@ export function ExpectedToolCallRow({
 
   const className = cn(
     "flex w-full items-center gap-2 overflow-hidden rounded-xl border bg-card px-3 py-2 text-left",
-    tint === "pass" && "border-emerald-500/40",
-    tint === "fail" && "border-rose-500/50",
+    tint === "pass" && "border-success/40",
+    tint === "fail" && "border-destructive/50",
     !tint && "border-border",
     runnable &&
       "group cursor-pointer transition-colors hover:border-primary/50 hover:bg-accent/40",
@@ -73,9 +73,9 @@ export function ExpectedToolCallRow({
       ) : null}
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {tint === "pass" ? (
-          <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+          <Check className="h-3.5 w-3.5 text-success" />
         ) : tint === "fail" ? (
-          <X className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
+          <X className="h-3.5 w-3.5 text-destructive" />
         ) : runnable ? (
           isRunning ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />

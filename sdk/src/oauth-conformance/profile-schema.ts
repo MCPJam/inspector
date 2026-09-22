@@ -12,7 +12,7 @@ import { z } from "zod";
 export const oauthConformanceProfileSchema = z.object({
   serverUrl: z.string().optional(),
   protocolVersion: z
-    .enum(["2025-03-26", "2025-06-18", "2025-11-25"])
+    .enum(["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"])
     .optional(),
   registrationStrategy: z.enum(["cimd", "dcr", "preregistered"]).optional(),
   clientId: z.string().optional(),

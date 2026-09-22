@@ -24,6 +24,8 @@ interface ActiveHostServerReconcilerProps {
   isAuthenticated: boolean;
   activeHost?: HostConfigDtoV2;
   activeHostId: string | null;
+  isActiveHostSelectionHydrated: boolean;
+  suspendAutoConnect?: boolean;
 }
 
 /**
@@ -48,42 +50,40 @@ export function ActiveHostServerReconciler({
   isAuthenticated,
   activeHost,
   activeHostId,
+  isActiveHostSelectionHydrated,
+  suspendAutoConnect = false,
 }: ActiveHostServerReconcilerProps) {
   const { servers: projectServersList } = useProjectServers({
     projectId,
     isAuthenticated,
   });
 
-  // While `projectServersList` is loading we resolve to an empty
-  // `requiredServerNames`. That's safe under main's "disconnect-all then
-  // reconnect required" strategy: the connect-required pass is keyed on
-  // a non-null `candidateNamesKey`, so it stays quiet until the catalog
-  // arrives and the candidate set materializes, at which point it fires
-  // exactly once.
-  const requiredServerNames = useMemo(() => {
-    const requiredIds = activeHost?.serverIds ?? [];
-    if (requiredIds.length === 0 || !projectServersList) return [];
-    const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const)
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [activeHost?.serverIds, projectServersList]);
+  // Auto-connect opens the whole project catalog, not the active host's
+  // stored `serverIds` — the host only supplies the scope key below. While
+  // `projectServersList` is loading we resolve to an empty list; the connect
+  // pass is keyed on a non-null `candidateNamesKey`, so it stays quiet until
+  // the catalog arrives, then fires exactly once.
+  const serverNames = useMemo(
+    () => (projectServersList ?? []).map((s) => s.name),
+    [projectServersList],
+  );
 
   useAutoConnectProjectServers({
     projectId,
     // Scope key is the explicit host id when one is picked; otherwise the
     // host config's own id (so swapping the project default to a different
     // host still counts as a scope change).
-    hostScopeKey: activeHostId ?? activeHost?.id ?? null,
-    requiredServerNames,
+    hostScopeKey: isActiveHostSelectionHydrated
+      ? (activeHostId ?? activeHost?.id ?? null)
+      : null,
+    serverNames,
+    suspendAutoConnect,
   });
 
   // Single source of truth: the Playground active server set
   // (`selectedMultipleServers`) mirrors the runtime set that is connected or
   // reconnecting. Keeping "connecting" active prevents the Playground tools
-  // pane from blinking empty during a client-switch reconnect. The Connect tab
+  // pane from blinking empty during a client-switch reconnect. The Servers tab
   // owns connectivity; everything else reflects it. Guarded by set-equality so
   // we never dispatch (and never loop) when the mirror already matches.
   const sharedAppState = useSharedAppState();
@@ -93,7 +93,7 @@ export function ActiveHostServerReconciler({
       Object.entries(sharedAppState.servers)
         .filter(([, server]) => isActiveRuntimeStatus(server.connectionStatus))
         .map(([name]) => name),
-    [sharedAppState.servers]
+    [sharedAppState.servers],
   );
   useEffect(() => {
     if (

@@ -22,7 +22,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const SUITE_PROPERTY = {
   type: "string",
@@ -58,6 +63,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // Opens the /evals/create route (the dialog) on the Evaluate screen.
       mayNavigate: true,
       execute: async (args) => {
@@ -91,6 +97,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       // A successful single-host launch lands on the new run's detail page.
       mayNavigate: true,
       execute: async (args) => {
@@ -130,6 +137,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const runId = asOptionalString(args.runId);
         if (!runId) {
@@ -162,6 +170,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const suite = requireSuite(args.suite);
         if (!suite) {
@@ -170,6 +179,111 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         const response = await dispatchInspectorCommand({
           type: "generateEvalTests",
           payload: { suite },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_edit_eval_case_draft",
+      description:
+        "Edit the test case CURRENTLY OPEN in the case editor (e.g. the 'Describe a case' workspace) — there is no suite/case id to pass, it always targets whatever case is on screen. Set 'prompt' to (re)write the case's user-turn prompt, 'addToolAssertion' to add a check that a specific tool was called with given arguments, or 'noTool' to mark the case as expecting no tool call. Fails with an error if no case is currently open for editing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "The user prompt this case's first turn should send. Replaces whatever prompt the case already had.",
+          },
+          addToolAssertion: {
+            type: "object",
+            description:
+              "Add a check that the given tool was called with these arguments.",
+            properties: {
+              toolName: { type: "string" },
+              arguments: {
+                type: "object",
+                description: "Expected arguments, as a plain object.",
+              },
+            },
+            required: ["toolName"],
+            additionalProperties: false,
+          },
+          noTool: {
+            type: "boolean",
+            description: "Mark the case as expecting no tool call at all.",
+          },
+        },
+        additionalProperties: false,
+      },
+      readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      nativePublication: PUBLISH_NATIVE,
+      execute: async (args) => {
+        const prompt = asOptionalString(args.prompt);
+        if (args.prompt !== undefined && prompt === undefined) {
+          return errorResult(
+            "'prompt' must be a non-empty string when provided.",
+          );
+        }
+        let addToolAssertion:
+          | { toolName: string; arguments?: Record<string, unknown> }
+          | undefined;
+        if (args.addToolAssertion !== undefined) {
+          const raw = args.addToolAssertion;
+          if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+            return errorResult("'addToolAssertion' must be an object.");
+          }
+          const toolName = asOptionalString(
+            (raw as Record<string, unknown>).toolName,
+          );
+          if (!toolName) {
+            return errorResult(
+              "'addToolAssertion.toolName' is required and must be a non-empty string.",
+            );
+          }
+          const rawArguments = (raw as Record<string, unknown>).arguments;
+          if (
+            rawArguments !== undefined &&
+            (typeof rawArguments !== "object" ||
+              rawArguments === null ||
+              Array.isArray(rawArguments))
+          ) {
+            return errorResult(
+              "'addToolAssertion.arguments' must be an object when provided.",
+            );
+          }
+          addToolAssertion = {
+            toolName,
+            ...(rawArguments
+              ? { arguments: rawArguments as Record<string, unknown> }
+              : {}),
+          };
+        }
+        if (args.noTool !== undefined && typeof args.noTool !== "boolean") {
+          return errorResult("'noTool' must be a boolean when provided.");
+        }
+        if (
+          prompt === undefined &&
+          addToolAssertion === undefined &&
+          args.noTool === undefined
+        ) {
+          return errorResult(
+            "Provide at least one of 'prompt', 'addToolAssertion', or 'noTool'.",
+          );
+        }
+        const response = await dispatchInspectorCommand({
+          type: "editEvalCaseDraft",
+          payload: {
+            ...(prompt !== undefined ? { prompt } : {}),
+            ...(addToolAssertion ? { addToolAssertion } : {}),
+            ...(args.noTool !== undefined ? { noTool: args.noTool } : {}),
+          },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },
@@ -193,6 +307,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const suite = requireSuite(args.suite);
         if (!suite) {

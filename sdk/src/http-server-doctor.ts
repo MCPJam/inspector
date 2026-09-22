@@ -21,6 +21,7 @@ import {
   wrapTransportForLogging,
 } from "./mcp-client-manager/transport-utils.js";
 import { probeMcpServer } from "./server-probe.js";
+import { CspSafeDialectAwareJsonSchemaValidator } from "./mcp-client-manager/csp-safe-dialect-aware-json-schema-validator.js";
 import type {
   HttpServerConfig,
   MCPPrompt,
@@ -211,6 +212,15 @@ export async function collectConnectedHttpServerDoctorState(
     resourcesResult,
     promptsResult,
     resourceTemplatesResult,
+    // This doctor drives a bare client rather than an MCPClientManager, and the
+    // verified skills read path is manager-shaped. Reporting `skipped` states
+    // that honestly instead of implying the server serves none.
+    skillsResult: {
+      skills: [],
+      check: skippedCheck(
+        "Skills over MCP is not inspected on this surface."
+      ),
+    },
   });
 }
 
@@ -227,7 +237,8 @@ async function collectTools(
         withRetry(
           () =>
             client.listTools(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -284,7 +295,8 @@ async function collectResources(
         withRetry(
           () =>
             client.listResources(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -341,7 +353,8 @@ async function collectPrompts(
         withRetry(
           () =>
             client.listPrompts(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -385,7 +398,8 @@ async function collectResourceTemplates(
         withRetry(
           () =>
             client.listResourceTemplates(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -442,6 +456,10 @@ async function connectHttpDoctorClient(
     );
   }
 
+  // No `io.modelcontextprotocol/tasks` era-gate shadow here: it is installed
+  // from the extension's own send path, and the doctor issues no `tasks/*`
+  // request at all (its `BrowserDoctorClient` surface is capabilities + the
+  // three list calls), so there is nothing for the gate to block.
   const client = new Client(
     {
       name: "mcpjam",
@@ -454,6 +472,12 @@ async function connectHttpDoctorClient(
             getDefaultClientCapabilities(),
             config.capabilities
           ),
+      // Validate declared draft-07 schemas instead of rejecting them (the
+      // upstream default is 2020-12-only and fails tools/call for v1-SDK
+      // servers with an outputSchema). CSP-safe flavor: this path ships in
+      // the browser and workerd entries, where Ajv's `new Function` is
+      // unavailable.
+      jsonSchemaValidator: new CspSafeDialectAwareJsonSchemaValidator(),
     }
   );
 
@@ -520,6 +544,14 @@ async function connectViaHttp(
     } catch (error) {
       streamableError = error;
       await safeCloseTransport(streamableTransport);
+      // Same opt-out the connect path honors: a server whose transport was
+      // DECLARED streamable-http must not be diagnosed "ready" over SSE.
+      // Without this the doctor contradicts MCPClientManager, which refuses
+      // the very same server — misleading diagnostics on an SSE-only
+      // endpoint that the declaration says should not be used.
+      if (config.disableSseFallback) {
+        throw error;
+      }
     }
   }
 
@@ -601,7 +633,21 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
     items.push(...selectItems(page));
     pages += 1;
 
-    if (!page.nextCursor) {
+    // ABSENCE ends the walk, not emptiness. MCP 2026-07-28
+    // `server/utilities/pagination` states that a client "MUST NOT" decide
+    // anything from a cursor's value beyond whether a non-null one was
+    // provided, and that "an empty string is a valid cursor and thus MUST NOT
+    // be treated as the end of results". A NON-STRING `nextCursor` is not a
+    // cursor at all and still ends the walk.
+    //
+    // There is deliberately NO repeated-cursor guard: comparing two cursors
+    // for equality is itself a determination based on cursor value, and a
+    // server may legally hand back one constant token — `""` included — for
+    // every page. `MAX_PAGINATION_PAGES` is the bound. It costs the same worst
+    // case a distinct-cursor server would produce anyway, so an equality check
+    // would buy almost nothing and break the empty-string case this module is
+    // being fixed for.
+    if (typeof page.nextCursor !== "string") {
       return items;
     }
 

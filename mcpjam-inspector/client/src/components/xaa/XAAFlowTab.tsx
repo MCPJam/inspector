@@ -28,8 +28,10 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import type { HostedServerWriteTarget } from "@/hooks/use-server-state";
 import type { ServerFormData } from "@/shared/types.js";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
+import { extractOauthErrorCode } from "@/lib/webmcp/oauth-error-code";
 import { useXaaPeople } from "@/hooks/useXaaPeople";
 import {
   useXaaTestTarget,
@@ -170,44 +172,6 @@ function computeTargetFingerprint(
   ].join("|");
 }
 
-/** RFC 6749/8693/8707 error codes we recognize. Only an allowlisted code is
- * ever stored/rendered — never a raw error string, which can embed tokens. */
-const OAUTH_ERROR_CODES = [
-  "invalid_grant",
-  "access_denied",
-  "invalid_client",
-  "invalid_request",
-  "unauthorized_client",
-  "unsupported_grant_type",
-  "invalid_scope",
-  "invalid_target",
-] as const;
-
-function extractOauthErrorCode(
-  error: string | undefined,
-  lastResponse: XAAFlowState["lastResponse"]
-): string | undefined {
-  // Prefer the structured token response (`{error}` or the proxy envelope's
-  // `{body: {error}}`) over substring-matching the message.
-  const body = lastResponse?.body as Record<string, unknown> | undefined;
-  const candidates = [
-    body?.error,
-    (body?.body as Record<string, unknown> | undefined)?.error,
-  ];
-  for (const candidate of candidates) {
-    if (
-      typeof candidate === "string" &&
-      (OAUTH_ERROR_CODES as readonly string[]).includes(candidate)
-    ) {
-      return candidate;
-    }
-  }
-  if (typeof error === "string") {
-    return OAUTH_ERROR_CODES.find((code) => error.includes(code));
-  }
-  return undefined;
-}
-
 function parseScopeSet(value: string | undefined): Set<string> {
   return new Set((value ?? "").split(/\s+/).filter(Boolean));
 }
@@ -263,7 +227,10 @@ interface XAAFlowTabProps {
   // callers can keep the modal open instead of treating every call as saved.
   onSaveServerConfig?: (
     formData: ServerFormData,
-    options?: { originalServerName?: string }
+    options?: {
+      originalServerName?: string;
+      hostedWriteTarget?: HostedServerWriteTarget;
+    }
   ) => void | boolean | Promise<void | boolean>;
   /**
    * Bumped by the shell when the header "Add Server" button is clicked while
@@ -483,6 +450,13 @@ export function XAAFlowTab({
     projectId: projectId ?? null,
     projectDefault: projectXaaTestDefaults?.defaultIdentity ?? null,
   });
+  const hostedWriteTarget: HostedServerWriteTarget | undefined =
+    HOSTED_MODE && target.barServerProjectId && target.barServerId
+      ? {
+          projectId: target.barServerProjectId,
+          serverId: target.barServerId,
+        }
+      : undefined;
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
   const flowConfigurationKey = buildXaaFlowConfigurationKey(
@@ -1724,7 +1698,11 @@ export function XAAFlowTab({
       setAssertionFormatSaving(true);
       try {
         await onSaveServerConfig(
-          buildXaaAssertionFormatResave(selectedServer, next)
+          buildXaaAssertionFormatResave(selectedServer, next),
+          {
+            originalServerName: selectedServer.name,
+            ...(hostedWriteTarget ? { hostedWriteTarget } : {}),
+          }
         );
       } finally {
         setAssertionFormatSaving(false);
@@ -1735,6 +1713,7 @@ export function XAAFlowTab({
       onSaveServerConfig,
       effectiveAssertionFormat,
       assertionFormatSaving,
+      hostedWriteTarget,
     ]
   );
 
@@ -1971,6 +1950,9 @@ export function XAAFlowTab({
           const saved = await onSaveServerConfig?.(formData, {
             originalServerName:
               serverModalMode === "add" ? undefined : selectedServer?.name,
+            ...(serverModalMode === "edit" && hostedWriteTarget
+              ? { hostedWriteTarget }
+              : {}),
           });
           if (saved === false) {
             throw new Error("Could not save the server. Please try again.");

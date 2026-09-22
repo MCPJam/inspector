@@ -6,7 +6,6 @@ import {
   useMemo,
   useEffect,
 } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
@@ -15,6 +14,7 @@ import type {
   DragEvent,
   FormEvent,
   KeyboardEvent,
+  ReactNode,
 } from "react";
 import { cn } from "@/lib/chat-utils";
 import { track } from "@/lib/analytics";
@@ -51,12 +51,22 @@ import {
   ClientSelector,
   type ClientSelectorData,
 } from "@/components/chat-v2/chat-input/client-selector";
+import {
+  ExecutionTargetChip,
+  type ExecutionTargetChipData,
+} from "@/components/chat-v2/chat-input/execution-target-chip";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
+import {
+  caretIsOnFirstLine,
+  caretIsOnLastLine,
+  navigateInputHistory,
+  type InputHistoryNavigation,
+} from "@/components/chat-v2/chat-input/input-history";
 import {
   Context,
   ContextTrigger,
@@ -76,9 +86,9 @@ import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Popover,
@@ -87,9 +97,9 @@ import {
 } from "@mcpjam/design-system/popover";
 import { ClientStylePillSelector } from "@/components/shared/ClientStylePillSelector";
 import {
-  getChatboxHostFamily,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioHostFamily,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { authFetch } from "@/lib/session-token";
 
@@ -139,7 +149,7 @@ type TranscriptionAbortState = {
 type VoiceInputBackendContext = {
   projectId?: string | null;
   selectedServerIds?: string[];
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 };
 
@@ -255,9 +265,18 @@ function getFilesFromClipboardData(dataTransfer: DataTransfer): File[] {
   return Array.from(dataTransfer.files);
 }
 
+/** Stable identity, so the default never re-triggers a memo downstream. */
+const EMPTY_INPUT_HISTORY: readonly string[] = [];
+
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * What Up/Down walk through, newest first — the thread's own user messages
+   * (see `input-history.ts`). Omitted by surfaces with no thread behind them,
+   * and the arrows then belong entirely to the caret.
+   */
+  inputHistory?: readonly string[];
   onSubmit: (
     event: FormEvent<HTMLFormElement>,
     additionalInput?: string
@@ -270,7 +289,10 @@ interface ChatInputProps {
   className?: string;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
-  onModelChange: (model: ModelDefinition) => void;
+  onModelChange: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean }
+  ) => void;
   onModelSelectorOpenChange?: (open: boolean) => void;
   multiModelEnabled?: boolean;
   selectedModels?: ModelDefinition[];
@@ -279,6 +301,16 @@ interface ChatInputProps {
   enableMultiModel?: boolean;
   /** Playground-only: renders a client chip beside the model chip. */
   clientSelector?: ClientSelectorData;
+  /**
+   * Where this turn's Claude Code agent runs, as a chip in the toolbar.
+   *
+   * A DATA prop, mirroring `clientSelector`: one key on
+   * `sharedChatInputProps` reaches all six `<ChatInput>` sites, and the
+   * component itself owns no lifecycle. The dialog it opens lives in
+   * PlaygroundMain, once — six composers each owning their own would be six
+   * dialogs racing one approval.
+   */
+  executionTarget?: ExecutionTargetChipData;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -315,9 +347,9 @@ interface ChatInputProps {
   /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
   showHostStyleSelector?: boolean;
   /** Current host style for the selector UI. */
-  hostStyle?: ChatboxHostStyle;
+  hostStyle?: ScenarioHostStyle;
   /** Shared host-style setter. */
-  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
+  onHostStyleChange?: (hostStyle: ScenarioHostStyle) => void;
   /** Onboarding: pulse the send button with glow animation */
   pulseSubmit?: boolean;
   /** Move the textarea caret to the end when this trigger changes */
@@ -345,18 +377,58 @@ interface ChatInputProps {
   voiceInputContext?: VoiceInputBackendContext;
   /** WorkOS/guest bearer used by local inspector routes to resolve provider keys. */
   voiceInputAuthHeaders?: Record<string, string>;
-  /** Hosted chatbox: optional servers not yet connected (Add server popover). */
-  chatboxAttachableServers?: Array<{
+  /** Hosted scenario: optional servers not yet connected (Add server popover). */
+  scenarioAttachableServers?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onAttachChatboxServer?: (serverId: string) => void;
+  onAttachScenarioServer?: (serverId: string) => void;
+  /**
+   * Opens the org's model providers page from the model picker's "Your
+   * providers" footer. Passed only when the viewer may open org settings.
+   */
+  onManageOrgProviders?: () => void;
+  /**
+   * Environment mode (Project Environments): the environment's resolved
+   * servers, id-first from the preview. When present (even empty) this
+   * REPLACES the ad-hoc rows above in the "+" menu — environment servers are
+   * connected by the backend on every turn, so there is no browser connection
+   * to manage and a "Connect" button would be a dead control. The toggle is
+   * the per-turn narrowing override, not a connect/disconnect.
+   */
+  environmentServers?: Array<{
+    serverId: string;
+    name: string;
+    enabled: boolean;
+    source?: string | null;
+  }>;
+  onEnvironmentServerToggle?: (serverId: string, enabled: boolean) => void;
+  /**
+   * True when the toggles above hold a per-turn override (some server was
+   * turned off/on for this session). Renders the Modified marker + reset —
+   * this menu is the ONLY surface for the override now, so the honesty
+   * affordance lives here too.
+   */
+  environmentServersOverridden?: boolean;
+  onResetEnvironmentServers?: () => void;
+  /**
+   * Banner rendered inside the composer, above everything else.
+   *
+   * Exists for statements the composer has to make ABOUT ITSELF — today, that
+   * a reopened conversation's as-run host/environment was never recorded, so
+   * these controls are the viewer's current selection rather than history (see
+   * `ConversationTargetNotice`). Rendered here rather than by each caller
+   * because there are six `<ChatInput>` sites and the notice must not be
+   * reachable from only some of them.
+   */
+  notice?: ReactNode;
 }
 
 export function ChatInput({
   value,
   onChange,
+  inputHistory = EMPTY_INPUT_HISTORY,
   onSubmit,
   stop,
   disabled = false,
@@ -374,6 +446,7 @@ export function ChatInput({
   onMultiModelEnabledChange,
   enableMultiModel = false,
   clientSelector,
+  executionTarget,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -409,31 +482,75 @@ export function ChatInput({
   onAddServer,
   voiceInputContext,
   voiceInputAuthHeaders,
-  chatboxAttachableServers,
-  onAttachChatboxServer,
+  scenarioAttachableServers,
+  onAttachScenarioServer,
+  onManageOrgProviders,
+  environmentServers,
+  onEnvironmentServerToggle,
+  environmentServersOverridden = false,
+  onResetEnvironmentServers,
+  notice,
 }: ChatInputProps) {
-  // Cloud skill source for the `/` picker: in hosted mode, list/load skills
-  // from the project's Convex/Computer source (Playground carries projectId via
-  // `clientSelector`). Gated behind the `skills-enabled` flag until QA completes
-  // (flag off ⇒ no cloud source, so the picker lists no cloud skills). Local
-  // mode keeps the default (filesystem) path. Memoized so the popover's fetch
-  // effects don't re-run every render.
+  // The project LIBRARY half of the `/` picker: list/load skills from the
+  // project's Convex source (Playground carries the id via `clientSelector`).
+  //
+  // NOT gated on `HOSTED_MODE` any more. It was, back when the picker showed
+  // one source or the other and hosted was the only mode with a library to
+  // show — which meant a local user's own project skills were unreachable from
+  // chat, though they are exactly what the library exists for. The picker now
+  // merges both halves (see SkillsPopoverSection), so this is simply "is there
+  // a library to read": a Convex project id exists in both modes, and an
+  // unsynced project has none, which keeps the half off by itself.
+  //
+  // Still gated behind the `skills-enabled` flag until QA completes. Memoized
+  // so the popover's fetch effects don't re-run every render.
   const skillsEnabled = useSkillsEnabled();
+  // Skills over MCP (SEP-2640): the selected servers ARE the candidate
+  // providers. `connected: true` because a server only reaches
+  // `selectedServers` once it is attached to this turn; the API still answers
+  // `support.active: false` for any connection where the extension is not
+  // mutually declared, so a non-declaring server contributes nothing either
+  // way.
+  //
+  // MEMOIZED on a stable signature. Rebuilding the array every render would
+  // give the consuming effect a fresh reference each pass, and since that
+  // effect fetches, every completed fetch would trigger the next one.
+  // JSON, not concatenation: a server id may contain the separator, and two
+  // different selections that concatenate alike would reuse a stale array.
+  const selectedServersSignature = JSON.stringify(selectedServers ?? []);
+  const serverSkillProviders = useMemo(
+    () =>
+      (selectedServers ?? []).map((serverId) => ({
+        serverId,
+        label: serverId,
+        connected: true,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedServersSignature]
+  );
+
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
-      HOSTED_MODE && skillsEnabled && clientSelector?.cloudProjectId
+      skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.cloudProjectId, skillsEnabled],
+    [clientSelector?.cloudProjectId, skillsEnabled]
   );
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
-  const resolvedThemeMode = chatboxHostTheme ?? globalThemeMode;
-  const isDarkChatboxTheme = resolvedThemeMode === "dark";
+  const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
+  const isDarkScenarioTheme = resolvedThemeMode === "dark";
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * Where an Up/Down walk through past messages currently stands — see
+   * `input-history.ts`. A ref, not state: nothing renders off it (the recalled
+   * text goes out through `onChange` like any other edit), and it must be
+   * readable by the very next keypress rather than after a commit.
+   */
+  const historyNavigationRef = useRef<InputHistoryNavigation | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -446,6 +563,7 @@ export function ChatInput({
   const recordingCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const fileErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingDurationSecondsRef = useRef<number>(0);
   const transcriptionRunRef = useRef(0);
@@ -495,13 +613,28 @@ export function ChatInput({
   };
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
-  const selectorHostStyle = hostStyle ?? chatboxHostStyle;
+  const selectorHostStyle = hostStyle ?? scenarioHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
       onDisconnectServer &&
       Object.keys(allServerConfigs).length > 0
   );
-  const hasServerOptions = Boolean(onAddServer || hasServerRows);
+  // Environment mode replaces the ad-hoc section outright — presence of the
+  // prop (not its length) is the mode switch, so an environment that resolves
+  // to zero servers shows no dead "Add server"/Connect controls either.
+  //
+  // `environmentServersOverridden` keeps the section even at zero servers: an
+  // override survives live edits of the environment (by design), so an
+  // environment edited down to zero servers can still carry a live override —
+  // a retained id can still run if it's an authorized project server. Hiding
+  // the section then would hide the Modified marker AND the only way to reset.
+  const isEnvironmentServerMode = environmentServers !== undefined;
+  const environmentSectionVisible =
+    isEnvironmentServerMode &&
+    (environmentServers.length > 0 || environmentServersOverridden);
+  const hasServerOptions = isEnvironmentServerMode
+    ? environmentSectionVisible
+    : Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
     Boolean(selectorHostStyle) &&
@@ -535,12 +668,19 @@ export function ChatInput({
     recordingCapTimerRef.current = null;
   }, []);
 
+  const clearFileErrorTimer = useCallback(() => {
+    if (!fileErrorTimerRef.current) return;
+    clearTimeout(fileErrorTimerRef.current);
+    fileErrorTimerRef.current = null;
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearStopFallbackTimer();
       clearRecordingCapTimer();
+      clearFileErrorTimer();
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
@@ -548,7 +688,12 @@ export function ChatInput({
       transcriptionAbortRef.current = null;
       stopAudioStream();
     };
-  }, [clearRecordingCapTimer, clearStopFallbackTimer, stopAudioStream]);
+  }, [
+    clearRecordingCapTimer,
+    clearStopFallbackTimer,
+    clearFileErrorTimer,
+    stopAudioStream,
+  ]);
 
   useLayoutEffect(() => {
     if (moveCaretToEndTrigger === undefined) return;
@@ -616,12 +761,16 @@ export function ChatInput({
       if (errors.length > 0) {
         setFileError(errors.join("\n"));
         // Clear error after 5 seconds
-        setTimeout(() => setFileError(null), 5000);
+        clearFileErrorTimer();
+        fileErrorTimerRef.current = setTimeout(() => {
+          fileErrorTimerRef.current = null;
+          setFileError(null);
+        }, 5000);
       }
 
       return true;
     },
-    [fileAttachments, onChangeFileAttachments]
+    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer]
   );
 
   const handleFileInputChange = useCallback(
@@ -786,8 +935,8 @@ export function ChatInput({
             voiceInputContext.selectedServerIds.length > 0
               ? { selectedServerIds: voiceInputContext.selectedServerIds }
               : {}),
-            ...(voiceInputContext?.chatboxId
-              ? { chatboxId: voiceInputContext.chatboxId }
+            ...(voiceInputContext?.scenarioId
+              ? { scenarioId: voiceInputContext.scenarioId }
               : {}),
             ...(voiceInputContext?.accessVersion !== undefined
               ? { accessVersion: voiceInputContext.accessVersion }
@@ -854,7 +1003,7 @@ export function ChatInput({
     [
       voiceInputAuthHeaders,
       voiceInputContext?.accessVersion,
-      voiceInputContext?.chatboxId,
+      voiceInputContext?.scenarioId,
       voiceInputContext?.projectId,
       voiceInputContext?.selectedServerIds,
     ]
@@ -1168,6 +1317,61 @@ export function ChatInput({
       return;
     }
 
+    // Up/Down through your own past messages (BB-183). AFTER the prompts
+    // popover, which owns the arrows while it is open, and never with a
+    // modifier held: Shift+Up selects, and the rest belong to the OS.
+    //
+    // Not while the composer is disabled, and NOT while the mic is open. While
+    // recording, the box shows "Listening..." and `value` holds the draft
+    // underneath it — a recall there would measure the caret against one
+    // string, test it against another, and overwrite a draft nobody can see.
+    // The textarea's own `onChange` already refuses writes in that state; this
+    // path reaches `onChange` directly, so it has to refuse them too.
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !disabled &&
+      voiceInputState === "idle" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      const older = event.key === "ArrowUp";
+      const atEdge = older
+        ? caretIsOnFirstLine(value, currentCaretIndex)
+        : caretIsOnLastLine(value, currentCaretIndex);
+      if (atEdge) {
+        const next = navigateInputHistory({
+          direction: older ? "older" : "newer",
+          entries: inputHistory,
+          value,
+          navigation: historyNavigationRef.current,
+        });
+        if (next) {
+          event.preventDefault();
+          historyNavigationRef.current = next.navigation;
+          if (next.value !== value) {
+            onChange(next.value);
+            // Land the caret at the end of the recalled text, where a terminal
+            // leaves it — the next thing anyone does is keep typing. After the
+            // controlled re-render, hence the frame.
+            const textarea = event.currentTarget;
+            requestAnimationFrame(() => {
+              const end = textarea.value.length;
+              textarea.setSelectionRange(end, end);
+              // Mirrored into state like every other programmatic caret move
+              // here: `caretIndex` is what the `/`-prompt and skill detection
+              // slice the value on, and leaving it behind would have them read
+              // a recalled message against the caret of the one before it.
+              setCaretIndex(end);
+            });
+          }
+          return;
+        }
+      }
+    }
+
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
@@ -1238,40 +1442,40 @@ export function ChatInput({
     );
   };
 
-  const chatboxHostFamily = getChatboxHostFamily(chatboxHostStyle);
+  const scenarioHostFamily = getScenarioHostFamily(scenarioHostStyle);
   const composerClasses =
-    chatboxHostFamily === "chatgpt"
+    scenarioHostFamily === "chatgpt"
       ? cn(
-          "chatbox-host-composer rounded-[1.75rem]",
-          isDarkChatboxTheme
+          "scenario-host-composer rounded-[1.75rem]",
+          isDarkScenarioTheme
             ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
             : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]"
         )
-      : chatboxHostFamily === "claude"
+      : scenarioHostFamily === "claude"
       ? cn(
-          "chatbox-host-composer rounded-[1.35rem]",
-          isDarkChatboxTheme
+          "scenario-host-composer rounded-[1.35rem]",
+          isDarkScenarioTheme
             ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
             : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]"
         )
       : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
-    chatboxHostFamily === "chatgpt"
-      ? isDarkChatboxTheme
+    scenarioHostFamily === "chatgpt"
+      ? isDarkScenarioTheme
         ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
         : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
-      : chatboxHostFamily === "claude"
-      ? isDarkChatboxTheme
+      : scenarioHostFamily === "claude"
+      ? isDarkScenarioTheme
         ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
         : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
       : "bg-primary text-primary-foreground hover:bg-primary/90";
   const inactiveSubmitButtonClasses =
-    chatboxHostFamily === "chatgpt"
-      ? isDarkChatboxTheme
+    scenarioHostFamily === "chatgpt"
+      ? isDarkScenarioTheme
         ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
         : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
-      : chatboxHostFamily === "claude"
-      ? isDarkChatboxTheme
+      : scenarioHostFamily === "claude"
+      ? isDarkScenarioTheme
         ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
         : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
       : "bg-muted text-muted-foreground cursor-not-allowed";
@@ -1296,6 +1500,11 @@ export function ChatInput({
 
   return (
     <>
+      {creditBalance?.platformPaidFallback && (
+        <p role="status" className="px-2 py-1 text-sm text-muted-foreground">
+          MCPJam&apos;s shared free allowance is unavailable; this chat is using your credits.
+        </p>
+      )}
       <form
         ref={formRef}
         className={cn("w-full", className)}
@@ -1325,6 +1534,8 @@ export function ChatInput({
             </div>
           )}
 
+          {notice}
+
           <PromptsPopover
             anchor={caret}
             selectedServers={selectedServers}
@@ -1336,12 +1547,22 @@ export function ChatInput({
             caretIndex={caretIndex}
             minimalMode={minimalMode}
             skillsSource={skillsSource}
+            // Skills over MCP (SEP-2640): the selected servers ARE the
+            // candidate providers. `connected: true` because a server only
+            // reaches `selectedServers` once it is attached to this turn; the
+            // API still answers `support.active: false` for any connection
+            // where the extension is not mutually declared, so a
+            // non-declaring server contributes nothing either way.
+            mcpServers={serverSkillProviders}
+            {...(skillsSource?.kind === "cloud"
+              ? { projectId: skillsSource.projectId }
+              : {})}
           />
 
           {minimalMode &&
-          chatboxAttachableServers &&
-          chatboxAttachableServers.length > 0 &&
-          onAttachChatboxServer ? (
+          scenarioAttachableServers &&
+          scenarioAttachableServers.length > 0 &&
+          onAttachScenarioServer ? (
             <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
               <Popover>
                 <PopoverTrigger asChild>
@@ -1362,12 +1583,12 @@ export function ChatInput({
                     Connect an optional server. You may be asked to authorize.
                   </p>
                   <div className="max-h-48 overflow-y-auto">
-                    {chatboxAttachableServers.map((s) => (
+                    {scenarioAttachableServers.map((s) => (
                       <button
                         key={s.serverId}
                         type="button"
                         className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
-                        onClick={() => onAttachChatboxServer(s.serverId)}
+                        onClick={() => onAttachScenarioServer(s.serverId)}
                       >
                         <span className="truncate font-medium">
                           {s.serverName}
@@ -1486,9 +1707,90 @@ export function ChatInput({
                     {hasServerOptions && (
                       <div className="px-1 pt-1 pb-0">
                         <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                          Servers
+                          {isEnvironmentServerMode
+                            ? "Environment servers"
+                            : "Servers"}
                         </p>
-                        {allServerConfigs &&
+                        {isEnvironmentServerMode && (
+                          <>
+                            <p className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+                              Connected automatically on every message.
+                            </p>
+                            {environmentServersOverridden && (
+                              <div className="flex items-center gap-1.5 px-2 pb-1.5">
+                                <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                                  Modified
+                                </span>
+                                {onResetEnvironmentServers && (
+                                  <button
+                                    type="button"
+                                    onClick={onResetEnvironmentServers}
+                                    // Same mid-turn lock as the toggles below.
+                                    disabled={isLoading}
+                                    className="text-[11px] text-primary underline-offset-4 hover:underline disabled:opacity-60"
+                                  >
+                                    Reset to environment
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            <div className="max-h-48 overflow-y-auto">
+                              {environmentServers.map((server) => (
+                                <div
+                                  key={server.serverId}
+                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div
+                                      className={cn(
+                                        "w-2 h-2 rounded-full shrink-0",
+                                        server.enabled
+                                          ? "bg-green-500 dark:bg-green-400"
+                                          : "bg-muted-foreground"
+                                      )}
+                                    />
+                                    <span
+                                      className={cn(
+                                        "text-sm font-medium truncate",
+                                        !server.enabled &&
+                                          "text-muted-foreground"
+                                      )}
+                                    >
+                                      {server.name}
+                                    </span>
+                                    {server.source === "plugin" && (
+                                      <span className="text-[10px] text-muted-foreground shrink-0 uppercase">
+                                        plugin
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center shrink-0">
+                                    <Switch
+                                      checked={server.enabled}
+                                      onCheckedChange={(next) =>
+                                        onEnvironmentServerToggle?.(
+                                          server.serverId,
+                                          next === true
+                                        )
+                                      }
+                                      // Locked while a turn is in flight —
+                                      // the same guard the header section
+                                      // applied before these controls moved:
+                                      // the running turn keeps its resolved
+                                      // set, so a mid-stream flip would only
+                                      // change NEXT turn while looking like
+                                      // it changed this one.
+                                      disabled={isLoading}
+                                      aria-label={`Include ${server.name}`}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {!isEnvironmentServerMode &&
+                          allServerConfigs &&
                           onDisconnectServer &&
                           Object.keys(allServerConfigs).length > 0 && (
                             <div className="max-h-48 overflow-y-auto">
@@ -1581,7 +1883,7 @@ export function ChatInput({
                                 })}
                             </div>
                           )}
-                        {onAddServer && (
+                        {!isEnvironmentServerMode && onAddServer && (
                           <button
                             type="button"
                             className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 cursor-pointer"
@@ -1600,8 +1902,10 @@ export function ChatInput({
                     <div
                       className={cn(
                         "px-1 pb-1",
-                        allServerConfigs &&
-                          Object.keys(allServerConfigs).length > 0 &&
+                        (isEnvironmentServerMode
+                          ? environmentSectionVisible
+                          : allServerConfigs &&
+                            Object.keys(allServerConfigs).length > 0) &&
                           "border-t border-border mt-1 pt-1"
                       )}
                     >
@@ -1635,17 +1939,39 @@ export function ChatInput({
                       </button>
 
                       {onRequireToolApprovalChange && (
-                        <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                          <div className="flex items-center gap-2 text-sm">
-                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                            Tool Approval
+                        <div className="rounded-md px-2 py-2 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm">
+                              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                              Tool Approval
+                            </div>
+                            <Switch
+                              checked={requireToolApproval}
+                              onCheckedChange={(checked) =>
+                                onRequireToolApprovalChange(checked)
+                              }
+                              aria-describedby="tool-approval-floor-note"
+                            />
                           </div>
-                          <Switch
-                            checked={requireToolApproval}
-                            onCheckedChange={(checked) =>
-                              onRequireToolApprovalChange(checked)
-                            }
-                          />
+                          {/* A caption rather than a tooltip: the row contains
+                              the switch itself, so a tooltip trigger wrapped
+                              around it would open over the control the user is
+                              reaching for, and a non-focusable trigger div
+                              would never open for a keyboard user at all.
+                              The switch decides for every tool that acts, so
+                              the only thing left to say is which calls it does
+                              not cover — reads, and an app's own tools, which
+                              belong to the iframe the user opened rather than
+                              to this setting. That belongs in front of someone
+                              rather than behind a hover. */}
+                          <p
+                            id="tool-approval-floor-note"
+                            className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
+                          >
+                            Pause before tool calls: MCP servers, the browser,
+                            a page's own tools, the shell. Read-only lookups
+                            and an open app's own actions never pause.
+                          </p>
                         </div>
                       )}
 
@@ -1678,8 +2004,12 @@ export function ChatInput({
                   modalThemeMode={globalThemeMode}
                 />
               ) : null}
+              {!minimalMode && executionTarget ? (
+                <ExecutionTargetChip {...executionTarget} />
+              ) : null}
               {!minimalMode && (
                 <ModelSelector
+                  platformPaidFallback={creditBalance?.platformPaidFallback}
                   currentModel={currentModel}
                   availableModels={availableModels}
                   onModelChange={onModelChange}
@@ -1692,6 +2022,7 @@ export function ChatInput({
                   onSelectedModelsChange={onSelectedModelsChange}
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
+                  onManageOrgProviders={onManageOrgProviders}
                 />
               )}
             </div>

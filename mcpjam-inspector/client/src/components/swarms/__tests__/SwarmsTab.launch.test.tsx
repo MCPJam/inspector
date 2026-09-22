@@ -1,6 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// NewJourneyButton's Advanced → Judge section pulls the model catalog via
+// useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
+// without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
+
 const persona = {
   _id: "persona-1",
   personaId: "p1",
@@ -13,7 +20,7 @@ const journey = {
   personaRefId: "persona-1",
   goal: "Book a flight",
   hostIds: ["host-1"],
-  config: { sessionsPerHost: 2, maxTurns: 6 },
+  config: { sessionsPerTarget: 2, maxTurns: 6 },
 };
 const host = { hostId: "host-1", name: "Host One" };
 
@@ -60,22 +67,28 @@ vi.mock("@/hooks/useViews", () => ({
     serverAttachments: [],
     isLoading: false,
   }),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
+}));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 
 function selectPersonaAndRun() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  fireEvent.click(screen.getByText("Persona One"));
-  return screen.getByRole("button", { name: "Run journey" });
+  openPersonasTab();
+  fireEvent.click(screen.getAllByText("Persona One")[0]);
+  return screen.getByRole("button", { name: "Run" });
 }
 
 beforeEach(() => {
@@ -100,6 +113,31 @@ describe("SwarmsTab — Run journey launch", () => {
     expect(arg.projectId).toBe("proj-1");
     expect(typeof arg.launchKey).toBe("string");
     expect(arg.launchKey.length).toBeGreaterThan(0);
+    // A solo Run is a wave of one: it still carries a durable id so the
+    // Overview never has to infer this run's grouping from its timestamp.
+    expect(typeof arg.swarmRunGroupId).toBe("string");
+    expect(arg.swarmRunGroupId.length).toBeGreaterThan(0);
+  });
+
+  it("reuses the wave id alongside the launch key on retry", async () => {
+    // A replayed launchKey returns the run the backend ALREADY created, which
+    // carries the wave it was first stamped with — so a fresh id on retry
+    // would claim a grouping the stored run does not have.
+    launchJourneyRunMock.mockRejectedValueOnce(
+      new LaunchJourneyRunError(500, "upstream unavailable")
+    );
+    const runBtn = selectPersonaAndRun();
+    fireEvent.click(runBtn);
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    const first = launchJourneyRunMock.mock.calls[0]![0] as any;
+
+    launchJourneyRunMock.mockResolvedValueOnce({ runId: "run-1" });
+    fireEvent.click(runBtn);
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    const retry = launchJourneyRunMock.mock.calls[1]![0] as any;
+
+    expect(retry.launchKey).toBe(first.launchKey);
+    expect(retry.swarmRunGroupId).toBe(first.swarmRunGroupId);
   });
 
   it("surfaces a 4xx as an inline error", async () => {
@@ -115,6 +153,28 @@ describe("SwarmsTab — Run journey launch", () => {
         screen.getByText("This journey has no pinned hosts to run")
       ).toBeInTheDocument()
     );
+  });
+
+  /**
+   * The limit dialog already carries this sentence plus the actions that clear
+   * it. The inline banner under the goal would repeat it with nothing to act
+   * on, so the launch handler skips it on the flag.
+   */
+  it("leaves the message to the dialog when the limit wall was raised", async () => {
+    launchJourneyRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(
+        429,
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        true
+      )
+    );
+
+    const runBtn = selectPersonaAndRun();
+    fireEvent.click(runBtn);
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runBtn).toBeEnabled());
+    expect(screen.queryByText(/MCPJam (model )?limit reached\./)).toBeNull();
   });
 
   it("reuses the SAME launchKey on retry after a 5xx/network failure, and only clears it after a confirmed 2xx", async () => {

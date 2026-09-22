@@ -16,6 +16,15 @@ export const ResourceUpdatedNotificationMethod =
 export const PromptListChangedNotificationMethod =
   "notifications/prompts/list_changed" as const;
 export const ProgressNotificationMethod = "notifications/progress" as const;
+/**
+ * `notifications/message` — server→client log records (RFC 5424 severities).
+ * Present on BOTH eras: legacy servers emit it after `logging/setLevel`;
+ * modern servers emit it inline within the originating request's response
+ * stream (there is no separate session channel). The manager surfaces it via
+ * `MCPClientManager.onLogMessage`.
+ */
+export const LoggingMessageNotificationMethod =
+  "notifications/message" as const;
 
 // Type aliases for notification handling (the manager's method-string form).
 type NotificationMethodName = ManagedMcpClientNotificationMethod;

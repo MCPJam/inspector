@@ -1,13 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mirrorUiToolToNativeMock } = vi.hoisted(() => ({
-  mirrorUiToolToNativeMock: vi.fn(),
-}));
-
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: mirrorUiToolToNativeMock,
-}));
-
 import {
   useUiToolsRegistry,
   type UiToolDefinition,
@@ -29,7 +21,8 @@ function makeTool(name: string, extra?: Partial<UiToolDefinition>): UiToolDefini
 function resetRegistry() {
   useUiToolsRegistry.setState({
     tools: new Map(),
-    nativeDisposers: new Map(),
+    globalNames: new Set(),
+    ownerTokens: new Map(),
     shippedNames: new Set(),
   });
 }
@@ -37,7 +30,6 @@ function resetRegistry() {
 describe("useUiToolsRegistry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mirrorUiToolToNativeMock.mockReturnValue(null);
     resetRegistry();
   });
 
@@ -92,20 +84,19 @@ describe("useUiToolsRegistry", () => {
     warn.mockRestore();
   });
 
-  it("disposes the native mirror on unregister and on replacement", () => {
-    const disposeFirst = vi.fn();
-    const disposeSecond = vi.fn();
-    mirrorUiToolToNativeMock
-      .mockReturnValueOnce(disposeFirst)
-      .mockReturnValueOnce(disposeSecond);
+  it("clears every per-name registry slot on unregister, even after replacement", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
+    useUiToolsRegistry
+      .getState()
+      .registerUiTool(makeTool("ui_navigate"), { scope: "global" });
     useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
-    useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
-    expect(disposeFirst).toHaveBeenCalledTimes(1);
 
     useUiToolsRegistry.getState().unregisterUiTool("ui_navigate");
-    expect(disposeSecond).toHaveBeenCalledTimes(1);
+    const state = useUiToolsRegistry.getState();
+    expect(state.tools.has("ui_navigate")).toBe(false);
+    expect(state.globalNames.has("ui_navigate")).toBe(false);
+    expect(state.ownerTokens.has("ui_navigate")).toBe(false);
   });
 
   it("unregisters via an aborted signal and skips already-aborted ones", () => {

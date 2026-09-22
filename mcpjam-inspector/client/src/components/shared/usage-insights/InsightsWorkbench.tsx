@@ -1,0 +1,572 @@
+import { toast } from "sonner";
+import { SessionQuestionFlow } from "./SessionQuestionFlow";
+import { useCallback, useEffect, useMemo, type ReactNode } from "react";
+import {
+  chipKey,
+  isSameSelection,
+  removeChipsByKeys,
+  type InsightsSelection,
+  type SelectionRef,
+  type UsageFilterChip,
+  type UsageFilterState,
+} from "@/hooks/scenario-usage-filters";
+import {
+  useInsightsFlowController,
+  useInsightsRebuild,
+  type InsightsView,
+} from "@/hooks/useInsightsFlowController";
+import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
+import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
+import { stageOrderStorageKey } from "@/components/shared/usage-insights/sankey-stage-order";
+import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
+import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
+import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { Button } from "@mcpjam/design-system/button";
+import { cn } from "@/lib/utils";
+import { X } from "lucide-react";
+
+interface InsightsWorkbenchProps {
+  /** Which surface's insights to read. Null ⇒ nothing to scope to. */
+  scope: InsightsScope | null;
+  /** Identity of the cohort; when it changes, filter + selection reset. */
+  cohortKey: string;
+  /** Force-applied filter transform (e.g. User Testing's hide-synthetic). */
+  augmentFilter?: (filter: UsageFilterState) => UsageFilterState;
+  /** Selection restored from the `sel` URL parameter. */
+  urlSelection?: ReadonlyArray<SelectionRef> | null;
+  /** Persist flow selection changes in the owning route. */
+  onSelectionChange?: (themes: ReadonlyArray<SelectionRef> | null) => void;
+  initialView?: InsightsView;
+  onViewChange?: (view: InsightsView) => void;
+  /** Open a session in the Sessions browser (the parent owns the tab flip). */
+  onOpenSession?: (sessionId: string) => void;
+  /** Open the Sessions tab without selecting a particular session. */
+  onOpenSessionsTab?: () => void;
+  /**
+   * Top-level callout above Findings / session flow (e.g. Run insights
+   * banner). Kept separate so the summary stays visible when Findings collapses.
+   */
+  bannerSlot?: ReactNode;
+  /**
+   * Pattern recommendations (expandable rows). Rendered as a distinct
+   * subsection inside Findings when present.
+   */
+  recommendationsSlot?: ReactNode;
+  /**
+   * Queue one rebuild when the Clusters view opens on a completed run whose
+   * topic map was never built. The server mutation dedupes in-flight runs; the
+   * ref below is hygiene before Convex reflects the queued state.
+   */
+  /**
+   * Rendered instead of the body when there is nothing to show — either no
+   * scope to read (a signed-out swarm) or a cohort with zero sessions. The
+   * copy is the caller's, because why there is nothing is a property of the
+   * surface: Swarms want "sign in", User Testing wants "share the link".
+   */
+  emptyState?: ReactNode;
+  className?: string;
+  /**
+   * How the body fills its space.
+   *
+   * `"fill"` (default) is the locked, viewport-filling layout: the whole
+   * workbench is `h-full` and every region clips, so the Sankey/topic map fit
+   * the pane and scroll internally. User Testing mounts the workbench inside an
+   * `absolute inset-0` box and relies on this.
+   *
+   * `"scroll"` lets findings use a fixed rail (`max-h-[26rem]`) while the
+   * Sankey fills the leftover parent and scrolls its own columns. The page
+   * must not grow with the SVG. The owner still uses `overflow-y-auto` so
+   * a tall findings rail can scroll past.
+   */
+  bodyLayout?: "fill" | "scroll";
+  /**
+   * Prefix for every `data-testid` this renders, so each surface keeps the
+   * ids its own suites already assert (`swarm-insights-*`, `scenario-insights-*`).
+   */
+  testIdPrefix: string;
+}
+
+/**
+ * Parent container for the Insights rail's self-titled sections ("Fix in your
+ * MCP server", "Recommendations"). It carries no heading of its own — the
+ * sections name themselves — so the rail is never labelled "Findings" (a word
+ * that now belongs to the Findings tab, not this rail). Hidden when every
+ * section renders nothing, so a provided-but-empty slot does not leave an
+ * empty shell.
+ *
+ * The body is one scrollable card. Sections sit inside it separated by a
+ * divider — they must not bring their own card chrome, or the rail reads as
+ * two stacked modules on the page.
+ */
+function InsightsFindings({
+  testId,
+  fillBody,
+  children,
+}: {
+  testId: string;
+  /**
+   * Whether the workbench body fills the viewport. The height cap lives here,
+   * next to the rail it constrains: a share of the viewport in the fill layout
+   * (`max-h-[42%]`), and a fixed height the rail scrolls within while the page
+   * scrolls past it in the scroll layout.
+   */
+  fillBody: boolean;
+  children: ReactNode;
+}) {
+  const maxHeightClass = fillBody ? "max-h-[42%]" : "max-h-[26rem]";
+
+  return (
+    <div
+      className={cn(
+        "flex min-h-0 shrink-0 flex-col overflow-hidden",
+        maxHeightClass,
+        "[&:not(:has([data-slot=findings-body]>*))]:hidden",
+      )}
+      data-testid={testId}
+    >
+      <div
+        data-slot="findings-body"
+        className="flex min-h-0 flex-1 flex-col divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/60 bg-card/60"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The Insights workbench: one body for Swarms and User Testing.
+ *
+ * Exclusive toggle between Session flow (Sankey) and Clusters (topic map),
+ * a recommendations rail (the "Fix in your MCP server" and "Recommendations"
+ * sections) above both, a chip row for dismissible filters, and a session
+ * drill-down beside the flow chart. Everything surface-specific arrives as a
+ * prop — the scope the queries read, the slots the rail renders, the filter
+ * policy, the empty state, and the testid prefix.
+ *
+ * This replaces two panels that had drifted into ~250 lines of duplicated
+ * shell against the same hooks. Where the two disagreed, the reconciliations
+ * are deliberate:
+ *
+ *  - The drill-down is ALWAYS MOUNTED (the User Testing contract, pinned by
+ *    its flow-selection suite): closing toggles the query's `enabled` rather
+ *    than unmounting the component, so reopening does not refetch from
+ *    scratch. It is a right-side sheet, not an in-flow panel, so the Sankey
+ *    keeps its width.
+ *  - The drill-down receives `flow.effectiveFilter`, not `flow.filter`, so a
+ *    force-applied chip (hide-synthetic) narrows the drill-down too. Swarm's
+ *    version passed the raw filter, which on a surface with an augment would
+ *    have shown rows the list beside it excludes.
+ *  - Only the fill-viewport layout survives. The scroll-area path had no
+ *    production caller. The Findings rail and Run insights banner are their
+ *    own sections above the session flow (not chip popovers).
+ *  - A topic-map dot click clears the filter on BOTH surfaces before opening
+ *    the session: an active cluster chip can otherwise hide the very session
+ *    the click asked for.
+ */
+export function InsightsWorkbench({
+  scope,
+  cohortKey,
+  augmentFilter,
+  urlSelection,
+  onSelectionChange,
+  initialView,
+  onViewChange,
+  onOpenSession,
+  onOpenSessionsTab,
+  bannerSlot,
+  recommendationsSlot,
+  emptyState,
+  className,
+  bodyLayout = "fill",
+  testIdPrefix,
+}: InsightsWorkbenchProps) {
+  const fillBody = bodyLayout === "fill";
+  const flow = useInsightsFlowController({
+    cohortKey,
+    ...(augmentFilter ? { augmentFilter } : {}),
+    ...(onSelectionChange ? { onSelectionChange } : {}),
+    ...(initialView ? { initialView } : {}),
+  });
+
+  const { breakdown, rebuild } = useUsageInsights({
+    scope,
+    filters: flow.breakdownFilter,
+    threadsEnabled: false,
+    breakdownEnabled: scope !== null,
+  });
+
+  const { rebuildBusy, handleRebuild } = useInsightsRebuild(rebuild, cohortKey);
+
+  const { setView } = flow;
+  const handleViewChange = useCallback(
+    (next: InsightsView) => {
+      setView(next);
+      onViewChange?.(next);
+    },
+    [setView, onViewChange],
+  );
+
+  const urlSelectionKey = urlSelection
+    ?.map((ref) => JSON.stringify(ref))
+    .join("\0");
+  const resolvedUrlSelection = useMemo<InsightsSelection | null>(() => {
+    if (!urlSelection || urlSelection.length === 0) return null;
+    const nodes = breakdown?.sankey?.nodes ?? [];
+    const questionLabels = breakdown?.sankey?.stages ?? [];
+    return {
+      // A shared link carries ids, not names. The chip's text comes from the
+      // catalog this reader just loaded, so a link cannot put words of its own
+      // into a chip that claims to be a question, and a question renamed since
+      // the link was saved reads under its current name.
+      questions: urlSelection
+        .filter((ref) => "questionId" in ref)
+        .map(({ label: _fromUrl, ...ref }) => {
+          const stage = questionLabels.find(
+            (candidate) => candidate.questionId === ref.questionId,
+          );
+          return { ...ref, ...(stage ? { label: stage.label } : {}) };
+        }),
+      themes: urlSelection
+        .filter((ref) => "dimension" in ref)
+        .map((theme) => {
+          const node = nodes.find(
+            (candidate) =>
+              candidate.stage === theme.dimension &&
+              candidate.key === theme.clusterId,
+          );
+          return { ...theme, ...(node ? { label: node.label } : {}) };
+        }),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity via key
+  }, [urlSelectionKey, breakdown?.sankey]);
+
+  // URL state is an external owner. Reconcile only when that external value
+  // changes, so a local click is not cleared before navigate updates it.
+  useEffect(() => {
+    if (urlSelection === undefined) return;
+    if (resolvedUrlSelection === null) {
+      if (flow.flowSelectionRef.current !== null) {
+        flow.commitSelection(null, { silent: true });
+      }
+      return;
+    }
+    if (isSameSelection(flow.flowSelectionRef.current, resolvedUrlSelection)) {
+      // The URL identity is unchanged, but the Sankey may just have supplied
+      // labels for a selection restored before the breakdown loaded.
+      flow.setFlowSelection(resolvedUrlSelection);
+      return;
+    }
+    flow.commitSelection(resolvedUrlSelection, { silent: true });
+  }, [
+    urlSelectionKey,
+    resolvedUrlSelection,
+    urlSelection,
+    flow.commitSelection,
+    flow.setFlowSelection,
+    flow.flowSelectionRef,
+  ]);
+
+  // Metadata is authoritative only after the subscription resolves. Never
+  // reinterpret a selection saved against an earlier question wording.
+  useEffect(() => {
+    const questions = breakdown?.questionBreakdown;
+    if (!questions) return;
+    const obsolete = flow.filter.chips.filter(
+      (chip) =>
+        chip.kind === "question" &&
+        !questions.some(
+          (q) => q.questionId === chip.questionId && q.version === chip.version,
+        ),
+    );
+    if (!obsolete.length) return;
+    for (const chip of obsolete) flow.handleClearChip(chipKey(chip));
+    if (
+      flow.flowSelection?.questions?.some(
+        (q) =>
+          !questions.some(
+            (current) =>
+              current.questionId === q.questionId &&
+              current.version === q.version,
+          ),
+      )
+    )
+      flow.commitSelection(null);
+    toast.info(
+      "A question changed or was removed. Its old selection was cleared.",
+    );
+  }, [
+    breakdown?.questionBreakdown,
+    flow.filter.chips,
+    flow.handleClearChip,
+    flow.flowSelection,
+    flow.commitSelection,
+  ]);
+
+  // Topic-map dot click → open that session. Clear the filter first so an
+  // active cluster chip can't hide the very session the click asked for.
+  const { clearAllFilters } = flow;
+  const handleOpenSessionFromMap = useCallback(
+    (sessionId: string) => {
+      clearAllFilters();
+      onOpenSession?.(sessionId);
+    },
+    [clearAllFilters, onOpenSession],
+  );
+
+  // Absent is not zero. `undefined` breakdown is loading — an empty state
+  // shown during the first subscription would flash on every mount — and a
+  // breakdown whose `totalSessions` is missing is a backend that does not
+  // report it, not a cohort with no sessions.
+  //
+  // FILTERED-TO-ZERO IS NOT EMPTY. Two criteria that never co-occur intersect
+  // to nothing, and swapping the whole workbench for "no sessions here" would
+  // take the chip row away with it — leaving the user no way to undo the
+  // filter that emptied the view. Only an UNFILTERED zero is the cohort being
+  // empty; the forced policy chip (hide-synthetic) is not a user filter and is
+  // not dismissible, so it is correctly absent from this test.
+  const userFiltered =
+    flow.dismissibleChips.length > 0 || flow.flowSelection !== null;
+  const nothingToShow =
+    scope === null || (!userFiltered && breakdown?.totalSessions === 0);
+  const showingEmpty = Boolean(emptyState && nothingToShow);
+  if (showingEmpty) {
+    return (
+      <div
+        className={cn(
+          "flex flex-col",
+          // Fill layout clips to the viewport. In the scroll layout the owning
+          // container has auto height, so `h-full` would collapse and the
+          // empty message would ride the top instead of centering — take a
+          // full-height floor and grow into the flex column instead.
+          fillBody ? "h-full min-h-0" : "min-h-full flex-1",
+          className,
+        )}
+        data-testid={`${testIdPrefix}-panel`}
+      >
+        {emptyState}
+      </div>
+    );
+  }
+  // No scope and no empty state to show for it: render nothing rather than a
+  // body wired to a cohort that does not exist.
+  if (!scope) return null;
+
+  const orderKey = stageOrderStorageKey(scope);
+
+  const journeyRunIds =
+    scope.kind === "swarm" && scope.journeyRunIds?.length
+      ? scope.journeyRunIds
+      : undefined;
+
+  // Session flow | Clusters sit in the chart header, not in Findings.
+  const viewChrome = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <InsightsViewToggle
+        view={flow.view}
+        onChange={handleViewChange}
+        testId={`${testIdPrefix}-view-toggle`}
+      />
+    </div>
+  );
+
+  const chipRow =
+    flow.dismissibleChips.length > 0 ? (
+      <div className="flex flex-wrap items-center gap-1.5 px-5 py-2">
+        {flow.dismissibleChips.map((chip: UsageFilterChip) => {
+          const key = chipKey(chip);
+          const label =
+            chip.kind === "cluster"
+              ? chip.label ?? "Cluster"
+              : chip.kind === "question"
+              ? chip.label ?? `Question: ${chip.value ? "Yes" : "No"}`
+              : chip.label ?? `${chip.key}: ${chip.value}`;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => flow.handleClearChip(key)}
+              className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs hover:bg-muted"
+            >
+              <span>{label}</span>
+              <X className="size-3" />
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
+
+  const sankeyBlock = (
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ErrorBoundary
+          key={cohortKey}
+          fallback={
+            <SessionFlowSankey
+              goalGroupsByJourney={scope.kind === "swarm"}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+              stageOrderKey={orderKey}
+            />
+          }
+        >
+          {scope.kind === "benchmark" ? (
+            <SessionFlowSankey
+              goalGroupsByJourney={false}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+              stageOrderKey={orderKey}
+            />
+          ) : (
+            <SessionQuestionFlow
+              scope={scope}
+              testId={`${testIdPrefix}-questions`}
+              goalGroupsByJourney={scope.kind === "swarm"}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+            />
+          )}
+        </ErrorBoundary>
+      </div>
+      {chipRow}
+    </div>
+  );
+
+  // The map is filtered by EXACTLY the chips rendered above it. Flow-owned
+  // chips are the Sankey selection's own output: the chip row hides them (the
+  // selected path already expresses them) and the drill-down that explains
+  // them is a flow-view affordance. Left in, they would dim the map from a
+  // selection with nothing on screen to name it and no way to clear it — and
+  // `?view=clusters&sel=…` would reproduce that on refresh or when shared.
+  // Dropped here rather than cleared on view change, so switching back to the
+  // flow still finds the selection where the user left it.
+  const mapFilter = removeChipsByKeys(flow.filter, flow.flowOwnedKeys);
+
+  const clustersBlock = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {chipRow}
+      {/* The topic map is a canvas that measures its container, so it needs a
+          definite height: `flex-1` in a column the pane bounds. */}
+      <div className="min-h-0 flex-1">
+        {/* The map owns the wheel here, because the page underneath it no
+            longer scrolls in this view. */}
+        <TopicMapPanel
+          scope={scope}
+          {...(journeyRunIds ? { journeyRunIds } : {})}
+          filter={mapFilter}
+          onToggleChip={flow.handleToggleChip}
+          onClearChip={flow.handleClearChip}
+          onRebuild={handleRebuild}
+          rebuildBusy={rebuildBusy}
+          onOpenSession={handleOpenSessionFromMap}
+          headerActions={viewChrome}
+        />
+      </div>
+    </div>
+  );
+
+  const selectionOpen = flow.flowSelection !== null;
+  const hasFindings = Boolean(recommendationsSlot);
+
+  /**
+   * The body takes the pane it is given instead of growing past it. Clusters
+   * need that so the map's zoom controls stay on screen. Session flow needs
+   * it so a tall SVG cannot become a page-scroll through mid-ribbon — the
+   * chart fills this leftover column and scrolls under its own titles.
+   */
+  const pinBodyToPane = true;
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-2",
+        // `h-full` fills the fill layout's `absolute inset-0` box; `flex-1`
+        // fills the scroll layout's leftover column. `min-h-0` lets the
+        // Sankey shrink to that pane and scroll inside it.
+        fillBody ? "h-full min-h-0 overflow-hidden" : "min-h-0 flex-1 overflow-hidden",
+        className,
+      )}
+      data-testid={`${testIdPrefix}-panel`}
+    >
+      {bannerSlot ? (
+        <div className="shrink-0" data-testid={`${testIdPrefix}-banner`}>
+          {bannerSlot}
+        </div>
+      ) : null}
+      {hasFindings ? (
+        <InsightsFindings
+          testId={`${testIdPrefix}-findings`}
+          fillBody={fillBody}
+        >
+          {recommendationsSlot}
+        </InsightsFindings>
+      ) : null}
+      <div
+        className={cn(
+          "relative flex flex-1",
+          pinBodyToPane && "min-h-0 overflow-hidden",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 flex-col",
+            pinBodyToPane && "overflow-hidden",
+          )}
+        >
+          {flow.view === "clusters" ? clustersBlock : sankeyBlock}
+        </div>
+        {flow.view === "flow" ? (
+          <div
+            data-testid={`${testIdPrefix}-drill-panel`}
+            aria-hidden={!selectionOpen}
+          >
+            {/* Always mounted so close toggles `enabled: false` instead of
+                unmounting — the flow-selection tests pin that contract. */}
+            <GoalOutcomeDrilldown
+              scope={scope}
+              selection={flow.flowSelection}
+              filter={flow.effectiveFilter}
+              variant="sheet"
+              onClose={flow.handleCloseFlow}
+              onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
+              footer={
+                onOpenSessionsTab ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onOpenSessionsTab}
+                  >
+                    Open in Sessions tab →
+                  </Button>
+                ) : null
+              }
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

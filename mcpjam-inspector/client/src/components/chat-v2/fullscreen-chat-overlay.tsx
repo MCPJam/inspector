@@ -1,4 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
 import type { CSSProperties } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
@@ -6,14 +7,14 @@ import type { DynamicToolUIPart, ToolUIPart, UITools } from "ai";
 import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
 
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import {
-  getChatboxChatBackground,
-  getChatboxHostFamily,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  getScenarioHostFamily,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
@@ -188,44 +189,44 @@ function getVisibleMessageEntries(
 }
 
 function getFullscreenChatAppearance(
-  chatboxHostStyle: ChatboxHostStyle | null,
-  isDarkChatboxTheme: boolean
+  scenarioHostStyle: ScenarioHostStyle | null,
+  isDarkScenarioTheme: boolean
 ) {
-  const hostFamily = getChatboxHostFamily(chatboxHostStyle);
+  const hostFamily = getScenarioHostFamily(scenarioHostStyle);
   return {
     composerClassName:
       hostFamily === "chatgpt"
         ? cn(
-            "chatbox-host-composer rounded-[1.75rem]",
-            isDarkChatboxTheme
+            "scenario-host-composer rounded-[1.75rem]",
+            isDarkScenarioTheme
               ? "border border-white/10 shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
               : "border border-neutral-200/90 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]"
           )
         : hostFamily === "claude"
         ? cn(
-            "chatbox-host-composer rounded-[1.35rem]",
-            isDarkChatboxTheme
+            "scenario-host-composer rounded-[1.35rem]",
+            isDarkScenarioTheme
               ? "border-[#4b463d] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
               : "border border-[#DFDFDB] shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]"
           )
         : "rounded-full border border-border/40 bg-background/95 backdrop-blur-xl",
     activeSubmitButtonClassName:
       hostFamily === "chatgpt"
-        ? isDarkChatboxTheme
+        ? isDarkScenarioTheme
           ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
           : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
         : hostFamily === "claude"
-        ? isDarkChatboxTheme
+        ? isDarkScenarioTheme
           ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
           : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
         : "bg-primary text-primary-foreground hover:bg-primary/90",
     inactiveSubmitButtonClassName:
       hostFamily === "chatgpt"
-        ? isDarkChatboxTheme
+        ? isDarkScenarioTheme
           ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
           : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
         : hostFamily === "claude"
-        ? isDarkChatboxTheme
+        ? isDarkScenarioTheme
           ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
           : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
         : "bg-muted text-muted-foreground cursor-not-allowed",
@@ -233,11 +234,11 @@ function getFullscreenChatAppearance(
 }
 
 function getFullscreenSurfaceStyle(
-  chatboxHostStyle: ChatboxHostStyle | null,
+  scenarioHostStyle: ScenarioHostStyle | null,
   resolvedThemeMode: "light" | "dark"
 ): CSSProperties | undefined {
-  const backgroundColor = getChatboxChatBackground(
-    chatboxHostStyle,
+  const backgroundColor = getScenarioChatBackground(
+    scenarioHostStyle,
     resolvedThemeMode
   );
   return backgroundColor ? { backgroundColor } : undefined;
@@ -598,8 +599,19 @@ type FullscreenChatOverlayProps = {
   isThinking: boolean;
   onStop?: () => void;
   onSend: () => void;
+  /**
+   * Rendered directly above the composer, inside the pinned (and therefore
+   * clickable) shell.
+   *
+   * This overlay REPLACES the docked composer — the caller stops rendering
+   * that one entirely while the overlay is up — so anything that gates Send
+   * has to be able to state its case, and offer its way out, here. Without
+   * this slot a gate whose control lives in the docked composer disables the
+   * only visible Send control and hides the only control that re-enables it.
+   */
+  notice?: ReactNode;
   /** Provider id from the active chat model — feeds the indicator's
-   * fallback path for surfaces without a chatbox host context. */
+   * fallback path for surfaces without a scenario host context. */
   modelProvider?: string | null;
 };
 export function FullscreenChatOverlay({
@@ -615,19 +627,20 @@ export function FullscreenChatOverlay({
   isThinking,
   onStop,
   onSend,
+  notice,
   modelProvider,
 }: FullscreenChatOverlayProps) {
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
-  const resolvedThemeMode = chatboxHostTheme ?? "light";
-  const isDarkChatboxTheme = resolvedThemeMode === "dark";
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
+  const resolvedThemeMode = scenarioHostTheme ?? "light";
+  const isDarkScenarioTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
-    () => getFullscreenChatAppearance(chatboxHostStyle, isDarkChatboxTheme),
-    [chatboxHostStyle, isDarkChatboxTheme]
+    () => getFullscreenChatAppearance(scenarioHostStyle, isDarkScenarioTheme),
+    [scenarioHostStyle, isDarkScenarioTheme]
   );
   const surfaceStyle = useMemo(
-    () => getFullscreenSurfaceStyle(chatboxHostStyle, resolvedThemeMode),
-    [chatboxHostStyle, resolvedThemeMode]
+    () => getFullscreenSurfaceStyle(scenarioHostStyle, resolvedThemeMode),
+    [scenarioHostStyle, resolvedThemeMode]
   );
 
   return (
@@ -645,6 +658,17 @@ export function FullscreenChatOverlay({
             modelProvider={modelProvider}
             chatSessionId={chatSessionId}
           />
+          {/* Above the composer and OUTSIDE the collapsible message list, so
+              it stays visible when the thread is collapsed — the state in
+              which the composer is all there is. */}
+          {notice ? (
+            <div
+              data-testid="fullscreen-composer-notice"
+              className="mb-2 rounded-3xl border border-border/40 bg-background/95 px-2 py-2 shadow-2xl backdrop-blur-xl"
+            >
+              {notice}
+            </div>
+          ) : null}
           <Composer
             value={input}
             onChange={onInputChange}

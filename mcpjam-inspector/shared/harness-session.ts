@@ -28,11 +28,16 @@ export function isHarnessSessionDataPart(
     return false;
   }
   const data = candidate.data;
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const workdir = (data as Record<string, unknown>).workdir;
+  // The contract is an ABSOLUTE path (it becomes the terminal cwd) — reject
+  // relative or whitespace-padded values instead of letting cwd drift.
   return (
-    !!data &&
-    typeof data === "object" &&
-    typeof (data as Record<string, unknown>).workdir === "string" &&
-    (data as Record<string, unknown>).workdir !== ""
+    typeof workdir === "string" &&
+    workdir === workdir.trim() &&
+    workdir.startsWith("/")
   );
 }
 
@@ -67,7 +72,7 @@ export interface HarnessResetDataPart {
   data: HarnessResetInfo;
 }
 
-const HARNESS_RESET_REASONS: ReadonlySet<string> = new Set([
+const HARNESS_RESET_REASONS: ReadonlySet<HarnessResetReason> = new Set([
   "sandbox-replaced",
   "legacy-cold-resume",
   "resume-failed",
@@ -88,6 +93,8 @@ export function isHarnessResetDataPart(
     !!data &&
     typeof data === "object" &&
     typeof (data as Record<string, unknown>).reason === "string" &&
-    HARNESS_RESET_REASONS.has((data as Record<string, unknown>).reason as string)
+    HARNESS_RESET_REASONS.has(
+      (data as Record<string, unknown>).reason as HarnessResetReason,
+    )
   );
 }

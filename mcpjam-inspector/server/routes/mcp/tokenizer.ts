@@ -1,3 +1,4 @@
+import { fetchTokenizerCount } from "../../utils/tokenizer-backend.js";
 import { Hono } from "hono";
 import "../../types/hono";
 import {
@@ -7,6 +8,7 @@ import {
   getFetchErrorCause,
 } from "../../utils/tokenizer-helpers";
 import { logger } from "../../utils/logger";
+import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const tokenizer = new Hono();
 
@@ -17,7 +19,7 @@ const tokenizer = new Hono();
  */
 tokenizer.post("/count-tools", async (c) => {
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       selectedServers?: string[];
       modelId?: string;
     };
@@ -83,16 +85,7 @@ tokenizer.post("/count-tools", async (c) => {
 
           if (useBackendTokenizer && mappedModelId) {
             // Use backend tokenizer API for mapped models
-            const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                text: toolsText,
-                model: mappedModelId,
-              }),
-            });
+            const response = await fetchTokenizerCount(toolsText, mappedModelId);
 
             if (response.ok) {
               const data = (await response.json()) as {
@@ -154,7 +147,12 @@ tokenizer.post("/count-tools", async (c) => {
       tokenCounts,
     });
   } catch (error) {
-    logger.error("[tokenizer] Error counting MCP tools tokens", error);
+    reportRouteFailure("[tokenizer] Error counting MCP tools tokens", error, {
+      // The per-server body already swallows connection failures; anything
+      // that escapes to here is the route's own orchestration.
+      source: "mcp.tokenizer.tools",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         ok: false,
@@ -172,7 +170,7 @@ tokenizer.post("/count-tools", async (c) => {
  */
 tokenizer.post("/count-text", async (c) => {
   try {
-    const body = (await c.req.json()) as {
+    const body = (await readRequestJson(c)) as {
       text?: string;
       modelId?: string;
     };
@@ -216,16 +214,7 @@ tokenizer.post("/count-text", async (c) => {
     if (useBackendTokenizer && mappedModelId) {
       try {
         // Use backend tokenizer API for mapped models
-        const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text,
-            model: mappedModelId,
-          }),
-        });
+        const response = await fetchTokenizerCount(text, mappedModelId);
 
         if (response.ok) {
           const data = (await response.json()) as {
@@ -287,7 +276,10 @@ tokenizer.post("/count-text", async (c) => {
       });
     }
   } catch (error) {
-    logger.error("[tokenizer] Error counting text tokens", error);
+    reportRouteFailure("[tokenizer] Error counting text tokens", error, {
+      source: "mcp.tokenizer.text",
+      hop: "mcpjam_internal",
+    });
     return c.json(
       {
         ok: false,

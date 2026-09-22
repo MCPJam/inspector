@@ -1,0 +1,46 @@
+import { describe, expect, it } from "vitest";
+import type { EvalIteration } from "../../evals/types";
+import { toolsFromIteration } from "../simple-case/route-rollup";
+
+function iteration(id: string, tools: string[], createdAt = 1): EvalIteration {
+  return {
+    _id: id,
+    testCaseId: "case-1",
+    createdBy: "u1",
+    createdAt,
+    updatedAt: createdAt,
+    iterationNumber: Number(id.replace(/\D/g, "") || 1),
+    status: "completed",
+    result: "passed",
+    actualToolCalls: tools.map((toolName) => ({ toolName, arguments: {} })),
+    metadata: { compareRunId: "cmp_latest" },
+    tokensUsed: 1,
+    testCaseSnapshot: {
+      title: "T",
+      query: "Q",
+      provider: "openai",
+      model: "gpt-4",
+      expectedToolCalls: [],
+    },
+  };
+}
+
+describe("toolsFromIteration", () => {
+  it("keeps arguments on a regression adopt and drops them for capability", () => {
+    const trial = iteration("9", ["search", "search", "get"]);
+    trial.actualToolCalls = [
+      { toolName: "search", arguments: { q: "a" } },
+      { toolName: "search", arguments: { q: "b" } },
+      { toolName: "get", arguments: { id: 1 } },
+    ];
+    expect(toolsFromIteration(trial, "capability")).toEqual([
+      { toolName: "search", arguments: {} },
+      { toolName: "get", arguments: {} },
+    ]);
+    expect(toolsFromIteration(trial, "regression")).toEqual([
+      { toolName: "search", arguments: { q: "a" } },
+      { toolName: "search", arguments: { q: "b" } },
+      { toolName: "get", arguments: { id: 1 } },
+    ]);
+  });
+});

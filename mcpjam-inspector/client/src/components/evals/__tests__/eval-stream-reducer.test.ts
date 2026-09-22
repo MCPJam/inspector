@@ -154,3 +154,106 @@ describe("eval-stream-reducer", () => {
     expect(state.stepStatus["step-abc"]?.status).toBe("ok");
   });
 });
+
+describe("reduceEvalStreamEvent — live browser frames", () => {
+  const frame = (over: Record<string, unknown> = {}) => ({
+    sequence: 1,
+    promptIndex: 0,
+    toolCallId: "tc-1",
+    stepIndex: 0,
+    action: "left_click",
+    coordinateX: 12,
+    coordinateY: 34,
+    thumbnailBase64: "aGk=",
+    thumbnailMediaType: "image/jpeg" as const,
+    ts: 5_000,
+    ...over,
+  });
+
+  it("projects a frame onto the persisted step-view shape", () => {
+    const state = reduceEvalStreamEvent(initialEvalStreamState, {
+      type: "browser_frame",
+      frame: frame(),
+    } as EvalStreamEvent);
+
+    expect(state.liveBrowserSteps).toHaveLength(1);
+    expect(state.liveBrowserSteps[0]).toMatchObject({
+      toolCallId: "tc-1",
+      stepIndex: 0,
+      promptIndex: 0,
+      action: "left_click",
+      coordinateX: 12,
+      // The live channel carries the bytes, not a storage reference — the
+      // durable upload hasn't happened yet at capture time.
+      screenshotUrl: "data:image/jpeg;base64,aGk=",
+    });
+    // No video exists until the run ends, so there is nothing to seek to.
+    expect(state.liveBrowserSteps[0]?.videoOffsetMs).toBeUndefined();
+  });
+
+  it("appends distinct clicks and replaces a re-delivered one", () => {
+    let state = reduceEvalStreamEvent(initialEvalStreamState, {
+      type: "browser_frame",
+      frame: frame(),
+    } as EvalStreamEvent);
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 2, stepIndex: 1, action: "type" }),
+    } as EvalStreamEvent);
+    // A NEWER frame for a click we already have (the harness can re-shoot the
+    // same step) replaces it in place — one click, one filmstrip entry.
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 3, stepIndex: 1, action: "type", ts: 9_999 }),
+    } as EvalStreamEvent);
+
+    expect(state.liveBrowserSteps.map((s) => s.stepIndex)).toEqual([0, 1]);
+    expect(state.liveBrowserSteps[1]?.ts).toBe(9_999);
+  });
+
+  it("merges live steps into the envelope as browserInteractionSteps", () => {
+    const state = reduceEvalStreamEvent(initialEvalStreamState, {
+      type: "browser_frame",
+      frame: frame(),
+    } as EvalStreamEvent);
+
+    // No trace snapshot yet — a widget rendered and got clicked inside turn 0.
+    // The Replay tab still has to open, so an envelope is still produced.
+    const merged = mergeStreamingTrace(
+      state.trace,
+      state.draftMessages,
+      state.liveBrowserSteps,
+    );
+    expect(merged?.browserInteractionSteps).toHaveLength(1);
+  });
+
+  it("ignores a frame whose sequence is not newer", () => {
+    let state = reduceEvalStreamEvent(initialEvalStreamState, {
+      type: "browser_frame",
+      frame: frame({ sequence: 5, stepIndex: 0 }),
+    } as EvalStreamEvent);
+    // A delayed or replayed frame must not move the view backwards.
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 4, stepIndex: 1 }),
+    } as EvalStreamEvent);
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 5, stepIndex: 2 }),
+    } as EvalStreamEvent);
+
+    expect(state.liveBrowserSteps.map((s) => s.stepIndex)).toEqual([0]);
+    expect(state.liveBrowserFrameSequence).toBe(5);
+
+    // A genuinely newer one still lands.
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 6, stepIndex: 1 }),
+    } as EvalStreamEvent);
+    expect(state.liveBrowserSteps.map((s) => s.stepIndex)).toEqual([0, 1]);
+  });
+
+  it("leaves the envelope null when there is nothing at all", () => {
+    expect(mergeStreamingTrace(null, [], [])).toBeNull();
+  });
+});

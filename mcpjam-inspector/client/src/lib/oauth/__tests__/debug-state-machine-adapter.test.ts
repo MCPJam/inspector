@@ -4,9 +4,11 @@ import {
   type OAuthFlowState,
 } from "@mcpjam/sdk/browser";
 import {
+  createDebugRequestExecutor,
   createInspectorOAuthStateMachine,
   type InspectorOAuthStateMachineConfig,
 } from "../debug-state-machine-adapter";
+import { authFetch } from "@/lib/session-token";
 
 const createOAuthStateMachineSpy = vi.fn(() => ({
   proceedToNextStep: vi.fn(),
@@ -111,9 +113,30 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     expect(config.hasClientSecret).toBe(true);
     const creds = await config.loadPreregisteredCredentials(loaderInput);
     expect(creds.clientId).toBe("client_from_profile");
-    expect(creds.clientSecret).toBe("explicit-secret");
+    // The exact typed secret is used in the live token exchange, including
+    // any leading/trailing whitespace — trimming it would silently
+    // authenticate with a different secret than the one the user entered.
+    expect(creds.clientSecret).toBe("  explicit-secret  ");
     expect(fetchOAuthClientSecret).not.toHaveBeenCalled();
     expect(tryResolveProjectServer).not.toHaveBeenCalled();
+  });
+
+  it("treats a whitespace-only profile secret as absent and falls back to Convex", async () => {
+    tryResolveProjectServer.mockReturnValue({
+      projectId: "proj_1",
+      serverId: "srv_1",
+    });
+    fetchOAuthClientSecret.mockResolvedValue({ clientSecret: "shhh" });
+
+    const config = buildMachineConfig({
+      preregisteredClientId: "client_from_profile",
+      preregisteredClientSecret: "   ",
+      hasClientSecret: true,
+    });
+
+    const creds = await config.loadPreregisteredCredentials(loaderInput);
+    expect(creds.clientSecret).toBe("shhh");
+    expect(fetchOAuthClientSecret).toHaveBeenCalled();
   });
 
   it("pairs a profile clientId with the Convex-backed secret", async () => {
@@ -208,5 +231,101 @@ describe("Inspector OAuth adapter one-step stepping", () => {
     // scheduleAutoAdvance via optional chaining, so leaving it out is precisely
     // what stops the prepare -> send -> receive burst on a single click.
     expect("scheduleAutoAdvance" in config).toBe(false);
+  });
+});
+
+describe("Inspector OAuth debug proxy failures", () => {
+  const authFetchMock = vi.mocked(authFetch);
+  const request = {
+    method: "GET",
+    url: "https://mcp.example.com/mcp",
+    headers: {},
+  };
+
+  function proxyFailure(body: string) {
+    return new Response(body, { status: 400, statusText: "Bad Request" });
+  }
+
+  beforeEach(() => {
+    authFetchMock.mockReset();
+  });
+
+  // Without the body the flow log and Sentry only ever saw "400 Bad Request",
+  // which is the same string for an unresolvable host, a blocked private
+  // address, and a timeout (INSPECTOR-CLIENT-21M).
+  it("includes the proxy's reason for the failure", async () => {
+    authFetchMock.mockResolvedValue(
+      proxyFailure(
+        JSON.stringify({
+          error: "mcp.internal resolves to a private or reserved address",
+        }),
+      ),
+    );
+
+    await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request: mcp.internal resolves to a private or reserved address",
+    );
+  });
+
+  it("falls back to the raw body when the response is not JSON", async () => {
+    authFetchMock.mockResolvedValue(proxyFailure("<html>502 upstream</html>"));
+
+    await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request: <html>502 upstream</html>",
+    );
+  });
+
+  // The cap applies to whichever branch produced the reason, not just the
+  // raw-text fallback — a JSON `error` is just as capable of being huge.
+  it.each([
+    ["json", JSON.stringify({ error: "x".repeat(1000) })],
+    ["raw text", "x".repeat(1000)],
+  ])("caps a long %s reason", async (_label, body) => {
+    authFetchMock.mockResolvedValue(proxyFailure(body));
+
+    const error = await createDebugRequestExecutor()(request).catch((e) => e);
+    expect(error.message).toBe(
+      `Backend debug proxy error: 400 Bad Request: ${"x".repeat(300)}`,
+    );
+  });
+
+  it("keeps the bare status line when the body is empty", async () => {
+    authFetchMock.mockResolvedValue(proxyFailure(""));
+
+    await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request",
+    );
+  });
+});
+
+describe("Inspector OAuth adapter SSRF loopback opt-in", () => {
+  // The SSRF guard blocks loopback metadata fetches unless the machine opts in.
+  // The debugger is a local-dev surface, so it must opt in whenever the server
+  // under test is itself loopback (e.g. a 127.0.0.1 dev MCP server) — otherwise
+  // discovery is refused and the flow never reaches "Authorize" (regression the
+  // oauth-debugger e2e caught).
+  it("allows loopback metadata fetch for a 127.0.0.1 server under test", () => {
+    const config = buildMachineConfig({
+      serverUrl: "http://127.0.0.1:52144/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowLoopbackMetadataFetch).toBe(true);
+  });
+
+  it("does not allow loopback for a public server under test", () => {
+    const config = buildMachineConfig({
+      serverUrl: "https://mcp.example.com/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowLoopbackMetadataFetch).toBe(false);
+  });
+
+  // The loopback-literal test above cannot recognise the case that prompted
+  // this: an authorization server on a custom hostname (`auth.local`) that
+  // resolves to 127.0.0.1. Outside hosted mode the wider allowance covers it,
+  // whatever the server URL happens to look like.
+  it("allows private metadata fetches outside hosted mode", () => {
+    const config = buildMachineConfig({
+      serverUrl: "https://mcp.example.com/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowPrivateMetadataFetch).toBe(true);
   });
 });

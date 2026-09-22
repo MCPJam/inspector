@@ -115,6 +115,44 @@ describe("materializeSkillFiles", () => {
     expect(session.writeBinaryFile).not.toHaveBeenCalled();
   });
 
+  it("filters a PROJECT-WIDE file set down to the delivered skills (environment turns)", async () => {
+    // A Project-Environment harness turn delivers only the environment's
+    // resolved skills, but the supporting-file query stays project-wide. This
+    // filtering is what makes that safe, so it is locked here rather than left
+    // implied: a file belonging to an undelivered project skill must not be
+    // written (its dir does not exist), and the prune sweep must not touch that
+    // skill's dir either.
+    const undeliveredDir = `${SKILLS_BASE}/other-project-skill`;
+    const { session, writes, removed } = fakeSession([
+      `${SKILLS_BASE}/env-skill/scripts/run.py`,
+      `${undeliveredDir}/scripts/legacy.py`,
+    ]);
+    const res = await materializeSkillFiles({
+      session,
+      files: [
+        // Delivered by the environment.
+        file({ skillId: "sk_env", path: "scripts/run.py" }),
+        // Project-wide extras the environment did NOT deliver.
+        file({ skillId: "sk_other", path: "scripts/legacy.py" }),
+        file({ skillId: "sk_other_2", path: "assets/logo.png" }),
+      ],
+      // Built from the DELIVERED skills alone.
+      skillNamesById: new Map([["sk_env", "env-skill"]]),
+    });
+
+    expect(res.written).toBe(1);
+    expect(res.skipped).toBe(2);
+    expect(writes.map((w) => w.path)).toEqual([
+      `${SKILLS_BASE}/env-skill/scripts/run.py`,
+    ]);
+    expect(writes.some((w) => w.path.includes("other-project-skill"))).toBe(
+      false
+    );
+    // The undelivered skill's dir is not a prune candidate — its on-box files
+    // survive untouched.
+    expect(removed).toEqual([]);
+  });
+
   it("skips a path that escapes the skill dir (defense-in-depth)", async () => {
     const { session } = fakeSession();
     const res = await materializeSkillFiles({

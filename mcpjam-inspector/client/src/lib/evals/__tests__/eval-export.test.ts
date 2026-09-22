@@ -6,6 +6,7 @@ import {
   buildSdkTestFile,
   buildServerConnections,
   normalizeDraftEvalCaseForExport,
+  normalizeSuiteConfigTestForExport,
   pickSuiteExportCases,
 } from "../eval-export";
 
@@ -18,6 +19,19 @@ const connectedHttpServer = {
 } satisfies ServerWithName;
 
 describe("eval-export", () => {
+  it("exports persisted models without duplicating provider prefixes", () => {
+    const exported = normalizeSuiteConfigTestForExport(
+      {
+        title: "Case",
+        models: [
+          { model: "anthropic/haiku", provider: "anthropic" },
+          { model: "gpt-4o", provider: "openai" },
+        ],
+      } as any,
+      0,
+    );
+    expect(exported.modelHints).toEqual(["anthropic/haiku", "openai/gpt-4o"]);
+  });
   it("normalizes draft input and preserves multi-turn prompt data", () => {
     const draft = normalizeDraftEvalCaseForExport({
       testCaseId: "case-1",
@@ -119,7 +133,7 @@ describe("eval-export", () => {
       "export MCP_SERVER_URL_CALENDAR=<replace-with-server-url>"
     );
     expect(envSnippet.snippet).toContain(
-      "export MCP_SERVER_URL_WEATHER=https://weather.example.com/mcp"
+      "export MCP_SERVER_URL_WEATHER='https://weather.example.com/mcp'"
     );
     // Reporting runs on MCPJam API keys (sk_); the retired mcpjam_ project
     // keys must never resurface in generated snippets.
@@ -129,10 +143,31 @@ describe("eval-export", () => {
     expect(envSnippet.snippet).not.toContain("MCPJAM_PROJECT_ID");
   });
 
+  it("shell-quotes server URLs so a pasted snippet cannot run them", () => {
+    // This snippet exists to be copied into a terminal, so a saved URL is
+    // input to a shell, not just a string. Stripping line terminators is not
+    // enough on its own: `$(...)`, backticks and `;` all run unquoted.
+    const url = "https://x/$(id)/`whoami`/;touch /tmp/pwned/'q'";
+    const hostile = { name: "weather", config: { url } } as unknown as ServerWithName;
+
+    const { snippet } = buildSdkEnvSnippet(["weather"], { weather: hostile });
+    const line = snippet
+      .split("\n")
+      .find((l) => l.startsWith("export MCP_SERVER_URL_WEATHER="))!;
+
+    // The whole value is single-quoted runs and escaped quotes, nothing else —
+    // which is precisely what leaves no room for the shell to expand anything.
+    expect(line).toMatch(
+      /^export MCP_SERVER_URL_WEATHER=(?:'[^']*'|\\')+$/
+    );
+    // And the URL is preserved rather than sanitized away.
+    expect(line).toContain("$(id)");
+  });
+
   it("pins exported env snippets to the project the export came from", () => {
     const envSnippet = buildSdkEnvSnippet([], {}, "jd7fromexport");
     expect(envSnippet.snippet).toContain(
-      "export MCPJAM_PROJECT_ID=jd7fromexport",
+      "export MCPJAM_PROJECT_ID='jd7fromexport'",
     );
   });
 
@@ -169,6 +204,10 @@ describe("eval-export", () => {
     });
 
     expect(sdkFile).toContain("new EvalTest(");
+    // The dashboard case's own id is emitted as the declared `id`, so the
+    // exported code-first test joins back to the same hosted history instead of
+    // starting a fresh one.
+    expect(sdkFile).toContain('id: "mt-neutral-first"');
     expect(sdkFile).toContain("evalTest.run(agent");
     expect(sdkFile).toContain("mcpjam: { suiteName: SUITE_NAME }");
     expect(sdkFile).toContain("evalTest.accuracy()");
@@ -268,6 +307,62 @@ describe("eval-export", () => {
     expect(sdkFile).not.toContain("createEvalRunReporter");
     expect(sdkFile).toContain("Scenario: Small talk only");
     expect(sdkFile).toContain("Generated from MCPJam");
+  });
+
+  it("mints a fresh id for a case that has none, never a positional one", () => {
+    // A positional fallback (`c_exported_2`) is order-dependent identity:
+    // inserting a case above this one would hand a DIFFERENT case this id on
+    // the next export, joining each to the other's history. The exported id
+    // must therefore be minted, and it must be a valid opaque id.
+    const exportCase = {
+      title: "No id anywhere",
+      query: "Fetch the weather",
+      runs: 1,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+      promptTurns: [
+        {
+          id: "turn-1",
+          prompt: "Fetch the weather",
+          expectedToolCalls: [],
+        },
+      ],
+    };
+
+    const build = (index: number) =>
+      buildSdkTestFile({
+        suite: { name: "Project export", description: "Generated from MCPJam" },
+        // Pad with leading cases so a positional scheme would produce a
+        // different number for the same case in the two files.
+        cases: [
+          ...Array.from({ length: index }, (_unused, i) => ({
+            ...exportCase,
+            id: `c_filler_${i + 1}`,
+            title: `Filler ${i + 1}`,
+          })),
+          exportCase,
+        ],
+        serverConnections: buildServerConnections(["weather"], {
+          weather: connectedHttpServer,
+        }),
+      });
+
+    // Case ids only — the generated file also declares server connection ids.
+    const caseIdsIn = (file: string) =>
+      [...file.matchAll(/^\s*id: "(c_[^"]+)",$/gm)]
+        .map((match) => match[1] as string)
+        .filter((id) => !id.startsWith("c_filler_"));
+
+    const first = caseIdsIn(build(0));
+    const second = caseIdsIn(build(2));
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]).toMatch(/^c_[A-Za-z0-9_-]{21}$/);
+    // Two exports of an id-less case are two different cases as far as anything
+    // downstream can tell. What must never happen is the id tracking POSITION.
+    expect(second[0]).toMatch(/^c_[A-Za-z0-9_-]{21}$/);
+    expect(second[0]).not.toBe("c_exported_3");
   });
 
   it("prefers persisted cases over run snapshots when both exist", () => {

@@ -76,6 +76,47 @@ const UNPROTECTED_PREFIXES = [
   // callback's redirect target is integrity-protected by an HMAC-signed
   // state and restricted to loopback (see routes/cli-auth/state.ts).
   "/api/cli/auth/",
+  // Slack account-link bridge: public front-channel. The user is NOT signed
+  // in when they arrive — establishing who they are is the entire point of
+  // the flow — so a session requirement here would make linking impossible.
+  // Authorization comes from the two identity proofs plus an HMAC-signed
+  // state, never from a session (see routes/slack-link/index.ts).
+  "/api/slack/link/",
+  // Discord account-link bridge: like Slack, this is a public OAuth
+  // front-channel. The HMAC state, Discord proof, and WorkOS proof authorize
+  // the flow; a browser session does not exist until the flow completes.
+  "/api/surface-link/",
+  // Backend→Inspector connection-work doorbell. The caller is the Convex
+  // backend, which sends `x-inspector-service-token` and nothing else — it has
+  // no browser session to present, so session auth would 401 it before its own
+  // guard ever ran. Authorization is NOT waived: the router mounts
+  // `internalServiceAuthMiddleware()`, which rejects a missing or wrong service
+  // token. This carve-out only decides WHICH gate answers.
+  //
+  // TRAILING SLASH DELIBERATELY. These are `startsWith` matches, so the
+  // unslashed form would also exempt any sibling that merely begins with the
+  // same characters — `/api/internal/server-connections-admin` would inherit a
+  // bypass nobody wrote it for. The router's only path is
+  // `/api/internal/server-connections/dispatch`, so the slash costs nothing.
+  "/api/internal/server-connections/",
+  // Backend→Inspector judge doorbell, for the same reason and with the same
+  // guard: the caller is Convex with a service token and no browser session, so
+  // session auth would 401 it before `internalServiceAuthMiddleware()` — which
+  // the router does mount — could reject a wrong token. The run id in the body
+  // is a selector, not authorization. Trailing slash for the same
+  // `startsWith` reason as above; the router's only path is
+  // `/api/internal/evals/judge-completed`.
+  "/api/internal/evals/",
+  // Backend→Inspector chat-session chain doorbell. Same caller, same guard,
+  // same reason: Convex sends `x-inspector-service-token` and no browser
+  // session, so session auth would 401 it before
+  // `internalServiceAuthMiddleware()` could reject a wrong token. The body
+  // carries no selector at all — the pass claims from the backend's own queue
+  // — so there is nothing here for a caller to name. Trailing slash for the
+  // same `startsWith` reason as above; the router's only path is
+  // `/api/internal/chat-stage/derivation-requested`.
+  "/api/internal/chat-stage/",
+  "/api/internal/agent-turns/",
 ];
 
 /**
@@ -116,7 +157,7 @@ function isSSERoute(path: string): boolean {
  */
 export async function sessionAuthMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   const path = c.req.path;
   const method = c.req.method;
@@ -178,7 +219,7 @@ export async function sessionAuthMiddleware(
           ? "SSE endpoints require ?_token=<token> query parameter"
           : "Include X-MCP-Session-Auth: Bearer <token> header",
       },
-      401
+      401,
     );
   }
 
@@ -190,7 +231,7 @@ export async function sessionAuthMiddleware(
         message: "Invalid session token.",
         hint: "Try refreshing the page to get a new token.",
       },
-      401
+      401,
     );
   }
 

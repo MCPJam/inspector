@@ -1,12 +1,12 @@
 /**
- * End-to-end fixture bundles from the plan: minimal, skill-only, MCP-only,
- * combined, app-plus-skills, supporting files, and unsupported components.
+ * End-to-end Agent Plugins bundle fixtures: minimal, skill-only, MCP-only,
+ * combined, app-plus-skills, supporting files, and failure isolation.
  */
 
 import { describe, expect, it } from "vitest";
 import { parsePluginBundle } from "../../src/plugin-bundle/index.js";
 import {
-  MCP_JSON_DIRECT,
+  MCP_JSON_HTTP,
   MCP_JSON_STDIO,
   SKILL_MD,
   bundle,
@@ -19,11 +19,12 @@ import {
 describe("parsePluginBundle fixtures", () => {
   it("parses a minimal manifest-only bundle", async () => {
     const parsed = await parsePluginBundle(minimalBundle());
+    expect(parsed.schemaVersion).toBe("1.0.0");
     expect(parsed.skills).toEqual([]);
     expect(parsed.mcpServers).toEqual([]);
     expect(parsed.apps).toEqual([]);
     expect(parsed.assets).toEqual([]);
-    expect(parsed.unsupported).toEqual([]);
+    expect(parsed.skipped).toEqual([]);
     expect(parsed.setupRequirements).toEqual([]);
     expect(parsed.warnings).toEqual([]);
   });
@@ -49,9 +50,19 @@ describe("parsePluginBundle fixtures", () => {
     expect(parsed.warnings).toEqual([]);
   });
 
+  it("namespaces model refs under dotted plugin names", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle(
+        { "skills/demo-skill/SKILL.md": SKILL_MD },
+        { name: "com.example.deploy" }
+      )
+    );
+    expect(parsed.skills[0].modelRef).toBe("com.example.deploy/demo-skill");
+  });
+
   it("parses an MCP-only bundle", async () => {
     const parsed = await parsePluginBundle(
-      minimalBundle({ ".mcp.json": MCP_JSON_DIRECT })
+      minimalBundle({ "mcp.json": MCP_JSON_HTTP })
     );
     expect(parsed.skills).toEqual([]);
     expect(parsed.mcpServers).toHaveLength(1);
@@ -71,7 +82,7 @@ describe("parsePluginBundle fixtures", () => {
     const parsed = await parsePluginBundle(
       minimalBundle({
         "skills/demo-skill/SKILL.md": SKILL_MD,
-        ".mcp.json": MCP_JSON_STDIO,
+        "mcp.json": MCP_JSON_STDIO,
       })
     );
     expect(parsed.skills).toHaveLength(1);
@@ -92,7 +103,7 @@ describe("parsePluginBundle fixtures", () => {
     const parsed = await parsePluginBundle(
       minimalBundle({
         "skills/demo-skill/SKILL.md": SKILL_MD,
-        ".mcp.json": MCP_JSON_DIRECT,
+        "mcp.json": MCP_JSON_HTTP,
         "todo.app.json": JSON.stringify({
           app_id: "com.example.todo",
           server: "demo-server",
@@ -115,7 +126,7 @@ describe("parsePluginBundle fixtures", () => {
   it("infers the app binding when the bundle has exactly one server", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle({
-        ".mcp.json": MCP_JSON_DIRECT,
+        "mcp.json": MCP_JSON_HTTP,
         ".app.json": JSON.stringify({ id: "com.example.solo" }),
       })
     );
@@ -163,15 +174,20 @@ describe("parsePluginBundle fixtures", () => {
     }
   });
 
-  it("captures agents/openai.yaml metadata without executing anything", async () => {
+  it("reads skill metadata from frontmatter without executing anything", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle({
-        "skills/demo-skill/SKILL.md": SKILL_MD,
-        "skills/demo-skill/agents/openai.yaml": [
+        "skills/demo-skill/SKILL.md": [
+          "---",
+          "name: demo-skill",
+          "description: Does demo things for tests.",
           "allow_implicit_invocation: true",
           "mcp_tools:",
           "  - demo-server/list_items",
           "  - demo-server/create_item",
+          "---",
+          "",
+          "Body.",
         ].join("\n"),
       })
     );
@@ -181,9 +197,6 @@ describe("parsePluginBundle fixtures", () => {
       "demo-server/list_items",
       "demo-server/create_item",
     ]);
-    expect(skill.openaiMetadata?.path).toBe(
-      "skills/demo-skill/agents/openai.yaml"
-    );
   });
 
   it("warns when the skill name does not match its directory", async () => {
@@ -196,17 +209,7 @@ describe("parsePluginBundle fixtures", () => {
     ]);
   });
 
-  it("rejects two skills declaring the same name", async () => {
-    await expectParseError(
-      minimalBundle({
-        "skills/one/SKILL.md": skillMd("same-name"),
-        "skills/two/SKILL.md": skillMd("same-name"),
-      }),
-      "SKILL_DUPLICATE_NAME"
-    );
-  });
-
-  it("enforces the max skill count", async () => {
+  it("enforces the max skill count as a bundle error", async () => {
     await expectParseError(
       minimalBundle({
         "skills/skill-a/SKILL.md": skillMd("skill-a"),
@@ -216,68 +219,6 @@ describe("parsePluginBundle fixtures", () => {
       "SKILL_TOO_MANY",
       { limits: { maxSkills: 2 } }
     );
-  });
-
-  it.each([
-    [
-      "missing frontmatter",
-      "No frontmatter here.",
-      "SKILL_FRONTMATTER_MISSING",
-    ],
-    [
-      "missing description",
-      "---\nname: demo-skill\n---\nBody",
-      "SKILL_MISSING_DESCRIPTION",
-    ],
-    [
-      "invalid name",
-      "---\nname: Bad_Name\ndescription: x\n---\nBody",
-      "SKILL_INVALID_NAME",
-    ],
-    [
-      "over-long description",
-      `---\nname: demo-skill\ndescription: ${"d".repeat(1100)}\n---\nBody`,
-      "SKILL_DESCRIPTION_TOO_LONG",
-    ],
-  ] as const)("rejects a skill with %s", async (_label, content, code) => {
-    await expectParseError(
-      minimalBundle({ "skills/demo-skill/SKILL.md": content }),
-      code
-    );
-  });
-
-  it("preserves hooks directories as unsupported components", async () => {
-    const parsed = await parsePluginBundle(
-      minimalBundle({
-        "hooks/on_start.sh": "#!/bin/sh\necho hi",
-        "tasks/daily.json": JSON.stringify({ cron: "0 0 * * *" }),
-      })
-    );
-    expect(parsed.unsupported).toEqual([
-      expect.objectContaining({
-        kind: "hooks",
-        key: "hooks",
-        paths: ["hooks/on_start.sh"],
-      }),
-      expect.objectContaining({
-        kind: "scheduled-task",
-        key: "tasks",
-        paths: ["tasks/daily.json"],
-      }),
-    ]);
-    expect(
-      parsed.warnings.filter((issue) => issue.code === "UNSUPPORTED_COMPONENT")
-    ).toHaveLength(2);
-  });
-
-  it("ignores non-root .mcp.json files with a warning", async () => {
-    const parsed = await parsePluginBundle(
-      minimalBundle({ "nested/.mcp.json": MCP_JSON_DIRECT })
-    );
-    expect(parsed.mcpServers).toEqual([]);
-    expect(parsed.warnings).toEqual([
-      expect.objectContaining({ code: "MCP_CONFIG_IGNORED" }),
-    ]);
   });
 
   it("classifies screenshots under assets/", async () => {
@@ -291,6 +232,20 @@ describe("parsePluginBundle fixtures", () => {
         contentType: "text/plain",
       }),
     ]);
+  });
+
+  it("treats unknown top-level directories as plain files, not components", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({
+        "hooks/on_start.sh": "#!/bin/sh\necho hi",
+        "com.example.vendor/extra.json": "{}",
+      })
+    );
+    expect(parsed.skills).toEqual([]);
+    expect(parsed.mcpServers).toEqual([]);
+    expect(parsed.apps).toEqual([]);
+    expect(parsed.skipped).toEqual([]);
+    expect(parsed.warnings).toEqual([]);
   });
 
   it("does not treat skill supporting .app.json files as app components", async () => {
@@ -307,8 +262,8 @@ describe("parsePluginBundle fixtures", () => {
   it("reports every collected issue on the thrown error", async () => {
     const error = await expectParseError(
       bundle({
-        ".codex-plugin/plugin.json": manifestJson({
-          version: "not-semver",
+        "plugin.json": manifestJson({
+          version: 42,
           homepage: "http://insecure.example",
         }),
       }),
@@ -319,26 +274,75 @@ describe("parsePluginBundle fixtures", () => {
   });
 });
 
-describe("hostile nesting (review fixes)", () => {
-  it("fails deep [[[...]]] frontmatter values with VALUE_TOO_DEEP, not a RangeError", async () => {
-    const bomb = `${"[".repeat(5000)}${"]".repeat(5000)}`;
-    const content = `---\nname: demo-skill\ndescription: x\nextra: ${bomb}\n---\nBody`;
-    // expectParseError asserts the throw is a PluginBundleError — a raw
-    // RangeError (stack overflow) would fail the instanceof check.
-    await expectParseError(
-      minimalBundle({ "skills/demo-skill/SKILL.md": content }),
-      "VALUE_TOO_DEEP"
+describe("skill failure isolation", () => {
+  it("skips one invalid skill, keeping valid siblings", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({
+        "skills/good-skill/SKILL.md": skillMd("good-skill"),
+        "skills/bad-skill/SKILL.md": "No frontmatter here.",
+      })
     );
+    expect(parsed.skills.map((skill) => skill.name)).toEqual(["good-skill"]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "skill", key: "bad-skill" }),
+    ]);
+    expect(
+      parsed.warnings.some(
+        (issue) => issue.code === "SKILL_FRONTMATTER_MISSING"
+      )
+    ).toBe(true);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "COMPONENT_SKIPPED")
+    ).toBe(true);
   });
 
-  it("fails deep flow values in agents/openai.yaml with VALUE_TOO_DEEP", async () => {
-    const bomb = `${"[".repeat(200)}${"]".repeat(200)}`;
-    await expectParseError(
-      minimalBundle({
-        "skills/demo-skill/SKILL.md": SKILL_MD,
-        "skills/demo-skill/agents/openai.yaml": `mcp_tools: ${bomb}\n`,
-      }),
-      "VALUE_TOO_DEEP"
+  it.each([
+    ["missing description", "---\nname: demo-skill\n---\nBody"],
+    ["invalid name", "---\nname: Bad_Name\ndescription: x\n---\nBody"],
+    [
+      "over-long description",
+      `---\nname: demo-skill\ndescription: ${"d".repeat(1100)}\n---\nBody`,
+    ],
+  ] as const)("skips a skill with %s, never the bundle", async (_label, content) => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({ "skills/demo-skill/SKILL.md": content })
     );
+    expect(parsed.skills).toEqual([]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "skill", key: "demo-skill" }),
+    ]);
+  });
+
+  it("skips the second of two skills declaring the same name", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({
+        "skills/one/SKILL.md": skillMd("same-name"),
+        "skills/two/SKILL.md": skillMd("same-name"),
+      })
+    );
+    expect(parsed.skills).toHaveLength(1);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "skill", key: "two" }),
+    ]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "SKILL_DUPLICATE_NAME")
+    ).toBe(true);
+  });
+});
+
+describe("hostile nesting", () => {
+  it("isolates a deep [[[...]]] frontmatter bomb to a skill skip, not a RangeError", async () => {
+    const bomb = `${"[".repeat(5000)}${"]".repeat(5000)}`;
+    const content = `---\nname: demo-skill\ndescription: x\nextra: ${bomb}\n---\nBody`;
+    const parsed = await parsePluginBundle(
+      minimalBundle({ "skills/demo-skill/SKILL.md": content })
+    );
+    expect(parsed.skills).toEqual([]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "skill", key: "demo-skill" }),
+    ]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "VALUE_TOO_DEEP")
+    ).toBe(true);
   });
 });

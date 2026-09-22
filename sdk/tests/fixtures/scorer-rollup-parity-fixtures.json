@@ -1,0 +1,897 @@
+{
+  "base": {
+    "schemaVersion": 1,
+    "sourceVersion": 1,
+    "suiteId": "suite_1",
+    "runId": "run_a",
+    "runGroupId": "grp_1",
+    "configRevision": "rev_1",
+    "caseSetFingerprint": "cases_1",
+    "sourceIterationCount": 4,
+    "materializationState": "final",
+    "scoreIntegrity": "valid",
+    "createdAt": 1700000000000,
+    "updatedAt": 1700000000000,
+    "configuredTrials": [
+      {
+        "caseId": "cas_refund",
+        "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+        "configuredTrials": 2,
+        "effectivePassThreshold": 1
+      },
+      {
+        "caseId": "cas_invoice",
+        "configuredTrials": 2,
+        "effectivePassThreshold": 0.8
+      }
+    ],
+    "execution": {
+      "environmentId": "env_prod",
+      "namedHostId": "host_claude",
+      "hostHarness": {
+        "kind": "claude",
+        "version": "1.2.0",
+        "configurationDigest": "hostcfg_1"
+      },
+      "effectiveModels": [
+        {
+          "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+          "model": "claude-sonnet-4-6",
+          "provider": "anthropic",
+          "configurationDigest": "modelcfg_1"
+        },
+        {
+          "model": "gpt-4.1",
+          "provider": "openai",
+          "configurationDigest": "modelcfg_2"
+        }
+      ],
+      "serverEnvironment": {
+        "environmentId": "env_prod",
+        "configurationDigest": "servercfg_1"
+      },
+      "executionOverridesDigest": "overrides_1"
+    },
+    "entries": [
+      {
+        "scorerId": "refund",
+        "definitionHash": "def_refund_1",
+        "idSource": "explicit",
+        "role": "gating",
+        "deterministic": true,
+        "passThreshold": 1,
+        "countable": 4,
+        "passed": 3,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0,
+        "notApplicable": 0,
+        "passRate": 0.75,
+        "meanValue": 0.75,
+        "observedPopulation": [
+          {
+            "caseId": "cas_refund",
+            "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+            "countable": 2,
+            "scored": 2,
+            "errors": 0,
+            "skipped": 0,
+            "notApplicable": 0
+          },
+          {
+            "caseId": "cas_invoice",
+            "countable": 2,
+            "scored": 2,
+            "errors": 0,
+            "skipped": 0,
+            "notApplicable": 0
+          }
+        ]
+      }
+    ]
+  },
+  "identity": [
+    {
+      "id": "permute-configured-trials",
+      "kind": "configuredTrials",
+      "equal": true,
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        },
+        {
+          "caseId": "cas_invoice",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 0.8
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_invoice",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 0.8
+        },
+        {
+          "caseId": "cas_refund",
+          "executionVariant": { "provider": "anthropic", "model": "claude-sonnet-4-6" },
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ]
+    },
+    {
+      "id": "configured-caseId-changed",
+      "kind": "configuredTrials",
+      "equal": false,
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_other",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ]
+    },
+    {
+      "id": "configured-executionVariant-changed",
+      "kind": "configuredTrials",
+      "equal": false,
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "executionVariant": { "model": "gpt-4.1", "provider": "openai" },
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ]
+    },
+    {
+      "id": "configured-configuredTrials-changed",
+      "kind": "configuredTrials",
+      "equal": false,
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "configuredTrials": 3,
+          "effectivePassThreshold": 1
+        }
+      ]
+    },
+    {
+      "id": "configured-effectivePassThreshold-changed",
+      "kind": "configuredTrials",
+      "equal": false,
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 1
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "configuredTrials": 2,
+          "effectivePassThreshold": 0.8
+        }
+      ]
+    },
+    {
+      "id": "permute-observed-weights",
+      "kind": "observedPopulation",
+      "equal": true,
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        },
+        {
+          "caseId": "cas_invoice",
+          "countable": 2,
+          "scored": 1,
+          "errors": 1,
+          "skipped": 0,
+          "notApplicable": 0,
+          "missing": 1,
+          "quarantined": 1
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_invoice",
+          "countable": 2,
+          "scored": 1,
+          "errors": 1,
+          "skipped": 0,
+          "notApplicable": 0,
+          "quarantined": 1,
+          "missing": 1
+        },
+        {
+          "caseId": "cas_refund",
+          "executionVariant": { "provider": "anthropic", "model": "claude-sonnet-4-6" },
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ]
+    },
+    {
+      "id": "observed-countable-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "countable",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 3,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ]
+    },
+    {
+      "id": "observed-scored-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "scored",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 1,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ]
+    },
+    {
+      "id": "observed-errors-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "errors",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 1,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 1,
+          "errors": 1,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ]
+    },
+    {
+      "id": "observed-skipped-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "skipped",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 1,
+          "notApplicable": 0
+        }
+      ]
+    },
+    {
+      "id": "observed-notApplicable-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "notApplicable",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 1
+        }
+      ]
+    },
+    {
+      "id": "observed-missing-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "missing",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0,
+          "missing": 1
+        }
+      ]
+    },
+    {
+      "id": "observed-quarantined-changed",
+      "kind": "observedPopulation",
+      "equal": false,
+      "field": "quarantined",
+      "a": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0
+        }
+      ],
+      "b": [
+        {
+          "caseId": "cas_refund",
+          "countable": 2,
+          "scored": 2,
+          "errors": 0,
+          "skipped": 0,
+          "notApplicable": 0,
+          "quarantined": 1
+        }
+      ]
+    },
+    {
+      "id": "permute-effective-models",
+      "kind": "execution",
+      "equal": true,
+      "a": {
+        "environmentId": "env_prod",
+        "namedHostId": "host_claude",
+        "hostHarness": {
+          "kind": "claude",
+          "version": "1.2.0",
+          "configurationDigest": "hostcfg_1"
+        },
+        "effectiveModels": [
+          {
+            "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+            "model": "claude-sonnet-4-6",
+            "provider": "anthropic",
+            "configurationDigest": "modelcfg_1"
+          },
+          {
+            "model": "gpt-4.1",
+            "provider": "openai",
+            "configurationDigest": "modelcfg_2"
+          }
+        ],
+        "serverEnvironment": {
+          "environmentId": "env_prod",
+          "configurationDigest": "servercfg_1"
+        }
+      },
+      "b": {
+        "namedHostId": "host_claude",
+        "environmentId": "env_prod",
+        "serverEnvironment": {
+          "configurationDigest": "servercfg_1",
+          "environmentId": "env_prod"
+        },
+        "effectiveModels": [
+          {
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "configurationDigest": "modelcfg_2"
+          },
+          {
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "configurationDigest": "modelcfg_1",
+            "executionVariant": { "provider": "anthropic", "model": "claude-sonnet-4-6" }
+          }
+        ],
+        "hostHarness": {
+          "configurationDigest": "hostcfg_1",
+          "version": "1.2.0",
+          "kind": "claude"
+        }
+      }
+    }
+  ],
+  "compare": [
+    {
+      "id": "comparable-pair",
+      "expectedBlockers": [],
+      "b": {
+        "runId": "run_b",
+        "runGroupId": "grp_other",
+        "entries": [
+          {
+            "scorerId": "refund",
+            "definitionHash": "def_refund_1",
+            "idSource": "explicit",
+            "role": "gating",
+            "deterministic": true,
+            "passThreshold": 1,
+            "countable": 4,
+            "passed": 2,
+            "failed": 2,
+            "errors": 0,
+            "skipped": 0,
+            "notApplicable": 0,
+            "passRate": 0.5,
+            "meanValue": 0.5,
+            "observedPopulation": [
+              {
+                "caseId": "cas_invoice",
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              },
+              {
+                "caseId": "cas_refund",
+                "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "same-environment-changed-model",
+      "expectedBlockers": ["differentExecutionIdentity"],
+      "b": {
+        "runId": "run_b",
+        "execution": {
+          "environmentId": "env_prod",
+          "namedHostId": "host_claude",
+          "hostHarness": {
+            "kind": "claude",
+            "version": "1.2.0",
+            "configurationDigest": "hostcfg_1"
+          },
+          "effectiveModels": [
+            {
+              "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+              "model": "claude-opus-4-1",
+              "provider": "anthropic",
+              "configurationDigest": "modelcfg_1"
+            },
+            {
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "configurationDigest": "modelcfg_2"
+            }
+          ],
+          "serverEnvironment": {
+            "environmentId": "env_prod",
+            "configurationDigest": "servercfg_1"
+          },
+          "executionOverridesDigest": "overrides_1"
+        }
+      }
+    },
+    {
+      "id": "same-environment-changed-server",
+      "expectedBlockers": ["differentExecutionIdentity"],
+      "b": {
+        "runId": "run_b",
+        "execution": {
+          "environmentId": "env_prod",
+          "namedHostId": "host_claude",
+          "hostHarness": {
+            "kind": "claude",
+            "version": "1.2.0",
+            "configurationDigest": "hostcfg_1"
+          },
+          "effectiveModels": [
+            {
+              "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+              "model": "claude-sonnet-4-6",
+              "provider": "anthropic",
+              "configurationDigest": "modelcfg_1"
+            },
+            {
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "configurationDigest": "modelcfg_2"
+            }
+          ],
+          "serverEnvironment": {
+            "environmentId": "env_prod",
+            "configurationDigest": "servercfg_rotated"
+          },
+          "executionOverridesDigest": "overrides_1"
+        }
+      }
+    },
+    {
+      "id": "same-environment-changed-host",
+      "expectedBlockers": ["differentExecutionIdentity"],
+      "b": {
+        "runId": "run_b",
+        "execution": {
+          "environmentId": "env_prod",
+          "namedHostId": "host_claude",
+          "hostHarness": {
+            "kind": "claude",
+            "version": "1.3.0",
+            "configurationDigest": "hostcfg_1"
+          },
+          "effectiveModels": [
+            {
+              "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+              "model": "claude-sonnet-4-6",
+              "provider": "anthropic",
+              "configurationDigest": "modelcfg_1"
+            },
+            {
+              "model": "gpt-4.1",
+              "provider": "openai",
+              "configurationDigest": "modelcfg_2"
+            }
+          ],
+          "serverEnvironment": {
+            "environmentId": "env_prod",
+            "configurationDigest": "servercfg_1"
+          },
+          "executionOverridesDigest": "overrides_1"
+        }
+      }
+    },
+    {
+      "id": "missing-frozen-host",
+      "expectedBlockers": ["missingFrozenHostIdentity", "differentExecutionIdentity"],
+      "b": {
+        "runId": "run_b",
+        "execution": { "hostHarness": null }
+      }
+    },
+    {
+      "id": "missing-frozen-model",
+      "expectedBlockers": ["missingFrozenModelIdentity", "differentExecutionIdentity"],
+      "b": {
+        "runId": "run_b",
+        "execution": { "effectiveModels": null }
+      }
+    },
+    {
+      "id": "missing-frozen-server",
+      "expectedBlockers": ["missingFrozenServerIdentity", "differentExecutionIdentity"],
+      "b": {
+        "runId": "run_b",
+        "execution": { "serverEnvironment": null }
+      }
+    },
+    {
+      "id": "environment-id-alone-is-not-enough",
+      "expectedBlockers": [
+        "missingFrozenHostIdentity",
+        "missingFrozenModelIdentity",
+        "missingFrozenServerIdentity"
+      ],
+      "a": {
+        "execution": {
+          "hostHarness": null,
+          "effectiveModels": null,
+          "serverEnvironment": null,
+          "executionOverridesDigest": null
+        }
+      },
+      "b": {
+        "runId": "run_b",
+        "execution": {
+          "hostHarness": null,
+          "effectiveModels": null,
+          "serverEnvironment": null,
+          "executionOverridesDigest": null
+        }
+      }
+    },
+    {
+      "id": "definition-changed",
+      "expectedBlockers": ["differentDefinition"],
+      "b": {
+        "runId": "run_b",
+        "entries": [
+          {
+            "scorerId": "refund",
+            "definitionHash": "def_refund_2",
+            "idSource": "explicit",
+            "role": "gating",
+            "deterministic": true,
+            "passThreshold": 1,
+            "countable": 4,
+            "passed": 3,
+            "failed": 1,
+            "errors": 0,
+            "skipped": 0,
+            "notApplicable": 0,
+            "passRate": 0.75,
+            "meanValue": 0.75,
+            "observedPopulation": [
+              {
+                "caseId": "cas_refund",
+                "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              },
+              {
+                "caseId": "cas_invoice",
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "observed-population-changed",
+      "expectedBlockers": ["differentObservedPopulationIdentity"],
+      "b": {
+        "runId": "run_b",
+        "entries": [
+          {
+            "scorerId": "refund",
+            "definitionHash": "def_refund_1",
+            "idSource": "explicit",
+            "role": "gating",
+            "deterministic": true,
+            "passThreshold": 1,
+            "countable": 4,
+            "passed": 3,
+            "failed": 1,
+            "errors": 0,
+            "skipped": 0,
+            "notApplicable": 0,
+            "passRate": 0.75,
+            "meanValue": 0.75,
+            "observedPopulation": [
+              {
+                "caseId": "cas_refund",
+                "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+                "countable": 2,
+                "scored": 1,
+                "errors": 1,
+                "skipped": 0,
+                "notApplicable": 0
+              },
+              {
+                "caseId": "cas_invoice",
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "integrity-invalid",
+      "expectedBlockers": ["invalidScoreIntegrity"],
+      "b": { "runId": "run_b", "scoreIntegrity": "invalid" }
+    },
+    {
+      "id": "integrity-missing",
+      "expectedBlockers": ["missingScoreIntegrity"],
+      "b": { "runId": "run_b", "scoreIntegrity": null }
+    },
+    {
+      "id": "provisional",
+      "expectedBlockers": ["provisional"],
+      "b": { "runId": "run_b", "materializationState": "provisional" }
+    },
+    {
+      "id": "truncated",
+      "expectedBlockers": ["truncated"],
+      "b": {
+        "runId": "run_b",
+        "truncation": { "retained": 1, "omitted": 1, "total": 2 }
+      }
+    },
+    {
+      "id": "missing-config-revision",
+      "expectedBlockers": ["missingConfigIdentity"],
+      "b": { "runId": "run_b", "configRevision": null }
+    },
+    {
+      "id": "different-config-revision",
+      "expectedBlockers": ["differentConfigIdentity"],
+      "b": { "runId": "run_b", "configRevision": "rev_2" }
+    },
+    {
+      "id": "missing-case-set",
+      "expectedBlockers": ["missingCaseSetIdentity"],
+      "b": { "runId": "run_b", "caseSetFingerprint": null }
+    },
+    {
+      "id": "different-case-set",
+      "expectedBlockers": ["differentCaseSetIdentity"],
+      "b": { "runId": "run_b", "caseSetFingerprint": "cases_2" }
+    },
+    {
+      "id": "different-schema-version",
+      "expectedBlockers": ["differentSchemaVersion"],
+      "skipSchema": true,
+      "b": { "runId": "run_b", "schemaVersion": 2 }
+    },
+    {
+      "id": "different-source-version",
+      "expectedBlockers": ["differentSourceVersion"],
+      "skipSchema": true,
+      "b": { "runId": "run_b", "sourceVersion": 2 }
+    },
+    {
+      "id": "missing-scorer",
+      "expectedBlockers": ["missingScorer"],
+      "b": {
+        "runId": "run_b",
+        "entries": [
+          {
+            "scorerId": "style",
+            "definitionHash": "def_style_1",
+            "idSource": "explicit",
+            "role": "advisory",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "countable": 4,
+            "passed": 4,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+            "notApplicable": 0,
+            "passRate": 1,
+            "meanValue": 0.9,
+            "observedPopulation": [
+              {
+                "caseId": "cas_refund",
+                "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              },
+              {
+                "caseId": "cas_invoice",
+                "countable": 2,
+                "scored": 2,
+                "errors": 0,
+                "skipped": 0,
+                "notApplicable": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "configured-trials-changed",
+      "expectedBlockers": ["differentConfiguredTrialIdentity"],
+      "b": {
+        "runId": "run_b",
+        "configuredTrials": [
+          {
+            "caseId": "cas_refund",
+            "executionVariant": { "model": "claude-sonnet-4-6", "provider": "anthropic" },
+            "configuredTrials": 3,
+            "effectivePassThreshold": 1
+          },
+          {
+            "caseId": "cas_invoice",
+            "configuredTrials": 2,
+            "effectivePassThreshold": 0.8
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -17,8 +17,8 @@ import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
+import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import {
   buildProjectOwnerProfileByUserId,
   resolveProjectThreadOwnerAvatar,
@@ -33,7 +33,7 @@ type ArchiveSectionScope = "personal" | "project";
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
   /** Which host aesthetic to mimic for strong-highlight tokens (falls back to "claude"). */
-  hostStyle?: ChatboxHostStyle;
+  hostStyle?: ScenarioHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
   projectId?: string | null;
@@ -442,13 +442,7 @@ export function ChatHistoryRail({
         }}
         onImported={({ suiteId, testCaseId }) => {
           setSessionToConvert(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            }),
-          );
+          navigateToPromotedTestCase({ suiteId, testCaseId });
         }}
       />
     </>

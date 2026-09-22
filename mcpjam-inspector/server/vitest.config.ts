@@ -22,6 +22,15 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
+// Versioned evaluation contract. Needs its own alias for the same reason every
+// other subpath here does: the generic "@mcpjam/sdk" find is a PREFIX
+// replacement, so without this entry the specifier rewrites to
+// `sdk/src/index.ts/contract` and fails to resolve.
+const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
 const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
@@ -31,6 +40,11 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   "../sdk/src/host-config/templates/index.ts",
 );
 const sdkPlatformEntry = path.resolve(rootDir, "../sdk/src/platform/index.ts");
+// Node-only SSRF guard + DNS-pinned transport. Needs its own alias for the
+// same reason every other subpath here does: the generic "@mcpjam/sdk" find is
+// a PREFIX replacement, so without this entry the specifier rewrites to
+// `sdk/src/index.ts/oauth/node` and fails to resolve.
+const sdkOAuthNodeEntry = path.resolve(rootDir, "../sdk/src/oauth/node.ts");
 const sdkHostCompatEntry = path.resolve(
   rootDir,
   "../sdk/src/host-compat/index.ts",
@@ -38,6 +52,17 @@ const sdkHostCompatEntry = path.resolve(
 const sdkPublicApiEntry = path.resolve(
   rootDir,
   "../sdk/src/public-api/index.ts",
+);
+// Plugin bundle parser/hashing — the local materializer consumes it server-side.
+const sdkPluginBundleEntry = path.resolve(
+  rootDir,
+  "../sdk/src/plugin-bundle/index.ts",
+);
+// SEP-1865 widget helpers — the MCP App render/capture utils resolve tool UI
+// resource URIs through the shared leaf.
+const sdkWidgetRuntimeEntry = path.resolve(
+  rootDir,
+  "../sdk/src/widget-runtime/index.ts",
 );
 
 export default defineConfig({
@@ -77,11 +102,16 @@ export default defineConfig({
           "@mcpjam/sdk/model-factory",
           "@mcpjam/sdk/matchers",
           "@mcpjam/sdk/predicates",
+          "@mcpjam/sdk/assertions",
+          "@mcpjam/sdk/contract",
           "@mcpjam/sdk/host-config/internal",
           "@mcpjam/sdk/host-config/templates",
           "@mcpjam/sdk/platform",
+          "@mcpjam/sdk/oauth/node",
           "@mcpjam/sdk/public-api",
           "@mcpjam/sdk/host-compat",
+          "@mcpjam/sdk/plugin-bundle",
+          "@mcpjam/sdk/widget-runtime",
         ],
       },
     },
@@ -107,6 +137,8 @@ export default defineConfig({
       { find: "@mcpjam/sdk/model-factory", replacement: sdkModelFactoryEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
+      { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       {
         find: "@mcpjam/sdk/host-config/internal",
         replacement: sdkHostConfigInternalEntry,
@@ -116,8 +148,14 @@ export default defineConfig({
         replacement: sdkHostConfigTemplatesEntry,
       },
       { find: "@mcpjam/sdk/platform", replacement: sdkPlatformEntry },
+      { find: "@mcpjam/sdk/oauth/node", replacement: sdkOAuthNodeEntry },
       { find: "@mcpjam/sdk/host-compat", replacement: sdkHostCompatEntry },
       { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
+      { find: "@mcpjam/sdk/plugin-bundle", replacement: sdkPluginBundleEntry },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: sdkWidgetRuntimeEntry,
+      },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],

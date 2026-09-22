@@ -1,23 +1,35 @@
+/**
+ * Thin registration helper over the v2 `McpServer`. One call registers a tool
+ * and, for a widget-backed tool, its `ui://` MCP Apps resource plus the
+ * `_meta` that points the host at it.
+ *
+ * Why there is no UI gating any more: the worker is stateless — a fresh
+ * server is built per HTTP request, so a registration can never be re-shaped
+ * once the client's `initialize` capabilities are known. A legacy-era
+ * `tools/list` in particular arrives with no memory of the handshake at all.
+ * The UI `_meta` is therefore ALWAYS advertised. That is a deliberate
+ * deviation from SEP-1865's SHOULD (gate on the client's `ui` capability);
+ * the accompanying MUST — a widget tool still returns a meaningful `content`
+ * array — is unaffected, and `_meta.ui` is inert for hosts that do not render
+ * apps. Always-on registration also fixes `resources/read` for the `ui://`
+ * resources, which the old two-mode registrar disabled outright whenever UI
+ * was not negotiated.
+ */
+import type {
+  McpServer,
+  RegisteredTool,
+  StandardSchemaWithJSON,
+  ToolAnnotations,
+  ToolCallback,
+} from "@modelcontextprotocol/server";
 import {
   RESOURCE_MIME_TYPE,
   RESOURCE_URI_META_KEY,
-  registerAppTool,
-} from "@modelcontextprotocol/ext-apps/server";
-import type {
-  McpServer,
-  RegisteredResource,
-  RegisteredTool,
-  ToolCallback,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
-import type {
-  AnySchema,
-  ZodRawShapeCompat,
-} from "@modelcontextprotocol/sdk/server/zod-compat.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+} from "../shared/platform-widgets.js";
 
 type ToolConfig<
-  OutputArgs extends ZodRawShapeCompat | AnySchema,
-  InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined
+  OutputArgs extends StandardSchemaWithJSON,
+  InputArgs extends StandardSchemaWithJSON | undefined = undefined
 > = {
   title?: string;
   description?: string;
@@ -28,63 +40,40 @@ type ToolConfig<
 };
 
 type ToolUiConfig<
-  InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined
+  InputArgs extends StandardSchemaWithJSON | undefined = undefined
 > = {
   resourceUri: string;
   html: string;
   resourceName?: string;
   resourceDescription?: string;
   resourceMeta?: Record<string, unknown>;
+  /**
+   * Widget-flavored callback. Registered in place of `callback` (the payload
+   * it returns carries the `widget` tag the shared bundle routes on); the
+   * plain callback remains the fallback for tools with no widget variant.
+   */
   callback?: ToolCallback<InputArgs>;
 };
 
 export interface SessionToolRegistrar {
   registerTool<
-    OutputArgs extends ZodRawShapeCompat | AnySchema,
-    InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined
+    OutputArgs extends StandardSchemaWithJSON,
+    InputArgs extends StandardSchemaWithJSON | undefined = undefined
   >(
     name: string,
     config: ToolConfig<OutputArgs, InputArgs>,
     callback: ToolCallback<InputArgs>,
     ui?: ToolUiConfig<InputArgs>
   ): RegisteredTool;
-  setUiEnabled(enabled: boolean, options?: SetUiEnabledOptions): void;
 }
 
-type SetUiEnabledOptions = {
-  notify?: boolean;
-};
-
-type MutableRegisteredTool = RegisteredTool & {
-  _meta?: Record<string, unknown>;
-  enabled: boolean;
-  handler: ToolCallback<any>;
-};
-
-type MutableRegisteredResource = RegisteredResource & {
-  enabled: boolean;
-};
-
-type UiAwareRegistration = {
-  plainCallback: ToolCallback<any>;
-  plainMeta: Record<string, unknown> | undefined;
-  resource: MutableRegisteredResource;
-  tool: MutableRegisteredTool;
-  uiCallback: ToolCallback<any>;
-  uiMeta: Record<string, unknown>;
-};
-
 export function createSessionToolRegistrar(
-  server: McpServer,
-  uiEnabled: boolean
+  server: McpServer
 ): SessionToolRegistrar {
-  const uiAwareRegistrations: UiAwareRegistration[] = [];
-  let currentUiEnabled = uiEnabled;
-
   return {
     registerTool<
-      OutputArgs extends ZodRawShapeCompat | AnySchema,
-      InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined
+      OutputArgs extends StandardSchemaWithJSON,
+      InputArgs extends StandardSchemaWithJSON | undefined = undefined
     >(
       name: string,
       config: ToolConfig<OutputArgs, InputArgs>,
@@ -95,22 +84,13 @@ export function createSessionToolRegistrar(
         return server.registerTool(name, config, callback);
       }
 
-      const plainMeta = stripToolUiMeta(config._meta);
-      const uiMeta = createToolUiMeta(config._meta, ui.resourceUri);
-      const uiCallback = (ui.callback ?? callback) as ToolCallback<any>;
-      const tool = currentUiEnabled
-        ? registerAppTool(
-            server,
-            name,
-            {
-              ...config,
-              _meta: uiMeta,
-            } as any,
-            uiCallback as any
-          )
-        : server.registerTool(name, { ...config, _meta: plainMeta }, callback);
+      const tool = server.registerTool(
+        name,
+        { ...config, _meta: createToolUiMeta(config._meta, ui.resourceUri) },
+        ui.callback ?? callback
+      );
 
-      const resource = server.registerResource(
+      server.registerResource(
         ui.resourceName ?? `${config.title ?? name} UI`,
         ui.resourceUri,
         {
@@ -131,67 +111,18 @@ export function createSessionToolRegistrar(
         })
       );
 
-      if (!currentUiEnabled) {
-        resource.disable();
-      }
-
-      uiAwareRegistrations.push({
-        plainCallback: callback as ToolCallback<any>,
-        plainMeta,
-        resource: resource as MutableRegisteredResource,
-        tool: tool as MutableRegisteredTool,
-        uiCallback,
-        uiMeta,
-      });
-
       return tool;
-    },
-    setUiEnabled(enabled, options) {
-      if (currentUiEnabled === enabled) {
-        return;
-      }
-
-      currentUiEnabled = enabled;
-      const notify = options?.notify ?? true;
-
-      for (const registration of uiAwareRegistrations) {
-        applyUiEnabledState(registration, enabled, notify);
-      }
     },
   };
 }
 
-function applyUiEnabledState(
-  registration: UiAwareRegistration,
-  enabled: boolean,
-  notify: boolean
-): void {
-  if (notify) {
-    registration.tool.update({
-      _meta: enabled ? registration.uiMeta : (registration.plainMeta ?? {}),
-      callback: enabled
-        ? registration.uiCallback
-        : registration.plainCallback,
-    } as any);
-
-    if (enabled) {
-      registration.resource.enable();
-    } else {
-      registration.resource.disable();
-    }
-
-    return;
-  }
-
-  registration.tool._meta = enabled
-    ? registration.uiMeta
-    : (registration.plainMeta ?? {});
-  registration.tool.handler = enabled
-    ? registration.uiCallback
-    : registration.plainCallback;
-  registration.resource.enabled = enabled;
-}
-
+/**
+ * The MCP Apps tool `_meta`: the nested `ui.resourceUri` form preferred by
+ * SEP-1865 plus the deprecated flat `ui/resourceUri` key, so hosts on either
+ * form resolve the widget. This is exactly what `registerAppTool` from
+ * `@modelcontextprotocol/ext-apps/server` used to synthesize, which is why the
+ * worker no longer needs that (v1-SDK-typed) helper.
+ */
 function createToolUiMeta(
   meta: Record<string, unknown> | undefined,
   resourceUri: string

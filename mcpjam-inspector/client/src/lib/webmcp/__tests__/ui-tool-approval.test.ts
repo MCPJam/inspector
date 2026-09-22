@@ -6,10 +6,6 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import {
   createUiAwareApprovalResponseHandler,
   fulfillOrphanedDeferredUiToolCalls,
@@ -18,6 +14,11 @@ import {
   __resetUiToolExecutorForTests,
   handleUiToolCall,
 } from "../ui-tool-executor";
+import {
+  __resetPageToolDispatchForTests,
+  setAdvertisedPageTools,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import {
   useUiToolsRegistry,
   type UiToolDefinition,
@@ -63,9 +64,9 @@ describe("createUiAwareApprovalResponseHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __resetUiToolExecutorForTests();
+    __resetPageToolDispatchForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -83,9 +84,12 @@ describe("createUiAwareApprovalResponseHandler", () => {
     handler({ id: "appr-1", approved: true });
     await flushMicrotasks();
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      { toolCallId: "tc-1", caller: "ask_mcpjam" },
+    );
     expect(addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" })
+      expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" }),
     );
     expect(addToolApprovalResponse).not.toHaveBeenCalled();
   });
@@ -169,6 +173,69 @@ describe("createUiAwareApprovalResponseHandler", () => {
 
     expect(onNavigationToolCall).toHaveBeenCalledWith("ui_navigate");
   });
+
+  it("approves a WebMCP page tool by fulfilling it in the browser", async () => {
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "added" }));
+    const initial = useWebmcpInspectorStore.getState();
+    vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+      ...initial,
+      session: { sessionId: "session-1" } as typeof initial.session,
+      tools: [
+        {
+          toolKey: "https://shop.test::add_to_cart",
+          binding: { frameId: "main", registrationSeq: 1 },
+        } as never,
+      ],
+      invokeToolForResult: invoke as never,
+    });
+    setAdvertisedPageTools([
+      {
+        alias: "page_1a2b3c4d",
+        binding: { frameId: "main", registrationSeq: 1 },
+        sessionId: "session-1",
+        toolKey: "https://shop.test::add_to_cart",
+        rawName: "add_to_cart",
+        origin: "https://shop.test",
+      },
+    ]);
+    const addToolApprovalResponse = vi.fn();
+    const addToolOutput = vi.fn();
+    const handler = createUiAwareApprovalResponseHandler({
+      getMessages: () => [
+        {
+          id: "m-page",
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolName: "page_1a2b3c4d",
+              toolCallId: "tc-page",
+              state: "approval-requested",
+              input: { sku: "ABC-123" },
+              approval: { id: "appr-page" },
+            },
+          ],
+        } as any,
+      ],
+      addToolApprovalResponse,
+      addToolOutput,
+    });
+
+    handler({ id: "appr-page", approved: true });
+    await flushMicrotasks();
+
+    expect(invoke).toHaveBeenCalledWith(
+      "https://shop.test::add_to_cart",
+      {
+        sku: "ABC-123",
+      },
+      { frameId: "main", registrationSeq: 1 },
+    );
+    expect(addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: "page_1a2b3c4d", toolCallId: "tc-page" }),
+    );
+    expect(addToolApprovalResponse).not.toHaveBeenCalled();
+  });
 });
 
 describe("fulfillOrphanedDeferredUiToolCalls", () => {
@@ -177,7 +244,6 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -201,7 +267,10 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
     });
     await flushMicrotasks();
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      expect.objectContaining({ toolCallId: expect.any(String) }),
+    );
     expect(addToolOutput).toHaveBeenCalled();
   });
 

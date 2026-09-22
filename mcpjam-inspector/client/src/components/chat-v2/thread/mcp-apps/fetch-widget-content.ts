@@ -57,7 +57,7 @@ export interface FetchMcpAppsWidgetContentRequest {
   viewParams?: Record<string, unknown>;
   /**
    * Route through /api/web even on local builds. Set from
-   * `useWebManagedServers()` by chatbox-runtime renderers whose serverId
+   * `useWebManagedServers()` by scenario-runtime renderers whose serverId
    * is a Convex id the local /api/apps pool can't resolve.
    */
   forceWebEndpoint?: boolean;
@@ -71,6 +71,19 @@ export interface FetchMcpAppsWidgetContentResponse {
   mimeTypeWarning?: string;
   mimeTypeValid?: boolean;
   prefersBorder?: boolean;
+  /**
+   * `_meta.ui.domain` — the dedicated origin the server ASKED for. Advisory:
+   * MCPJam derives the origin it serves the view from, and reports this only
+   * so the Workbench can say whether the declaration matches.
+   */
+  declaredDomain?: string;
+  /**
+   * Subdomain label for this server's dedicated view origin
+   * (`<label>.sandbox.mcpjam.com`), derived from the server's identity. Absent
+   * when the server identifies nothing to derive from; the view then renders
+   * on the default sandbox origin.
+   */
+  viewOriginLabel?: string;
   /**
    * Server-confirmed compat-runtime flag — echoes what the route
    * decided after applying its `injectOpenAiCompat === true` gate.

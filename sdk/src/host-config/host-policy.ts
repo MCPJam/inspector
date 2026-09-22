@@ -411,6 +411,9 @@ export function buildHostIterationMetadata(
   if (signals.toolsDroppedVisibility > 0) {
     meta.tools_dropped_visibility = signals.toolsDroppedVisibility;
   }
+  if ((signals.toolsDescriptionOverridden ?? 0) > 0) {
+    meta.tools_description_overridden = signals.toolsDescriptionOverridden!;
+  }
   if (policy.requireToolApproval && approvalsWouldRequire > 0) {
     meta.approvals_would_require = approvalsWouldRequire;
   }

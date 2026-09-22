@@ -1,3 +1,4 @@
+import { looksLikeErrorPage } from "@/shared/error-page";
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -11,20 +12,61 @@ export const DEFAULT_CHAT_COMPOSER_PLACEHOLDER = `Ask something… Use Slash "/"
 /** Match ChatTabV2 minimalMode / compact composer (e.g. overlays, narrow NUX). */
 export const MINIMAL_CHAT_COMPOSER_PLACEHOLDER = "Message…";
 
+// Starter prompts must be answerable from the model's own tool list — the
+// playground/chat model only sees the selected servers' model-visible tools,
+// so prompts that need meta-data (server inventory, activity logs) always
+// dead-end in "I don't have access to that".
 export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
   {
-    label: "Show me connected tools",
-    text: "List my connected MCP servers and their available tools.",
+    label: "What can this server do?",
+    text: "What can this server do?",
   },
   {
-    label: "Suggest an automation",
-    text: "Suggest an automation I can build with my current MCP setup.",
+    label: "What tools can I use?",
+    text: "What tools can I use?",
   },
   {
-    label: "Summarize recent activity",
-    text: "Summarize the most recent activity across my MCP servers.",
+    label: "Give me example prompts to try",
+    text: "Give me example prompts to try",
   },
 ];
+
+/**
+ * Whether the composer's empty state offers {@link STARTER_PROMPTS}.
+ *
+ * They are a PLAYGROUND affordance: they get someone who just connected a
+ * server to a first tool call, and every one of them asks the assistant about
+ * its own tooling.
+ *
+ * A published study is the opposite situation. The tester is there to use the
+ * thing; the study's own "What to try" list is what tells them where to start;
+ * and no product a real user opens greets them with three prompts asking the
+ * assistant to describe itself. So the chips both duplicate the study's
+ * instructions and break the illusion the study exists to test.
+ *
+ * `hostedScenarioId` is the exact signal for that surface — only the hosted
+ * study page sets it (the Playground's hosted context carries `hostId`
+ * instead), and it covers BOTH ways that page is reached: a tester's share
+ * link, and the creator's own "Open preview", which has to look like what the
+ * tester sees.
+ *
+ * A predicate rather than an inline `&&` chain because the component that
+ * renders it cannot be mounted in a unit test — the rule would otherwise be
+ * asserted only by tests that mock the component away, which is how the first
+ * version of this shipped with a test that could not fail.
+ */
+export function shouldShowStarterPrompts(input: {
+  hasMessages: boolean;
+  isAuthLoading: boolean;
+  showDisabledCallout: boolean;
+  /** Set only on the hosted study page; `undefined` everywhere else. */
+  hostedScenarioId: string | undefined;
+}): boolean {
+  if (input.hostedScenarioId) return false;
+  return (
+    !input.showDisabledCallout && !input.hasMessages && !input.isAuthLoading
+  );
+}
 
 export interface FormattedError {
   message: string;
@@ -74,6 +116,105 @@ const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
 
+/**
+ * Plain-English copy for the connection failures a chat turn can hit.
+ *
+ * The server already sends an accurate `code` (`WebRouteError` → `webError`),
+ * but the raw `message` beside it is written for us, not for the person in the
+ * playground: a failed OAuth refresh renders as "Authorization failed" and an
+ * unreachable server as "fetch failed". Both leave the user with no idea what
+ * to do next. Translate the codes we understand and leave everything else on
+ * the existing verbatim path.
+ *
+ * The raw message is preserved as `details`, so the "More details" collapsible
+ * still shows exactly what the server said.
+ */
+const describeServer = (serverName: string | undefined) =>
+  serverName ? `“${serverName}”` : "the MCP server";
+
+const humanizeConnectionError = (
+  code: unknown,
+  rawDetails: unknown,
+): string | null => {
+  if (typeof code !== "string") return null;
+
+  const detailBag =
+    rawDetails && typeof rawDetails === "object"
+      ? (rawDetails as Record<string, unknown>)
+      : undefined;
+  const serverName =
+    typeof detailBag?.serverName === "string" && detailBag.serverName.length > 0
+      ? detailBag.serverName
+      : undefined;
+  const server = describeServer(serverName);
+
+  // An expired/revoked OAuth grant is flagged by the backend regardless of the
+  // code it rides in on (see hosted-oauth-refresh.ts), so check it first.
+  if (
+    detailBag?.refreshTokenInvalid === true ||
+    detailBag?.oauthRequired === true
+  ) {
+    return `Your connection to ${server} has expired. Reconnect it to keep chatting.`;
+  }
+
+  switch (code) {
+    case "SERVER_UNREACHABLE":
+      return `Couldn't reach ${server}. It may be offline or blocking the connection.`;
+    case "TIMEOUT":
+      return `${serverName ? `“${serverName}”` : "The MCP server"} took too long to respond.`;
+    // UNAUTHORIZED / FORBIDDEN are NOT unambiguous: the same codes carry
+    // MCPJam's own auth failures (expired session, missing bearer via
+    // `assertBearerToken`) and project-permission denials, neither of which is
+    // the user's MCP server misbehaving. Sending someone to reconnect a server
+    // that is working fine is worse than the jargon this replaces, so only
+    // rewrite when the payload actually names a server. Everything else falls
+    // through to the verbatim path.
+    case "UNAUTHORIZED":
+      if (!serverName) return null;
+      return `${server} rejected the connection. Reconnect it to refresh your access.`;
+    case "FORBIDDEN":
+      if (!serverName) return null;
+      return `${server} refused this request. Your access may not cover the tools this chat needs.`;
+    default:
+      return null;
+  }
+};
+
+/**
+ * Build the "More details" payload for a humanized banner.
+ *
+ * The banner no longer leads with the server's own wording, so that wording has
+ * to survive here or it is lost outright. Fold it into the structured details
+ * rather than replacing them (a bare `details ?? message` drops one or the
+ * other), and keep the result JSON-shaped when the server sent an object so
+ * `ErrorBox` still renders it through `JsonEditor` instead of a flat `<pre>`.
+ */
+const preserveServerMessageInDetails = (
+  message: string,
+  rawDetails: unknown,
+): string | undefined => {
+  if (rawDetails == null) return message;
+
+  if (
+    typeof rawDetails === "object" &&
+    !Array.isArray(rawDetails) &&
+    // `serverMessage` (not `message`) so a details bag that already carries its
+    // own `message` key can't silently swallow the server's wording.
+    !("serverMessage" in (rawDetails as Record<string, unknown>))
+  ) {
+    return normalizeDetails({
+      ...(rawDetails as Record<string, unknown>),
+      serverMessage: message,
+    });
+  }
+
+  const normalized = normalizeDetails(rawDetails);
+  if (!normalized) return message;
+  return normalized.includes(message)
+    ? normalized
+    : `${message}\n\n${normalized}`;
+};
+
 const normalizeDetails = (details: unknown): string | undefined => {
   if (details == null) return undefined;
   if (typeof details === "string") return details;
@@ -88,7 +229,9 @@ const normalizeDetails = (details: unknown): string | undefined => {
 const lowercaseFirst = (value: string) =>
   value.length > 0 ? value[0].toLowerCase() + value.slice(1) : value;
 
-const pluralize = (value: number, unit: string) =>
+/** `1 server`, `0 servers`. Exported so other count strips reuse this instead
+ *  of re-deriving the same `s` suffix. */
+export const pluralize = (value: number, unit: string) =>
   `${value} ${unit}${value === 1 ? "" : "s"}`;
 
 const collectStringValues = (
@@ -314,6 +457,42 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         );
       }
 
+      // Connection failures get human copy; the server's own wording stays
+      // reachable under "More details" rather than leading the banner. Copy
+      // A hosted chat failure arrives as a JSON envelope, and this branch
+      // returns before the string-shaped checks below ever run — so the
+      // pinned-version recognition has to happen HERE too, or it only ever
+      // fires for the bare-sentence case a test can construct by hand and a
+      // real turn never produces.
+      const envelopePin = summarizeProtocolVersionPin(message);
+      if (envelopePin) {
+        return {
+          ...envelopePin,
+          // Keep the server's own envelope fields where they exist: `details`
+          // carries the normalized block the card renders, and the status is
+          // worth surfacing even though the action does not depend on it.
+          details: details ?? envelopePin.details,
+          ...(parsed.statusCode !== undefined
+            ? { statusCode: parsed.statusCode }
+            : {}),
+        };
+      }
+      // only — `isRetryable` and every other field keep whatever the server
+      // sent, so the banner's affordances are unchanged.
+      const humanized = humanizeConnectionError(code, parsed.details);
+      if (humanized) {
+        return {
+          message: humanized,
+          details: preserveServerMessageInDetails(message, parsed.details),
+          code,
+          statusCode: parsed.statusCode,
+          isRetryable: parsed.isRetryable,
+          isMCPJamPlatformError: code
+            ? MCPJAM_PLATFORM_CODES.includes(code)
+            : false,
+        };
+      }
+
       return {
         message,
         details,
@@ -337,7 +516,184 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
+  const protocolPin = summarizeProtocolVersionPin(errorString);
+  if (protocolPin) return protocolPin;
+
+  const opaque = summarizeOpaquePayload(errorString);
+  if (opaque) return opaque;
+
   return { message: errorString };
+}
+
+/**
+ * Longest error text rendered inline. Past this the chat turns into a wall of
+ * red and the actual conversation is pushed off screen.
+ */
+const INLINE_MESSAGE_MAX = 400;
+
+/** Hard cap on what we keep for the collapsible. */
+const RAW_PAYLOAD_MAX = 4000;
+
+/**
+ * Anything a document can legally lead with before its first real tag: a byte
+ * order mark, whitespace, HTML comments, an XML declaration. Gateways and
+ * proxies prepend these freely.
+ */
+
+/**
+ * `code` carried by a formatted upstream-error-page failure.
+ *
+ * The chat surfaces key their retry affordance off this rather than off
+ * `isRetryable`, which the server also sets on failures that resending the
+ * last message cannot help with.
+ */
+export const UPSTREAM_ERROR_PAGE_CODE = "upstream_error_page";
+
+/**
+ * `code` for "this connection pins an MCP protocol version the server does not
+ * offer" — the SDK's `ProtocolVersionPinUnsupported`.
+ *
+ * Chat surfaces key the "Change protocol version" affordance off this. It is a
+ * separate code from `UPSTREAM_ERROR_PAGE_CODE` because the two want opposite
+ * actions: an error page is transient and wants a retry, a version pin is a
+ * SETTING and resending the same message will fail identically forever.
+ */
+export const PROTOCOL_VERSION_PIN_CODE = "protocol_version_pin_unsupported";
+
+/**
+ * The clause `ProtocolVersionPinUnsupported` authors into its own message.
+ *
+ * Matched as text because that is all that survives: the AI SDK turns a failed
+ * chat response into `new Error(await response.text())`, so the class, the
+ * `normalized` block and the response headers are gone by the time a chat
+ * surface sees anything. The SDK-side describer keys off the same clause and
+ * says so; reword one and the paired tests on both sides fail together.
+ */
+const PROTOCOL_VERSION_PIN_MARKER = /which this client is pinned to/i;
+
+/** `2026-07-28` out of the sentence, for the banner's own wording. */
+const PROTOCOL_VERSION_PATTERN = /protocol version (\d{4}-\d{2}-\d{2})/i;
+
+/**
+ * Recognize a pinned-version refusal and hand the banner an actionable code.
+ *
+ * Returns `null` for everything else, so ordinary errors are untouched.
+ */
+function summarizeProtocolVersionPin(raw: string): FormattedError | null {
+  if (!PROTOCOL_VERSION_PIN_MARKER.test(raw)) return null;
+  const version = raw.match(PROTOCOL_VERSION_PATTERN)?.[1];
+  return {
+    // The SDK's sentence already names the server and the version, and it is
+    // the one place that wording lives. Passed through rather than rebuilt
+    // here, where the server id is not available.
+    message: raw.trim(),
+    code: PROTOCOL_VERSION_PIN_CODE,
+    // NOT retryable: the pin is a stored setting, so the identical turn fails
+    // identically until someone changes it. Offering a retry here would be
+    // offering a button that cannot work.
+    isRetryable: false,
+    ...(version ? { details: JSON.stringify({ protocolVersion: version }) } : {}),
+  };
+}
+
+/**
+ * Pull the status out of an error page's `<title>` or `<h1>` — the two places
+ * gateways put it verbatim ("502 Bad Gateway"). Deliberately not a scan of the
+ * whole document: a bare `\b\d{3}\b` match anywhere would happily return a
+ * pixel value out of an inline stylesheet.
+ *
+ * Both headings are tried in order rather than preferring whichever exists.
+ * A generic `<title>Error</title>` over an `<h1>503 Service Unavailable</h1>`
+ * is a real page shape, and taking the title just because it is present threw
+ * away the only status on the page.
+ */
+function extractErrorPageStatus(html: string): number | undefined {
+  const headings = [
+    html.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1],
+    html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1],
+  ];
+  for (const heading of headings) {
+    const status = heading?.match(/\b([45]\d{2})\b/)?.[1];
+    if (!status) continue;
+    const parsed = Number(status);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+/**
+ * Pull the gateway's own request handle out of an error page — Cloudflare's
+ * `Ray ID`, and the `Request ID` / `Correlation ID` its peers print instead.
+ * It is the one field on the page worth keeping: it is what support can join
+ * against, and it is the reason "More details" can be status + id rather than
+ * page source.
+ *
+ * The capture group cannot contain `<`, and the markup between the label and
+ * the value is consumed by a group we throw away, so no fragment of the
+ * document can reach the UI through this.
+ */
+const ERROR_PAGE_REQUEST_ID =
+  /\b(?:ray|request|correlation)[\s_-]?id\b\s*[:#]?\s*(?:<[^>]*>|\s)*([0-9A-Za-z][0-9A-Za-z-]{5,63})/i;
+
+function extractErrorPageRequestId(html: string): string | undefined {
+  return html.match(ERROR_PAGE_REQUEST_ID)?.[1];
+}
+
+/**
+ * Last-resort formatting for a body that is not an error message at all.
+ *
+ * When an upstream hop fails — a gateway 502, a proxy timeout — the response
+ * body is an HTML page, and the AI SDK surfaces it by throwing
+ * `new Error(await response.text())`. That put an entire HTML document into
+ * `message`, which rendered verbatim and unbounded.
+ *
+ * Returns `null` for ordinary error text so every existing message is
+ * untouched; only genuinely opaque or oversized payloads are summarized. An
+ * oversized message keeps its original in `details` for the existing
+ * collapsible — an error PAGE does not, because a response body we never
+ * asked for has no business being in a transcript at all.
+ */
+function summarizeOpaquePayload(raw: string): FormattedError | null {
+  const trimmed = raw.trim();
+
+  if (looksLikeErrorPage(trimmed)) {
+    const statusCode = extractErrorPageStatus(trimmed);
+    const requestId = extractErrorPageRequestId(trimmed);
+    // The page itself is DISCARDED here, not truncated into `details`. A
+    // gateway interstitial is markup, a timestamp and a datacentre name; the
+    // only two facts in it a developer can act on are the status and the
+    // request id, and keeping the rest meant pasting a document into a
+    // transcript that someone is trying to read a conversation out of.
+    //
+    // The copy names reachability, not blame. Whichever hop answered, what
+    // the person in the chat needs to know is that the failure was transient
+    // and that their session survived it — hence `isRetryable`, which is what
+    // puts a retry beside the reset the banner would otherwise offer alone.
+    return {
+      message:
+        "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again.",
+      code: UPSTREAM_ERROR_PAGE_CODE,
+      isRetryable: true,
+      details: JSON.stringify({
+        upstreamResponse: "Error page (HTML body discarded)",
+        ...(statusCode !== undefined ? { status: statusCode } : {}),
+        ...(requestId !== undefined ? { requestId } : {}),
+      }),
+      ...(statusCode !== undefined ? { statusCode } : {}),
+    };
+  }
+
+  if (trimmed.length <= INLINE_MESSAGE_MAX) return null;
+
+  const details =
+    trimmed.length > RAW_PAYLOAD_MAX
+      ? `${trimmed.slice(0, RAW_PAYLOAD_MAX)}…`
+      : trimmed;
+
+  return {
+    message: `${trimmed.slice(0, INLINE_MESSAGE_MAX).trimEnd()}…`,
+    details,
+  };
 }
 
 export const VALID_MESSAGE_ROLES: UIMessage["role"][] = [
@@ -403,6 +759,29 @@ export function buildMcpPromptMessages(
 }
 
 /**
+ * A skill name, reduced to the character set a provider accepts inside a
+ * `tool_use.id`.
+ *
+ * Anthropic validates those ids against `^[a-zA-Z0-9_-]+$` and rejects the
+ * whole request otherwise. A SERVER-SERVED skill (SEP-2640) is addressed by a
+ * namespaced ref — `<server>/<skill>` — so its `/` made every follow-up turn
+ * fail with `messages.N.content.M.tool_use.id: String should match pattern`,
+ * and the transcript could not be continued at all. Cloud and local skills are
+ * plain slugs, which is why the id survived unsanitized until server skills
+ * introduced a separator into the name.
+ *
+ * The name is in the id for debuggability only — `generateId()` supplies the
+ * uniqueness — so replacing rather than dropping the offending characters
+ * keeps the id readable while making it valid. Sanitized at the ONE place ids
+ * are minted rather than by narrowing refs upstream: the ref's shape is the
+ * namespacing contract the picker and `loadSkill` both compute, and bending it
+ * to a provider's id rules would make two unrelated concerns share a format.
+ */
+function toolCallIdSegment(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]+/g, "_");
+}
+
+/**
  * Builds UIMessages that simulate the LLM calling loadSkill tool.
  * Creates assistant messages with tool invocations instead of user messages.
  */
@@ -414,10 +793,20 @@ export function buildSkillToolMessages(
   for (const skill of skillResults) {
     if (!skill.content) continue;
 
-    const toolCallId = `skill-load-${skill.name}-${generateId()}`;
+    const toolCallId = `skill-load-${toolCallIdSegment(
+      skill.name
+    )}-${generateId()}`;
 
-    // Format output to match server-side loadSkill response
-    const skillOutput = `# Skill: ${skill.name}\n\n${skill.content}`;
+    // Format output to match server-side loadSkill response.
+    //
+    // `toolOutput` is the escape hatch for a SERVER-SERVED skill (SEP-2640):
+    // its `loadSkill` result is the shared origin banner plus the body, and the
+    // banner already carries the `# Skill: <ref>` heading. Re-prefixing here
+    // would produce a message the tool could never have returned, breaking the
+    // "injection is indistinguishable from a real tool result" invariant this
+    // whole function exists to maintain.
+    const skillOutput =
+      skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`;
 
     // Build parts array
     const parts: UIMessage["parts"] = [];

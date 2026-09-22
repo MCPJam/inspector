@@ -49,6 +49,11 @@ interface LearnMoreHoverCardProps {
   triggerTooltipDelayMs?: number;
   /** Message shown inside the hover card for disabled items (e.g. "Available locally") */
   disabledMessage?: string;
+  /**
+   * Holds the hover card shut. Set it while the trigger owns another popover
+   * (a menu, a dialog) so the two don't animate over the same rectangle.
+   */
+  suppressed?: boolean;
 }
 
 export function LearnMoreHoverCard({
@@ -58,6 +63,7 @@ export function LearnMoreHoverCard({
   triggerTooltip,
   triggerTooltipDelayMs,
   disabledMessage,
+  suppressed = false,
 }: LearnMoreHoverCardProps) {
   const entry = learnMoreContent[tabId];
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -65,6 +71,7 @@ export function LearnMoreHoverCard({
   const [open, setOpen] = useState(false);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const handoffTimerRef = useRef<number | null>(null);
+  const isOpen = open && !suppressed;
 
   const clearHandoffTimer = () => {
     if (handoffTimerRef.current !== null) {
@@ -78,11 +85,20 @@ export function LearnMoreHoverCard({
   }, []);
 
   useEffect(() => {
-    if (open && videoRef.current) {
+    if (isOpen && videoRef.current) {
       videoRef.current.currentTime = 0;
       videoRef.current.play().catch(() => {});
     }
-  }, [open]);
+  }, [isOpen]);
+
+  // Drop any pending open the moment the trigger hands off to another popover,
+  // so lifting suppression later doesn't replay a stale hover intent.
+  useEffect(() => {
+    if (!suppressed) return;
+    clearHandoffTimer();
+    setOpen(false);
+    setTooltipOpen(false);
+  }, [suppressed]);
 
   useEffect(() => {
     return () => {
@@ -97,6 +113,12 @@ export function LearnMoreHoverCard({
 
   const handleOpenChange = (nextOpen: boolean) => {
     clearHandoffTimer();
+
+    if (suppressed) {
+      setTooltipOpen(false);
+      setOpen(false);
+      return;
+    }
 
     if (!shouldShowTooltipFirst) {
       setOpen(nextOpen);
@@ -140,7 +162,7 @@ export function LearnMoreHoverCard({
     <HoverCard
       openDelay={shouldShowTooltipFirst ? 0 : 400}
       closeDelay={200}
-      open={open}
+      open={isOpen}
       onOpenChange={handleOpenChange}
     >
       {shouldShowTooltipFirst ? (

@@ -42,6 +42,10 @@ const manager = new MCPClientManager({
 - CLI-based MCP servers
 - Servers requiring local resources
 
+<Note>
+Unconfigured stdio connections auto-negotiate the MCP era: the SDK probes `server/discover` on a sibling process to detect 2026 support, then falls back to the legacy `initialize` handshake if the server doesn't respond. This means your server binary may be spawned a second time during the probe. The probe is bounded (at most one extra spawn) and only occurs when no explicit protocol version pin is set.
+</Note>
+
 ### HTTP Servers (Remote)
 
 HTTP servers connect via SSE (Server-Sent Events) or Streamable HTTP over the network.
@@ -91,7 +95,42 @@ With this configuration, the SDK:
 
 - exchanges the refresh token for an access token during connection
 - automatically retries with a fresh access token when the server returns an auth challenge
-- stores rotated refresh tokens returned by the authorization server
+- keeps using the newest refresh token the authorization server returns, **for the life of the connection**
+
+<Warning>
+**A refresh token is usually single-use, so persist the rotation or the next
+run cannot authorize.** Most authorization servers hand back a new refresh
+token on every exchange and immediately invalidate the old one. The SDK keeps
+using the newest one for as long as the connection that received it lives. It
+can do no more than that: the value you passed as `refreshToken` is spent, so a
+long-lived caller configured from a secret — a CI job, a cron, a worker —
+authorizes once and then fails, with nothing in the logs to say a credential
+was replaced. A reconnect after `disconnectServer` starts from the
+`refreshToken` on the config as well, so it needs the persisted value too.
+
+Use `onTokensRotated` to store the replacement wherever the original came from:
+
+```typescript
+const manager = new MCPClientManager({
+  asana: {
+    url: "https://mcp.asana.com/mcp",
+    refreshToken: await secrets.read("ASANA_REFRESH_TOKEN"),
+    clientId: process.env.ASANA_CLIENT_ID!,
+    onTokensRotated: async ({ refreshToken }) => {
+      await secrets.write("ASANA_REFRESH_TOKEN", refreshToken);
+    },
+  },
+});
+```
+
+It fires only when the token actually changed, and it is awaited before the
+connection completes — so a job that exits the moment it finishes still gets
+the write, and a handler that never settles stalls the connection. It never
+fails a connection that has already authorized: an error from your handler is
+swallowed and **nothing is logged**, so log it yourself, and if the write has
+to be reliable do it somewhere it can be retried. The payload carries the
+access token alongside the refresh token, so keep it out of shared logs.
+</Warning>
 
 <Note>
 `refreshToken` is only supported for HTTP servers. When you use it, do not also set `accessToken`, `authProvider`, or an `Authorization` header in `requestInit.headers`.
@@ -148,7 +187,7 @@ Always disconnect servers when you're done, especially in tests. This cleans up 
 
 ## Working with Multiple Servers
 
-A key strength of `MCPClientManager` is managing multiple servers simultaneously:
+`MCPClientManager` can manage multiple servers at once:
 
 ```typescript
 const manager = new MCPClientManager({
@@ -184,7 +223,7 @@ const allTools = await manager.getTools();
 
 ## Executing Tools Directly
 
-You can call tools without involving an LLM—useful for unit tests:
+You can call tools without involving an LLM, useful for unit tests:
 
 ```typescript
 // Direct tool execution
@@ -239,13 +278,15 @@ Verify a server is responsive:
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
 } catch {
   console.warn("Server not responding, reconnecting...");
   await manager.disconnectServer("myServer");
   await manager.connectToServer("myServer");
 }
 ```
+
+`pingServer` is era-aware: on a modern (2026-07-28) connection it probes with `server/discover`; on a legacy connection it uses `ping`. Callers don't need to handle the difference.
 
 ## Next Steps
 

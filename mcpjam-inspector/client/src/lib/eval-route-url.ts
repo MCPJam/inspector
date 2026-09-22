@@ -1,17 +1,33 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import { stripProjectFromPath } from "./project-route";
 
-export type EvalRoutePrefix = "/evals" | "/ci-evals";
+/**
+ * Both eval modes live under `/evals`; Runs is the `/evals/runs` sub-tree.
+ * The two prefixes stay mutually exclusive — parsing a Runs URL against the
+ * Suites prefix returns null rather than a bare list route, so a mode never
+ * silently renders the other mode's URL.
+ *
+ * `/evaluate` is the flag-gated Evaluate (New) tab. It is a SIBLING of
+ * `/evals`, not a sub-tree: it does not start with `/evals/`, so the guards
+ * below already keep the two from parsing each other's URLs.
+ */
+export type EvalRoutePrefix = "/evals" | "/evals/runs" | "/evaluate";
 
 export function parseEvalRouteFromUrl(
   prefix: EvalRoutePrefix,
   pathname: string,
-  search = ""
+  search = "",
 ): EvalRoute | null {
-  const normalizedPathname = pathname.startsWith("/")
-    ? pathname
-    : `/${pathname}`;
+  // Eval routes are project-owned, so the live pathname is
+  // `/p/<projectId>/evals/...`. The project comes off before matching: these
+  // prefixes are LOGICAL, and the eval route is the same route in every
+  // project.
+  const withoutProject = stripProjectFromPath(pathname);
+  const normalizedPathname = withoutProject.startsWith("/")
+    ? withoutProject
+    : `/${withoutProject}`;
   if (
     normalizedPathname !== prefix &&
     !normalizedPathname.startsWith(`${prefix}/`)
@@ -20,35 +36,49 @@ export function parseEvalRouteFromUrl(
   }
 
   const params = new URLSearchParams(
-    search.startsWith("?") ? search : search ? `?${search}` : ""
+    search.startsWith("?") ? search : search ? `?${search}` : "",
   );
   const segments = normalizedPathname.replace(/^\/+/, "").split("/");
-  const routeRoot = prefix.replace(/^\/+/, "");
-  if (segments[0] !== routeRoot) return null;
+  const prefixSegments = prefix.replace(/^\/+/, "").split("/");
+  if (prefixSegments.some((segment, index) => segments[index] !== segment)) {
+    return null;
+  }
+  // `/evals/runs` is Runs mode's own root, not a Suites route.
+  if (prefix === "/evals" && segments[1] === "runs") return null;
 
-  if (segments.length === 1 || !segments[1]) {
+  const tail = segments.slice(prefixSegments.length);
+
+  if (tail.length === 0 || !tail[0]) {
     return { type: "list" };
   }
 
-  if (segments[1] === "create") {
+  if (tail[0] === "create") {
     return { type: "create" };
   }
 
-  if (prefix === "/ci-evals" && segments[1] === "commit" && segments[2]) {
+  // Evaluate (New) only. The v1 `/evals` tab has no first-run preview.
+  if (prefix === "/evaluate" && tail[0] === "eval-server" && tail[1]) {
+    return {
+      type: "eval-server",
+      serverId: decodePathSegment(tail[1]),
+    };
+  }
+
+  if (prefix === "/evals/runs" && tail[0] === "commit" && tail[1]) {
     return {
       type: "commit-detail",
-      commitSha: decodePathSegment(segments[2]),
+      commitSha: decodePathSegment(tail[1]),
       suite: params.get("suite") || undefined,
       iteration: params.get("iteration") || undefined,
     };
   }
 
-  if (segments[1] !== "suite" || !segments[2]) {
+  if (tail[0] !== "suite" || !tail[1]) {
     return { type: "list" };
   }
 
-  const suiteId = decodePathSegment(segments[2]);
-  const rest = segments.slice(3);
+  const suiteId = decodePathSegment(tail[1]);
+  const rest = tail.slice(2);
 
   if (rest.length === 0) {
     return {
@@ -62,15 +92,26 @@ export function parseEvalRouteFromUrl(
   }
 
   if (rest.length === 1 && rest[0] === "edit") {
-    return { type: "suite-edit", suiteId };
+    return {
+      type: "suite-edit",
+      suiteId,
+      ...(params.get("fromCaseChecks")
+        ? { fromCaseChecks: params.get("fromCaseChecks")! }
+        : {}),
+    };
   }
 
-  if (rest.length === 2 && rest[0] === "runs" && rest[1]) {
+  if (
+    (rest.length === 2 || (rest.length === 3 && rest[2] === "compare")) &&
+    rest[0] === "runs" &&
+    rest[1]
+  ) {
     const insightsFocus = parseTruthyParam(params.get("insights"));
     return {
       type: "run-detail",
       suiteId,
       runId: decodePathSegment(rest[1]),
+      ...(rest[2] === "compare" ? { comparison: true } : {}),
       iteration: params.get("iteration") || undefined,
       testCaseId: params.get("case") || undefined,
       ...(insightsFocus ? { insightsFocus: true } : {}),
@@ -92,14 +133,17 @@ export function parseEvalRouteFromUrl(
     }
     if (rest.length === 3 && rest[2] === "edit") {
       const openCompare = parseTruthyParam(params.get("compare"));
+      const fromEvalServer = params.get("fromEvalServer") || undefined;
       return {
         type: "test-edit",
         suiteId,
         testId,
         ...(openCompare ? { openCompare: true } : {}),
+        ...(parseTruthyParam(params.get("checks")) ? { checks: true } : {}),
         ...(params.get("iteration")
           ? { iteration: params.get("iteration") || undefined }
           : {}),
+        ...(fromEvalServer ? { fromEvalServer } : {}),
       };
     }
   }
@@ -120,16 +164,40 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
 
   return useMemo(
     () => parseEvalRouteFromUrl(prefix, pathname, search) ?? { type: "list" },
-    [prefix, pathname, search]
+    [prefix, pathname, search],
   );
+}
+
+/** The two lenses over the same eval suites, switched in the Evaluate header. */
+export type EvalsMode = "suites" | "runs";
+
+export function evalsModeForPathname(pathname: string): EvalsMode {
+  const logical = stripProjectFromPath(pathname);
+  const normalized = logical.startsWith("/") ? logical : `/${logical}`;
+  return normalized === "/evals/runs" || normalized.startsWith("/evals/runs/")
+    ? "runs"
+    : "suites";
+}
+
+export function useEvalsMode(): EvalsMode {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const pathname =
+    locationContext?.location.pathname ??
+    (typeof window === "undefined" ? "/evals" : window.location.pathname);
+  return evalsModeForPathname(pathname);
 }
 
 export function useEvalsRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evals");
 }
 
-export function useCiEvalsRouteFromUrl(): EvalRoute {
-  return useEvalRouteFromUrl("/ci-evals");
+export function useEvalsRunsRouteFromUrl(): EvalRoute {
+  return useEvalRouteFromUrl("/evals/runs");
+}
+
+/** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
+export function useEvaluateRouteFromUrl(): EvalRoute {
+  return useEvalRouteFromUrl("/evaluate");
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {

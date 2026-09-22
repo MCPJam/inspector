@@ -1,13 +1,51 @@
 import { useMemo } from "react";
-import { formatRunId } from "../helpers";
+import { compactModelIdTail } from "@/lib/environment-label";
+import { formatRunId, runEnvironmentRef, runClientIdentity } from "../helpers";
 import { computeIterationResult } from "../pass-criteria";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../types";
+
+export const CLIENT_DEFAULT_MODEL_KEY = "client-default";
+
+export type CrossHostEnvironment = {
+  environmentId: string;
+  hostId: string;
+  modelId?: string;
+  serverAttachmentId?: string | null;
+  skillSelection?: {
+    skillIds: string[];
+    /**
+     * Exact-version pins. Carried because two environments can differ ONLY in
+     * which revision they hold a skill at — that is the side-by-side comparison
+     * the feature exists for, and it must not collapse into one cell.
+     */
+    versionPins?: { skillId: string; versionId: string }[];
+  } | null;
+  computerEnvironmentId?: string | null;
+  pluginVersionIds?: string[];
+};
 
 export type HostColumn = {
+  /** Only real named clients can open host configuration. */
+  namedHostId?: string;
+  hostStyle?: string;
   hostId: string;
+  /** `(hostId, modelKey)` or per-env when a shared-slot collision splits. */
+  columnKey?: string;
+  modelKey?: string;
+  modelLabel?: string | null;
   hostName: string | null;
-  /** True when this host is no longer in hostAttachments (historical fallback). */
+  /**
+   * True when this host is no longer in hostAttachments AND no environment-backed
+   * run resolved to it — i.e. genuinely detached, not merely run-derived.
+   */
   isHistorical: boolean;
+  /** Annotating segment when a collision split this cell (e.g. `"sandbox-x"`). */
+  splitLabel?: string | null;
 };
 
 export type CellTrendPoint = {
@@ -15,6 +53,12 @@ export type CellTrendPoint = {
   runLabel: string;
   timestamp: number;
   result: "passed" | "failed" | "pending" | "partial";
+  /** Passed iterations for this run in the cell. */
+  passed: number;
+  /** Failed iterations for this run in the cell. */
+  failed: number;
+  /** Total iterations for this run in the cell. */
+  total: number;
   /** Median (p50) latency for this run in the cell. */
   latencyMs: number | null;
   /** 95th percentile latency for this run in the cell. */
@@ -52,6 +96,18 @@ export type CrossHostData = {
 export type UseCrossHostDataOptions = {
   /** When true, attach per-cell run trend series (All runs view). */
   cellTrends?: boolean;
+  /**
+   * `namedHostId` → display name for hosts the suite does not carry an
+   * attachment for — sourced from the project host list (`useHostList`), which
+   * the caller owns so this hook (and the components around it) stay
+   * queryless. Without it, run-derived columns can only show a truncated id.
+   */
+  hostNamesById?: Map<string, string | null>;
+  /**
+   * Project environments for the suite — used to derive `modelKey` and to
+   * detect shared-slot collisions that must split a (host, model) cell.
+   */
+  environments?: readonly CrossHostEnvironment[];
 };
 
 /** Fallback display name for a host with no resolved name: last 6 id chars. */
@@ -138,7 +194,7 @@ function iterationLatencyMs(iter: EvalIteration): number | null {
  */
 export function buildCellTrendSeries(
   caseId: string,
-  hostId: string,
+  columnKey: string,
   runs: EvalSuiteRun[],
   allIterations: EvalIteration[],
   runHostMap: Map<string, string>,
@@ -149,7 +205,7 @@ export function buildCellTrendSeries(
 
   for (const iter of allIterations) {
     if (!iter.suiteRunId || !activeRunIds.has(iter.suiteRunId)) continue;
-    if (runHostMap.get(iter.suiteRunId) !== hostId) continue;
+    if (runHostMap.get(iter.suiteRunId) !== columnKey) continue;
     const iterCaseId = iter.testCaseId ?? `__no_case_${iter._id}`;
     if (iterCaseId !== caseId) continue;
 
@@ -196,12 +252,14 @@ export function buildCellTrendSeries(
         pendingCount,
         totalCount,
       ),
+      passed: passCount,
+      failed: failCount,
+      total: totalCount,
       latencyMs: median(latencySamples),
       latencyP95Ms: percentile(latencySamples, 95),
       tokens:
         totalCount > 0 && totalTokens > 0 ? totalTokens / totalCount : null,
-      toolCalls:
-        totalCount > 0 ? totalToolCalls / totalCount : null,
+      toolCalls: totalCount > 0 ? totalToolCalls / totalCount : null,
     };
   });
 }
@@ -246,6 +304,137 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   };
 }
 
+function slotFingerprint(env: CrossHostEnvironment): string {
+  const skills = skillSlotKey(env);
+  const plugins = [...(env.pluginVersionIds ?? [])].sort().join(",");
+  return [
+    env.serverAttachmentId ?? "",
+    skills,
+    env.computerEnvironmentId ?? "",
+    plugins,
+  ].join("|");
+}
+
+/** Which shared slot separates these environments, or null if none does. */
+type DifferingSlot = "servers" | "skills" | "sandbox" | "plugins";
+
+function differingSlot(envs: CrossHostEnvironment[]): DifferingSlot | null {
+  if (envs.length < 2) return null;
+  const first = envs[0]!;
+  const differsOn = (read: (env: CrossHostEnvironment) => string) =>
+    envs.some((env) => read(env) !== read(first));
+
+  if (differsOn((env) => env.serverAttachmentId ?? "")) return "servers";
+  if (differsOn(skillSlotKey)) {
+    return "skills";
+  }
+  if (differsOn((env) => env.computerEnvironmentId ?? "")) return "sandbox";
+  if (differsOn((env) => sortedIds(env.pluginVersionIds))) return "plugins";
+  return null;
+}
+
+function sortedIds(ids: readonly string[] | undefined): string {
+  return [...(ids ?? [])].sort().join(",");
+}
+
+/**
+ * The skill slot's identity: WHICH skills, and at which revision each is held.
+ *
+ * The revision half is load-bearing. Two environments selecting the same skill
+ * ids at different pinned revisions are two different executions — comparing
+ * them is the whole point — so a key built from ids alone would report them as
+ * one slot, merge their runs into a single cell, and average away the very
+ * difference under test.
+ */
+function skillSlotKey(env: CrossHostEnvironment): string {
+  const ids = sortedIds(env.skillSelection?.skillIds);
+  const pins = [...(env.skillSelection?.versionPins ?? [])]
+    .map((pin) => `${pin.skillId}@${pin.versionId}`)
+    .sort()
+    .join(",");
+  return pins ? `${ids}#${pins}` : ids;
+}
+
+/**
+ * How ONE environment reads along the slot that split its cell.
+ *
+ * The label has to differ per environment, because telling the split columns
+ * apart is the entire reason the cell split. Naming the slot alone would print
+ * the same annotation on every column — and reading the sandbox pin regardless
+ * of which slot actually differs would do it too, while also naming the wrong
+ * dimension.
+ */
+function splitLabelFor(
+  env: CrossHostEnvironment,
+  slot: DifferingSlot | null,
+): string | null {
+  switch (slot) {
+    case "servers":
+      return env.serverAttachmentId
+        ? `servers-${env.serverAttachmentId.slice(-4)}`
+        : "no servers";
+    case "skills": {
+      // A COUNT cannot tell these columns apart. That is true of a skill count
+      // when the split is by revision — every column reads "1 skill" — and just
+      // as true of a pin COUNT, since two environments each pinning one skill
+      // to a different revision both read "pinned 1 version". Name the
+      // revisions themselves, by the same id-suffix convention the servers and
+      // sandbox arms use. Sorted so the label is stable across pin order.
+      const pins = env.skillSelection?.versionPins ?? [];
+      if (pins.length > 0) {
+        const revisions = pins
+          .map((pin) => pin.versionId.slice(-4))
+          .sort()
+          .join(",");
+        return `pinned ${revisions}`;
+      }
+      const count = env.skillSelection?.skillIds.length ?? 0;
+      return count === 0
+        ? "no skills"
+        : `${count} skill${count === 1 ? "" : "s"}`;
+    }
+    case "sandbox":
+      return env.computerEnvironmentId
+        ? `sandbox-${env.computerEnvironmentId.slice(-4)}`
+        : "no sandbox";
+    case "plugins": {
+      const count = env.pluginVersionIds?.length ?? 0;
+      return count === 0
+        ? "no plugins"
+        : `${count} plugin${count === 1 ? "" : "s"}`;
+    }
+    default:
+      return null;
+  }
+}
+
+export function modelKeyForRun(
+  run: EvalSuiteRun,
+  envById: Map<string, CrossHostEnvironment>,
+): string {
+  // Persisted attribution is the run's frozen column. A later edit to the
+  // named environment must not move historical runs into a new model cell
+  // (or recast an inherit run as an override).
+  if (
+    (run.modelSource === "override" || run.modelSource === "case") && run.effectiveModelId) {
+    return run.effectiveModelId;
+  }
+  if (run.modelSource === "client_default") {
+    return CLIENT_DEFAULT_MODEL_KEY;
+  }
+  if (run.client?.modelId) return run.client.modelId;
+  // Pre-attribution rows: join the live environment if present.
+  const ref = runEnvironmentRef(run);
+  const env = ref ? envById.get(ref.environmentId) : undefined;
+  if (env?.modelId) return env.modelId;
+  return CLIENT_DEFAULT_MODEL_KEY;
+}
+
+function modelLabelForKey(modelKey: string): string | null {
+  if (modelKey === CLIENT_DEFAULT_MODEL_KEY) return null;
+  return compactModelIdTail(modelKey);
+}
+
 export function useCrossHostData(
   suite: EvalSuite,
   cases: EvalCase[],
@@ -253,42 +442,188 @@ export function useCrossHostData(
   allIterations: EvalIteration[],
   options: UseCrossHostDataOptions = {},
 ): CrossHostData {
-  const { cellTrends = false } = options;
+  const { cellTrends = false, hostNamesById, environments } = options;
 
   return useMemo(() => {
     const attachments = suite.hostAttachments ?? [];
     const hasHostAttachments = attachments.length > 0;
+    const envById = new Map(
+      (environments ?? []).map((env) => [env.environmentId, env]),
+    );
 
-    // Build ordered host columns from attachments
-    const attachedHostIds = new Set(attachments.map((a) => a.namedHostId));
-    const hostColumns: HostColumn[] = attachments.map((a) => ({
-      hostId: a.namedHostId,
-      hostName: a.hostName,
-      isHistorical: false,
-    }));
-
-    // Index active run IDs to avoid orphaned historical iterations
     const activeRunIds = new Set(runs.map((r) => r._id));
+    const attachedHostIds = new Set(attachments.map((a) => a.namedHostId));
 
-    // Find historical namedHostIds from runs that are no longer attached
-    const historicalHostIds = new Set<string>();
-    for (const run of runs) {
-      if (run.namedHostId && !attachedHostIds.has(run.namedHostId)) {
-        historicalHostIds.add(run.namedHostId);
+    type PendingColumn = {
+      hostId: string;
+      modelKey: string;
+      envIds: string[];
+      isHistorical: boolean;
+      /** The column id is a real `hosts` row, not a synthetic style/sdk key. */
+      addressable: boolean;
+    };
+    const pending = new Map<string, PendingColumn>();
+    // Keep the existing named-host column ids; synthetic identities cannot
+    // be passed to host queries or configuration actions.
+    const clientColumnId = (run: EvalSuiteRun) => {
+      const identity = runClientIdentity(run);
+      return identity.namedHostId ?? identity.key;
+    };
+    const identities = new Map(
+      runs.map((run) => [
+        clientColumnId(run),
+        runClientIdentity(run, hostNamesById),
+      ]),
+    );
+    const groupKey = (hostId: string, modelKey: string) =>
+      `${hostId}::${modelKey}`;
+
+    const touch = (
+      hostId: string,
+      modelKey: string,
+      opts: { envId?: string; historical: boolean; addressable: boolean },
+    ) => {
+      const key = groupKey(hostId, modelKey);
+      const existing = pending.get(key);
+      if (!existing) {
+        pending.set(key, {
+          hostId,
+          modelKey,
+          envIds: opts.envId ? [opts.envId] : [],
+          isHistorical: opts.historical,
+          addressable: opts.addressable,
+        });
+        return;
       }
+      if (opts.envId && !existing.envIds.includes(opts.envId)) {
+        existing.envIds.push(opts.envId);
+      }
+      existing.isHistorical = existing.isHistorical && opts.historical;
+      existing.addressable = existing.addressable || opts.addressable;
+    };
+
+    for (const a of attachments) {
+      touch(a.namedHostId, CLIENT_DEFAULT_MODEL_KEY, {
+        historical: false,
+        addressable: true,
+      });
     }
 
-    // Append stable fallback columns for historical host IDs
-    for (const hostId of historicalHostIds) {
-      hostColumns.push({ hostId, hostName: null, isHistorical: true });
+    for (const run of runs) {
+      const identity = runClientIdentity(run);
+      const hostId = identity.namedHostId ?? identity.key;
+      const modelKey = modelKeyForRun(run, envById);
+      const ref = runEnvironmentRef(run);
+      const historical = !attachedHostIds.has(hostId) && ref === null;
+      touch(hostId, modelKey, {
+        envId: ref?.environmentId,
+        historical,
+        // Only a run that resolved to a real host contributes an addressable
+        // id. A pre-descriptor run can still carry an environmentRef, so
+        // "this group has env ids" does NOT make its id a host id.
+        addressable: Boolean(identity.namedHostId),
+      });
     }
 
-    // Build run → namedHostId index (only active runs)
+    // The caller often hands the project's full named-environment list.
+    // Only environments attached to this suite, or referenced by a
+    // displayed run, should mint columns — otherwise every other named
+    // row in the project appears as an empty host/model cell.
+    const relevantEnvIds = new Set<string>(suite.environmentIds ?? []);
+    for (const run of runs) {
+      const ref = runEnvironmentRef(run);
+      if (ref) relevantEnvIds.add(ref.environmentId);
+    }
+
+    for (const env of environments ?? []) {
+      if (!env.hostId) continue;
+      if (!relevantEnvIds.has(env.environmentId)) continue;
+      const modelKey = env.modelId ?? CLIENT_DEFAULT_MODEL_KEY;
+      touch(env.hostId, modelKey, {
+        envId: env.environmentId,
+        historical: false,
+        addressable: true,
+      });
+    }
+
+    const resolveHostName = (hostId: string): string | null =>
+      attachments.find((a) => a.namedHostId === hostId)?.hostName ??
+      hostNamesById?.get(hostId) ??
+      identities.get(hostId)?.name ??
+      null;
+
+    // Runs with no environmentRef cannot land in a split column. If a
+    // colliding group also has a legacy host-backed run, keep the plain
+    // group key alive so those iterations stay visible.
+    const groupsNeedingResidual = new Set<string>();
+    for (const run of runs) {
+      if (runEnvironmentRef(run)) continue;
+      groupsNeedingResidual.add(
+        groupKey(clientColumnId(run), modelKeyForRun(run, envById)),
+      );
+    }
+
+    const hostColumns: HostColumn[] = [];
+    for (const group of pending.values()) {
+      const identity = identities.get(group.hostId);
+      const namedHostId = group.addressable ? group.hostId : undefined;
+      const groupEnvs = group.envIds
+        .map((id) => envById.get(id))
+        .filter((e): e is CrossHostEnvironment => Boolean(e));
+      const fps = new Set(groupEnvs.map(slotFingerprint));
+      const collide = fps.size > 1;
+      if (collide) {
+        const slot = differingSlot(groupEnvs);
+        for (const env of groupEnvs) {
+          hostColumns.push({
+            hostId: group.hostId,
+            namedHostId,
+            hostStyle: identity?.hostStyle,
+            columnKey: `${group.hostId}::${group.modelKey}::${env.environmentId}`,
+            modelKey: group.modelKey,
+            modelLabel: modelLabelForKey(group.modelKey),
+            hostName: resolveHostName(group.hostId),
+            isHistorical: group.isHistorical,
+            splitLabel: splitLabelFor(env, slot),
+          });
+        }
+        if (
+          !groupsNeedingResidual.has(groupKey(group.hostId, group.modelKey))
+        ) {
+          continue;
+        }
+      }
+      hostColumns.push({
+        hostId: group.hostId,
+        namedHostId,
+        hostStyle: identity?.hostStyle,
+        columnKey: groupKey(group.hostId, group.modelKey),
+        modelKey: group.modelKey,
+        modelLabel: modelLabelForKey(group.modelKey),
+        hostName: resolveHostName(group.hostId),
+        isHistorical: group.isHistorical,
+      });
+    }
+
+    // Build run → columnKey index (only active runs)
     const runHostMap = new Map<string, string>();
     for (const run of runs) {
-      if (run.namedHostId && activeRunIds.has(run._id)) {
-        runHostMap.set(run._id, run.namedHostId);
-      }
+      if (!activeRunIds.has(run._id)) continue;
+      const hostId = clientColumnId(run);
+      const modelKey = modelKeyForRun(run, envById);
+      const ref = runEnvironmentRef(run);
+      const splitCol = hostColumns.find(
+        (col) =>
+          col.hostId === hostId &&
+          col.modelKey === modelKey &&
+          col.splitLabel &&
+          ref &&
+          col.columnKey?.endsWith(`::${ref.environmentId}`),
+      );
+      runHostMap.set(
+        run._id,
+        splitCol?.columnKey ?? groupKey(hostId, modelKey),
+      );
     }
 
     // Rank runs newest-first by completedAt ?? createdAt so cells can be
@@ -336,7 +671,8 @@ export function useCrossHostData(
       if (!hostId) continue;
       const caseId = iter.testCaseId ?? `__no_case_${iter._id}`;
 
-      if (winningRunByCell.get(caseId)?.get(hostId) !== iter.suiteRunId) continue;
+      if (winningRunByCell.get(caseId)?.get(hostId) !== iter.suiteRunId)
+        continue;
 
       let byHost = rawMatrix.get(caseId);
       if (!byHost) {
@@ -352,23 +688,23 @@ export function useCrossHostData(
     const matrix = new Map<string, Map<string, CellData>>();
     for (const [caseId, byHost] of rawMatrix) {
       const cellMap = new Map<string, CellData>();
-      for (const [hostId, iters] of byHost) {
+      for (const [columnKey, iters] of byHost) {
         const cell = buildCellData(iters);
         if (cellTrends) {
           const trendSeries = buildCellTrendSeries(
             caseId,
-            hostId,
+            columnKey,
             runs,
             allIterations,
             runHostMap,
             activeRunIds,
           );
           if (trendSeries.length > 0) {
-            cellMap.set(hostId, { ...cell, trendSeries });
+            cellMap.set(columnKey, { ...cell, trendSeries });
             continue;
           }
         }
-        cellMap.set(hostId, cell);
+        cellMap.set(columnKey, cell);
       }
       matrix.set(caseId, cellMap);
     }
@@ -388,5 +724,13 @@ export function useCrossHostData(
     const hasAnyData = matrix.size > 0;
 
     return { hostColumns, caseRows, matrix, hasAnyData, hasHostAttachments };
-  }, [suite.hostAttachments, cases, runs, allIterations, cellTrends]);
+  }, [
+    suite.hostAttachments,
+    cases,
+    runs,
+    allIterations,
+    cellTrends,
+    hostNamesById,
+    environments,
+  ]);
 }

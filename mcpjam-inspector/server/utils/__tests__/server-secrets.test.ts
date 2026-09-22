@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchRuntimeServerSecrets } from "../server-secrets.js";
+import {
+  fetchRuntimeServerSecrets,
+  postToConvexAuthorized,
+} from "../server-secrets.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+const ORIGINAL_SERVICE_TOKEN = process.env.INSPECTOR_SERVICE_TOKEN;
 
 describe("fetchRuntimeServerSecrets", () => {
   beforeEach(() => {
@@ -13,6 +17,11 @@ describe("fetchRuntimeServerSecrets", () => {
       delete process.env.CONVEX_HTTP_URL;
     } else {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    if (ORIGINAL_SERVICE_TOKEN === undefined) {
+      delete process.env.INSPECTOR_SERVICE_TOKEN;
+    } else {
+      process.env.INSPECTOR_SERVICE_TOKEN = ORIGINAL_SERVICE_TOKEN;
     }
     vi.unstubAllGlobals();
   });
@@ -38,6 +47,71 @@ describe("fetchRuntimeServerSecrets", () => {
       status: 403,
       code: "FORBIDDEN",
       message: "No access",
+    });
+  });
+
+  it("requires service authentication for scenario secrets and preserves the viewer bearer", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      Response.json({ success: true, headers: { Authorization: "synthetic" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const args = {
+      bearerToken: "tester-token",
+      projectId: "project-1",
+      serverId: "server-1",
+      scenarioId: "scenario-1",
+      accessScope: "chat_v2" as const,
+    };
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    await expect(fetchRuntimeServerSecrets(args)).rejects.toMatchObject({
+      status: 500,
+      code: "INTERNAL_ERROR",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    await expect(fetchRuntimeServerSecrets(args)).resolves.toMatchObject({
+      headers: { Authorization: "synthetic" },
+    });
+    expect(fetchMock.mock.calls[0]?.[1].headers).toMatchObject({
+      Authorization: "Bearer tester-token",
+      "x-inspector-service-token": "service-token",
+    });
+  });
+
+  it("requires and unconditionally forwards the service token for DCR", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    await expect(
+      postToConvexAuthorized({
+        path: "/web/xaa/server/dcr-registration",
+        bearerToken: "user-token",
+        body: { action: "get" },
+        serviceName: "DCR",
+        requireInspectorServiceToken: true,
+      })
+    ).rejects.toThrow(/INSPECTOR_SERVICE_TOKEN/);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    await postToConvexAuthorized({
+      path: "/web/xaa/server/dcr-registration",
+      bearerToken: "user-token",
+      body: { action: "get" },
+      serviceName: "DCR",
+      requireInspectorServiceToken: true,
+    });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer user-token",
+      "x-inspector-service-token": "service-token",
     });
   });
 });

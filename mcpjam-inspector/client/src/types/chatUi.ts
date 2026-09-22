@@ -1,23 +1,91 @@
 // Shared "Chat UI" types — single source of truth for the chatUi envelope
 // that wraps welcome/feedback dialogs (and future surfaces / branding).
-// Consumed by the chatbox builder, the hosted chat runtime, and the
+// Consumed by the scenario builder, the hosted chat runtime, and the
 // playground bootstrap normalizer.
 
-export interface ChatboxWelcomeDialogSettings {
+export interface ScenarioWelcomeDialogSettings {
   enabled: boolean;
   body?: string;
 }
 
-export interface ChatboxFeedbackDialogSettings {
+/**
+ * @deprecated The session-level feedback dialog. Its backend write path and
+ * storage table are gone; per-turn ratings replaced it.
+ *
+ * As of the backend's Phase-3 deploy A, redeem and the settings response no
+ * longer return this surface at all, and `chatUi.surfaces.feedback` is no
+ * longer writable. Nothing in the client reads it. It survives only so a build
+ * running against an older backend still typechecks, and goes away with the
+ * backend's deploy B.
+ */
+export interface ScenarioFeedbackDialogSettings {
   enabled: boolean;
   /** Completed tool calls between feedback prompts in hosted sessions (not user message count). */
   everyNToolCalls?: number;
   promptHint?: string;
 }
 
+/**
+ * Which per-turn widget a scenario shows. `stars` writes `sessionScores` under
+ * the `user_rating` key (1–5); `thumbs` writes `user_thumb` (0|1). Both fold
+ * into the same session rollup server-side, so the Sessions filters do not
+ * branch on this.
+ */
+export type ScenarioPerTurnFeedbackStyle = "stars" | "thumbs";
+
+/**
+ * Per-turn ratings: a rating plus an optional comment under each assistant
+ * response, written to `sessionScores` under the key the `style` selects.
+ *
+ * OFF by default and rolled out per scenario. The backend normalizer returns a
+ * fully-defaulted envelope through redeem, so a `true` default would enable
+ * this everywhere the moment the UI shipped.
+ */
+export interface ScenarioPerTurnFeedbackSettings {
+  enabled: boolean;
+  /** Absent ⇒ `stars`, which is what every scenario predating thumbs had. */
+  style?: ScenarioPerTurnFeedbackStyle;
+  /** Label above the widget. Empty ⇒ the widget's own copy. */
+  prompt?: string;
+  commentPlaceholder?: string;
+  thanksMessage?: string;
+}
+
+/**
+ * One "what to try" item (BB-176).
+ *
+ * `id` is minted client-side and is stable for the life of the item: it keys
+ * the tester's local check state, so editing or deleting one task must not
+ * re-point another task's checkmark.
+ */
+export interface ScenarioTaskItem {
+  id: string;
+  title: string;
+  /** One-liner under the title. Absent ⇒ the title stands alone. */
+  hint?: string;
+}
+
+/**
+ * The study's task list. Empty is the ordinary case — a study with no tasks
+ * hides the tester-side control entirely rather than showing an empty one.
+ *
+ * Deliberately holds no completion state: checking items off is the tester's
+ * private bookkeeping, and what they actually did is read from Sessions.
+ */
+export interface ScenarioTasksSettings {
+  items: ScenarioTaskItem[];
+}
+
 export interface ChatUiSurfaces {
-  welcome?: ChatboxWelcomeDialogSettings | null;
-  feedback?: ChatboxFeedbackDialogSettings | null;
+  welcome?: ScenarioWelcomeDialogSettings | null;
+  /** @deprecated see `ScenarioFeedbackDialogSettings`. */
+  feedback?: ScenarioFeedbackDialogSettings | null;
+  perTurnFeedback?: ScenarioPerTurnFeedbackSettings | null;
+  /**
+   * Additive: a backend predating BB-176 omits this, so every reader must
+   * treat absent as "no tasks" rather than assume the key is there.
+   */
+  tasks?: ScenarioTasksSettings | null;
 }
 
 export interface ChatUiSettings {

@@ -53,6 +53,7 @@ const tools = await manager.getTools();
 
 // Test definition (reused across providers)
 const additionTest = new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (agent) => {
     const r = await agent.run("Add 2 and 3");
@@ -101,11 +102,13 @@ async function compareProviders() {
   const suite = new EvalSuite({ name: "Tool Selection" });
 
   suite.add(new EvalTest({
+    id: "c_add",
     name: "add",
     test: async (a) => (await a.run("Add 2+3")).hasToolCall("add"),
   }));
 
   suite.add(new EvalTest({
+    id: "c_echo",
     name: "echo",
     test: async (a) => (await a.run("Echo 'hello'")).hasToolCall("echo"),
   }));

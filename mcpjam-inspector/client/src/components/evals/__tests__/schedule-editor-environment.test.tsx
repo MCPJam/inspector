@@ -1,0 +1,138 @@
+import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+
+const { mockSetSuiteSchedule, mockUseProjectEnvironments } = vi.hoisted(() => ({
+  mockSetSuiteSchedule: vi.fn(async () => ({})),
+  mockUseProjectEnvironments: vi.fn(() => [
+    { environmentId: "env-a", name: "Alpha" },
+    { environmentId: "env-b", name: "Beta" },
+  ]),
+}));
+
+vi.mock("convex/react", () => ({
+  useMutation: () => mockSetSuiteSchedule,
+  useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: (projectId: string | null) =>
+    projectId ? mockUseProjectEnvironments() : undefined,
+}));
+
+// Pin labels route through `environmentLabel`, which needs the project's host
+// and image names to label a NAMELESS (ad-hoc) row by its client.
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({
+    hosts: [{ hostId: "host-1", name: "Claude" }],
+    isLoading: false,
+  }),
+}));
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useComputersEnabled: () => false,
+}));
+vi.mock("@/hooks/useSandboxImages", () => ({
+  useSandboxImages: () => undefined,
+}));
+
+// The pin is NOT flag-gated: a suite fanning out over >=2 cells has to say
+// which one a scheduled run uses, whatever minted them. Kept mocked FALSE so
+// these cases prove the pin survives the named-environments flag being off.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+// `useEnvironmentLabelContext` always calls `useAvailableModels`, which
+// requires AppStateProvider. These cases only assert the pin select.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
+
+import { ScheduleEditor } from "../schedule-editor";
+
+describe("ScheduleEditor environment pin", () => {
+  beforeEach(() => {
+    mockSetSuiteSchedule.mockClear();
+  });
+
+  it("renders a required environment select for a multi-env suite and pins on enable", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScheduleEditor
+        suiteId="suite-1"
+        schedule={undefined}
+        projectId="proj-1"
+        environmentIds={["env-b", "env-a"]}
+      />
+    );
+
+    expect(
+      screen.getByText("Scheduled runs use environment")
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("switch"));
+
+    expect(mockSetSuiteSchedule).toHaveBeenCalledTimes(1);
+    expect(mockSetSuiteSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        enabled: true,
+        // Defaults to the FIRST attached env (suite attach order), not the
+        // environments list order.
+        environmentId: "env-b",
+      })
+    );
+  });
+
+  it("uses the persisted pin over the attach-order default", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScheduleEditor
+        suiteId="suite-1"
+        schedule={{
+          intervalMinutes: 60,
+          enabled: false,
+          state: "active",
+          environmentId: "env-a",
+        }}
+        projectId="proj-1"
+        environmentIds={["env-b", "env-a"]}
+      />
+    );
+
+    await user.click(screen.getByRole("switch"));
+
+    expect(mockSetSuiteSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true, environmentId: "env-a" })
+    );
+  });
+
+  it("omits the pin (and the select) for single-env and legacy suites", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScheduleEditor
+        suiteId="suite-1"
+        schedule={undefined}
+        projectId="proj-1"
+        environmentIds={["env-a"]}
+      />
+    );
+
+    expect(
+      screen.queryByText("Scheduled runs use environment")
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("switch"));
+
+    expect(mockSetSuiteSchedule).toHaveBeenCalledTimes(1);
+    const args = mockSetSuiteSchedule.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(args).not.toHaveProperty("environmentId");
+  });
+});

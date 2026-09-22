@@ -1,13 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { buildCiEvalsPath, buildEvalsPath } from "../app-navigation";
+import {
+  buildEvalsRunsPath,
+  buildEvalsPath,
+  buildEvaluatePath,
+} from "../app-navigation";
 import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 describe("eval-route-url", () => {
+  it("preserves the originating case checks when opening suite evaluators", () => {
+    const route = {
+      type: "suite-edit" as const,
+      suiteId: "suite-1",
+      fromCaseChecks: "case-1",
+    };
+    const [path, search] = buildEvaluatePath(route).split("?");
+    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(
+      route,
+    );
+  });
+  it("roundtrips the case UVC checks page", () => {
+    const route = {
+      type: "test-edit" as const,
+      suiteId: "suite-1",
+      testId: "case-1",
+      checks: true,
+    };
+    const url = buildEvalsPath(route);
+    const [path, search] = url.split("?");
+    expect(url).toContain("checks=1");
+    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(route);
+  });
   it("parses eval list and create routes", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
       type: "list",
     });
-    expect(parseEvalRouteFromUrl("/ci-evals", "ci-evals")).toEqual({
+    expect(parseEvalRouteFromUrl("/evals/runs", "evals/runs")).toEqual({
       type: "list",
     });
     expect(parseEvalRouteFromUrl("/evals", "/evals/create")).toEqual({
@@ -22,7 +49,7 @@ describe("eval-route-url", () => {
       view: "runs",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=runs")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=runs"),
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -32,8 +59,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123",
-        "?view=test-cases&fromCommit=abc123"
-      )
+        "?view=test-cases&fromCommit=abc123",
+      ),
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -41,7 +68,7 @@ describe("eval-route-url", () => {
       fromCommit: "abc123",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host"),
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -57,14 +84,14 @@ describe("eval-route-url", () => {
         type: "suite-overview",
         suiteId: "s_abc",
         view: "executions",
-      })
+      }),
     ).toBe("/evals/suite/s_abc?view=executions");
     expect(
       buildEvalsPath({
         type: "suite-overview",
         suiteId: "s_abc",
         fromCommit: "manual-xyz",
-      })
+      }),
     ).toBe("/evals/suite/s_abc?fromCommit=manual-xyz");
   });
 
@@ -73,8 +100,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/runs/r_456",
-        "?iteration=i_1&insights=1"
-      )
+        "?iteration=i_1&insights=1",
+      ),
     ).toEqual({
       type: "run-detail",
       suiteId: "s_123",
@@ -86,8 +113,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/runs/r_456",
-        "?compareTo=r_123"
-      )
+        "?compareTo=r_123",
+      ),
     ).toEqual({
       type: "run-detail",
       suiteId: "s_123",
@@ -119,9 +146,9 @@ describe("eval-route-url", () => {
         iteration: "i_3",
         insightsFocus: true,
         compareToRunId: "r_base",
-      })
+      }),
     ).toBe(
-      "/evals/suite/s_abc/runs/r_def?iteration=i_3&insights=1&compareTo=r_base"
+      "/evals/suite/s_abc/runs/r_def?iteration=i_3&insights=1&compareTo=r_base",
     );
   });
 
@@ -130,8 +157,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789",
-        "?iteration=i_2"
-      )
+        "?iteration=i_2",
+      ),
     ).toEqual({
       type: "test-detail",
       suiteId: "s_123",
@@ -139,7 +166,7 @@ describe("eval-route-url", () => {
       iteration: "i_2",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/test/t_789/edit")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/test/t_789/edit"),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -149,8 +176,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789/edit",
-        "?compare=1"
-      )
+        "?compare=1",
+      ),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -161,8 +188,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789/edit",
-        "?compare=true&iteration=i_42"
-      )
+        "?compare=true&iteration=i_42",
+      ),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -184,17 +211,42 @@ describe("eval-route-url", () => {
         testId: "t_def",
         openCompare: true,
         iteration: "i_42",
-      })
-    ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
+      }),
+    ).toBe("/evaluate/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
+    expect(
+      buildEvaluatePath({
+        type: "test-edit",
+        suiteId: "preview:asana:create-and-assign",
+        testId: "case-create-task",
+        fromEvalServer: "srv-a",
+      }),
+    ).toBe(
+      "/evaluate/suite/preview%3Aasana%3Acreate-and-assign/test/case-create-task/edit?fromEvalServer=srv-a",
+    );
   });
 
-  it("parses ci eval commit detail query state", () => {
+  it("parses a first-run return onto today's case editor", () => {
     expect(
       parseEvalRouteFromUrl(
-        "/ci-evals",
-        "/ci-evals/commit/abc1234567890",
-        "?suite=s_abc&iteration=i_4"
-      )
+        "/evaluate",
+        "/evaluate/suite/preview%3Aasana%3Acreate-and-assign/test/case-create-task/edit",
+        "?fromEvalServer=srv-a",
+      ),
+    ).toEqual({
+      type: "test-edit",
+      suiteId: "preview:asana:create-and-assign",
+      testId: "case-create-task",
+      fromEvalServer: "srv-a",
+    });
+  });
+
+  it("parses runs-mode commit detail query state", () => {
+    expect(
+      parseEvalRouteFromUrl(
+        "/evals/runs",
+        "/evals/runs/commit/abc1234567890",
+        "?suite=s_abc&iteration=i_4",
+      ),
     ).toEqual({
       type: "commit-detail",
       commitSha: "abc1234567890",
@@ -203,32 +255,32 @@ describe("eval-route-url", () => {
     });
   });
 
-  it("builds ci eval commit detail and suite routes", () => {
+  it("builds runs-mode commit detail and suite routes", () => {
     expect(
-      buildCiEvalsPath({
+      buildEvalsRunsPath({
         type: "commit-detail",
         commitSha: "abc1234567890",
         suite: "s_abc",
         iteration: "i_4",
-      })
-    ).toBe("/ci-evals/commit/abc1234567890?suite=s_abc&iteration=i_4");
+      }),
+    ).toBe("/evals/runs/commit/abc1234567890?suite=s_abc&iteration=i_4");
     expect(
-      buildCiEvalsPath({
+      buildEvalsRunsPath({
         type: "suite-overview",
         suiteId: "s_abc",
         view: "test-cases",
         fromCommit: "sha9abcdef",
-      })
-    ).toBe("/ci-evals/suite/s_abc?view=test-cases&fromCommit=sha9abcdef");
+      }),
+    ).toBe("/evals/runs/suite/s_abc?view=test-cases&fromCommit=sha9abcdef");
   });
 
-  it("parses ci eval suite drill-down paths", () => {
+  it("parses runs-mode suite drill-down paths", () => {
     expect(
       parseEvalRouteFromUrl(
-        "/ci-evals",
-        "/ci-evals/suite/s_123/test/t_789/edit",
-        "?compare=1"
-      )
+        "/evals/runs",
+        "/evals/runs/suite/s_123/test/t_789/edit",
+        "?compare=1",
+      ),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -238,12 +290,112 @@ describe("eval-route-url", () => {
   });
 
   it("returns null outside the requested prefix", () => {
-    expect(parseEvalRouteFromUrl("/ci-evals", "/evals/suite/s_123")).toBeNull();
+    expect(
+      parseEvalRouteFromUrl("/evals/runs", "/evals/suite/s_123"),
+    ).toBeNull();
+  });
+
+  it("keeps the two modes mutually exclusive under the shared /evals root", () => {
+    // Runs lives inside Suites' path space, so Suites must NOT swallow a Runs
+    // URL as a bare list route — that would render the wrong lens instead of
+    // letting the Runs route match.
+    expect(parseEvalRouteFromUrl("/evals", "/evals/runs")).toBeNull();
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/runs/suite/s_123"),
+    ).toBeNull();
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/runs/commit/abc123"),
+    ).toBeNull();
+  });
+
+  it("degrades a commit route built in Suites mode to that mode's list", () => {
+    // Commits are a Runs-only lens; Suites has no cross-suite SHA view.
+    expect(
+      buildEvalsPath({ type: "commit-detail", commitSha: "abc1234567890" }),
+    ).toBe("/evals");
+  });
+
+  it("keeps /evaluate and /evals from parsing each other's URLs", () => {
+    // The flag-gated Evaluate (New) tab is a SIBLING of /evals, not a
+    // sub-tree: `/evaluate` does not start with `/evals/`, and `/evals` does
+    // not start with `/evaluate/`. If either prefix ever swallowed the
+    // other's URLs, one tab would silently render the other's routes.
+    expect(parseEvalRouteFromUrl("/evals", "/evaluate")).toBeNull();
+    expect(parseEvalRouteFromUrl("/evals", "/evaluate/suite/s_123")).toBeNull();
+    expect(parseEvalRouteFromUrl("/evaluate", "/evals")).toBeNull();
+    expect(parseEvalRouteFromUrl("/evaluate", "/evals/runs")).toBeNull();
+
+    expect(parseEvalRouteFromUrl("/evaluate", "/evaluate")).toEqual({
+      type: "list",
+    });
+    expect(parseEvalRouteFromUrl("/evaluate", "/evaluate/create")).toEqual({
+      type: "create",
+    });
+    expect(
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/eval-server/srv-a"),
+    ).toEqual({
+      type: "eval-server",
+      serverId: "srv-a",
+    });
+    expect(parseEvalRouteFromUrl("/evals", "/evals/eval-server/srv-a")).toEqual(
+      { type: "list" },
+    );
+    expect(
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123/runs/r_9"),
+    ).toEqual({
+      type: "run-detail",
+      suiteId: "s_123",
+      runId: "r_9",
+      iteration: undefined,
+      testCaseId: undefined,
+    });
+  });
+
+  it("builds /evaluate paths and degrades its commit route to the list", () => {
+    expect(buildEvaluatePath({ type: "list" })).toBe("/evaluate");
+    expect(buildEvaluatePath({ type: "create" })).toBe("/evaluate/create");
+    expect(buildEvaluatePath({ type: "eval-server", serverId: "srv-a" })).toBe(
+      "/evaluate/eval-server/srv-a",
+    );
+    expect(buildEvalsPath({ type: "eval-server", serverId: "srv-a" })).toBe(
+      "/evals",
+    );
+    expect(
+      buildEvaluatePath({ type: "suite-overview", suiteId: "s_123" }),
+    ).toBe("/evaluate/suite/s_123");
+    // Commits are a Runs-mode lens; Evaluate (New) has no cross-suite SHA view.
+    expect(
+      buildEvaluatePath({ type: "commit-detail", commitSha: "abc1234567890" }),
+    ).toBe("/evaluate");
+  });
+
+  it("roundtrips the dedicated run comparison page", () => {
+    // The route this asserts is the one EBB-14 was: both halves of the
+    // round-trip have always worked, and the URL still 404'd because the
+    // router never registered the path. `route-elements-coverage.test.ts`
+    // guards that half; this one guards the string.
+    const route = {
+      type: "run-detail" as const,
+      suiteId: "s_1",
+      runId: "r_1",
+      comparison: true,
+    };
+    const path = buildEvaluatePath(route);
+    expect(path).toBe("/evaluate/suite/s_1/runs/r_1/compare");
+    expect(parseEvalRouteFromUrl("/evaluate", path)).toEqual({
+      ...route,
+      iteration: undefined,
+      testCaseId: undefined,
+    });
+    // Without the trailing segment it is the plain run page, not a compare.
+    expect(
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_1/runs/r_1"),
+    ).not.toHaveProperty("comparison");
   });
 
   it("decodes path params", () => {
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/suite%20one/test/case%202")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/suite%20one/test/case%202"),
     ).toEqual({
       type: "test-detail",
       suiteId: "suite one",

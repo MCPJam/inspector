@@ -20,10 +20,13 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  markSignOutInProgress,
+  SIGN_OUT_REQUEST_TIMEOUT_MS,
+} from "@/lib/auth/sign-out-latch";
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
-  LogIn,
   ChevronsUpDown,
   CircleUser,
   LogOut,
@@ -44,7 +47,7 @@ interface SidebarUserProps {
 
 export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signIn, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
+  const { user, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -65,13 +68,30 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const initials = getInitials(displayName);
 
   const finishSignOut = () => {
+    // Before `signOut()`, never after: authkit's refresh timer can fire on the
+    // next tick, and an unlatched failure would redirect this tab to the login
+    // page on top of the logout navigation below. See `sign-out-latch`.
+    markSignOutInProgress();
     const returnTo = window.location.origin;
     if (window.isElectron) {
-      void Promise.resolve(signOut({ returnTo, navigate: false })).finally(
-        () => {
+      // Bounded, because the latch above is. This promise settles when the
+      // logout request does, and nothing else navigates this window, so a hung
+      // request would outlive the suppression window and let the refresh timer
+      // redirect to the hosted login page mid-logout. The response is opaque,
+      // so there is nothing to lose by giving up on it and leaving anyway.
+      void Promise.race([
+        Promise.resolve(signOut({ returnTo, navigate: false })),
+        new Promise((resolve) =>
+          setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS),
+        ),
+      ])
+        // A failed logout request still gets the navigation: the session is
+        // already gone locally, and stranding the user on the signed-in app
+        // would be a worse answer than leaving.
+        .catch(() => undefined)
+        .finally(() => {
           window.location.assign(returnTo);
-        }
-      );
+        });
       return;
     }
 
@@ -104,10 +124,17 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
 
   const avatarUrl = profilePictureUrl;
 
+  // `size="lg"` drops its icon-mode padding so a 32px avatar can fill the
+  // button; the loading/guest branches hold a bare 16px icon instead, so they
+  // must center it explicitly or it parks 8px left of the rail centerline.
   const loadingState = (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" disabled>
+        <SidebarMenuButton
+          size="lg"
+          disabled
+          className="group-data-[collapsible=icon]:justify-center"
+        >
           <RefreshCw className="size-4 animate-spin" />
           <span className="truncate group-data-[collapsible=icon]:hidden">
             Loading...
@@ -128,28 +155,11 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
     return loadingState;
   }
 
-  // No WorkOS user → offer sign-in. In local/npx mode the actor is an anonymous
-  // guest (the raw WorkOS `user` stays null), and the header's sign-in button is
-  // hidden on the Home route, so the sidebar footer is the only sign-in
-  // affordance there. Surface it in both modes for parity with hosted.
+  // No WorkOS user → render nothing. Guests sign in from the header button and
+  // the org switcher's sign-in chip; a third affordance in the sidebar footer is
+  // redundant.
   if (!user) {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="lg"
-            onClick={() => signIn()}
-            aria-label="Sign in"
-            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-          >
-            <LogIn className="size-4" />
-            <span className="truncate group-data-[collapsible=icon]:hidden">
-              Sign in
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    );
+    return null;
   }
 
   if (isLoading) {
@@ -262,7 +272,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => appNavigate("/support")}
+                onClick={() => appNavigate("/settings/support")}
                 className="cursor-pointer"
               >
                 <MessageCircleQuestion className="size-4" />

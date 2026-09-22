@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   resolveHostTools,
@@ -18,7 +18,17 @@ const ctx = {
 // truthy instance. Execute paths live in mcpjam-built-in-tools.test.ts.
 const stubClient = {} as PlatformApiClient;
 
+import { coercePersonalEngineForActor } from "../computers/engine";
+import type { ExecutionScope } from "../execution-scope";
+
 const computer = { kind: "personal", workdir: "/srv" };
+
+/** A per-run box that actually booted the desktop image. */
+const DESKTOP_BINDING = {
+  sandboxId: "sbx_desktop_1",
+  sandboxRowId: "row_desktop_1",
+  runtimeKind: "desktop-browser" as const,
+};
 
 describe("resolveHostTools — builtInToolIds", () => {
   it("resolves web_search to a runnable tool", () => {
@@ -101,12 +111,82 @@ describe("resolveHostTools — computer-backed bash", () => {
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("advertises bash to guest actors too (cost is contained backend-side)", () => {
+  // ── Eval snapshots now carry `builtInToolIds` AND an ephemeral `computer`.
+  //
+  // Both halves are new at once, so the hazard is that `bash` gets registered
+  // TWICE for one iteration: once here (the host grants the id and the config
+  // carries a computer) and once out of band, where the eval runner injects a
+  // sandbox-bound `bash` into `prepared.allTools` after provisioning the box.
+  //
+  // It cannot happen, and these pin the reason: the personal resolver refuses a
+  // non-personal kind outright. The two paths are mutually exclusive by
+  // construction rather than by ordering luck.
+
+  it("does NOT advertise bash off an EPHEMERAL computer — the per-run box is not a personal resource", () => {
+    // An eval iteration's pinned config carries `{ kind: "ephemeral" }`. If
+    // this resolved a personal machine from it, the iteration would get a
+    // second `bash` pointed at the ACTING MEMBER's own computer, alongside the
+    // sandbox-bound one the runner injects.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME],
+        computer: { kind: "ephemeral" },
+      },
+      ctx
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("binds exactly ONE bash when the turn owns a sandbox, even with an ephemeral computer on the config", () => {
+    // The binding arrives out of band on `ctx` and is checked before every
+    // other gate, so it wins outright — one entry, bound to that box.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME],
+        computer: { kind: "ephemeral" },
+      },
+      { ...ctx, sandboxBinding: { sandboxId: "sbx_eval_1" } }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    expect(typeof tools![BASH_TOOL_NAME].execute).toBe("function");
+  });
+
+  it("skips bash for an anonymous guest on the personal-project path (backend rejects the reserve)", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
       { ...ctx, isGuest: true }
     );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("advertises bash to a guest ONLY on a host-funded swarm executionScope", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isGuest: true,
+        executionScope: {
+          kind: "swarm",
+          swarmId: "swarm-1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws-1",
+        },
+      }
+    );
     expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+  });
+
+  it("skips bash for a guest on a project-scoped executionScope (not host-funded)", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isGuest: true,
+        executionScope: { kind: "project", projectId: "project-1" },
+      }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
   it("does NOT advertise bash off the computer alone — the id must be granted", () => {
@@ -115,6 +195,209 @@ describe("resolveHostTools — computer-backed bash", () => {
       ctx
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+});
+
+describe("resolveHostTools — local engine actor coercion (structural)", () => {
+  // The observables: the LOCAL engine forces needsApproval:true whatever the
+  // host says, and its description names the user's own machine — so a tool
+  // built with approval OFF that still requires approval PROVES local
+  // survived, and one that doesn't PROVES the downgrade fired.
+  function bashTool(extraCtx: Record<string, unknown>) {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        requireToolApproval: false,
+        computerEngine: "local",
+        ...extraCtx,
+      } as never
+    );
+    return tools?.[BASH_TOOL_NAME] as
+      | { needsApproval?: boolean; description?: string }
+      | undefined;
+  }
+
+  it("honors local for a signed-in member's direct turn", () => {
+    // `bashTool` threads `requireToolApproval: false`, and local bash follows
+    // the switch like every other family now. What "local" still decides is
+    // WHICH machine the description names, which is the coercion under test.
+    const bash = bashTool({});
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).toMatch(/user's own machine/);
+  });
+
+  it("gates local bash when the switch is on", () => {
+    const bash = bashTool({ requireToolApproval: true });
+    expect(bash?.needsApproval).toBe(true);
+  });
+
+  it("downgrades local for a scenario session", () => {
+    const bash = bashTool({ isScenarioSession: true });
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).not.toMatch(/user's own machine/);
+  });
+
+  it("downgrades local for a guest on a host-funded swarm scope", () => {
+    const bash = bashTool({
+      isGuest: true,
+      executionScope: {
+        kind: "swarm",
+        swarmId: "swarm-1",
+        accessVersion: 1,
+        projectId: "project-1",
+        workspaceId: "ws-1",
+      },
+    });
+    // Bash IS advertised on the swarm grant — but never on the local engine.
+    expect(bash).toBeDefined();
+    expect(bash?.needsApproval).toBe(false);
+    expect(bash?.description).not.toMatch(/user's own machine/);
+  });
+
+  it("never reaches the personal path at all in a journey session", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      { ...ctx, computerEngine: "local", isJourneySession: true } as never
+    );
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+});
+
+describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
+  it("suppresses bash and reports a visible reason", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        onToolSuppressed: (info) => suppressed.push(info),
+      }
+    );
+    // The rest of the host's built-ins are untouched — only bash drops.
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+    expect(suppressed).toHaveLength(1);
+    expect(suppressed[0]!.id).toBe(BASH_TOOL_NAME);
+    // The reason has to say WHY, not just "unavailable": whoever opens the run
+    // needs to tell this apart from a host-config mistake.
+    expect(suppressed[0]!.reason).toMatch(/simulated \(swarm\) sessions/);
+  });
+
+  it("suppresses bash even when an executionScope is threaded", () => {
+    // `executionScope` cannot isolate a Journey run's bash (a signed-in
+    // launcher resolves to project_member), so it must not re-open the gate.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        executionScope: { kind: "project", projectId: "project-1" },
+      }
+    );
+    expect(tools).toBeUndefined();
+  });
+
+  it("leaves evals and hosted chat unaffected", () => {
+    for (const surface of [{}, { isScenarioSession: true }]) {
+      const tools = resolveHostTools(
+        { builtInToolIds: [BASH_TOOL_NAME], computer },
+        { ...ctx, ...surface }
+      );
+      expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    }
+  });
+
+  it("never constructs the bash tool, so no reserve can be attempted", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      { ...ctx, isJourneySession: true }
+    );
+    // No tool object at all ⇒ nothing the model can invoke ⇒ the reserve call
+    // inside `buildBashTool`'s execute is unreachable for this session.
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+});
+
+describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
+  const binding = { sandboxId: "sbx_ephemeral_1", workdir: "/srv/app" };
+
+  it("lifts the Journey suppression — a bound session gets bash", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        sandboxBinding: binding,
+        onToolSuppressed: (info) => suppressed.push(info),
+      }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    // Nothing was suppressed, so no notice should have been emitted either.
+    expect(suppressed).toHaveLength(0);
+  });
+
+  it("binds to the sandbox even with NO computer on the config", () => {
+    // The ephemeral path does not consult `config.computer` at all. A snapshot
+    // whose target carries no computer still gets a shell once a binding
+    // exists, because the binding IS the resource.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, isJourneySession: true, sandboxBinding: binding }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+  });
+
+  it("cannot be injected through the wire-sourced config", () => {
+    // THE unforgeability property. `sandboxBinding` does not exist on
+    // HostToolsConfig, so a hostile runtime-config / run-snapshot payload has
+    // no field to smuggle one in through — the value can only arrive on `ctx`,
+    // which is constructed in-process.
+    const hostilePayload = {
+      builtInToolIds: [BASH_TOOL_NAME],
+      computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
+      sandboxBinding: { sandboxId: "sbx_attacker" },
+    } as never;
+    const tools = resolveHostTools(hostilePayload, {
+      ...ctx,
+      isJourneySession: true,
+    });
+    // Still suppressed: the payload's extra keys are inert.
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+
+  it("still rejects a forged `ephemeral` computer on a non-journey surface", () => {
+    // `narrowHostComputer` is unchanged and only accepts `personal`, so the
+    // union that was NOT built stays impossible to fake.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME],
+        computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
+      },
+      ctx
+    );
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+
+  it("guest and executionScope gates do not apply to the ephemeral path", () => {
+    // A binding-holder has already passed the backend's provision
+    // authorization (project member + run launcher + a claimed, running
+    // attempt); the guest/scope gates below it reason about the personal
+    // reserve, which is not happening here.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, isGuest: true, sandboxBinding: binding }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+  });
+
+  it("inherits requireToolApproval like the personal path does", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, sandboxBinding: binding, requireToolApproval: true }
+    );
+    expect(tools![BASH_TOOL_NAME].needsApproval).toBe(true);
   });
 });
 
@@ -146,10 +429,10 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("does not advertise any workspace id in chatbox sessions", () => {
+  it("does not advertise any workspace id in scenario sessions", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isChatboxSession: true, mcpjamPlatformClient: stubClient }
+      { ...ctx, isScenarioSession: true, mcpjamPlatformClient: stubClient }
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -202,8 +485,739 @@ describe("narrowHostComputer", () => {
     expect(narrowHostComputer(null)).toBeNull();
     expect(narrowHostComputer("personal")).toBeNull();
     expect(narrowHostComputer({ kind: "shared" })).toBeNull();
+    // `personal` remains the ONLY accepted kind. The ephemeral sandbox binding
+    // deliberately travels on `ctx`, not here — widening this union would make
+    // the binding wire-forgeable, which is why it was not done.
+    expect(
+      narrowHostComputer({ kind: "ephemeral", sandboxId: "sbx_1" })
+    ).toBeNull();
     expect(narrowHostComputer({ kind: "personal", workdir: "   " })).toEqual({
       kind: "personal",
     });
   });
+});
+
+/**
+ * W3: the `browser` capability. The gates here are what keep a model from
+ * driving a real, signed-in browser on a surface that never thought about
+ * approval — and what keeps a shell off the same box.
+ */
+describe("resolveHostTools — browser", () => {
+  const browserCtx = {
+    ...ctx,
+    browserApprovalDelivery: { kind: "attested" as const },
+  };
+
+  function withFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("is not advertised while the runtime flag is off", () => {
+    withFlag(undefined, () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
+      ).toBeUndefined();
+    });
+  });
+
+  it("is not advertised when the BACKEND says it is not exposable (W7)", async () => {
+    // Honored even with the env flag on. The likeliest reason for a refusal is
+    // an unset desktop credit rate, which would meter every hosted browser
+    // hour at the cheaper terminal rate.
+    const { resetComputersRuntimeConfigBootstrapForTests, initComputersRuntimeConfigBootstrap } =
+      await import("../computers/runtime-config");
+    resetComputersRuntimeConfigBootstrapForTests();
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "tok");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              enabled: false,
+              hostedBrowser: { exposable: false, reason: "desktop_rate_unset" },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    await initComputersRuntimeConfigBootstrap();
+    try {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      withFlag("1", () => {
+        expect(
+          resolveHostTools(
+            { builtInToolIds: ["browser"], computer },
+            { ...browserCtx, onToolSuppressed: (i) => suppressed.push(i) },
+          ),
+        ).toBeUndefined();
+      });
+      expect(suppressed[0]).toMatchObject({ id: "browser" });
+      expect(suppressed[0].reason).toContain("not fully configured");
+    } finally {
+      resetComputersRuntimeConfigBootstrapForTests();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("is still advertised when the backend has not answered at all", async () => {
+    // An older backend says nothing. That is not a refusal — the env flag is
+    // already dark by default and is what staging drives the runtime with.
+    const { resetComputersRuntimeConfigBootstrapForTests } = await import(
+      "../computers/runtime-config"
+    );
+    resetComputersRuntimeConfigBootstrapForTests();
+    withFlag("1", () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
+      ).toBeDefined();
+    });
+  });
+
+  it("builds the browser verbs when enabled, attested and computer-backed", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        browserCtx,
+      );
+      // SIX, including the listing verb: this ctx carries no page-tool
+      // snapshot, which is a session's first turn — no page has been read, so
+      // nothing first-class can replace the verb that lists a page's tools.
+      // The first-class shape (five) is pinned below, with a snapshot.
+      expect(Object.keys(tools ?? {}).sort()).toEqual([
+        "browser_act",
+        "browser_navigate",
+        "browser_observe",
+        "browser_tabs",
+        "browser_webmcp_invoke",
+        "browser_webmcp_tools",
+      ]);
+    });
+  });
+
+  it("hands back tools that carry their own approval declaration", () => {
+    // Nothing is threaded back any more. The registry's whole job here is to
+    // pass the built tools through unchanged, declarations included — and to
+    // hand the builder the host's switch, which is what the declaration is
+    // computed from. A registry that dropped it would silently un-gate every
+    // browser tool on a host that asked for approval.
+    withFlag("1", () => {
+      const gated = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...browserCtx, requireToolApproval: true },
+      );
+      expect(
+        (gated?.browser_act as { needsApproval?: unknown })?.needsApproval,
+      ).toBe(true);
+
+      const free = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...browserCtx, requireToolApproval: false },
+      );
+      expect(
+        (free?.browser_act as { needsApproval?: unknown })?.needsApproval,
+      ).toBe(false);
+    });
+  });
+
+  it("advertises NOTHING on a surface that did not attest approval delivery", () => {
+    // The five prepareChatV2 call sites that thread no approvals are safe
+    // BECAUSE of this, without any edit to them.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...ctx, onToolSuppressed: (info) => suppressed.push(info) },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.some((s) => s.id === "browser")).toBe(true);
+    });
+  });
+
+  it("advertises browser and bash together on the same computer", () => {
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...browserCtx, onToolSuppressed: (info) => suppressed.push(info) },
+      );
+      expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+      expect(suppressed).toEqual([]);
+    });
+  });
+
+  it("allows the pair when the deployment accepted the trust boundary", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...browserCtx },
+      );
+      expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(tools ?? {})).toContain("browser_act");
+    });
+  });
+
+  it("requires a computer OR a desktop binding, refuses guests and unbound journeys", () => {
+    withFlag("1", () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"] }, browserCtx),
+      ).toBeUndefined();
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...browserCtx, isGuest: true },
+        ),
+      ).toBeUndefined();
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...browserCtx, isJourneySession: true },
+        ),
+      ).toBeUndefined();
+      // ...but a run that brought its OWN desktop box needs NO host-config
+      // computer at all: the box IS the computer, and it arrives on `ctx`.
+      expect(
+        Object.keys(
+          resolveHostTools(
+            { builtInToolIds: ["browser"] },
+            { ...browserCtx, sandboxBinding: DESKTOP_BINDING },
+          ) ?? {},
+        ),
+      ).toContain("browser_act");
+    });
+  });
+});
+
+/**
+ * W6: a browser bound to the RUN'S OWN BOX.
+ *
+ * The binding is what turns an unattended browser from a shared hazard into
+ * an isolated machine, so what these pin is which gates it clears and which
+ * it does not: it clears "you need a computer" and the bash co-tenancy rule
+ * (a disposable box holds no human profile), and it does NOT clear being the
+ * wrong kind of box.
+ */
+describe("resolveHostTools — browser on a per-run sandbox", () => {
+  const unattended = {
+    kind: "unattended" as const,
+    policy: { mode: "allow_all" as const },
+  };
+
+  function withFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("builds the browser for an unattended run bound to a DESKTOP box", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          isJourneySession: true,
+          sandboxBinding: DESKTOP_BINDING,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    });
+  });
+
+  it("suppresses it on a TERMINAL box, and says why", () => {
+    // A browser on a terminal image fails with nothing saying why — there is
+    // no X server for Chromium to draw on.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          sandboxBinding: { sandboxId: "sbx_1", sandboxRowId: "row_1" },
+          onToolSuppressed: (info) => suppressed.push(info),
+        },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
+        "not a desktop",
+      );
+    });
+  });
+
+  it("suppresses it for ANY unattended hosted run with no binding at all", () => {
+    // Generalized from the journey-only gate: an eval is in exactly the same
+    // position, and the hosted engine has one computer per project+member.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          onToolSuppressed: (info) => suppressed.push(info),
+        },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
+        "disposable",
+      );
+    });
+  });
+
+  it("exempts a bound box from the bash co-tenancy rule — and only a bound box", () => {
+    // The rule guards a HUMAN's cookies and daemon token. A disposable box is
+    // created for one run, signed into nothing and destroyed with it.
+    withFlag("1", () => {
+      const bound = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          sandboxBinding: DESKTOP_BINDING,
+        },
+      );
+      expect(Object.keys(bound ?? {})).toContain("browser_act");
+
+      const unbound = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...ctx, browserApprovalDelivery: { kind: "attested" as const } },
+      );
+      expect(Object.keys(unbound ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(unbound ?? {})).toContain("browser_act");
+    });
+  });
+
+  it("suppresses a binding that predates the control-plane row id", () => {
+    // A browser session is RECORDED against the row; a binding with only a
+    // vendor id names a box no replica could later find.
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          sandboxBinding: {
+            sandboxId: "sbx_1",
+            runtimeKind: "desktop-browser" as const,
+          },
+        },
+      );
+      expect(tools).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * The engine branch. A local browser is not a hosted resource — it boots no
+ * desktop, reserves nothing and costs no credits — so the hosted rollout's
+ * gates must not decide whether a user can drive their own Chromium, and the
+ * actor coercion must still keep unattended surfaces off it.
+ */
+describe("resolveHostTools — browser engines", () => {
+  const localCtx = {
+    ...ctx,
+    browserApprovalDelivery: { kind: "attested" as const },
+    browserEngine: "local" as const,
+  };
+
+  function withHostedFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("advertises a LOCAL browser while the hosted rollout flag is off", () => {
+    withHostedFlag(undefined, () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        localCtx,
+      );
+      // No snapshot on this ctx ⇒ the listing verb stays (see the hosted
+      // case above for why).
+      expect(Object.keys(tools ?? {}).sort()).toEqual([
+        "browser_act",
+        "browser_navigate",
+        "browser_observe",
+        "browser_tabs",
+        "browser_webmcp_invoke",
+        "browser_webmcp_tools",
+      ]);
+    });
+  });
+
+  it("lets a local browser sit beside bash", () => {
+    // On the user's own machine the shell already runs as them, with every
+    // credential store on it; the co-tenancy rule is about one hosted box.
+    withHostedFlag(undefined, () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser", "bash"], computer },
+        localCtx,
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+      expect(Object.keys(tools ?? {})).toContain("bash");
+    });
+  });
+
+  it("allows the pair on a hosted box", () => {
+    withHostedFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser", "bash"], computer },
+        {
+          ...ctx,
+          browserApprovalDelivery: { kind: "attested" as const },
+          onToolSuppressed: (i) => suppressed.push(i),
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+      expect(suppressed).toEqual([]);
+    });
+  });
+
+  // Every actor for whom `local` is not legal: not a signed-in member driving
+  // their own turn. Typed rather than `as const` so each entry can be read
+  // both as ctx fields and as coercion arguments.
+  const coercedActors: Array<
+    [
+      string,
+      {
+        isGuest?: boolean;
+        isScenarioSession?: boolean;
+        isJourneySession?: boolean;
+        executionScope?: ExecutionScope;
+      },
+    ]
+  > = [
+    ["a guest", { isGuest: true }],
+    ["a scenario session", { isScenarioSession: true }],
+    ["a journey session", { isJourneySession: true }],
+    [
+      "a host-funded swarm scope",
+      {
+        executionScope: {
+          kind: "swarm",
+          swarmId: "swarm-1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws-1",
+        },
+      },
+    ],
+  ];
+  for (const [label, actor] of coercedActors) {
+    it(`never gives ${label} the user's own browser`, () => {
+      withHostedFlag(undefined, () => {
+        // Coerced off `local` at the chokepoint, and then refused by the
+        // hosted gates it lands on — so the answer is "no browser", never
+        // "someone else's browser".
+        const tools = resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...localCtx, ...actor },
+        );
+        expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
+      });
+    });
+
+    it(`downgrades ${label} off the local engine at the chokepoint`, () => {
+      // Asserted on the COERCION itself, not through the registry. Through the
+      // registry the answer depends on what the cloud family resolves to in
+      // this environment — with no data plane configured it happens to be
+      // `unavailable`, so a registry-level assertion would pass for a reason
+      // that has nothing to do with the actor. What must be true of the actor
+      // is only this: whatever they get, it is never the member's own machine.
+      expect(
+        coercePersonalEngineForActor("local", {
+          isGuest: Boolean(actor.isGuest),
+          isScenarioSession: Boolean(actor.isScenarioSession),
+          isJourneySession: Boolean(actor.isJourneySession),
+          executionScopeKind: actor.executionScope?.kind,
+        }),
+      ).not.toBe("local");
+    });
+  }
+});
+
+describe("resolveHostTools — browser on a machine that cannot serve it", () => {
+  function withHostedBrowserFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("suppresses rather than quietly running the user's browser in the cloud", () => {
+    // `resolvePersonalComputerEngine`'s own invariant: an explicit `local`
+    // that cannot be honored resolves `unavailable`, NEVER silently cloud.
+    // The browser branch used to read every non-`local` answer as "hosted".
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    withHostedBrowserFlag("1", () => {
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          {
+            ...ctx,
+            browserApprovalDelivery: { kind: "attested" as const },
+            browserEngine: "unavailable" as const,
+            localBrowserRequested: true,
+            onToolSuppressed: (i: { id: string; reason: string }) =>
+              suppressed.push(i),
+          },
+        ),
+      ).toBeUndefined();
+    });
+    expect(suppressed[0]).toMatchObject({ id: "browser" });
+    expect(suppressed[0].reason).toContain("this machine");
+  });
+
+  it("still builds the HOSTED browser when no local engine was asked for", () => {
+    // The common deployment has no local engine configured at all, which says
+    // nothing about whether the hosted browser may be advertised.
+    withHostedBrowserFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          browserApprovalDelivery: { kind: "attested" as const },
+          browserEngine: "unavailable" as const,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_act");
+    });
+  });
+});
+
+/**
+ * The plumbing an unattended browser needs, checked THROUGH the registry
+ * rather than by handing `buildBrowserTools` a key directly — a unit test that
+ * supplies one itself cannot notice that no real caller does.
+ */
+describe("resolveHostTools — an unattended run names itself", () => {
+  function withHostedBrowserFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  const unattended = {
+    kind: "unattended" as const,
+    policy: { mode: "allow_all" as const },
+  };
+
+  // THE OWNER KEY IS ENGINE-BLIND, but the hosted engine refuses an unattended
+  // run that brings no box of its own (its one computer per project+member is
+  // shared by every run), so these cases run on the LOCAL engine — the
+  // unattended browser that keys per run today. The hosted+sandbox cases live
+  // in their own describe.
+  const localEngine = { browserEngine: "local" as const };
+
+  it("builds them for a run that carries an iteration id", () => {
+    withHostedBrowserFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          ...localEngine,
+          browserApprovalDelivery: unattended,
+          // What `evals-runner` threads: this iteration, not this suite.
+          runKey: "iteration-7",
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    });
+  });
+
+  it("falls back to the simulated session id a journey already carries", () => {
+    withHostedBrowserFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          ...localEngine,
+          chatSessionId: "sim-session-1",
+          browserApprovalDelivery: unattended,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    });
+  });
+
+  it("advertises nothing when the run cannot name itself at all", () => {
+    // Fail-closed rather than share: two runs on one project would otherwise
+    // get one throwaway Chromium and each other's logged-in state.
+    withHostedBrowserFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          ...localEngine,
+          chatSessionId: undefined,
+          browserApprovalDelivery: unattended,
+          onToolSuppressed: (i: { id: string; reason: string }) =>
+            suppressed.push(i),
+        },
+      );
+      expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
+      expect(suppressed[0]?.reason).toContain("name the run");
+    });
+  });
+});
+
+describe("resolveHostTools — first-class page tools", () => {
+  const SNAPSHOT = {
+    tools: [
+      {
+        name: "add_topping",
+        description: "Add a topping",
+        origin: "https://pizza.test",
+        isMainFrame: true,
+        frameId: "frame-main",
+        registrationSeq: 1,
+      },
+    ],
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 2,
+  };
+
+  function withFlag<T>(mode: string | undefined, run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    const beforeHosted = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (mode === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = mode;
+    process.env.HOSTED_BROWSER_TOOLS_ENABLED = "1";
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+      if (beforeHosted === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = beforeHosted;
+      }
+    }
+  }
+
+  function resolve(over: Record<string, unknown>) {
+    return resolveHostTools(
+      { builtInToolIds: ["browser"], computer: { kind: "personal" } },
+      {
+        authHeader: "Bearer t",
+        projectId: "p1",
+        browserApprovalDelivery: { kind: "attested" },
+        ...over,
+      } as never,
+    );
+  }
+
+  it("advertises the peeked page tools when one is threaded", () => {
+    const tools = withFlag("first_class", () =>
+      resolve({ browserPageTools: SNAPSHOT, browserDynamicPageTools: true }),
+    );
+    expect(Object.keys(tools ?? {})).toContain("webmcp_add_topping");
+  });
+
+  it("advertises none when the route threaded nothing", () => {
+    // ABSENT ⇒ no page tools, whatever the flag says. A turn only gets them
+    // when its route decided to read the page AND got an answer.
+    const tools = withFlag("first_class", () => resolve({}));
+    expect(
+      Object.keys(tools ?? {}).some((name) => name.startsWith("webmcp_")),
+    ).toBe(false);
+  });
+
+  it("hands the advertised set back so the turn can persist it", () => {
+    const seen: Array<{ minted: Array<{ name: string }> }> = [];
+    withFlag("first_class", () =>
+      resolve({
+        browserPageTools: SNAPSHOT,
+        browserDynamicPageTools: true,
+        onBrowserPageTools: (info: { minted: Array<{ name: string }> }) =>
+          seen.push(info),
+      }),
+    );
+    // Written down rather than re-derived: the live browser describes the page
+    // it is on NOW, so a reopened conversation would attribute its cards to
+    // whatever tool happens to carry that name then.
+    expect(seen[0]?.minted.map((tool) => tool.name)).toEqual([
+      "webmcp_add_topping",
+    ]);
+  });
+});
+
+it("refuses both tools before a saved profile can reach an unattended shared box", () => {
+  expect(() =>
+    resolveHostTools(
+      { builtInToolIds: ["bash", "browser"], computer },
+      {
+        ...ctx,
+        browserProfileId: "saved-profile",
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        sandboxBinding: {
+          sandboxId: "sandbox",
+          sandboxRowId: "row",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    ),
+  ).toThrow("browser_profile_shell_conflict");
 });

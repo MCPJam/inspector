@@ -40,6 +40,28 @@ export interface ResolvedHarnessSandbox {
   sandboxId: string;
 }
 
+/**
+ * An EPHEMERAL box the caller already provisioned, handed to the harness
+ * instead of resolving a personal computer at all (B-isolation phase 6).
+ *
+ * The harness twin of `TrustedSandboxBinding` (the bash path's `ctx` binding),
+ * and trusted the same way: it travels out of band on the handler options, so
+ * only an in-process caller that just booted the box can produce one. It is
+ * NOT the same type, because the harness needs one thing bash does not — the
+ * CONTROL-PLANE row id. The egress broker leases against that row, and keeping
+ * it off the bash contract keeps the vendor-only binding narrow (bash has no
+ * business knowing a control-plane id, and a shared optional field is how a
+ * "sometimes present" invariant starts).
+ */
+export interface TrustedHarnessSandboxBinding {
+  /** `evalSandboxes` row id — what the harness broker leases against. */
+  sandboxRowId: string;
+  /** E2B sandbox id (vendor identity) to `Sandbox.connect` to. */
+  sandboxId: string;
+  /** Working directory the session's Shell is rooted at. */
+  workdir?: string;
+}
+
 export async function resolveHarnessSandbox(args: {
   /** The acting user's bearer (forwarded to the control plane for authz). */
   bearer: string;

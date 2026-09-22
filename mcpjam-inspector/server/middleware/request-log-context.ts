@@ -34,6 +34,34 @@ function isHealthPath(path: string): boolean {
 // mint a fresh UUID.
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
+/**
+ * Make a caller-supplied user-agent safe to put in a log row.
+ *
+ * Two hazards and a distinction, the same shape as the `x-request-id` guard
+ * above. An unbounded string bloats every row and the backend's index with it —
+ * real agents send a few dozen characters, and a four-kilobyte tail is either a
+ * bug or an attempt. Tabs and whitespace runs make one agent read as several in
+ * a group-by, which is the whole reason to record the field. And an empty
+ * header is not a user-agent; it is a caller who sent none, which the row says
+ * by omitting the field rather than by carrying a blank one.
+ *
+ * The control-character strip is the SECOND line, not the only one: NUL and
+ * CRLF — the characters that would let a caller forge a log line — are rejected
+ * by the HTTP parser before this middleware ever runs. It stays because a
+ * sanitizer that depends on an upstream layer staying strict is one deploy away
+ * from being wrong.
+ */
+function sanitizeUserAgent(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 256);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 function isStreaming(c: Context): boolean {
   const ct = c.res.headers.get("content-type") ?? "";
   if (ct.includes("text/event-stream")) return true;
@@ -48,6 +76,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
   }
 
   const startedAt = Date.now();
+  const userAgent = sanitizeUserAgent(c.req.header("user-agent"));
   const inboundRequestId = c.req.header("x-request-id");
   const requestId =
     inboundRequestId && REQUEST_ID_PATTERN.test(inboundRequestId)
@@ -65,6 +94,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     route: "pending",
     method: c.req.method,
     authType: "unknown",
+    ...(userAgent ? { userAgent } : {}),
   };
 
   c.set("requestLogContext", baseContext);
@@ -100,17 +130,70 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     const body = c.res.body;
     if (body) {
       const closedCtx: RequestLogContext = { ...enriched };
-      const ts = new TransformStream({
-        flush() {
-          const durationMs = Date.now() - startedAt;
-          logger.event(
-            "http.stream.closed",
-            { ...closedCtx, durationMs },
-            { statusCode: closedCtx.statusCode ?? status, durationMs },
-          );
+      // Hand-rolled pull wrapper instead of a TransformStream: flush() only
+      // runs on a NORMAL end-of-stream, so a producer error or a client
+      // disconnect used to leave no `http.stream.closed` at all — the most
+      // common streaming failure produced zero telemetry. read()/cancel()
+      // cover all three exits deterministically, and pull() is demand-driven
+      // so backpressure is preserved.
+      const reader = body.getReader();
+      let closedEmitted = false;
+      const emitClosed = (
+        outcome: "completed" | "aborted" | "errored",
+        error?: unknown,
+      ) => {
+        // Exactly once: cancel and a pending read rejection can race.
+        if (closedEmitted) return;
+        closedEmitted = true;
+        const durationMs = Date.now() - startedAt;
+        // Guarded extraction: a rejection reason can be a value whose
+        // message getter or string coercion throws (Proxy trap, null-proto
+        // object). Letting that escape here would swallow the closed row AND
+        // replace the stream error with a secondary failure from the
+        // telemetry code — same precedent as reportRouteFailure's
+        // "[unreadable error value]" handling.
+        let errorMessage: string | undefined;
+        if (outcome === "errored" && error !== undefined) {
+          try {
+            errorMessage = (
+              error instanceof Error ? error.message : String(error)
+            ).slice(0, 500);
+          } catch {
+            errorMessage = "[unreadable error value]";
+          }
+        }
+        logger.event(
+          "http.stream.closed",
+          { ...closedCtx, durationMs },
+          {
+            statusCode: closedCtx.statusCode ?? status,
+            durationMs,
+            outcome,
+            ...(errorMessage ? { errorMessage } : {}),
+          },
+        );
+      };
+      const wrapped = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              emitClosed("completed");
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          } catch (err) {
+            emitClosed("errored", err);
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          emitClosed("aborted", reason);
+          return reader.cancel(reason);
         },
       });
-      c.res = new Response(body.pipeThrough(ts), {
+      c.res = new Response(wrapped, {
         status: c.res.status,
         statusText: c.res.statusText,
         headers: c.res.headers,
@@ -128,18 +211,88 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       : 500
     : status;
 
-  if (effectiveStatus >= 500) {
-    // Sentry capture is owned by the route's error handler / Sentry middleware;
-    // we deliberately don't forward here (default is sentry: false) to avoid
-    // double-capture for the same exception.
+  // 424 joins the 5xx range as a FAILURE for logging purposes. It is the one
+  // 4xx this server emits for "we could not reach the dependency the request
+  // named" (`mapTargetServerError`), which is a failed request in every sense
+  // except whose fault it was. Without this it would log as
+  // `http.request.completed` and lose the `errorCode` / `origin` / `slug` /
+  // `errorMessage` breakdown below — and that Axiom slice is exactly what
+  // makes an unpaged `ambiguous` bucket measurable, i.e. what lets the bucket
+  // be promoted later as a data decision rather than a guess. Moving these
+  // failures out of the 5xx range to stop them paging us must not also move
+  // them out of the record that says how often they happen.
+  if (effectiveStatus >= 500 || effectiveStatus === 424) {
+    // Prefer the route's own error code/message over a classifier bucket. A
+    // route that *returns* a `webError` response (the hosted connect paths do)
+    // never reaches the `thrown` branch, so both of these used to collapse to a
+    // bare "internal_error" with the cause discarded. `scrubLogPayload` strips
+    // bearers/JWTs/emails from the message at emit time.
+    // Only trust the stashed meta when it belongs to *this* status — a route
+    // may emit a 4xx `webError` and then fail with an unrelated 500 later.
+    const webErrorMeta =
+      c.var.webErrorMeta?.status === effectiveStatus
+        ? c.var.webErrorMeta
+        : undefined;
+    const errorCode = thrown
+      ? classifyError(thrown)
+      : (webErrorMeta?.code ?? "internal_error");
+    const rawErrorMessage = thrown
+      ? thrown instanceof Error
+        ? thrown.message
+        : String(thrown)
+      : webErrorMeta?.message;
+    // Cap the message: SDK connect errors sometimes embed the upstream
+    // response body ("Error POSTing to endpoint (HTTP 502): <html>…"), and an
+    // unbounded string would bloat the log line. 500 chars keeps the cause.
+    const errorMessage = rawErrorMessage?.slice(0, 500);
+
+    // Sentry capture is owned by `Hono.onError` -> `logger.error` (there is no
+    // Sentry middleware). We deliberately don't forward here (default is
+    // sentry: false) to avoid double-capture for the same exception.
     reqLogger.event(
       "http.request.failed",
       {
         statusCode: effectiveStatus,
-        errorCode: thrown ? classifyError(thrown) : "internal_error",
+        errorCode,
+        ...(errorMessage ? { errorMessage } : {}),
+        // Present only for routes that produced a normalized error. This is
+        // where `ambiguous`-bucket volume becomes measurable without paging on
+        // it — see the field docs in `log-events.ts`.
+        ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
+        ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
+        // Omitted when undeclared rather than defaulted. A row with no `hop`
+        // is one nobody has attributed yet, which is not the same claim as
+        // "the user's hop" — see the field docs in `log-events.ts`.
+        ...(webErrorMeta?.hop ? { hop: webErrorMeta.hop } : {}),
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );
+  } else if (effectiveStatus >= 400) {
+    // 4xx: a declared client outcome, deliberately NOT `http.request.failed`
+    // — but typed anyway. `classifyRuntimeError` checks 401 before every
+    // other branch, so an MCP auth incident can arrive here entirely as
+    // 401s (measured on the 08-06 route: 2,328 401s next to 4,932 500s),
+    // and #3948 moved the largest upstream-auth class to 403. Without
+    // code/origin/slug those classes fingerprint as one `route 401` bucket
+    // per route and rate spikes are undiagnosable.
+    const webErrorMeta =
+      c.var.webErrorMeta?.status === effectiveStatus
+        ? c.var.webErrorMeta
+        : undefined;
+    const errorCode = thrown ? classifyError(thrown) : webErrorMeta?.code;
+    const rawErrorMessage = thrown
+      ? thrown instanceof Error
+        ? thrown.message
+        : String(thrown)
+      : webErrorMeta?.message;
+    const errorMessage = rawErrorMessage?.slice(0, 500);
+    reqLogger.event("http.request.completed", {
+      statusCode: effectiveStatus,
+      ...(errorCode ? { errorCode } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
+      ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
+      ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
+    });
   } else {
     reqLogger.event("http.request.completed", {
       statusCode: effectiveStatus,

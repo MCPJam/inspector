@@ -1,22 +1,78 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 
+export interface FakeMcpRequestRecord {
+  method: string;
+  path: string;
+  /**
+   * The full request URL including query string. `path` stays the bare pathname
+   * that existing callers match on; wire-invariant assertions need the query
+   * (`resource`, `code_challenge_method`, `state`, `redirect_uri`).
+   */
+  url: string;
+  query: Record<string, string>;
+  headers: Record<string, string>;
+  authorization?: string;
+  body?: unknown;
+}
+
 export interface FakeMcpServer {
   origin: string;
   serverUrl: string;
-  requests: Array<{
-    method: string;
-    path: string;
-    authorization?: string;
-    body?: unknown;
-  }>;
+  requests: FakeMcpRequestRecord[];
   close: () => Promise<void>;
 }
 
-const ACCESS_TOKEN = "e2e-access-token";
-const REFRESH_TOKEN = "e2e-refresh-token";
-const CLIENT_ID = "e2e-client-id";
-const AUTH_CODE = "e2e-auth-code";
+export interface FakeOAuthMcpServerOptions {
+  /**
+   * Make `/token` fail with an OAuth error response. `echoInErrorDescription`
+   * is interpolated into `error_description` verbatim, which is how a real
+   * authorization server leaks a credential back into a rendered trace.
+   *
+   * Omitted by default, so the fixture's wire behavior is byte-identical to
+   * what the Playwright projects already depend on.
+   */
+  tokenFailure?: {
+    status?: number;
+    error?: string;
+    echoInErrorDescription?: string;
+  };
+  /**
+   * Shallow-merged into the authorization-server metadata document. A key set
+   * to `null` is DELETED, which is how a server that advertises no
+   * `code_challenge_methods_supported` at all is expressed.
+   */
+  authorizationServerMetadata?: Record<string, unknown>;
+  /** Same merge semantics, for the protected-resource metadata document. */
+  protectedResourceMetadata?: Record<string, unknown>;
+}
+
+/** Shallow merge where an explicit `null` removes the key. */
+function applyMetadataOverrides(
+  base: Record<string, unknown>,
+  overrides: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!overrides) return base;
+  const merged = { ...base, ...overrides };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === null) delete merged[key];
+  }
+  return merged;
+}
+
+/**
+ * Exported so a test can assert against the fixture's own values rather than
+ * against whatever the code under test produced — the point of an oracle.
+ */
+export const FAKE_OAUTH_ACCESS_TOKEN = "e2e-access-token";
+export const FAKE_OAUTH_REFRESH_TOKEN = "e2e-refresh-token";
+export const FAKE_OAUTH_CLIENT_ID = "e2e-client-id";
+export const FAKE_OAUTH_AUTH_CODE = "e2e-auth-code";
+
+const ACCESS_TOKEN = FAKE_OAUTH_ACCESS_TOKEN;
+const REFRESH_TOKEN = FAKE_OAUTH_REFRESH_TOKEN;
+const CLIENT_ID = FAKE_OAUTH_CLIENT_ID;
+const AUTH_CODE = FAKE_OAUTH_AUTH_CODE;
 
 function createInitializeResult(parsedBody: unknown, serverName: string) {
   return {
@@ -83,7 +139,17 @@ function parseBody(rawBody: string, contentType: string | undefined): unknown {
   return rawBody;
 }
 
-export async function startFakeOAuthMcpServer(): Promise<FakeMcpServer> {
+function normalizeHeaders(request: IncomingMessage): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(request.headers).flatMap(([key, value]) =>
+      typeof value === "string" ? [[key.toLowerCase(), value] as const] : [],
+    ),
+  );
+}
+
+export async function startFakeOAuthMcpServer(
+  options: FakeOAuthMcpServerOptions = {},
+): Promise<FakeMcpServer> {
   const requests: FakeMcpServer["requests"] = [];
 
   const server = http.createServer(
@@ -97,6 +163,9 @@ export async function startFakeOAuthMcpServer(): Promise<FakeMcpServer> {
       requests.push({
         method: request.method ?? "GET",
         path: url.pathname,
+        url: url.toString(),
+        query: Object.fromEntries(url.searchParams.entries()),
+        headers: normalizeHeaders(request),
         authorization: request.headers.authorization,
         body: parsedBody,
       });
@@ -135,11 +204,18 @@ export async function startFakeOAuthMcpServer(): Promise<FakeMcpServer> {
       }
 
       if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
-        sendJson(response, 200, {
-          resource: `${origin}/mcp`,
-          authorization_servers: [origin],
-          scopes_supported: ["openid", "profile", "email"],
-        });
+        sendJson(
+          response,
+          200,
+          applyMetadataOverrides(
+            {
+              resource: `${origin}/mcp`,
+              authorization_servers: [origin],
+              scopes_supported: ["openid", "profile", "email"],
+            },
+            options.protectedResourceMetadata
+          )
+        );
         return;
       }
 
@@ -147,17 +223,24 @@ export async function startFakeOAuthMcpServer(): Promise<FakeMcpServer> {
         url.pathname === "/.well-known/oauth-authorization-server" ||
         url.pathname === "/.well-known/openid-configuration"
       ) {
-        sendJson(response, 200, {
-          issuer: origin,
-          authorization_endpoint: `${origin}/authorize`,
-          token_endpoint: `${origin}/token`,
-          registration_endpoint: `${origin}/register`,
-          response_types_supported: ["code"],
-          grant_types_supported: ["authorization_code", "refresh_token"],
-          token_endpoint_auth_methods_supported: ["none"],
-          code_challenge_methods_supported: ["S256"],
-          scopes_supported: ["openid", "profile", "email"],
-        });
+        sendJson(
+          response,
+          200,
+          applyMetadataOverrides(
+            {
+              issuer: origin,
+              authorization_endpoint: `${origin}/authorize`,
+              token_endpoint: `${origin}/token`,
+              registration_endpoint: `${origin}/register`,
+              response_types_supported: ["code"],
+              grant_types_supported: ["authorization_code", "refresh_token"],
+              token_endpoint_auth_methods_supported: ["none"],
+              code_challenge_methods_supported: ["S256"],
+              scopes_supported: ["openid", "profile", "email"],
+            },
+            options.authorizationServerMetadata
+          )
+        );
         return;
       }
 
@@ -195,6 +278,19 @@ export async function startFakeOAuthMcpServer(): Promise<FakeMcpServer> {
       }
 
       if (url.pathname === "/token") {
+        const failure = options.tokenFailure;
+        if (failure) {
+          sendJson(response, failure.status ?? 400, {
+            error: failure.error ?? "invalid_grant",
+            ...(failure.echoInErrorDescription
+              ? {
+                  error_description: `rejected: ${failure.echoInErrorDescription}`,
+                }
+              : {}),
+          });
+          return;
+        }
+
         sendJson(response, 200, {
           access_token: ACCESS_TOKEN,
           refresh_token: REFRESH_TOKEN,
@@ -241,6 +337,9 @@ export async function startFakePlainMcpServer(): Promise<FakeMcpServer> {
       requests.push({
         method: request.method ?? "GET",
         path: url.pathname,
+        url: url.toString(),
+        query: Object.fromEntries(url.searchParams.entries()),
+        headers: normalizeHeaders(request),
         authorization: request.headers.authorization,
         body: parsedBody,
       });

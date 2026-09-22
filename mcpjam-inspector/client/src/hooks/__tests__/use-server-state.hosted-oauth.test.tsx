@@ -63,6 +63,11 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
+  // Literal rather than the real export: the module under mock is the one
+  // being stubbed out. Drift is caught by the ratchet in
+  // lib/oauth/__tests__/oauth-callback-recovery.test.ts, which pins the
+  // constant to this exact value.
+  OAUTH_PENDING_STORAGE_KEY: "mcp-oauth-pending",
   completeHostedOAuthCallback: mockHandleOAuthCallback,
   handleOAuthCallback: mockHandleOAuthCallback,
   getStoredTokens: vi.fn(),
@@ -232,9 +237,71 @@ describe("useServerState hosted OAuth callback guards", () => {
     readStoredOAuthConfigMock.mockReturnValue({});
   });
 
-  it("defers hosted chatbox OAuth callbacks to App.tsx", async () => {
+  it("keeps the base connection intact when adding an account fails", async () => {
+    window.history.replaceState({}, "", "/");
+    const { initiateOAuth, clearOAuthData } = await import("@/lib/oauth/mcp-oauth");
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(initiateOAuth).mockResolvedValue({ success: false, error: "Consent declined" } as any);
+    vi.mocked(clearOAuthData).mockClear();
+    vi.mocked(deleteServer).mockClear();
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+    await act(async () => {
+      await result.current.handleReconnect("asana", { forceOAuthFlow: true, connectionIntent: { kind: "add" } });
+    });
+    expect(clearOAuthData).not.toHaveBeenCalled();
+    expect(deleteServer).not.toHaveBeenCalled();
+    expect(dispatch.mock.calls.some(([action]) => ["RECONNECT_REQUEST", "CONNECT_FAILURE"].includes(action.type))).toBe(false);
+  });
+
+  // A `?code=` on a route this hook does not own must not be claimed. The
+  // GitHub App bind returns to `/settings/integrations/github/callback`, and
+  // this effect used to complete it as an MCP flow, fail, toast "No pending
+  // OAuth flow found", and navigate away — stripping GitHub's `code`/`state`
+  // before `GithubInstallCallbackRoute` could read them, so the bind failed
+  // 100% in production with a misleading "opened without the details GitHub
+  // sends".
+  it("leaves a GitHub App bind callback alone when no MCP flow is pending", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/settings/integrations/github/callback?code=gh-code&state=gh-state",
+    );
+
+    renderHostedServerState();
+
+    await waitFor(() => {
+      expect(mockListServers).toHaveBeenCalled();
+    });
+
+    expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+    // The params must survive for the route that actually owns them.
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("code")).toBe("gh-code");
+    expect(params.get("state")).toBe("gh-state");
+  });
+
+  // Non-vacuity for the guard above: it must refuse only callbacks with no
+  // pending MCP flow, never disable the handler outright.
+  it("still completes an MCP callback when a flow IS pending", async () => {
+    window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+    });
+
+    renderHostedServerState();
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalled();
+    });
+  });
+
+  it("defers hosted scenario OAuth callbacks to App.tsx", async () => {
     writeHostedOAuthPendingMarker({
-      surface: "chatbox",
+      surface: "scenario",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnPath: "#asaan",
@@ -578,6 +645,19 @@ describe("useServerState hosted OAuth callback guards", () => {
         }),
       );
     });
+  });
+
+  it("opens the known server's OAuth flow when a user action requests readiness", async () => {
+    mockReconnectServer.mockResolvedValueOnce({ success: false, error: 'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.' });
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({ kind: "redirect" });
+    const { result } = renderHostedServerState(vi.fn());
+    await act(async () => {
+      await result.current.ensureServersReady(["asana"], { allowInteractiveOAuthFlow: true });
+    });
+    expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "asana", useOAuth: true }),
+      expect.objectContaining({ allowInteractiveOAuthFlow: true, beforeRedirect: expect.any(Function) }),
+    );
   });
 
   it("reports reauth instead of launching interactive OAuth during automatic readiness checks", async () => {

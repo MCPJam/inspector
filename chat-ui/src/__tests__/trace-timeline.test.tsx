@@ -54,6 +54,74 @@ describe("TraceTimeline (recorded waterfall)", () => {
     getByText(/No timing data recorded/i);
   });
 
+  // Rehydrated sessions rebuild the transcript from the UI, so it can be
+  // shorter than the server transcript the span indices were recorded against.
+  it("renders when span message indices point past the transcript", () => {
+    const staleSpans: TraceSpan[] = [
+      {
+        id: "p0-llm",
+        name: "Agent",
+        category: "llm",
+        startMs: 0,
+        endMs: 500,
+        promptIndex: 0,
+        stepIndex: 0,
+        messageStartIndex: 5,
+        messageEndIndex: 6,
+      },
+    ];
+    const { getAllByTestId } = render(
+      <TraceTimeline
+        recordedSpans={staleSpans}
+        transcriptMessages={[
+          { role: "user", content: "what's the weather" },
+          { role: "assistant", content: "it's sunny" },
+        ]}
+      />,
+    );
+    const rows = getAllByTestId("trace-row");
+    expect(rows.length).toBeGreaterThan(0);
+    // Out-of-range indices must not borrow an unrelated user message as the
+    // row's prompt label.
+    expect(rows.some((row) => row.textContent?.includes("User:"))).toBe(false);
+    expect(
+      rows.some((row) => row.textContent?.includes("what's the weather")),
+    ).toBe(false);
+  });
+
+  // A transcript whose last message is a user message would otherwise be the
+  // one a backward walk lands on, mislabelling the row with an unrelated turn.
+  it("borrows no user label when the transcript ends with a user message", () => {
+    const staleSpans: TraceSpan[] = [
+      {
+        id: "p0-llm",
+        name: "Agent",
+        category: "llm",
+        startMs: 0,
+        endMs: 500,
+        promptIndex: 0,
+        stepIndex: 0,
+        messageStartIndex: 5,
+        messageEndIndex: 6,
+      },
+    ];
+    const { getAllByTestId } = render(
+      <TraceTimeline
+        recordedSpans={staleSpans}
+        transcriptMessages={[
+          { role: "user", content: "what's the weather" },
+          { role: "user", content: "still there?" },
+        ]}
+      />,
+    );
+    const rows = getAllByTestId("trace-row");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((row) => row.textContent?.includes("User:"))).toBe(false);
+    expect(
+      rows.some((row) => row.textContent?.includes("still there?")),
+    ).toBe(false);
+  });
+
   it("shows harness metadata (provider/finish) in the detail pane for llm spans", () => {
     const llmSpans: TraceSpan[] = [
       {
