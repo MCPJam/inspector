@@ -1,9 +1,26 @@
 import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { GripVertical } from "lucide-react";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  type SortingStrategy,
+} from "@dnd-kit/sortable";
+import {
   useCallback,
   useId,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -21,11 +38,42 @@ import { cn } from "@/lib/utils";
 
 export type FlowStageColor = { node: string; head: string };
 
+/**
+ * dnd-kit's default sensor treats the whole sortable as a handle. Question
+ * labels, the plus, and the editor are buttons/inputs inside that handle, so a
+ * click never reaches them. Skip those — drag still starts from the title
+ * text and the empty header chrome.
+ */
+class HeaderPointerSensor extends PointerSensor {
+  static activators = [
+    {
+      eventName: "onPointerDown" as const,
+      handler: ({ nativeEvent }: { nativeEvent: PointerEvent }) => {
+        if (!nativeEvent.isPrimary || nativeEvent.button !== 0) return false;
+        const target = nativeEvent.target;
+        return !(
+          target instanceof Element &&
+          target.closest("button, input, textarea, [data-no-dnd]")
+        );
+      },
+    },
+  ];
+}
+
+/**
+ * Headers sit on absolute column X, not in a flex row. The default horizontal
+ * strategy still slides siblings into a phantom order during drag.
+ */
+const pinnedColumnStrategy: SortingStrategy = () => null;
+
 const VIEW_WIDTH = 1160;
 /** Reserved to the right of the last column for its labels. */
 const LABEL_GUTTER = 260;
 /** Band at the top of the SVG holding the column headers. */
 const HEADER_HEIGHT = 26;
+/** Room for a last-column title plus the add-column control (icon or editor). */
+const HEADER_SLOT = 235;
+const TRAILING_SLOT = 220;
 
 function contentSankeyHeight(nodeCountWidestColumn: number): number {
   return Math.max(320, nodeCountWidestColumn * 42 + 40);
@@ -41,59 +89,6 @@ function contentSankeyHeight(nodeCountWidestColumn: number): number {
  * would observe nothing and never re-attach, leaving the diagram at its
  * content floor inside a full-height pane.
  */
-/**
- * Leftover viewport below this element — not the element's own height.
- *
- * Measuring the box itself fights a growing SVG: a taller viewBox makes the
- * box taller, which asks for a taller viewBox. Window leftover is independent
- * of that, so a short cohort stretches into the pane and a tall one still
- * grows the page.
- */
-function useRemainingViewport(enabled: boolean) {
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  const detachRef = useRef<(() => void) | null>(null);
-
-  const ref = useCallback(
-    (element: HTMLDivElement | null) => {
-      detachRef.current?.();
-      detachRef.current = null;
-      if (!enabled || !element) return;
-
-      const update = () => {
-        const width = Math.round(element.clientWidth);
-        const top = element.getBoundingClientRect().top;
-        const height = Math.max(0, Math.round(window.innerHeight - top - 16));
-        setSize((current) =>
-          current.width === width && current.height === height
-            ? current
-            : { width, height },
-        );
-      };
-
-      update();
-      window.addEventListener("resize", update);
-      window.addEventListener("scroll", update, true);
-      if (typeof ResizeObserver === "undefined") {
-        detachRef.current = () => {
-          window.removeEventListener("resize", update);
-          window.removeEventListener("scroll", update, true);
-        };
-        return;
-      }
-      const observer = new ResizeObserver(update);
-      observer.observe(element);
-      detachRef.current = () => {
-        window.removeEventListener("resize", update);
-        window.removeEventListener("scroll", update, true);
-        observer.disconnect();
-      };
-    },
-    [enabled],
-  );
-
-  return { ref, size };
-}
-
 function usePaneSize(enabled: boolean) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const detachRef = useRef<(() => void) | null>(null);
@@ -147,12 +142,20 @@ export function FlowSankeyDiagram<S extends string>({
   headerContent,
   headerTrailing,
   headerHeight = HEADER_HEIGHT,
+  toolbar,
+  onReorderStages,
+  reorderDisabled = false,
   isSelectable,
   isLinkSelectable,
 }: {
   headerContent?: Partial<Record<S, ReactNode>>;
   headerTrailing?: ReactNode;
   headerHeight?: number;
+  /**
+   * Chrome above the chart (Session flow title, view toggle). Renders outside
+   * the scrolling pane so a wide or tall diagram cannot carry it away.
+   */
+  toolbar?: ReactNode;
   sankey: InsightsSankey<S>;
   stages: readonly S[];
   stageTitles: Record<S, string>;
@@ -172,10 +175,15 @@ export function FlowSankeyDiagram<S extends string>({
    */
   fillHeight?: boolean;
   /**
-   * Stretch into leftover viewport below the chart, then grow the page if
-   * the themes need more. For scroll layouts that must not inner-scroll.
+   * Fill the leftover parent the way `fillHeight` fills a locked pane:
+   * stretch the columns into that box and scroll them under sticky titles.
+   * The page must not grow with the SVG — that is what orphaned the ribbons.
    */
   fillRemainingViewport?: boolean;
+  /** Persist a dragged permutation of `stages`. Omit to keep headers fixed. */
+  onReorderStages?: (stages: S[]) => void;
+  /** Block drag while a column editor is open so the pointer stays on the form. */
+  reorderDisabled?: boolean;
   /** Defaults to {@link stageValueLabel} ("Not analyzed" for unlabeled). */
   labelForNode?: (node: InsightsSankeyNode<S>) => string;
   /**
@@ -192,16 +200,16 @@ export function FlowSankeyDiagram<S extends string>({
   ) => boolean;
 }) {
   // The canvas widens with the column count instead of squeezing columns into a
-  // fixed width, and reserves a strip on the right for the authoring control so
-  // it cannot land on top of the last column's labels.
-  const authoringWidth = headerTrailing ? 240 : 0;
-  const viewWidth = Math.max(VIEW_WIDTH, stages.length * 260) + authoringWidth;
+  // fixed width. The add-column control sits in the last header, not in a
+  // reserved strip on the far right — that strip left a lone plus floating
+  // past the last labels.
+  const viewWidth = Math.max(VIEW_WIDTH, stages.length * 260);
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
-  const pane = usePaneSize(fillHeight && !fillRemainingViewport);
-  const leftover = useRemainingViewport(fillRemainingViewport);
-  const chartPaneRef = fillRemainingViewport ? leftover.ref : pane.ref;
-  const chartPaneSize = fillRemainingViewport ? leftover.size : pane.size;
+  const fillsPane = fillHeight || fillRemainingViewport;
+  const pane = usePaneSize(fillsPane);
+  const chartPaneRef = pane.ref;
+  const chartPaneSize = pane.size;
   // Gradient ids are per diagram instance and per link INDEX. Two diagrams
   // on one page must not share `<defs>` ids, and two links whose node ids
   // differ only in a character the sanitizer folds must not share one
@@ -233,109 +241,94 @@ export function FlowSankeyDiagram<S extends string>({
     return contentSankeyHeight(widest);
   }, [sankey, stages]);
 
+  // Extra columns need a floor wider than the pane. Stretch and header %
+  // must use that drawn width — using the pane's client width is what
+  // letterboxed the SVG (`xMid` + meet) and slid the bars off the titles
+  // until someone deleted a column and the floor fit again.
+  const wideMinWidth = stages.length > 4 ? stages.length * 190 : undefined;
+  const drawnWidth = Math.max(chartPaneSize.width, wideMinWidth ?? 0);
+
   const height = useMemo(() => {
-    const stretch = fillHeight || fillRemainingViewport;
-    if (!stretch || chartPaneSize.width <= 0 || chartPaneSize.height <= 0) {
+    if (!fillsPane || drawnWidth <= 0 || chartPaneSize.height <= 0) {
       return contentHeight;
     }
     const available = Math.round(
-      (chartPaneSize.height / chartPaneSize.width) * viewWidth - headerHeight,
+      (chartPaneSize.height / drawnWidth) * viewWidth,
     );
     return Math.max(contentHeight, available);
-  }, [
-    fillHeight,
-    fillRemainingViewport,
-    chartPaneSize.height,
-    chartPaneSize.width,
-    contentHeight,
-    viewWidth,
-    headerHeight,
-  ]);
+  }, [fillsPane, drawnWidth, chartPaneSize.height, contentHeight, viewWidth]);
 
   const layout = useMemo(() => {
     if (sankey.nodes.length === 0) return null;
-    const usable = viewWidth - LABEL_GUTTER - authoringWidth;
+    const usable = viewWidth - LABEL_GUTTER;
     const lastIndex = Math.max(1, stages.length - 1);
     const columnX = stages.map(
       (_, index) => 40 + (index * (usable - SANKEY_NODE_WIDTH)) / lastIndex,
     );
     return layoutSankey(sankey, viewWidth, height, columnX, stages);
-  }, [sankey, height, stages, viewWidth, authoringWidth]);
+  }, [sankey, height, stages, viewWidth]);
 
   const chartNeedsScroll =
-    fillHeight &&
-    !fillRemainingViewport &&
+    fillsPane &&
     chartPaneSize.height > 0 &&
-    height + headerHeight >
-      (chartPaneSize.width > 0
-        ? (chartPaneSize.height / chartPaneSize.width) * viewWidth
-        : 0) +
-        1;
+    drawnWidth > 0 &&
+    height > (chartPaneSize.height / drawnWidth) * viewWidth + 1;
 
   if (!layout) return null;
 
+  const paneScrolls = fillsPane || chartNeedsScroll || stages.length > 4;
+
   return (
     <>
+    {toolbar ? (
       <div
-        ref={chartPaneRef}
-        className={cn(
-          "w-full min-w-0",
-          fillHeight && !fillRemainingViewport && "min-h-0 flex-1",
-          chartNeedsScroll || stages.length > 4
-            ? "overflow-auto"
-            : "overflow-hidden",
-        )}
+        data-testid="sankey-flow-header"
+        className="shrink-0 bg-background"
       >
+        {toolbar}
+      </div>
+    ) : null}
+    <div
+      ref={chartPaneRef}
+      data-testid="sankey-chart-pane"
+      className={cn(
+        "relative z-0 w-full min-w-0",
+        fillsPane && "min-h-0 flex-1",
+        paneScrolls ? "overflow-auto" : "overflow-hidden",
+      )}
+    >
+      <div
+        className={cn(
+          "shrink-0 bg-background",
+          fillsPane && "sticky top-0 z-10",
+        )}
+        style={wideMinWidth ? { minWidth: wideMinWidth } : undefined}
+      >
+        <SankeyColumnHeaders
+          stages={stages}
+          stageTitles={stageTitles}
+          stageColors={stageColors}
+          headerContent={headerContent}
+          headerTrailing={headerTrailing}
+          headerHeight={headerHeight}
+          columnX={layout.columnX}
+          viewWidth={viewWidth}
+          minWidth={wideMinWidth}
+          onReorderStages={onReorderStages}
+          reorderDisabled={reorderDisabled}
+        />
+      </div>
         <svg
-          viewBox={`0 0 ${viewWidth} ${height + headerHeight}`}
-          style={
-            stages.length > 4 ? { minWidth: stages.length * 190 } : undefined
-          }
+          viewBox={`0 0 ${viewWidth} ${height}`}
+          style={wideMinWidth ? { minWidth: wideMinWidth } : undefined}
           role="group"
           aria-label={ariaLabel}
-          preserveAspectRatio="xMidYMin meet"
+          preserveAspectRatio="xMinYMin meet"
           className={cn(
             "block w-full",
-            fillHeight && !fillRemainingViewport && !chartNeedsScroll
-              ? "h-full"
-              : "mt-1 h-auto",
+            fillsPane && !chartNeedsScroll ? "h-full" : "mt-1 h-auto",
           )}
         >
-          <g>
-            {stages.map((stage, index) =>
-              headerContent?.[stage] ? (
-                <foreignObject
-                  key={stage}
-                  x={layout.columnX[index]}
-                  y={0}
-                  width={235}
-                  height={headerHeight}
-                >
-                  {headerContent[stage]}
-                </foreignObject>
-              ) : (
-                <text
-                  key={stage}
-                  x={layout.columnX[index]}
-                  y={14}
-                  fill={stageColors[stage].head}
-                  className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
-                >
-                  {stageTitles[stage]}
-                </text>
-              ),
-            )}
-            {headerTrailing ? (
-              <foreignObject
-                x={viewWidth - 225}
-                y={0}
-                width={220}
-                height={headerHeight}
-              >
-                {headerTrailing}
-              </foreignObject>
-            ) : null}
-          </g>
 
           <defs>
             {layout.links.map((link, index) => (
@@ -367,7 +360,7 @@ export function FlowSankeyDiagram<S extends string>({
             ))}
           </defs>
 
-          <g transform={`translate(0, ${headerHeight})`}>
+          <g>
             {layout.links.map((link, index) => {
               const id = `${link.source.id}→${link.target.id}`;
               const selectable =
@@ -414,7 +407,7 @@ export function FlowSankeyDiagram<S extends string>({
             })}
           </g>
 
-          <g transform={`translate(0, ${headerHeight})`}>
+          <g>
             {layout.nodes.map((node) => {
               const selectable = !!onSelectNode && nodeSelectable(node);
               const emphasized =
@@ -549,5 +542,223 @@ function FlowNodeShape<S extends string>({
         </text>
       ) : null}
     </>
+  );
+}
+
+function SankeyColumnHeaders<S extends string>({
+  stages,
+  stageTitles,
+  stageColors,
+  headerContent,
+  headerTrailing,
+  headerHeight,
+  columnX,
+  viewWidth,
+  minWidth,
+  onReorderStages,
+  reorderDisabled,
+}: {
+  stages: readonly S[];
+  stageTitles: Record<S, string>;
+  stageColors: Record<S, FlowStageColor>;
+  headerContent?: Partial<Record<S, ReactNode>>;
+  headerTrailing?: ReactNode;
+  headerHeight: number;
+  columnX: number[];
+  viewWidth: number;
+  minWidth?: number;
+  onReorderStages?: (stages: S[]) => void;
+  reorderDisabled?: boolean;
+}) {
+  const [activeId, setActiveId] = useState<S | null>(null);
+  const [a11yRoot, setA11yRoot] = useState<HTMLDivElement | null>(null);
+  const sensors = useSensors(
+    useSensor(HeaderPointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+  const reorderable = onReorderStages != null && !reorderDisabled;
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!onReorderStages || !over || active.id === over.id) return;
+    const oldIndex = stages.indexOf(active.id as S);
+    const newIndex = stages.indexOf(over.id as S);
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorderStages(arrayMove([...stages], oldIndex, newIndex));
+  };
+
+  const row = (
+    <div
+      className="relative w-full"
+      data-testid="sankey-column-headers"
+      data-reorderable={reorderable ? "true" : undefined}
+      style={{ minWidth, height: headerHeight }}
+    >
+      {stages.map((stage, index) => {
+        const trailing =
+          index === stages.length - 1 ? headerTrailing : undefined;
+        const slot = HEADER_SLOT + (trailing ? TRAILING_SLOT : 0);
+        const style: CSSProperties = {
+          left: `${(columnX[index] / viewWidth) * 100}%`,
+          width: `${(slot / viewWidth) * 100}%`,
+          height: headerHeight,
+          color: stageColors[stage]?.head,
+        };
+        const inner = (
+          <>
+            {onReorderStages ? (
+              <GripVertical
+                aria-hidden
+                className="size-3 shrink-0 opacity-40"
+              />
+            ) : null}
+            {headerContent?.[stage] ?? (
+              <span className="text-[10.5px] font-semibold uppercase tracking-[0.13em]">
+                {stageTitles[stage]}
+              </span>
+            )}
+            {trailing}
+          </>
+        );
+        const className = cn(
+          "absolute top-0 flex gap-1.5 select-none",
+          headerHeight > HEADER_HEIGHT ? "items-start" : "items-center",
+        );
+        if (!onReorderStages) {
+          return (
+            <div
+              key={stage}
+              data-column-x={columnX[index]}
+              data-column-id={stage}
+              className={className}
+              style={style}
+            >
+              {inner}
+            </div>
+          );
+        }
+        return (
+          <SortableColumnHeader
+            key={stage}
+            id={stage}
+            disabled={!reorderable}
+            columnX={columnX[index]}
+            title={
+              reorderable
+                ? `Drag to reorder the ${stageTitles[stage]} column`
+                : undefined
+            }
+            className={className}
+            style={style}
+          >
+            {inner}
+          </SortableColumnHeader>
+        );
+      })}
+    </div>
+  );
+
+  if (!onReorderStages) return row;
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      accessibility={{
+        container: a11yRoot ?? undefined,
+        announcements: {
+          onDragStart({ active }) {
+            return `Picked up the ${stageTitles[active.id as S] ?? active.id} column`;
+          },
+          // Silent on purpose: the columns hold position while a header is
+          // dragged, so there is no intermediate move to announce. dnd-kit
+          // types this as `string | undefined`, not `void`.
+          onDragOver(): string | undefined {
+            return undefined;
+          },
+          onDragEnd({ active, over }) {
+            const name = stageTitles[active.id as S] ?? String(active.id);
+            if (!over || active.id === over.id) {
+              return `Released the ${name} column`;
+            }
+            return `Moved the ${name} column`;
+          },
+          onDragCancel({ active }) {
+            return `Cancelled moving the ${stageTitles[active.id as S] ?? active.id} column`;
+          },
+        },
+      }}
+      onDragStart={({ active }) => setActiveId(active.id as S)}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveId(null)}
+    >
+      <div ref={setA11yRoot} className="sr-only" data-testid="sankey-dnd-a11y" />
+      <SortableContext items={[...stages]} strategy={pinnedColumnStrategy}>
+        {row}
+      </SortableContext>
+      <DragOverlay dropAnimation={null}>
+        {activeId ? (
+          <div
+            className="flex cursor-grabbing items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.13em]"
+            style={{ color: stageColors[activeId]?.head }}
+          >
+            <GripVertical aria-hidden className="size-3 shrink-0 opacity-40" />
+            {stageTitles[activeId]}
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+function SortableColumnHeader({
+  id,
+  disabled,
+  columnX,
+  title,
+  className,
+  style,
+  children,
+}: {
+  id: string;
+  disabled: boolean;
+  columnX: number;
+  title?: string;
+  className?: string;
+  style: CSSProperties;
+  children: ReactNode;
+}) {
+  const { listeners, setNodeRef, isDragging } = useSortable({
+    id,
+    disabled,
+    // Absolute columns must not animate into a flex-row ghost order.
+    animateLayoutChanges: () => false,
+  });
+  // Pointer-only: Space/Enter on a nested question-label button must still
+  // open the editor, not start a sortable keyboard drag.
+  const dragListeners =
+    listeners == null
+      ? {}
+      : (({ onKeyDown: _ignored, ...pointerListeners }) => pointerListeners)(
+          listeners,
+        );
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-column-x={columnX}
+      data-column-id={id}
+      data-dragging={isDragging ? "true" : undefined}
+      title={title}
+      className={cn(
+        className,
+        !disabled && "cursor-grab",
+        isDragging && "z-30 cursor-grabbing opacity-40",
+      )}
+      style={style}
+      {...dragListeners}
+    >
+      {children}
+    </div>
   );
 }
