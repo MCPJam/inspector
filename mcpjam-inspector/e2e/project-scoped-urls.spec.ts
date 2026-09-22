@@ -27,6 +27,10 @@ test.describe("canonical project URLs", () => {
         "mcp-onboarding-state",
         JSON.stringify({ status: "completed", completedAt: 1 }),
       );
+      window.localStorage.setItem(
+        "mcp-first-run-server-choice-state",
+        JSON.stringify({ status: "completed", completedAt: 1, shownAt: 1 }),
+      );
     });
   });
 
