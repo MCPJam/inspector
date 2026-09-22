@@ -118,7 +118,7 @@ import {
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
   getStudyMetricsOperation,
   getStudyUsageOperation,
   listStudyFindingsOperation,
@@ -270,7 +270,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
 
   // ── User testing ────────────────────────────────────────────────────────
   //
@@ -367,14 +367,14 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   archive_goal:
     "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
   archive_swarm:
-    "Takes a container off the roster; the tab shows the journeys authored under it.",
+    "Takes a container off the roster; the tab shows the goals authored under it.",
   generate_personas:
     "Runs a model on the organization's account. The create flow in the Swarms tab is where generation belongs — it shows the drafts and lets you pick, where a chat tool would spend and hand back prose.",
   generate_goals:
     "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
-  request_wave_insights:
-    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
-  cancel_wave_insights:
+  request_swarm_run_insights:
+    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the swarm run it applies to.",
+  cancel_swarm_run_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
   // Launches a browser and executes the caller's tool. The Apps tab renders
   // the same widget interactively, with the console and network panes beside

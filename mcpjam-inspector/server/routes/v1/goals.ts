@@ -108,10 +108,7 @@ function both(
 ): void {
   goals[method](canonicalPath, (c) => handler(c, CANONICAL));
   goals[method](legacyPath, (c) => {
-    markDeprecated(
-      c,
-      `/api/v1${canonicalPath.replace(/:(\w+)/g, "{$1}")}`,
-    );
+    markDeprecated(c, `/api/v1${canonicalPath.replace(/:(\w+)/g, "{$1}")}`);
     return handler(c, LEGACY);
   });
 }

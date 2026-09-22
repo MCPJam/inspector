@@ -9452,27 +9452,27 @@
         }
       }
     },
-    "/projects/{projectId}/waves/{waveId}/insights": {
+    "/projects/{projectId}/swarm-runs/{swarmRunId}/insights": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/waveId"
+          "$ref": "#/components/parameters/swarmRunId"
         }
       ],
       "get": {
-        "operationId": "getWaveInsights",
+        "operationId": "getSwarmRunInsights",
         "tags": ["Swarm insights"],
-        "summary": "Get wave insights",
+        "summary": "Get swarm run insights",
         "description": "Poll this after requesting insights. **404 means nobody asked** — it is deliberately not an empty `status: \"none\"` body, so a caller in a polling loop cannot mistake \"never requested\" for \"asked and still working\".",
         "responses": {
           "200": {
-            "description": "The wave's insights.",
+            "description": "The swarm run's insights.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaveInsights"
+                  "$ref": "#/components/schemas/SwarmRunInsights"
                 }
               }
             }
@@ -9495,9 +9495,9 @@
         }
       },
       "post": {
-        "operationId": "requestWaveInsights",
+        "operationId": "requestSwarmRunInsights",
         "tags": ["Swarm insights"],
-        "summary": "Request wave insights",
+        "summary": "Request swarm run insights",
         "description": "Answers **202**: generation is scheduled, not done. Poll the GET above rather than re-requesting.\n\n**No credits are consumed** — the model cost is on MCPJam. It still draws on the `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and user-testing insights, so a request here takes one from there too.\n\nThree refusals, and they mean different things:\n- `429` with `code: \"RATE_LIMITED\"` and a short `Retry-After` — the per-minute burst brake. Wait seconds.\n- `429` naming `insightsPerDay` in `details` — the daily ledger. `Retry-After` counts to UTC midnight.\n- `403` — the feature is not available to your organization. Waiting will never help; collapsing this into the 429s would send someone who hit today's cap shopping for a plan they already have.",
         "requestBody": {
           "required": false,
@@ -9505,7 +9505,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/WaveInsightsRequest"
+                "$ref": "#/components/schemas/SwarmRunInsightsRequest"
               }
             }
           }
@@ -9516,7 +9516,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaveInsightsRequested"
+                  "$ref": "#/components/schemas/SwarmRunInsightsRequested"
                 }
               }
             }
@@ -9542,17 +9542,17 @@
         }
       },
       "delete": {
-        "operationId": "cancelWaveInsights",
+        "operationId": "cancelSwarmRunInsights",
         "tags": ["Swarm insights"],
-        "summary": "Cancel a pending wave-insights generation",
-        "description": "Stops a generation that is still `pending`. A wave with no generation in progress answers 409 — there is nothing to cancel, and reporting success would tell a caller it stopped something it did not.",
+        "summary": "Cancel a pending swarm-run-insights generation",
+        "description": "Stops a generation that is still `pending`. A swarm run with no generation in progress answers 409 — there is nothing to cancel, and reporting success would tell a caller it stopped something it did not.",
         "responses": {
           "200": {
             "description": "The generation was cancelled.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaveInsightsCanceled"
+                  "$ref": "#/components/schemas/SwarmRunInsightsCanceled"
                 }
               }
             }
@@ -13634,11 +13634,11 @@
           "type": "string"
         }
       },
-      "waveId": {
-        "name": "waveId",
+      "swarmRunId": {
+        "name": "swarmRunId",
         "in": "path",
         "required": true,
-        "description": "Wave ID — the opaque group id shared by every run of one co-launched swarm. Returned on every run in the wave.",
+        "description": "Swarm run ID — the opaque group id shared by every run of one co-launched swarm. Returned on every run in the swarm run.",
         "schema": {
           "type": "string"
         }
@@ -27386,11 +27386,11 @@
           }
         }
       },
-      "WaveInsights": {
+      "SwarmRunInsights": {
         "type": "object",
-        "description": "Model analysis over a whole wave. Produced asynchronously — POLL this rather than re-requesting, because a second request SPENDS again.",
+        "description": "Model analysis over a whole swarm run — the batch of sibling goal runs launched together. Produced asynchronously — POLL this rather than re-requesting, because a second request SPENDS again.",
         "required": [
-          "waveId",
+          "swarmRunId",
           "status",
           "insights",
           "discovery",
@@ -27399,7 +27399,7 @@
           "updatedAt"
         ],
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
           "status": {
@@ -27428,11 +27428,11 @@
           }
         }
       },
-      "WaveInsightsRequested": {
+      "SwarmRunInsightsRequested": {
         "type": "object",
-        "required": ["waveId", "projectId", "status"],
+        "required": ["swarmRunId", "projectId", "status"],
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
           "projectId": {
@@ -27444,11 +27444,11 @@
           }
         }
       },
-      "WaveInsightsCanceled": {
+      "SwarmRunInsightsCanceled": {
         "type": "object",
-        "required": ["waveId", "projectId", "canceled"],
+        "required": ["swarmRunId", "projectId", "canceled"],
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
           "projectId": {
@@ -27460,13 +27460,13 @@
           }
         }
       },
-      "WaveInsightsRequest": {
+      "SwarmRunInsightsRequest": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "force": {
             "type": "boolean",
-            "description": "Regenerate over a wave that already has insights. OFF by default because it takes a SECOND slice of your organization's shared daily insight quota (no credits either way) — and the common cause of a repeated request is a caller that did not poll."
+            "description": "Regenerate over a swarm run that already has insights. OFF by default because it takes a SECOND slice of your organization's shared daily insight quota (no credits either way) — and the common cause of a repeated request is a caller that did not poll."
           }
         }
       },

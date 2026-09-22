@@ -104,7 +104,7 @@ function requireConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
   return url;
@@ -112,7 +112,7 @@ function requireConvexHttpUrl(): string {
 
 async function parseBody<T>(
   c: { req: { json: () => Promise<unknown> } },
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -121,7 +121,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Request body must be JSON"
+      "Request body must be JSON",
     );
   }
   const parsed = schema.safeParse(raw);
@@ -129,7 +129,7 @@ async function parseBody<T>(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      parsed.error.issues[0]?.message ?? "Invalid request body"
+      parsed.error.issues[0]?.message ?? "Invalid request body",
     );
   }
   return parsed.data;

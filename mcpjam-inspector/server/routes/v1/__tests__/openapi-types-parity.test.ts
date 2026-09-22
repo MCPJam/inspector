@@ -171,9 +171,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   SwarmOverviewFinding: "PlatformSwarmOverviewFinding",
   SwarmOverviewRun: "PlatformSwarmOverviewRun",
   SwarmOverview: "PlatformSwarmOverview",
-  WaveInsights: "PlatformWaveInsights",
-  WaveInsightsRequested: "PlatformWaveInsightsRequested",
-  WaveInsightsCanceled: "PlatformWaveInsightsCanceled",
+  SwarmRunInsights: "PlatformSwarmRunInsights",
+  SwarmRunInsightsRequested: "PlatformSwarmRunInsightsRequested",
+  SwarmRunInsightsCanceled: "PlatformSwarmRunInsightsCanceled",
 
   // ── A4: User testing ──────────────────────────────────────────────────
   //

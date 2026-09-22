@@ -2493,9 +2493,9 @@ describe("operation catalog consistency", () => {
     list_swarm_findings: {},
     dismiss_swarm_finding: { finding: "f" },
     undismiss_swarm_finding: { finding: "f" },
-    get_wave_insights: { wave: "w" },
-    request_wave_insights: { wave: "w" },
-    cancel_wave_insights: { wave: "w" },
+    get_swarm_run_insights: { swarmRun: "w" },
+    request_swarm_run_insights: { swarmRun: "w" },
+    cancel_swarm_run_insights: { swarmRun: "w" },
     update_study: { study: "cb", name: "Checkout" },
     list_study_sessions: { study: "cb" },
     get_study_session: { study: "cb", session: "s" },
@@ -2769,8 +2769,8 @@ describe("operation catalog consistency", () => {
       // pass spends against the org's shared daily budget.
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
-      "request_wave_insights",
-      "cancel_wave_insights",
+      "request_swarm_run_insights",
+      "cancel_swarm_run_insights",
       // User testing writes. The exposure controls are the reason `risk`
       // exists as a separate axis from `readOnly`: rotating a link and
       // dismissing a finding are both writes, and only one of them can lock

@@ -284,9 +284,19 @@ function toFindingDto(row: FindingRow) {
   };
 }
 
-function toWaveInsightsDto(row: WaveInsightsRow, waveId: string) {
+/**
+ * `legacy` decides only the key the batch id is spelled under: the canonical
+ * `/swarm-runs` surface says `swarmRunId`, the deprecated `/waves` one keeps
+ * saying `waveId` for the callers it exists for. The stored column is
+ * `swarmRunGroupId` on both and does not move.
+ */
+function toSwarmRunInsightsDto(
+  row: WaveInsightsRow,
+  swarmRunId: string,
+  surface: { legacy: boolean },
+) {
   return {
-    waveId,
+    [surface.legacy ? "waveId" : "swarmRunId"]: swarmRunId,
     /**
      * pending | completed | failed. `pending` means a generation is in flight;
      * poll rather than re-requesting, which would either 409 or (with `force`)
@@ -313,13 +323,13 @@ function toWaveInsightsDto(row: WaveInsightsRow, waveId: string) {
 async function requireRunInProject(
   client: ConvexHttpClient,
   projectId: string,
-  runId: string
+  runId: string,
 ): Promise<void> {
   let run: { projectId?: string } | null;
   try {
     run = (await client.query(
       "journeyRuns:getJourneyRun" as never,
-      { runId } as never
+      { runId } as never,
     )) as { projectId?: string } | null;
   } catch (error) {
     throw translateReadError(error);
@@ -331,12 +341,12 @@ async function requireRunInProject(
 
 async function listFindingRows(
   client: ConvexHttpClient,
-  projectId: string
+  projectId: string,
 ): Promise<FindingRow[]> {
   try {
     return ((await client.query(
       "swarmWaveInsights:listSwarmFindings" as never,
-      { projectId } as never
+      { projectId } as never,
     )) ?? []) as FindingRow[];
   } catch (error) {
     throw translateReadError(error);
@@ -356,10 +366,10 @@ async function listFindingRows(
 async function requireFindingInProject(
   client: ConvexHttpClient,
   projectId: string,
-  findingId: string
+  findingId: string,
 ): Promise<FindingRow> {
   const row = (await listFindingRows(client, projectId)).find(
-    (candidate) => String(candidate.findingId) === findingId
+    (candidate) => String(candidate.findingId) === findingId,
   );
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Finding not found");
@@ -382,7 +392,7 @@ function both(
   method: "get" | "post",
   canonicalPath: string,
   legacyPath: string,
-  handler: (c: Context) => Promise<Response>
+  handler: (c: Context) => Promise<Response>,
 ): void {
   swarmInsights[method](canonicalPath, handler);
   swarmInsights[method](legacyPath, (c) => {
@@ -408,13 +418,13 @@ both(
     try {
       row = (await client.query(
         "journeyRuns:getSwarmOverview" as never,
-        { projectId } as never
+        { projectId } as never,
       )) as OverviewRow;
     } catch (error) {
       throw translateReadError(error);
     }
     return v1Resource(c, toOverviewDto(row));
-  }
+  },
 );
 
 // GET /v1/projects/:projectId/goal-runs/:runId/scorecard
@@ -433,7 +443,7 @@ both(
     try {
       row = (await client.query(
         "journeyRuns:getRunScorecard" as never,
-        { runId } as never
+        { runId } as never,
       )) as ScorecardRow | null;
     } catch (error) {
       throw translateReadError(error);
@@ -445,11 +455,11 @@ both(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        "This run has no rubric, so it has no scorecard"
+        "This run has no rubric, so it has no scorecard",
       );
     }
     return v1Resource(c, toScorecardDto(row, runId));
-  }
+  },
 );
 
 // GET /v1/projects/:projectId/goal-findings   (alias: /journey-findings)
@@ -462,20 +472,46 @@ both(
     const client = createConvexClient(await getConvexBearerForRequest(c));
     const rows = await listFindingRows(client, projectId);
     return v1PageJson(c, rows.map(toFindingDto));
-  }
+  },
 );
 
-// GET /v1/projects/:projectId/waves/:waveId/insights
-swarmInsights.get("/projects/:projectId/waves/:waveId/insights", async (c) => {
+/**
+ * The batch id off the path, under whichever spelling the surface addresses
+ * it by. `swarmRunGroupId` upstream on both.
+ */
+function swarmRunIdParam(c: Context, surface: { legacy: boolean }): string {
+  return c.req.param(surface.legacy ? "waveId" : "swarmRunId");
+}
+
+/** Register one insights route on both spellings, deprecating the old one. */
+function bothInsights(
+  method: "get" | "post" | "delete",
+  suffix: string,
+  handler: (c: Context, surface: { legacy: boolean }) => Promise<Response>,
+): void {
+  const canonical = `/projects/:projectId/swarm-runs/:swarmRunId${suffix}`;
+  swarmInsights[method](canonical, (c) => handler(c, { legacy: false }));
+  swarmInsights[method](`/projects/:projectId/waves/:waveId${suffix}`, (c) => {
+    markDeprecated(
+      c,
+      "/api/v1/projects/{projectId}/swarm-runs/{swarmRunId}/insights",
+    );
+    return handler(c, { legacy: true });
+  });
+}
+
+// GET /v1/projects/:projectId/swarm-runs/:swarmRunId/insights
+//   (alias: /waves/:waveId/insights)
+bothInsights("get", "/insights", async (c, surface) => {
   const projectId = c.req.param("projectId");
-  const waveId = c.req.param("waveId");
+  const swarmRunId = swarmRunIdParam(c, surface);
   const client = createConvexClient(await getConvexBearerForRequest(c));
 
   let row: WaveInsightsRow | null;
   try {
     row = (await client.query(
       "swarmWaveInsights:getWaveInsights" as never,
-      { projectId, swarmRunGroupId: waveId } as never
+      { projectId, swarmRunGroupId: swarmRunId } as never,
     )) as WaveInsightsRow | null;
   } catch (error) {
     throw translateReadError(error);
@@ -487,10 +523,12 @@ swarmInsights.get("/projects/:projectId/waves/:waveId/insights", async (c) => {
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
-      "No insights have been requested for this wave"
+      surface.legacy
+        ? "No insights have been requested for this wave"
+        : "No insights have been requested for this swarm run",
     );
   }
-  return v1Resource(c, toWaveInsightsDto(row, waveId));
+  return v1Resource(c, toSwarmRunInsightsDto(row, swarmRunId, surface));
 });
 
 // ── Writes ──────────────────────────────────────────────────────────────────
@@ -498,15 +536,16 @@ swarmInsights.get("/projects/:projectId/waves/:waveId/insights", async (c) => {
 const requestInsightsSchema = z
   .strictObject({
     /**
-     * Regenerate over a wave that already has insights. Off by default because
-     * it SPENDS a second time against the org's shared daily ledger, and the
-     * common cause of a repeated request is a caller that did not poll.
+     * Regenerate over a swarm run that already has insights. Off by default
+     * because it SPENDS a second time against the org's shared daily ledger,
+     * and the common cause of a repeated request is a caller that did not poll.
      */
     force: z.boolean().optional(),
   })
   .optional();
 
-// POST /v1/projects/:projectId/waves/:waveId/insights
+// POST /v1/projects/:projectId/swarm-runs/:swarmRunId/insights
+//   (alias: /waves/:waveId/insights)
 //
 // Answers **202**: generation is scheduled, not done. Poll the GET above.
 //
@@ -521,9 +560,9 @@ const requestInsightsSchema = z
 // beta gate's refusal stays a distinct 403 — collapsing it into the 429s would
 // tell an org that hit its daily cap that the feature is unavailable to them,
 // and they would go and ask for a plan they already have.
-swarmInsights.post("/projects/:projectId/waves/:waveId/insights", async (c) => {
+bothInsights("post", "/insights", async (c, surface) => {
   const projectId = c.req.param("projectId");
-  const waveId = c.req.param("waveId");
+  const swarmRunId = swarmRunIdParam(c, surface);
   const raw = (await c.req.text()).trim();
   let body: { force?: boolean } | undefined;
   if (raw.length > 0) {
@@ -534,7 +573,7 @@ swarmInsights.post("/projects/:projectId/waves/:waveId/insights", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Request body must be JSON"
+        "Request body must be JSON",
       );
     }
     const parsed = requestInsightsSchema.safeParse(parsedJson);
@@ -542,7 +581,7 @@ swarmInsights.post("/projects/:projectId/waves/:waveId/insights", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        parsed.error.issues[0]?.message ?? "Invalid request body"
+        parsed.error.issues[0]?.message ?? "Invalid request body",
       );
     }
     body = parsed.data;
@@ -554,40 +593,54 @@ swarmInsights.post("/projects/:projectId/waves/:waveId/insights", async (c) => {
       "swarmWaveInsights:requestWaveInsights" as never,
       {
         projectId,
-        swarmRunGroupId: waveId,
+        swarmRunGroupId: swarmRunId,
         ...(body?.force ? { force: true } : {}),
-      } as never
+      } as never,
     );
   } catch (error) {
-    throw translateConvexWriteError(error, { resource: "Wave insights" });
+    throw translateConvexWriteError(error, {
+      resource: surface.legacy ? "Wave insights" : "Swarm run insights",
+    });
   }
 
-  return v1Resource(c, { waveId, projectId, status: "pending" }, 202);
+  return v1Resource(
+    c,
+    {
+      [surface.legacy ? "waveId" : "swarmRunId"]: swarmRunId,
+      projectId,
+      status: "pending",
+    },
+    202,
+  );
 });
 
-// DELETE /v1/projects/:projectId/waves/:waveId/insights
+// DELETE /v1/projects/:projectId/swarm-runs/:swarmRunId/insights
+//   (alias: /waves/:waveId/insights)
 //
 // Cancel an in-flight generation. Parity with the UI, and the recovery path
 // when a request was made by mistake or its runner went silent — without it a
-// wave stuck in `pending` can never be re-requested without `force`, which
-// spends again.
-swarmInsights.delete(
-  "/projects/:projectId/waves/:waveId/insights",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const waveId = c.req.param("waveId");
-    const client = createConvexClient(await getConvexBearerForRequest(c));
-    try {
-      await client.mutation(
-        "swarmWaveInsights:cancelWaveInsights" as never,
-        { projectId, swarmRunGroupId: waveId } as never
-      );
-    } catch (error) {
-      throw translateConvexWriteError(error, { resource: "Wave insights" });
-    }
-    return v1Resource(c, { waveId, projectId, canceled: true });
+// swarm run stuck in `pending` can never be re-requested without `force`,
+// which spends again.
+bothInsights("delete", "/insights", async (c, surface) => {
+  const projectId = c.req.param("projectId");
+  const swarmRunId = swarmRunIdParam(c, surface);
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  try {
+    await client.mutation(
+      "swarmWaveInsights:cancelWaveInsights" as never,
+      { projectId, swarmRunGroupId: swarmRunId } as never,
+    );
+  } catch (error) {
+    throw translateConvexWriteError(error, {
+      resource: surface.legacy ? "Wave insights" : "Swarm run insights",
+    });
   }
-);
+  return v1Resource(c, {
+    [surface.legacy ? "waveId" : "swarmRunId"]: swarmRunId,
+    projectId,
+    canceled: true,
+  });
+});
 
 // POST /v1/projects/:projectId/goal-findings/:findingId/dismiss
 //   (alias: /journey-findings/:findingId/dismiss)
@@ -603,13 +656,13 @@ both(
     try {
       await client.mutation(
         "swarmWaveInsights:dismissFinding" as never,
-        { findingId } as never
+        { findingId } as never,
       );
     } catch (error) {
       throw translateConvexWriteError(error, { resource: "Finding" });
     }
     return v1Resource(c, { id: findingId, projectId, dismissed: true });
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/goal-findings/:findingId/undismiss
@@ -630,13 +683,13 @@ both(
     try {
       await client.mutation(
         "swarmWaveInsights:undismissFinding" as never,
-        { findingId } as never
+        { findingId } as never,
       );
     } catch (error) {
       throw translateConvexWriteError(error, { resource: "Finding" });
     }
     return v1Resource(c, { id: findingId, projectId, dismissed: false });
-  }
+  },
 );
 
 export default swarmInsights;

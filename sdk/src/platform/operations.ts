@@ -165,6 +165,9 @@ import type {
   PlatformSwarmArchived,
   PlatformSwarmFinding,
   PlatformSwarmOverview,
+  PlatformSwarmRunInsights,
+  PlatformSwarmRunInsightsCanceled,
+  PlatformSwarmRunInsightsRequested,
   PlatformWaveInsights,
   PlatformWaveInsightsCanceled,
   PlatformUserTestingInsightsRequested,
@@ -15421,6 +15424,61 @@ export const undismissSwarmFindingOperation: PlatformOperation<
   },
 };
 
+const DEPRECATED_SWARM_RUN_SELECTOR_SUFFIX =
+  " DEPRECATED: use `swarmRun`, which means exactly this.";
+
+/**
+ * Fold a `swarmRun` selector onto its deprecated `wave` spelling.
+ *
+ * In `execute` rather than a `.refine()` because the CLI calls `execute`
+ * directly and would otherwise skip the check — the same reason
+ * `foldGoalSelector` above lives here.
+ */
+function foldSwarmRunSelector(input: {
+  swarmRun?: string;
+  wave?: string;
+}): string {
+  if (input.swarmRun !== undefined && input.wave !== undefined) {
+    throw operationInputError(
+      "Pass either swarmRun or its deprecated wave alias, not both."
+    );
+  }
+  const selected = input.swarmRun ?? input.wave;
+  if (selected === undefined) {
+    throw operationInputError(
+      "swarmRun is required — the `swarmRunId` on a goal run."
+    );
+  }
+  return selected;
+}
+
+const swarmRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  swarmRun: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm run id — the `swarmRunId` on a goal run."),
+  wave: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm run id." + DEPRECATED_SWARM_RUN_SELECTOR_SUFFIX),
+});
+
+export type GetSwarmRunInsightsInput = z.infer<typeof swarmRunSelectorInput>;
+export type GetSwarmRunInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: PlatformSwarmRunInsights;
+};
+
 const waveSelectorInput = z.object({
   project: z
     .string()
@@ -15449,6 +15507,129 @@ export type GetWaveInsightsResult = {
 const INCLUDED_ANALYSIS_FAILURE_NOTE =
   "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity — try again later, not in a loop.";
 
+export const getSwarmRunInsightsOperation: PlatformOperation<
+  GetSwarmRunInsightsInput,
+  GetSwarmRunInsightsResult
+> = {
+  name: "get_swarm_run_insights",
+  title: "Get an MCPJam swarm run's insights",
+  description:
+    "The model's analysis of a whole swarm run — the batch of sibling goal runs launched together — if one has been requested. Poll this after request_swarm_run_insights; status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " +
+    INCLUDED_ANALYSIS_FAILURE_NOTE,
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    // A swarm run IS a run on the Swarms surface: `/swarms/<swarmRunId>`.
+    // The permalink TYPE key is still `journey_run`; it moves in the
+    // wire-value step, once the Slack and Discord apps accept both.
+    {
+      type: "journey_run",
+      id: result.insights.swarmRunId,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: swarmRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const swarmRunId = foldSwarmRunSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const insights = await client.getSwarmRunInsights(
+      { projectId: project.id, swarmRunId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestSwarmRunInsightsInput = swarmRunSelectorInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe(
+      "Regenerate over a swarm run that already has insights. TAKES ANOTHER SLICE of the daily insight quota (no credits either way) — the usual reason a swarm run looks stuck is a caller that did not poll, so read get_swarm_run_insights before reaching for this."
+    ),
+});
+
+export type RequestSwarmRunInsightsInput = z.infer<
+  typeof requestSwarmRunInsightsInput
+>;
+export type RequestSwarmRunInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformSwarmRunInsightsRequested;
+};
+
+export const requestSwarmRunInsightsOperation: PlatformOperation<
+  RequestSwarmRunInsightsInput,
+  RequestSwarmRunInsightsResult
+> = {
+  name: "request_swarm_run_insights",
+  title: "Request MCPJam swarm run insights",
+  description:
+    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; poll get_swarm_run_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: requestSwarmRunInsightsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const swarmRunId = foldSwarmRunSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const request = await client.requestSwarmRunInsights(
+      {
+        projectId: project.id,
+        swarmRunId,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelSwarmRunInsightsInput = z.infer<typeof swarmRunSelectorInput>;
+export type CancelSwarmRunInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: PlatformSwarmRunInsightsCanceled;
+};
+
+export const cancelSwarmRunInsightsOperation: PlatformOperation<
+  CancelSwarmRunInsightsInput,
+  CancelSwarmRunInsightsResult
+> = {
+  name: "cancel_swarm_run_insights",
+  title: "Cancel an MCPJam swarm run insights request",
+  description:
+    "Stop an in-flight insights generation. This is the recovery path for a swarm run stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: swarmRunSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const swarmRunId = foldSwarmRunSelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const canceled = await client.cancelSwarmRunInsights(
+      { projectId: project.id, swarmRunId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+// ── Swarm run insights (deprecated compatibility operations) ────────────────
+//
+// The `wave` spelling, kept executable so an embedded caller holding one of
+// these names keeps working. Each calls its OWN old route and returns the old
+// DTO — never the canonical operation — so its caller's response shape does
+// not change under it. Absent from ALL_OPERATIONS, so no surface offers one.
+// Deleted at GA.
+
+/** @deprecated Use {@link getSwarmRunInsightsOperation}. */
 export const getWaveInsightsOperation: PlatformOperation<
   GetWaveInsightsInput,
   GetWaveInsightsResult
@@ -15456,7 +15637,7 @@ export const getWaveInsightsOperation: PlatformOperation<
   name: "get_wave_insights",
   title: "Get an MCPJam wave's insights",
   description:
-    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " +
+    "DEPRECATED — use get_swarm_run_insights, which is this operation under the name the product uses. The model's analysis of a whole wave, if one has been requested. " +
     INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
@@ -15496,6 +15677,7 @@ export type RequestWaveInsightsResult = {
   request: PlatformWaveInsightsRequested;
 };
 
+/** @deprecated Use {@link requestSwarmRunInsightsOperation}. */
 export const requestWaveInsightsOperation: PlatformOperation<
   RequestWaveInsightsInput,
   RequestWaveInsightsResult
@@ -15503,7 +15685,7 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
+    "DEPRECATED — use request_swarm_run_insights, which is this operation under the name the product uses. Asks a model to analyze a whole wave; returns immediately with status pending. Included with MCPJam; no customer credits consumed; it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -15531,6 +15713,7 @@ export type CancelWaveInsightsResult = {
   canceled: PlatformWaveInsightsCanceled;
 };
 
+/** @deprecated Use {@link cancelSwarmRunInsightsOperation}. */
 export const cancelWaveInsightsOperation: PlatformOperation<
   CancelWaveInsightsInput,
   CancelWaveInsightsResult
@@ -15538,7 +15721,7 @@ export const cancelWaveInsightsOperation: PlatformOperation<
   name: "cancel_wave_insights",
   title: "Cancel an MCPJam wave insights request",
   description:
-    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+    "DEPRECATED — use cancel_swarm_run_insights, which is this operation under the name the product uses. Stops an in-flight insights generation.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -18547,9 +18730,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
   // User testing — what a published scenario produced, and who may reach it.
   updateStudyOperation,
   listStudySessionsOperation,

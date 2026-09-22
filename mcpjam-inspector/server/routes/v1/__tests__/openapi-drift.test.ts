@@ -193,6 +193,13 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/journey-findings",
   "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
   "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  // The DEPRECATED `/waves` aliases of the `/swarm-runs` insights surface.
+  // Same handlers, the pre-rename `waveId` response spelling, and
+  // `Deprecation: true` on every response. Undocumented for the same reason
+  // as the aliases above.
+  "get /projects/{projectId}/waves/{waveId}/insights",
+  "post /projects/{projectId}/waves/{waveId}/insights",
+  "delete /projects/{projectId}/waves/{waveId}/insights",
   // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
   // the same handler as its documented `/clients` twin with the pre-rename DTO
   // and the pre-rename (tokenless) write contract, and every response carries

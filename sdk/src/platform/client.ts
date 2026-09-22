@@ -111,6 +111,9 @@ import type {
   PlatformSwarmArchived,
   PlatformSwarmFinding,
   PlatformSwarmOverview,
+  PlatformSwarmRunInsights,
+  PlatformSwarmRunInsightsCanceled,
+  PlatformSwarmRunInsightsRequested,
   PlatformWaveInsights,
   PlatformWaveInsightsCanceled,
   PlatformWaveInsightsRequested,
@@ -5015,6 +5018,66 @@ export class PlatformApiClient {
     );
   }
 
+  getSwarmRunInsights(
+    params: { projectId: string; swarmRunId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmRunInsights> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarm-runs/${encodeURIComponent(params.swarmRunId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Request an LLM pass over a swarm run. Answers **202** — generation is
+   * scheduled, not done; poll `getSwarmRunInsights`.
+   *
+   * SPENDS against the org's `insightsPerDay` ledger, which is SHARED with
+   * user-testing window insights. `force` regenerates over a swarm run that
+   * already has insights and spends again; the usual reason to reach for it is
+   * a caller that did not poll.
+   */
+  requestSwarmRunInsights(
+    params: { projectId: string; swarmRunId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmRunInsightsRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarm-runs/${encodeURIComponent(params.swarmRunId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /**
+   * Cancel an in-flight generation. The recovery path when a request was made
+   * by mistake or its runner went silent — without it a swarm run stuck
+   * `pending` can only be re-requested with `force`, which spends again.
+   */
+  cancelSwarmRunInsights(
+    params: { projectId: string; swarmRunId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmRunInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarm-runs/${encodeURIComponent(params.swarmRunId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * @deprecated Use {@link getSwarmRunInsights}. Calls the deprecated `/waves`
+   * route, which answers with `waveId`.
+   */
   getWaveInsights(
     params: { projectId: string; waveId: string },
     options?: RequestOptions
@@ -5030,13 +5093,8 @@ export class PlatformApiClient {
   }
 
   /**
-   * Request an LLM pass over a wave. Answers **202** — generation is
-   * scheduled, not done; poll `getWaveInsights`.
-   *
-   * SPENDS against the org's `insightsPerDay` ledger, which is SHARED with
-   * user-testing window insights. `force` regenerates over a wave that already
-   * has insights and spends again; the usual reason to reach for it is a
-   * caller that did not poll.
+   * @deprecated Use {@link requestSwarmRunInsights}. Calls the deprecated
+   * `/waves` route.
    */
   requestWaveInsights(
     params: { projectId: string; waveId: string; force?: boolean },
@@ -5053,9 +5111,8 @@ export class PlatformApiClient {
   }
 
   /**
-   * Cancel an in-flight generation. The recovery path when a request was made
-   * by mistake or its runner went silent — without it a wave stuck `pending`
-   * can only be re-requested with `force`, which spends again.
+   * @deprecated Use {@link cancelSwarmRunInsights}. Calls the deprecated
+   * `/waves` route.
    */
   cancelWaveInsights(
     params: { projectId: string; waveId: string },

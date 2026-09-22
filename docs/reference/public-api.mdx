@@ -412,18 +412,18 @@ Three things worth knowing before you write the client:
 
 **Swarms — insights** — what a run revealed. Read these in order of cost: the
 roll-up and the scorecard are deterministic and free, the findings registry
-aggregates them, and wave insights run a model.
+aggregates them, and swarm run insights run a model.
 
 | Endpoint | What it does |
 | --- | --- |
 | `GET .../goals-overview` | Project roll-up: recent runs, goal-completion rates, repeat failures, trend |
 | `GET .../goal-runs/{runId}/scorecard` | One run's deterministic rubric result. No model, no spend |
-| `GET .../goal-findings` | Criteria that keep failing, tracked across waves |
+| `GET .../goal-findings` | Criteria that keep failing, tracked across swarm runs |
 | `POST .../goal-findings/{findingId}/dismiss` | Hide a finding |
 | `POST .../goal-findings/{findingId}/undismiss` | Un-hide it |
-| `GET .../waves/{waveId}/insights` | Poll a wave's generated insights. **404 = nobody asked** |
-| `POST .../waves/{waveId}/insights` | Request them. `202` — scheduled, not done |
-| `DELETE .../waves/{waveId}/insights` | Cancel a generation still `pending` |
+| `GET .../swarm-runs/{swarmRunId}/insights` | Poll a swarm run's generated insights. **404 = nobody asked** |
+| `POST .../swarm-runs/{swarmRunId}/insights` | Request them. `202` — scheduled, not done |
+| `DELETE .../swarm-runs/{swarmRunId}/insights` | Cancel a generation still `pending` |
 
 Two arithmetic traps worth naming, because both produce numbers that look
 plausible and are wrong:
@@ -440,7 +440,7 @@ Dismissal is the orthogonal `dismissedAt`, so a finding can be both recurring
 and dismissed, and hiding one never claims it stopped happening.
 
 <Warning>
-  Requesting wave insights consumes **no credits** — the model cost is on
+  Requesting swarm run insights consumes **no credits** — the model cost is on
   MCPJam. It still counts against the `insightsPerDay` ledger, which counts
   REQUESTS and is **shared** with eval-run and user-testing insights, so a
   request here takes one from there too. Poll the `GET` rather than
@@ -518,7 +518,7 @@ current views with version provenance, not historical traffic snapshots.
 
 Check `scan.truncated` and `analysis.sampled` before interpreting coverage as a
 whole-scope total. Map reads separately expose displayed counts, scope totals,
-sampling, and freshness; a wave's displayed counts cover only its requested
+sampling, and freshness; a swarm run's displayed counts cover only its requested
 goal runs. A pending projection contributes to the unmapped count rather
 than a fabricated map node.
 
@@ -529,7 +529,7 @@ violation. Read what you recognize; ignore the rest.
 
 <Warning>
   Requesting insights consumes **no credits** — the model cost is on MCPJam.
-  It still draws on the same `insightsPerDay` ledger as eval-run and swarm wave
+  It still draws on the same `insightsPerDay` ledger as eval-run and swarm run
   insights — one REQUEST quota, three producers. Poll the window read rather
   than re-requesting; `force: true` deliberately takes a second slice, which is
   why it is never inferred from anything else.

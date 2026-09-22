@@ -5086,6 +5086,47 @@ export interface PlatformEvalRunJudgeRequested {
 }
 
 /** LLM analysis over a whole wave. Requested explicitly; produced async. */
+// ── Swarm run insights ──────────────────────────────────────────────────────
+//
+// A SWARM RUN is the batch of sibling goal runs launched together — what the
+// product has called it since the Swarms surface shipped, and what the UI's
+// `/swarms/:id` route already addresses. The API called it a `wave`, and the
+// stored column is `swarmRunGroupId`. Only the public name moves; the column
+// does not.
+
+export interface PlatformSwarmRunInsights {
+  swarmRunId: string;
+  /** pending | completed | failed. Poll rather than re-requesting. */
+  status: "pending" | "completed" | "failed";
+  /** Directed lane. Null until generation completes. */
+  insights: unknown | null;
+  /**
+   * Discovery lane — what the model noticed unprompted. Null while only the
+   * directed lane has finished, which is a normal intermediate state.
+   */
+  discovery: unknown | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: number;
+}
+
+/** Receipt for a swarm-run-insights request. 202: scheduled, not done. */
+export interface PlatformSwarmRunInsightsRequested {
+  swarmRunId: string;
+  projectId: string;
+  status: "pending";
+}
+
+export interface PlatformSwarmRunInsightsCanceled {
+  swarmRunId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/**
+ * @deprecated Use {@link PlatformSwarmRunInsights}. Returned by the deprecated
+ * `get_wave_insights` operation, which calls the deprecated `/waves` route.
+ */
 export interface PlatformWaveInsights {
   waveId: string;
   /** pending | completed | failed. Poll rather than re-requesting. */
@@ -5102,13 +5143,14 @@ export interface PlatformWaveInsights {
   updatedAt: number;
 }
 
-/** Receipt for a wave-insights request. 202: scheduled, not done. */
+/** @deprecated Use {@link PlatformSwarmRunInsightsRequested}. */
 export interface PlatformWaveInsightsRequested {
   waveId: string;
   projectId: string;
   status: "pending";
 }
 
+/** @deprecated Use {@link PlatformSwarmRunInsightsCanceled}. */
 export interface PlatformWaveInsightsCanceled {
   waveId: string;
   projectId: string;

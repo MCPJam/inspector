@@ -223,7 +223,7 @@ describe("workspace tool catalog", () => {
       "list_swarm_findings",
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
-      "get_wave_insights",
+      "get_swarm_run_insights",
       // User testing: aggregate reads and the judgement calls over them.
       // Session listings, transcripts and every exposure control stay out —
       // see EXCLUDED_FROM_WORKSPACE for which reason applies to which.

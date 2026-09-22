@@ -76,9 +76,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_swarm_findings: { command: "cloud goals findings" },
   dismiss_swarm_finding: { command: "cloud goals dismiss-finding" },
   undismiss_swarm_finding: { command: "cloud goals undismiss-finding" },
-  get_wave_insights: { command: "cloud goals insights" },
-  request_wave_insights: { command: "cloud goals request-insights" },
-  cancel_wave_insights: { command: "cloud goals cancel-insights" },
+  get_swarm_run_insights: { command: "cloud goals insights" },
+  request_swarm_run_insights: { command: "cloud goals request-insights" },
+  cancel_swarm_run_insights: { command: "cloud goals cancel-insights" },
 
   // ── Personas and swarm containers (Swarms authoring) ────────────────────
   list_personas: { command: "cloud personas list" },

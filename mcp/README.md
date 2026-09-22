@@ -151,9 +151,9 @@ so results respect the caller's project access.
 | `list_swarm_findings` | Criteria that keep failing across waves, with how long each has been failing. | — |
 | `dismiss_swarm_finding` | Mark a finding as not worth acting on. Its lifecycle keeps updating underneath. | — |
 | `undismiss_swarm_finding` | Bring a dismissed finding back into the active list. | — |
-| `get_wave_insights` | The model's analysis of a whole wave, if one has been requested. Poll after requesting. | — |
-| `request_wave_insights` | Ask a model to analyze a whole wave. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
-| `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
+| `get_swarm_run_insights` | The model's analysis of a whole swarm run, if one has been requested. Poll after requesting. | — |
+| `request_swarm_run_insights` | Ask a model to analyze a whole swarm run. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
+| `cancel_swarm_run_insights` | Stop an in-flight insights generation — the recovery path for a swarm run stuck pending. | — |
 | `publish_study` | Publish a project environment for user testing, returning its share link and access mode. | — |
 | `unpublish_study` | Take a live study down. Every guest session on it dies with it. | — |
 | `list_study_sessions` | Sessions real visitors had with a published study: counts, feedback, device, segment and a first-message preview. Summaries only. | — |

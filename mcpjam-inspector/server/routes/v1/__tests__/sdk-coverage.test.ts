@@ -407,6 +407,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
   "post /organizations/{organizationId}/eval-check-repos":
     "connectEvalCheckRepo",
+  "get /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
+    "getSwarmRunInsights",
+  "post /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
+    "requestSwarmRunInsights",
+  "delete /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
+    "cancelSwarmRunInsights",
+  // The DEPRECATED `/waves` aliases, each on its own client method calling
+  // its own old route.
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",

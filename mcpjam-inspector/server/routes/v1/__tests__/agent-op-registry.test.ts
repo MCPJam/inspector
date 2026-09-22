@@ -188,7 +188,7 @@ describe("agent op registry", () => {
         "update_swarm",
         "dismiss_swarm_finding",
         "undismiss_swarm_finding",
-        "cancel_wave_insights",
+        "cancel_swarm_run_insights",
         "dismiss_study_finding",
         "undismiss_study_finding",
         "cancel_study_insights",
@@ -1975,7 +1975,7 @@ describe("tier derives from operation.risk", () => {
       tier: "gated",
       reason: "The same as generate_personas: platform-paid, shared quota.",
     },
-    request_wave_insights: {
+    request_swarm_run_insights: {
       tier: "gated",
       reason:
         "Platform-paid, so risk is none. Gated on the insightsPerDay " +
@@ -1985,7 +1985,7 @@ describe("tier derives from operation.risk", () => {
     request_study_insights: {
       tier: "gated",
       reason:
-        "The same shared insightsPerDay ledger as request_wave_insights, " +
+        "The same shared insightsPerDay ledger as request_swarm_run_insights, " +
         "plus a 409 until the window is mined, which a caller must not " +
         "retry in a loop.",
     },
@@ -2243,7 +2243,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
   "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
-  "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
   "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
   "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",

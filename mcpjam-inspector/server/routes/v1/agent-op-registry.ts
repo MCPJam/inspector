@@ -143,9 +143,9 @@ import {
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
   generatePersonasOperation,
   generateGoalsOperation,
   getStudyMetricsOperation,
@@ -2159,8 +2159,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: listSwarmFindingsOperation, tier: "direct" },
   { operation: dismissSwarmFindingOperation, tier: "direct" },
   { operation: undismissSwarmFindingOperation, tier: "direct" },
-  { operation: getWaveInsightsOperation, tier: "direct" },
-  { operation: cancelWaveInsightsOperation, tier: "direct" },
+  { operation: getSwarmRunInsightsOperation, tier: "direct" },
+  { operation: cancelSwarmRunInsightsOperation, tier: "direct" },
 
   // ── GATED — the swarm operations that SPEND.
   {
@@ -2228,7 +2228,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: requestWaveInsightsOperation,
+    operation: requestSwarmRunInsightsOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2242,7 +2242,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
       "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
@@ -2285,7 +2285,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      // Platform-paid; see `request_wave_insights` above for why it stays
+      // Platform-paid; see `request_swarm_run_insights` above for why it stays
       // gated on a shared quota rather than on money.
       confirmSeverity: "none",
     },

@@ -26,7 +26,7 @@ import { usageError } from "../lib/output.js";
 import {
   archiveGoalOperation,
   archiveSwarmOperation,
-  cancelWaveInsightsOperation,
+  cancelSwarmRunInsightsOperation,
   createGoalOperation,
   createPersonaOperation,
   createSwarmOperation,
@@ -39,11 +39,11 @@ import {
   getPersonaOperation,
   getSwarmOperation,
   getSwarmOverviewOperation,
-  getWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
   listPersonasOperation,
   listSwarmFindingsOperation,
   listSwarmsOperation,
-  requestWaveInsightsOperation,
+  requestSwarmRunInsightsOperation,
   undismissSwarmFindingOperation,
   updateGoalOperation,
   updatePersonaOperation,
@@ -182,6 +182,26 @@ function iterationsOf(options: IterationOptions): number | undefined {
   return raw === undefined
     ? undefined
     : parseIntegerOption(raw, "--iterations", SESSIONS_BOUNDS);
+}
+
+/**
+ * The swarm run id, from whichever spelling was given.
+ *
+ * `--swarm-run` is the public name; `--wave` is the pre-rename spelling, kept
+ * so existing scripts keep running. Passing both is refused rather than
+ * resolved by precedence.
+ */
+function swarmRunIdOf(options: { swarmRun?: string; wave?: string }): string {
+  if (options.swarmRun !== undefined && options.wave !== undefined) {
+    throw usageError(
+      "Use either --swarm-run or its deprecated --wave alias, not both."
+    );
+  }
+  const selected = options.swarmRun ?? options.wave;
+  if (selected === undefined) {
+    throw usageError("Missing required option: --swarm-run");
+  }
+  return selected;
 }
 
 /** The same, on a command that requires it. */
@@ -656,14 +676,15 @@ export function registerSwarmAuthoringCommands(
       goals
         .command("insights")
         .description(
-          "The model's analysis of a whole wave, if one has been requested. Not-found means nobody asked for it, which is different from asked-and-still-working."
+          "The model's analysis of a whole swarm run, if one has been requested. Not-found means nobody asked for it, which is different from asked-and-still-working."
         )
-        .requiredOption("--wave <id>", "Wave ID (the waveId on a run)")
+        .option("--swarm-run <id>", "Swarm run ID (the swarmRunId on a run)")
+        .option("--wave <id>", "Deprecated alias for --swarm-run")
     ),
-    getWaveInsightsOperation,
-    (options: ProjectOptions & { wave: string }) => ({
+    getSwarmRunInsightsOperation,
+    (options: ProjectOptions & { swarmRun?: string; wave?: string }) => ({
       project: options.project,
-      wave: options.wave,
+      swarmRun: swarmRunIdOf(options),
     })
   );
 
@@ -672,18 +693,25 @@ export function registerSwarmAuthoringCommands(
       goals
         .command("request-insights")
         .description(
-          "Ask a model to analyze a whole wave. Returns immediately as pending; poll `goals insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with user-testing insights. Read the scorecards first — they cost no quota and usually explain the failure."
+          "Ask a model to analyze a whole swarm run. Returns immediately as pending; poll `goals insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with user-testing insights. Read the scorecards first — they cost no quota and usually explain the failure."
         )
-        .requiredOption("--wave <id>", "Wave ID")
+        .option("--swarm-run <id>", "Swarm run ID")
+        .option("--wave <id>", "Deprecated alias for --swarm-run")
         .option(
           "--force",
-          "Regenerate over a wave that already has insights. Takes another slice of the daily insight quota."
+          "Regenerate over a swarm run that already has insights. Takes another slice of the daily insight quota."
         )
     ),
-    requestWaveInsightsOperation,
-    (options: ProjectOptions & { wave: string; force?: boolean }) => ({
+    requestSwarmRunInsightsOperation,
+    (
+      options: ProjectOptions & {
+        swarmRun?: string;
+        wave?: string;
+        force?: boolean;
+      }
+    ) => ({
       project: options.project,
-      wave: options.wave,
+      swarmRun: swarmRunIdOf(options),
       ...(options.force ? { force: true } : {}),
     })
   );
@@ -693,14 +721,15 @@ export function registerSwarmAuthoringCommands(
       goals
         .command("cancel-insights")
         .description(
-          "Stop an in-flight insights generation. The recovery path for a wave stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota."
+          "Stop an in-flight insights generation. The recovery path for a swarm run stuck pending — without it the only way forward is --force, which takes another slice of the daily insight quota."
         )
-        .requiredOption("--wave <id>", "Wave ID")
+        .option("--swarm-run <id>", "Swarm run ID")
+        .option("--wave <id>", "Deprecated alias for --swarm-run")
     ),
-    cancelWaveInsightsOperation,
-    (options: ProjectOptions & { wave: string }) => ({
+    cancelSwarmRunInsightsOperation,
+    (options: ProjectOptions & { swarmRun?: string; wave?: string }) => ({
       project: options.project,
-      wave: options.wave,
+      swarmRun: swarmRunIdOf(options),
     })
   );
 
