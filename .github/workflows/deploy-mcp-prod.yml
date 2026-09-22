@@ -13,9 +13,33 @@ name: Deploy MCP Production
 # Reviewer gating lives on the `mcp-production` GitHub Environment in repo
 # Settings → Environments, not in this file. Keeping the gate in the
 # environment config means it applies uniformly to both invocation paths.
+#
+# Three things gate a promotion, in order:
+#   1. `verify-staging` — staging is green for the current MCP build inputs.
+#   2. `eval-gate`      — the dogfood eval suite passes against the STAGING
+#                         worker, i.e. against the candidate itself. This runs
+#                         before the reviewer is asked, so the verdict informs
+#                         the approval rather than arriving after it.
+#   3. the `mcp-production` environment reviewer.
+#
+# The eval gate can be skipped with `skip_eval_gate`, which demands a reason and
+# prints it in the summary. An escape hatch that has to be named is the honest
+# alternative to a gate people quietly delete the first time it is inconvenient
+# — and it is needed, because a gate that cannot tell "the server regressed"
+# from "our runner is down" would otherwise hold releases hostage to our own
+# infrastructure.
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_eval_gate:
+        description: "Promote without the eval gate (requires a reason)"
+        type: boolean
+        default: false
+      skip_eval_gate_reason:
+        description: "Why the eval gate is being skipped"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -40,13 +64,14 @@ env:
   PRODUCTION_URL: ${{ vars.MCP_WORKER_PRODUCTION_URL || 'https://mcp.mcpjam.com' }}
 
 jobs:
-  deploy:
+  # Deliberately NOT in the `deploy` job, and deliberately without an
+  # `environment:`. Environment protection pauses a job before its first step,
+  # so anything living inside `deploy` runs only after a human has already
+  # approved. These checks exist to inform that decision, so they have to run
+  # first.
+  verify-staging:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment:
-      name: mcp-production
-      url: ${{ env.PRODUCTION_URL }}
-
+    timeout-minutes: 10
     steps:
       - name: Enforce main branch
         run: |
@@ -55,19 +80,22 @@ jobs:
             exit 1
           fi
 
-      - name: Require Cloudflare credentials
+      - name: Refuse to skip the eval gate without a reason
+        if: ${{ inputs.skip_eval_gate }}
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          REASON: ${{ inputs.skip_eval_gate_reason }}
         run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "Missing GitHub Actions secret: CLOUDFLARE_ACCOUNT_ID" >&2
+          # Trimmed, so whitespace is not a reason.
+          if [ -z "$(printf '%s' "$REASON" | tr -d '[:space:]')" ]; then
+            echo "::error::skip_eval_gate requires skip_eval_gate_reason. Say why the candidate is safe to promote unevaluated."
             exit 1
           fi
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "Missing GitHub Actions secret: CLOUDFLARE_API_TOKEN" >&2
-            exit 1
-          fi
+          echo "::warning::Eval gate skipped: $REASON"
+          {
+            echo "## ⚠️ Eval gate skipped"
+            echo
+            echo "Reason given: $REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -162,6 +190,53 @@ jobs:
               `${latestSuccess.head_sha.slice(0, 7)}; current main ${headSha.slice(0, 7)} ` +
               `differs only in non-MCP paths — safe to promote.`
             );
+
+  # The candidate itself, evaluated. `--server mcpjam-mcp-staging` points the
+  # suite file's cases at the staging worker, which is what is about to be
+  # promoted — the same file that monitors production nightly, so the two can
+  # never drift into two different definitions of "working".
+  eval-gate:
+    needs: verify-staging
+    if: ${{ !inputs.skip_eval_gate }}
+    uses: ./.github/workflows/mcp-dogfood-evals.yml
+    with:
+      server: mcpjam-mcp-staging
+    secrets: inherit
+
+  deploy:
+    needs: [verify-staging, eval-gate]
+    # `always()` so a deliberately skipped eval gate does not skip the deploy
+    # with it, while `verify-staging` and a FAILED gate still block. Without
+    # this, `skip_eval_gate` would silently cancel the promotion instead of
+    # allowing it.
+    if: >-
+      ${{ always() &&
+          needs.verify-staging.result == 'success' &&
+          needs.eval-gate.result != 'failure' &&
+          needs.eval-gate.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: mcp-production
+      url: ${{ env.PRODUCTION_URL }}
+
+    steps:
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Missing GitHub Actions secret: CLOUDFLARE_ACCOUNT_ID" >&2
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing GitHub Actions secret: CLOUDFLARE_API_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
