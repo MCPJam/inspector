@@ -67,6 +67,30 @@ const input = {
 };
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
 
+it("lets a new job take a suite a FAILED job still points at", async () => {
+  // A failed job keeps its id on the suite so the reader can retry it. The
+  // next job read that id as a newer follower and stood down before polling,
+  // so the suite sat on "running" and Generate refused every retry.
+  const key = evalSuiteKey(scope);
+  useEvalGeneration.setState({
+    suites: {
+      [key]: { status: "error", drafts: [], authoringJobId: "dead" } as never,
+    },
+  });
+  vi.mocked(readJob)
+    .mockReset()
+    .mockResolvedValue(authoredJob({ jobId: "fresh", drafts: [] }));
+  await followAuthoringJob(
+    { projectId: scope.projectId, suiteId: scope.suiteId },
+    "fresh",
+    { takeOver: true },
+  );
+  expect(readJob).toHaveBeenCalledWith("fresh");
+  expect(useEvalGeneration.getState().suites[key]).toMatchObject({
+    status: "ready",
+  });
+});
+
 it("clears a finished job's drafts when a new import starts", async () => {
   // A second import appended its cases to the first one's, so a six-case
   // document read back as twelve drafts — two of every case. A person's own

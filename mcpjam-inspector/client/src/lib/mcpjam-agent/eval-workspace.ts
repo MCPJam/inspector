@@ -421,7 +421,7 @@ export function startEvalGeneration(
       options,
     },
   })
-    .then(({ jobId }) => followAuthoringJob(scope, jobId))
+    .then(({ jobId }) => followAuthoringJob(scope, jobId, { takeOver: true }))
     .catch((error) =>
       updateGeneration(key, (state) => ({
         ...state,
@@ -644,13 +644,25 @@ function supersededBy(key: string, jobId: string): boolean {
 export async function followAuthoringJob(
   scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
   jobId: string,
+  options?: {
+    /**
+     * This job was just started from this tab, so it outranks whatever the
+     * suite was pointing at.
+     *
+     * Without it a failed job kept its id on the suite, the next job read that
+     * id as a newer follower and stood down before polling, and the suite sat
+     * on "running" forever — one failed generation was enough to make the
+     * Generate button refuse every retry.
+     */
+    takeOver?: boolean;
+  },
 ) {
   if (authoringPolls.has(jobId)) return;
   const key = evalSuiteKey(scope);
   // Claiming the suite is itself a write, so an already-superseded job must
   // stand down BEFORE it announces itself — otherwise it takes the key back
   // from the job the reader opened and the guards below never fire.
-  if (supersededBy(key, jobId)) return;
+  if (!options?.takeOver && supersededBy(key, jobId)) return;
   authoringPolls.add(jobId);
   updateGeneration(key, (state) => ({
     ...state,
@@ -831,7 +843,8 @@ export async function controlAuthoringJob(
   if (!jobId) return;
   try {
     await authoringRequest({ operation, jobId });
-    if (operation === "retry") await followAuthoringJob(scope, jobId);
+    if (operation === "retry")
+      await followAuthoringJob(scope, jobId, { takeOver: true });
   } catch (error) {
     updateGeneration(key, (state) => ({
       ...state,
