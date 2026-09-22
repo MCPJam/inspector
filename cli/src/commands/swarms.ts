@@ -21,7 +21,7 @@
  * the question directly.
  */
 import type { Command } from "commander";
-import { goalIdOf } from "./goals.js";
+import { foldSwarmRunId, goalIdOf } from "./goals.js";
 import { usageError } from "../lib/output.js";
 import {
   archiveGoalOperation,
@@ -191,13 +191,9 @@ function iterationsOf(options: IterationOptions): number | undefined {
  * so existing scripts keep running. Passing both is refused rather than
  * resolved by precedence.
  */
+/** {@link foldSwarmRunId}, on the insight commands that require one. */
 function swarmRunIdOf(options: { swarmRun?: string; wave?: string }): string {
-  if (options.swarmRun !== undefined && options.wave !== undefined) {
-    throw usageError(
-      "Use either --swarm-run or its deprecated --wave alias, not both."
-    );
-  }
-  const selected = options.swarmRun ?? options.wave;
+  const selected = foldSwarmRunId(options);
   if (selected === undefined) {
     throw usageError("Missing required option: --swarm-run");
   }
@@ -839,6 +835,7 @@ export function registerSwarmAuthoringCommands(
         name?: string;
         description?: string;
         environment?: string[];
+        iterations?: string;
         sessionsPerTarget?: string;
         maxTurns?: string;
       }
@@ -852,13 +849,11 @@ export function registerSwarmAuthoringCommands(
       ...(options.environment?.length
         ? { environmentIds: options.environment }
         : {}),
-      ...(options.sessionsPerTarget !== undefined
-        ? {
-            sessionsPerTarget: parseIntegerOption(
-              options.sessionsPerTarget,
-              "--sessions-per-target"
-            ),
-          }
+      // Through the shared fold, like `goals update`: `addConfigOptions`
+      // registers BOTH flags on this command, so reading only the deprecated
+      // one would accept `--iterations` and silently change nothing.
+      ...(iterationsOf(options) !== undefined
+        ? { iterations: iterationsOf(options)! }
         : {}),
       ...(options.maxTurns !== undefined
         ? { maxTurns: parseIntegerOption(options.maxTurns, "--max-turns") }

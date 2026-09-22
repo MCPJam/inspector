@@ -23,9 +23,15 @@ export const GOAL_RUN_RESOURCE_TYPES = new Set(["goal_run", "journey_run"]);
  *
  * An id is required: a type with nothing to watch cannot start a live
  * surface, and claiming one would leave a message that never updates.
+ *
+ * @param {{ type?: string, id?: string } | null | undefined} resource
+ * @returns {boolean}
  */
 export function isGoalRunResource(resource) {
 	return Boolean(
-		resource && GOAL_RUN_RESOURCE_TYPES.has(resource.type) && resource.id,
+		resource &&
+			typeof resource.type === "string" &&
+			GOAL_RUN_RESOURCE_TYPES.has(resource.type) &&
+			resource.id,
 	);
 }

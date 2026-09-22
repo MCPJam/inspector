@@ -2125,7 +2125,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: getGoalOperation,
     tier: "direct",
     promptNotes: [
-      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_goal` before proposing a launch so the number in your proposal is the real one.",
+      "- A goal run produces `targets x iterations` conversations, and that total is what spends. Read `get_goal` before proposing a launch so the number in your proposal is the real one.",
     ],
   },
   { operation: createGoalOperation, tier: "direct" },
@@ -2167,18 +2167,24 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: launchGoalRunOperation,
     tier: "gated",
     proposal: {
+      // BOTH selector spellings: `goalId` is canonical and `journey` its
+      // deprecated alias, so reading only the alias renders a valid proposal
+      // as "(unnamed)" with no target metadata. The target TYPE stays
+      // `journey` — it is a stored proposal discriminant, not a public noun.
       describe: (input) =>
-        `Launch journey ${named(input, "journey") ?? "(unnamed)"}`,
+        `Launch goal ${
+          named(input, "goalId") ?? named(input, "journey") ?? "(unnamed)"
+        }`,
       buttonLabel: "Launch it",
       kind: "start",
       confirmSeverity: "spend",
       target: (input) => {
-        const journey = named(input, "journey");
-        return journey ? { type: "journey", selector: journey } : undefined;
+        const selector = named(input, "goalId") ?? named(input, "journey");
+        return selector ? { type: "journey", selector } : undefined;
       },
     },
     promptNotes: [
-      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
+      "- Launching a goal fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
     ],
   },
   {

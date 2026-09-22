@@ -15,10 +15,10 @@ import { MCPJAM_COMMANDS, resolveCommandRegistration } from "./commands.js";
 import { config, describeConfigGaps } from "./config.js";
 import { buildInteractionRef, buildMessageRef } from "./context.js";
 import { createDiscordDelivery } from "./delivery.js";
+import { isGoalRunResource } from "./goal-run.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
 import { toDeliverableResult, toReplayContent } from "./turn-result.js";
-import { isGoalRunResource } from "./goal-run.js";
 import { watchDiscordJourneyRun, watchDiscordRun } from "./watcher.js";
 
 if (!config.botToken) throw new Error("DISCORD_BOT_TOKEN is required");

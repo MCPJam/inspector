@@ -104,6 +104,31 @@ export function goalIdOf(options: {
   return selected;
 }
 
+/**
+ * The swarm run id, from whichever spelling was given, or `undefined`.
+ *
+ * `--swarm-run` is the public name; `--wave` is the pre-rename spelling, kept
+ * so existing scripts keep running. Passing both is refused rather than
+ * resolved by precedence: sibling runs of one batch are linked by this id, and
+ * picking one silently would split a batch in two.
+ *
+ * Here rather than in `swarms.ts` because both files need it and `swarms.ts`
+ * already imports from this one; the reverse would be a cycle. It returns
+ * `undefined` for the optional case (`goals run`), and `swarms.ts` wraps it
+ * for the commands that require one.
+ */
+export function foldSwarmRunId(options: {
+  swarmRun?: string;
+  wave?: string;
+}): string | undefined {
+  if (options.swarmRun !== undefined && options.wave !== undefined) {
+    throw usageError(
+      "Use either --swarm-run or its deprecated --wave alias, not both."
+    );
+  }
+  return options.swarmRun ?? options.wave;
+}
+
 export function registerGoalsCommands(program: Command): Command {
   const goals = program
     .command("goals")
@@ -214,9 +239,10 @@ export function registerGoalsCommands(program: Command): Command {
       "Retry key. Pass one: a launch spends model credits, so a retry after a dropped response must not run the goal twice. Replaying a key returns the original run."
     )
     .option(
-      "--wave <id>",
+      "--swarm-run <id>",
       "Opaque id linking the sibling runs of one co-launched batch"
     )
+    .option("--wave <id>", "Deprecated alias for --swarm-run")
     .option(
       "--environment <id>",
       "Fan out across this project environment instead of the goal's authored targets (repeatable)",
@@ -230,6 +256,7 @@ export function registerGoalsCommands(program: Command): Command {
           goalId?: string;
           journey?: string;
           idempotencyKey?: string;
+          swarmRun?: string;
           wave?: string;
           environment?: string[];
         },
@@ -247,7 +274,12 @@ export function registerGoalsCommands(program: Command): Command {
                 ...(options.idempotencyKey
                   ? { idempotencyKey: options.idempotencyKey }
                   : {}),
-                ...(options.wave ? { waveId: options.wave } : {}),
+                // `swarmRunId`, not `waveId`: the operation renamed its input
+                // with the rest of the noun, and the conditional spread means
+                // a stale key would be dropped in silence rather than refused.
+                ...(foldSwarmRunId(options)
+                  ? { swarmRunId: foldSwarmRunId(options)! }
+                  : {}),
                 ...(options.environment?.length
                   ? { environmentIds: options.environment }
                   : {}),

@@ -94,8 +94,10 @@ const WIDGET_PAYLOAD_GUARDS: Record<
     isRecord(payload.project) && Array.isArray(payload.items),
   scenarios: (payload) =>
     isRecord(payload.project) && Array.isArray(payload.items),
-  scenario: (payload) =>
-    isRecord(payload.project) && isRecord(payload.scenario),
+  // `study`, not `scenario`: the VIEW KEY stays (it addresses a bundled HTML
+  // resource) but the payload it carries is now `GetStudyResult`, whose
+  // members are `project` and `study`.
+  scenario: (payload) => isRecord(payload.project) && isRecord(payload.study),
 };
 
 /**

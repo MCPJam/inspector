@@ -31,7 +31,7 @@
     },
     {
       "name": "Environments",
-      "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and journeys run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
+      "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and goals run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
     },
     {
       "name": "Plugins",
@@ -1573,7 +1573,7 @@
         "operationId": "listClients",
         "tags": ["Clients"],
         "summary": "List a project's clients",
-        "description": "The clients saved in the project — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns the `id`s and `configId`s the detail and write routes take. Clients that exist only as the private backing of a User Testing scenario are omitted unless `includePrivateBacking=true`.",
+        "description": "The clients saved in the project — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns the `id`s and `configId`s the detail and write routes take. Clients that exist only as the private backing of a User Testing study are omitted unless `includePrivateBacking=true`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -1800,7 +1800,7 @@
         "operationId": "deleteClient",
         "tags": ["Clients"],
         "summary": "Delete a client",
-        "description": "Permanently deletes the client. Refused while a live environment, an active legacy journey or an eval suite still holds it — the error names what to detach first. Guest callers are denied (a write).",
+        "description": "Permanently deletes the client. Refused while a live environment, an active legacy goal or an eval suite still holds it — the error names what to detach first. Guest callers are denied (a write).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -5539,7 +5539,7 @@
         "operationId": "listStudies",
         "tags": ["Studies"],
         "summary": "List a project's scenarios",
-        "description": "The scenarios published from this project — name, access mode, attached servers, and share link. Read-only.",
+        "description": "The studies published from this project — name, access mode, attached servers, and share link. Read-only.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -5547,7 +5547,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The project's scenarios.",
+            "description": "The project's studies.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5585,7 +5585,7 @@
         "operationId": "createTunnel",
         "tags": ["Tunnels"],
         "summary": "Create (or revive) a relay tunnel for a named project server",
-        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and scenarios can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam cloud tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and studies can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam cloud tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -8141,7 +8141,7 @@
         "operationId": "updatePersona",
         "tags": ["Swarms"],
         "summary": "Update a persona",
-        "description": "Partial update. Journeys reference the persona by id, so renaming one does not disturb anything pointing at it.",
+        "description": "Partial update. Goals reference the persona by id, so renaming one does not disturb anything pointing at it.",
         "requestBody": {
           "required": true,
           "description": "Fields to change.",
@@ -8188,7 +8188,7 @@
         "operationId": "deletePersona",
         "tags": ["Swarms"],
         "summary": "Delete a persona",
-        "description": "Refused with 409 while journeys still reference this persona — deleting it would strand them.",
+        "description": "Refused with 409 while goals still reference this persona — deleting it would strand them.",
         "responses": {
           "200": {
             "description": "The persona was deleted.",
@@ -8245,7 +8245,7 @@
         },
         "responses": {
           "200": {
-            "description": "Draft personas and journeys.",
+            "description": "Draft personas and goals.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8526,7 +8526,7 @@
         },
         "responses": {
           "200": {
-            "description": "Draft journeys.",
+            "description": "Draft goals.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8571,7 +8571,7 @@
         "summary": "Get a journey",
         "responses": {
           "200": {
-            "description": "The journey.",
+            "description": "The goal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8601,7 +8601,7 @@
         "operationId": "updateGoal",
         "tags": ["Swarms"],
         "summary": "Update a journey",
-        "description": "Editing a journey never disturbs a run already under way: a run pins its own immutable snapshot of the definition at launch.",
+        "description": "Editing a goal never disturbs a run already under way: a run pins its own immutable snapshot of the definition at launch.",
         "requestBody": {
           "required": true,
           "description": "Fields to change.",
@@ -8615,7 +8615,7 @@
         },
         "responses": {
           "200": {
-            "description": "The updated journey.",
+            "description": "The updated goal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8651,7 +8651,7 @@
         "description": "ARCHIVES rather than deletes, and the response says so. Existing runs keep pointing at the definition they executed, so their history stays readable.",
         "responses": {
           "200": {
-            "description": "The journey was archived.",
+            "description": "The goal was archived.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8723,7 +8723,7 @@
         "operationId": "createSwarm",
         "tags": ["Swarms"],
         "summary": "Create a swarm",
-        "description": "A swarm is an authoring container holding DEFAULTS for the journeys made under it. Creating one starts nothing.",
+        "description": "A swarm is an authoring container holding DEFAULTS for the goals made under it. Creating one starts nothing.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -8826,7 +8826,7 @@
         "operationId": "updateSwarm",
         "tags": ["Swarms"],
         "summary": "Update a swarm",
-        "description": "Changes the container's DEFAULTS. Journeys already authored under it keep the values they were created with — this is not a cascade.",
+        "description": "Changes the container's DEFAULTS. Goals already authored under it keep the values they were created with — this is not a cascade.",
         "requestBody": {
           "required": true,
           "description": "Fields to change.",
@@ -8873,7 +8873,7 @@
         "operationId": "archiveSwarm",
         "tags": ["Swarms"],
         "summary": "Archive a swarm",
-        "description": "ARCHIVES the container. The journeys authored under it are not touched — they keep their own definitions and stay launchable.",
+        "description": "ARCHIVES the container. The goals authored under it are not touched — they keep their own definitions and stay launchable.",
         "responses": {
           "200": {
             "description": "The swarm was archived.",
@@ -8913,13 +8913,13 @@
         "operationId": "listGoals",
         "tags": ["Swarms"],
         "summary": "List journeys",
-        "description": "The project's journeys, newest first. Archived journeys are excluded.",
+        "description": "The project's goals, newest first. Archived goals are excluded.",
         "requestBody": {
           "$ref": "#/components/requestBodies/cursorBody"
         },
         "responses": {
           "200": {
-            "description": "A page of journeys.",
+            "description": "A page of goals.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8949,7 +8949,7 @@
         "operationId": "createGoal",
         "tags": ["Swarms"],
         "summary": "Create a journey",
-        "description": "Creates one journey: a persona pursuing a `goal` against one or more environments. To draft several with a model first, use `POST /projects/{projectId}/journeys/generate` — that route persists nothing.\n\n`personaId` and `swarmId` must belong to THIS project. Naming one from another project is a `404`, not a silent cross-project reference.\n\nCreating a journey does not run it. Launch it with `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
+        "description": "Creates one goal: a persona pursuing a task against one or more environments. To draft several with a model first, use `POST /projects/{projectId}/goals/generate` — that route persists nothing.\n\n`personaId` and `swarmId` must belong to THIS project. Naming one from another project is a `404`, not a silent cross-project reference.\n\nCreating a goal does not run it. Launch it with `POST /projects/{projectId}/goals/{goalId}/runs`.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -8963,7 +8963,7 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "The journey to create.",
+          "description": "The goal to create.",
           "content": {
             "application/json": {
               "schema": {
@@ -8974,7 +8974,7 @@
         },
         "responses": {
           "201": {
-            "description": "The created journey.",
+            "description": "The created goal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9056,13 +9056,13 @@
         "operationId": "launchGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Launch a journey",
-        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished — poll `GET /projects/{projectId}/journey-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets × sessionsPerTarget` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both normally carry `Retry-After` — honor it when it is there, and back off on your own when it is not, rather than blocking on a header that may not come. A retried `Idempotency-Key` consumes NO quota.",
+        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished — poll `GET /projects/{projectId}/goal-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets × iterations` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both normally carry `Retry-After` — honor it when it is there, and back off on your own when it is not, rather than blocking on a header that may not come. A retried `Idempotency-Key` consumes NO quota.",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
-            "description": "**Send one.** A launch spends model credits, so a retry of a dropped response must not run the journey twice. Replaying a key returns the ORIGINAL run with `deduped: true` and starts no second runner.\n\nOmitting the header is read as a request that declined to identify itself, and gets a FRESH run every time.",
+            "description": "**Send one.** A launch spends model credits, so a retry of a dropped response must not run the goal twice. Replaying a key returns the ORIGINAL run with `deduped: true` and starts no second runner.\n\nOmitting the header is read as a request that declined to identify itself, and gets a FRESH run every time.",
             "schema": {
               "type": "string"
             }
@@ -9070,7 +9070,7 @@
         ],
         "requestBody": {
           "required": false,
-          "description": "Optional launch options. Omit the body entirely to run the journey as authored.",
+          "description": "Optional launch options. Omit the body entirely to run the goal as authored.",
           "content": {
             "application/json": {
               "schema": {
@@ -9600,7 +9600,7 @@
         "operationId": "publishStudy",
         "tags": ["Studies"],
         "summary": "Publish an environment for user testing",
-        "description": "PUT, not POST, because publishing is IDEMPOTENT: one scenario per environment, and publishing an already-published environment returns the existing one rather than minting a second. `created` says which happened.\n\nRequires project ADMIN.",
+        "description": "PUT, not POST, because publishing is IDEMPOTENT: one study per environment, and publishing an already-published environment returns the existing one rather than minting a second. `created` says which happened.\n\nRequires project ADMIN.",
         "requestBody": {
           "required": false,
           "description": "Optional create-time overrides. A bodyless publish is the common case.",
@@ -9614,7 +9614,7 @@
         },
         "responses": {
           "200": {
-            "description": "The scenario, new or existing.",
+            "description": "The study, new or existing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9659,7 +9659,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The scenario was removed (or there was none).",
+            "description": "The study was removed (or there was none).",
             "content": {
               "application/json": {
                 "schema": {
@@ -9699,7 +9699,7 @@
         "operationId": "updateStudy",
         "tags": ["Studies"],
         "summary": "Update a scenario",
-        "description": "Change a scenario's identity or its exposure — but not both in one call. **Send `mode` on its own.** Identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.\n\nNarrowing `mode` bumps `accessVersion` upstream and invalidates sessions minted under the old one.",
+        "description": "Change a study's identity or its exposure — but not both in one call. **Send `mode` on its own.** Identity and exposure are separate operations upstream, and applying them in sequence could leave the study live in a mode you did not ask for.\n\nNarrowing `mode` bumps `accessVersion` upstream and invalidates sessions minted under the old one.",
         "requestBody": {
           "required": true,
           "content": {
@@ -9712,7 +9712,7 @@
         },
         "responses": {
           "200": {
-            "description": "The updated scenario.",
+            "description": "The updated study.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9939,7 +9939,7 @@
         "operationId": "rotateStudyLink",
         "tags": ["Studies"],
         "summary": "Rotate the share link",
-        "description": "Mints a new share link and stops the old URL from granting access. Everyone you shared it with needs the new one.\n\n**Rotation does NOT evict anyone who already redeemed the old link.** Their grant is a stored row, not a property of the URL, and it survives rotation — `accessVersion` is deliberately not bumped here. So rotation alone does not undo a leak: rotate to close the door, then `DELETE .../members/{memberIdOrEmail}` for anyone who already walked through it.\n\nBodyless: the scenario is the whole request, and the new secret is minted server-side by definition.",
+        "description": "Mints a new share link and stops the old URL from granting access. Everyone you shared it with needs the new one.\n\n**Rotation does NOT evict anyone who already redeemed the old link.** Their grant is a stored row, not a property of the URL, and it survives rotation — `accessVersion` is deliberately not bumped here. So rotation alone does not undo a leak: rotate to close the door, then `DELETE .../members/{memberIdOrEmail}` for anyone who already walked through it.\n\nBodyless: the study is the whole request, and the new secret is minted server-side by definition.",
         "responses": {
           "200": {
             "description": "The new link.",
@@ -10084,7 +10084,7 @@
         "operationId": "rebindStudy",
         "tags": ["Studies"],
         "summary": "Point a scenario at a different environment",
-        "description": "Keeps the scenario's LINK, its members and its session history while changing what visitors actually reach. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone.\n\nThe new environment must belong to THIS project; one that does not answers 404 rather than confirming it exists elsewhere.",
+        "description": "Keeps the study's LINK, its members and its session history while changing what visitors actually reach. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone.\n\nThe new environment must belong to THIS project; one that does not answers 404 rather than confirming it exists elsewhere.",
         "requestBody": {
           "required": true,
           "content": {
@@ -10097,7 +10097,7 @@
         },
         "responses": {
           "200": {
-            "description": "The scenario now points at the new environment.",
+            "description": "The study now points at the new environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10140,7 +10140,7 @@
         "operationId": "getStudyMetrics",
         "tags": ["Studies"],
         "summary": "Session metrics",
-        "description": "Volumes, completion and feedback rates over the scenario's sessions.\n\n`404` when the scenario has produced no sessions yet — an empty scenario has no metrics, which is different from metrics that are all zero.",
+        "description": "Volumes, completion and feedback rates over the study's sessions.\n\n`404` when the study has produced no sessions yet — an empty study has no metrics, which is different from metrics that are all zero.",
         "parameters": [
           {
             "name": "population",
@@ -10198,7 +10198,7 @@
         "operationId": "getStudyUsage",
         "tags": ["Studies"],
         "summary": "Usage breakdown",
-        "description": "Which models, tools and servers the scenario's sessions used.\n\n**Check `scan.truncated` before quoting a rate.** `404` when there is no usage data yet.",
+        "description": "Which models, tools and servers the study's sessions used.\n\n**Check `scan.truncated` before quoting a rate.** `404` when there is no usage data yet.",
         "responses": {
           "200": {
             "description": "The breakdown.",
@@ -10284,7 +10284,7 @@
         "operationId": "listStudyFindings",
         "tags": ["Studies"],
         "summary": "List scenario findings",
-        "description": "Every finding raised over this scenario's windows, dismissed ones included — dismissal is a state on the finding, not a deletion.",
+        "description": "Every finding raised over this study's windows, dismissed ones included — dismissal is a state on the finding, not a deletion.",
         "responses": {
           "200": {
             "description": "The findings.",
@@ -10373,7 +10373,7 @@
         "operationId": "requestStudyInsights",
         "tags": ["Studies"],
         "summary": "Request insights for the current window",
-        "description": "**No credits are consumed** — the model cost is on MCPJam. Runs a model over the scenario's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm wave insights, so a request here takes one from there.\n\n`202`: scheduled, not done. Poll `GET .../windows/{windowId}/insights` with the returned `windowId` rather than re-requesting.\n\n`409` when the current window has not been mined yet: the request was well formed and retrying it verbatim will not help until sessions have been processed.",
+        "description": "**No credits are consumed** — the model cost is on MCPJam. Runs a model over the study's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm run insights, so a request here takes one from there.\n\n`202`: scheduled, not done. Poll `GET .../windows/{windowId}/insights` with the returned `windowId` rather than re-requesting.\n\n`409` when the current window has not been mined yet: the request was well formed and retrying it verbatim will not help until sessions have been processed.",
         "requestBody": {
           "required": false,
           "content": {
@@ -23071,7 +23071,7 @@
       },
       "StudyLink": {
         "type": "object",
-        "description": "Share link for the scenario. The URL embeds the access token; visible to any caller who can read the scenario (the same audience that sees it in the hosted UI).",
+        "description": "Share link for the study. The URL embeds the access token; visible to any caller who can read the study (the same audience that sees it in the hosted UI).",
         "required": ["path", "url"],
         "properties": {
           "path": {
@@ -23086,7 +23086,7 @@
       },
       "StudyServer": {
         "type": "object",
-        "description": "A server attached to the scenario. Scenarios attach HTTP servers only, so `url` is the server's endpoint.",
+        "description": "A server attached to the study. Studies attach HTTP servers only, so `url` is the server's endpoint.",
         "required": ["id", "name", "useOAuth"],
         "properties": {
           "id": {
@@ -23106,7 +23106,7 @@
       },
       "StudySummary": {
         "type": "object",
-        "description": "Summary of a published scenario, as returned by the list endpoint.",
+        "description": "Summary of a published study, as returned by the list endpoint.",
         "required": ["id", "name", "serverCount", "serverNames"],
         "properties": {
           "id": {
@@ -23123,7 +23123,7 @@
           },
           "mode": {
             "type": ["string", "null"],
-            "description": "Who can use the scenario.",
+            "description": "Who can use the study.",
             "enum": [
               "project_members",
               "invited_only",
@@ -23133,11 +23133,11 @@
           },
           "hostStyle": {
             "type": ["string", "null"],
-            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the study renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": ["string", "null"],
-            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
+            "description": "The named host the study publishes (hosts and studies are 1:1)."
           },
           "hostName": {
             "type": ["string", "null"]
@@ -23173,7 +23173,7 @@
       },
       "StudyDetail": {
         "type": "object",
-        "description": "A scenario's full read-only settings: the summary fields plus the host execution config and resolved servers.",
+        "description": "A study's full read-only settings: the summary fields plus the host execution config and resolved servers.",
         "required": [
           "id",
           "name",
@@ -23207,7 +23207,7 @@
           },
           "mode": {
             "type": ["string", "null"],
-            "description": "Who can use the scenario.",
+            "description": "Who can use the study.",
             "enum": [
               "project_members",
               "invited_only",
@@ -23217,11 +23217,11 @@
           },
           "hostStyle": {
             "type": ["string", "null"],
-            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the study renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": ["string", "null"],
-            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
+            "description": "The named host the study publishes (hosts and studies are 1:1)."
           },
           "hostName": {
             "type": ["string", "null"]
@@ -23255,7 +23255,7 @@
           },
           "modelId": {
             "type": ["string", "null"],
-            "description": "Model the scenario chats with."
+            "description": "Model the study chats with."
           },
           "systemPrompt": {
             "type": ["string", "null"]
@@ -24035,7 +24035,7 @@
       },
       "ProjectEnvironment": {
         "type": "object",
-        "description": "A project environment: a named, live-editable execution bundle that eval suites and journeys run against.",
+        "description": "A project environment: a named, live-editable execution bundle that eval suites and goals run against.",
         "required": [
           "id",
           "projectId",
@@ -25560,7 +25560,7 @@
       },
       "Persona": {
         "type": "object",
-        "description": "A reusable synthetic character. The GOAL lives on the journey, not here — one persona can be pointed at many different tasks.",
+        "description": "A reusable synthetic character. The TASK lives on the goal, not here — one persona can be pointed at many different tasks.",
         "required": [
           "id",
           "projectId",
@@ -25576,7 +25576,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Durable id — what journeys reference and what every route here addresses."
+            "description": "Durable id — what goals reference and what every route here addresses."
           },
           "projectId": {
             "type": "string"
@@ -25728,7 +25728,7 @@
       },
       "Goal": {
         "type": "object",
-        "description": "A persona's task: what they are trying to accomplish, and across which targets. Launching one is `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
+        "description": "A persona's task: what they are trying to accomplish, and across which targets. Launching one is `POST /projects/{projectId}/goals/{goalId}/runs`.",
         "required": [
           "id",
           "projectId",
@@ -25761,18 +25761,18 @@
           },
           "swarmId": {
             "type": ["string", "null"],
-            "description": "The swarm container this journey was authored under. Provenance only — nothing resolves through it at run time, and a journey created outside a swarm has none."
+            "description": "The swarm container this goal was authored under. Provenance only — nothing resolves through it at run time, and a goal created outside a swarm has none."
           },
           "environmentIds": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Environments this journey fans out across. EMPTY on a host-pinned journey — that is a different execution model, not a journey with no targets."
+            "description": "Environments this goal fans out across. EMPTY on a host-pinned goal — that is a different execution model, not a goal with no targets."
           },
           "serverAttachmentId": {
             "type": "string",
-            "description": "Legacy host-pinned grounding. Absent on an environment-based journey."
+            "description": "Legacy host-pinned grounding. Absent on an environment-based goal."
           },
           "iterations": {
             "type": ["integer", "null"],
@@ -25865,7 +25865,7 @@
       },
       "GoalUpdateRequest": {
         "type": "object",
-        "description": "PATCH with a TRI-STATE, and the third state is the point: a field absent leaves it alone, present sets it, and `null` CLEARS it. There is no other way to say \"stop fanning this journey out across environments and go back to its host targets\".\n\n`sessionsPerTarget` and `maxTurns` must be sent TOGETHER — they are one config object upstream, so a partial update would need a read-modify-write that could silently clobber a concurrent edit. Requiring both is a 400 you can fix rather than a lost update you never see.",
+        "description": "PATCH with a TRI-STATE, and the third state is the point: a field absent leaves it alone, present sets it, and `null` CLEARS it. There is no other way to say \"stop fanning this goal out across environments and go back to its host targets\".\n\n`iterations` and `maxTurns` must be sent TOGETHER — they are one config object upstream, so a partial update would need a read-modify-write that could silently clobber a concurrent edit. Requiring both is a 400 you can fix rather than a lost update you never see.",
         "additionalProperties": false,
         "minProperties": 1,
         "properties": {
@@ -25916,7 +25916,7 @@
       },
       "GoalArchived": {
         "type": "object",
-        "description": "Journeys ARCHIVE rather than delete: existing runs keep pointing at the definition they executed.",
+        "description": "Goals ARCHIVE rather than delete: existing runs keep pointing at the definition they executed.",
         "required": ["id", "projectId", "archived"],
         "properties": {
           "id": {
@@ -26129,7 +26129,7 @@
           },
           "journeyCount": {
             "type": "integer",
-            "description": "Journeys to draft per persona."
+            "description": "Goals to draft per persona."
           },
           "personaCount": {
             "type": "integer",
@@ -26177,7 +26177,7 @@
           },
           "persona": {
             "type": "object",
-            "description": "The persona to draft journeys FOR, passed BY VALUE rather than by id. Not an oversight: the create flow drafts a persona and its journeys before either exists, so requiring a persisted persona would force you to save a draft you may discard.",
+            "description": "The persona to draft goals FOR, passed BY VALUE rather than by id. Not an oversight: the create flow drafts a persona and its goals before either exists, so requiring a persisted persona would force you to save a draft you may discard.",
             "required": ["name", "role"],
             "properties": {
               "name": {
@@ -26199,7 +26199,7 @@
       },
       "GenerationDrafts": {
         "type": "object",
-        "description": "DRAFTS. Nothing here is persisted — feed what you want to keep to `POST /projects/{projectId}/personas` or `POST /projects/{projectId}/journeys`.\n\nThe shape depends on the request: `POST /personas/generate` returns `{persona, journeys}` without `personaCount` and `{personas: [{persona, journeys}]}` with it; `POST /journeys/generate` returns `{journeys}`.",
+        "description": "DRAFTS. Nothing here is persisted — feed what you want to keep to `POST /projects/{projectId}/personas` or `POST /projects/{projectId}/goals`.\n\nThe shape depends on the request: `POST /personas/generate` returns `{persona, journeys}` without `personaCount` and `{personas: [{persona, journeys}]}` with it; `POST /goals/generate` returns `{journeys}`. The payload KEY is still `journeys`: it is the drafting service's own shape, not a resource noun, and it moves at general availability with the rest of the deprecated surface.",
         "additionalProperties": true,
         "properties": {
           "persona": {
@@ -26555,7 +26555,7 @@
         "properties": {
           "total": {
             "type": "integer",
-            "description": "Targets × `sessionsPerTarget`, fixed at launch."
+            "description": "Targets × `iterations`, fixed at launch."
           },
           "succeeded": {
             "type": "integer"
@@ -26593,7 +26593,7 @@
           },
           "swarmRunId": {
             "type": "string",
-            "description": "The batch this run was launched with. Sibling runs of one co-launched wave share it; a solo relaunch is a wave of one. Absent on a run launched without one."
+            "description": "The batch this run was launched with. Sibling runs of one co-launched swarm run share it; a solo relaunch is a swarm run of one. Absent on a run launched without one."
           },
           "status": {
             "type": "string",
@@ -26953,7 +26953,7 @@
               "type": "string"
             },
             "minItems": 1,
-            "description": "Fan out across THESE environments instead of the journey's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+            "description": "Fan out across THESE environments instead of the goal's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
           }
         }
       },
@@ -26973,7 +26973,7 @@
           },
           "status": {
             "type": "string",
-            "description": "Always `running` — the run row exists and its fan-out has started. This is a 202: nothing here says the journey has finished, only that it is under way.",
+            "description": "Always `running` — the run row exists and its fan-out has started. This is a 202: nothing here says the goal run has finished, only that it is under way.",
             "enum": ["running"]
           },
           "deduped": {
@@ -27052,7 +27052,7 @@
       },
       "RunScorecard": {
         "type": "object",
-        "description": "Deterministic rubric result for one run. NO MODEL IS INVOLVED and nothing is spent — reach for this before the model-generated wave insights, which usually is not the question you actually have.",
+        "description": "Deterministic rubric result for one run. NO MODEL IS INVOLVED and nothing is spent — reach for this before the model-generated swarm run insights, which usually is not the question you actually have.",
         "required": ["runId", "criteria", "sessionsTotal", "sessionsGraded"],
         "properties": {
           "runId": {
@@ -27221,7 +27221,7 @@
           },
           "runStreak": {
             "type": "integer",
-            "description": "Consecutive runs of this journey where the criterion failed."
+            "description": "Consecutive runs of this goal where the criterion failed."
           }
         }
       },
@@ -27539,11 +27539,11 @@
           },
           "link": {
             "type": ["string", "null"],
-            "description": "The share link. `null` when the scenario has no link token."
+            "description": "The share link. `null` when the study has no link token."
           },
           "created": {
             "type": "boolean",
-            "description": "False when the environment was ALREADY published and this returned the existing scenario. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
+            "description": "False when the environment was ALREADY published and this returned the existing study. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
           },
           "overridesIgnored": {
             "type": "boolean",
@@ -27553,7 +27553,7 @@
       },
       "StudyPublishRequest": {
         "type": "object",
-        "description": "Optional CREATE-TIME overrides, applied in the same call so the scenario is never briefly live in a wider mode than you asked for. Ignored on a republish — see `overridesIgnored`.",
+        "description": "Optional CREATE-TIME overrides, applied in the same call so the study is never briefly live in a wider mode than you asked for. Ignored on a republish — see `overridesIgnored`.",
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -27580,7 +27580,7 @@
           },
           "deleted": {
             "type": "boolean",
-            "description": "False when the environment had no scenario. NOT an error — unpublishing something already unpublished is a no-op."
+            "description": "False when the environment had no study. NOT an error — unpublishing something already unpublished is a no-op."
           },
           "id": {
             "type": "string"
@@ -27589,7 +27589,7 @@
       },
       "StudyUpdated": {
         "type": "object",
-        "description": "Scenario metadata after an update. Deliberately WITHOUT `accessVersion`: a mode change bumps it upstream, but the envelope this route re-reads does not carry the new value — reporting a stale one would document a revocation signal the response cannot deliver. The publish response carries the real one.",
+        "description": "Study metadata after an update. Deliberately WITHOUT `accessVersion`: a mode change bumps it upstream, but the envelope this route re-reads does not carry the new value — reporting a stale one would document a revocation signal the response cannot deliver. The publish response carries the real one.",
         "required": ["id", "projectId", "name", "description", "mode"],
         "properties": {
           "id": {
@@ -27617,7 +27617,7 @@
       },
       "StudyUpdateRequest": {
         "type": "object",
-        "description": "At least one field. **Send `mode` on its own**: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
+        "description": "At least one field. **Send `mode` on its own**: identity and exposure are separate operations upstream, and applying them in sequence could leave the study live in a mode you did not ask for.",
         "additionalProperties": false,
         "minProperties": 1,
         "properties": {
@@ -27638,7 +27638,7 @@
       },
       "StudySession": {
         "type": "object",
-        "description": "One visitor's session with a published scenario. A SUMMARY, not a transcript.",
+        "description": "One visitor's session with a published study. A SUMMARY, not a transcript.",
         "required": [
           "id",
           "chatSessionId",
@@ -27966,7 +27966,7 @@
         "properties": {
           "environmentId": {
             "type": "string",
-            "description": "The environment to point this scenario at. Must belong to the SAME project."
+            "description": "The environment to point this study at. Must belong to the SAME project."
           }
         }
       },
@@ -28597,26 +28597,26 @@
       "StudyMetrics": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Session metrics for the scenario: volumes, completion and feedback rates, cohort splits.\n\nDeliberately UNPINNED. The upstream projection grows with the product and the SDK types it as an open record for the same reason — pinning a field list here would turn every added metric into a spec violation. Read what you recognize and ignore the rest.",
+        "description": "Session metrics for the study: volumes, completion and feedback rates, cohort splits.\n\nDeliberately UNPINNED. The upstream projection grows with the product and the SDK types it as an open record for the same reason — pinning a field list here would turn every added metric into a spec violation. Read what you recognize and ignore the rest.",
         "properties": {}
       },
       "StudyUsage": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Usage breakdown: models, tools and servers the scenario's sessions actually used.\n\n**Read `scan.truncated` before quoting any rate from this.** True means the rates were computed over the most recent N sessions rather than all of them, and dropping the flag turns a conditional statistic into an unconditional claim.\n\nUnpinned for the same reason as `ScenarioMetrics`.",
+        "description": "Usage breakdown: models, tools and servers the study's sessions actually used.\n\n**Read `scan.truncated` before quoting any rate from this.** True means the rates were computed over the most recent N sessions rather than all of them, and dropping the flag turns a conditional statistic into an unconditional claim.\n\nUnpinned for the same reason as `ScenarioMetrics`.",
         "properties": {}
       },
       "StudySignals": {
         "type": "object",
         "additionalProperties": true,
-        "description": "What the miner extracted from the scenario's current window — and how you learn the current window id, which the window-insights read takes. There is no separate \"list windows\" route because the only window anyone asks about is the live one.\n\nUnpinned; see `ScenarioMetrics`.",
+        "description": "What the miner extracted from the study's current window — and how you learn the current window id, which the window-insights read takes. There is no separate \"list windows\" route because the only window anyone asks about is the live one.\n\nUnpinned; see `ScenarioMetrics`.",
         "properties": {}
       },
       "StudyWindowInsights": {
         "type": "object",
         "required": ["windowId"],
         "additionalProperties": true,
-        "description": "One window's generated insights, plus the `windowId` they belong to. The generated part is unpinned; see `ScenarioMetrics`.",
+        "description": "One window's generated insights, plus the `windowId` they belong to. The generated part is unpinned; see `StudyMetrics`.",
         "properties": {
           "windowId": {
             "type": "string"
@@ -28626,7 +28626,7 @@
       "StudyFinding": {
         "type": "object",
         "additionalProperties": true,
-        "description": "One finding over a scenario window. Unpinned; see `ScenarioMetrics`. The stable fields are the document id (used by dismiss/undismiss) and the dismissal state.",
+        "description": "One finding over a study window. Unpinned; see `StudyMetrics`. The stable fields are the document id (used by dismiss/undismiss) and the dismissal state.",
         "properties": {}
       },
       "StudyFindingPage": {

@@ -245,7 +245,7 @@ shares.post(`${BASE}/rotate-link`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    resourceType,
+    resourceType: projectNounValue(resourceType, vocabulary),
     resourceId,
     projectId,
     rotated: true,
@@ -278,7 +278,7 @@ shares.put(`${BASE}/members`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    resourceType,
+    resourceType: projectNounValue(resourceType, vocabulary),
     resourceId,
     projectId,
     email: body.email,
@@ -301,7 +301,7 @@ shares.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    resourceType,
+    resourceType: projectNounValue(resourceType, vocabulary),
     resourceId,
     projectId,
     removed: memberIdOrEmail,
