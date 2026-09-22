@@ -1,7 +1,7 @@
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
-import { WebApiError } from "./base";
+import { WebApiError, requestIdOfResponse } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -116,6 +116,7 @@ export interface ChatHistoryTurnTrace {
   spanCount: number;
   modelId?: string;
   spansBlobUrl?: string | null;
+  requestPayloadsBlobUrl?: string | null;
   /**
    * The `webmcp_*` page tools this turn actually advertised, when the backend
    * projected them (`mintedPageTool.ts`). A fact about the turn, not the live
@@ -199,7 +200,14 @@ async function webGet<T>(
         : typeof body?.error === "string"
         ? body.error
         : `Request failed (${response.status})`;
-    throw new WebApiError(response.status, code, message);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      undefined,
+      undefined,
+      requestIdOfResponse(response),
+    );
   }
 
   return body as T;
@@ -235,7 +243,14 @@ async function webPost<TRequest, TResponse>(
         : typeof body?.error === "string"
         ? body.error
         : `Request failed (${response.status})`;
-    throw new WebApiError(response.status, code, message);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      undefined,
+      undefined,
+      requestIdOfResponse(response),
+    );
   }
 
   return body as TResponse;

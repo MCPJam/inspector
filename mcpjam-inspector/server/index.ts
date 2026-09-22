@@ -167,6 +167,7 @@ import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
@@ -209,7 +210,7 @@ import {
 } from "./services/bench-worker";
 import {
   SERVER_PORT,
-  CORS_ORIGINS,
+  CORS_OPTIONS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
@@ -495,13 +496,7 @@ if (enableHttpLogs) {
     }),
   );
 }
-app.use(
-  "*",
-  cors({
-    origin: CORS_ORIGINS,
-    credentials: true,
-  }),
-);
+app.use("*", cors(CORS_OPTIONS));
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
 // route (multipart blobs; it applies its own higher bodyLimit at the mount
@@ -541,6 +536,7 @@ app.route("/api/internal/evals", internalEvalJudgeCompletions);
 // judge doorbell above — the ring is a wake-up, and the pass claims from the
 // backend's own queue rather than from anything the caller named.
 app.route("/api/internal/chat-stage", internalChatStageDerivations);
+app.route("/api/internal/agent-turns", internalAgentTurns);
 // W1 hosted-browser debug probe — mounted only when explicitly enabled (it
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.

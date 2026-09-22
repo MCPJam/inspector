@@ -1,23 +1,16 @@
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
- * Chrome: identity row (back · title · actions) above Findings |
- * Insights | Sessions. Findings is the default landing tab.
- *
- * This page is also where a live run lives once the create wizard is left: the
- * wizard's Running step has no URL, so a finding followed out of it lands here,
- * and the live strip below the header is what says the run is still going —
- * plus, when a session is focused, the one control back to the whole run.
+ * Chrome: identity row (back · title · settled outcome · tabs · actions).
+ * A still-running wave with no `?tab=` opens Run — the same matrix +
+ * stream as the create wizard. Findings is the default once the wave has
+ * settled. The live strip under the header is only for work in flight
+ * (progress + Stop).
  */
 import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import {
@@ -31,39 +24,21 @@ import {
 import {
   parseSelectionParam,
   serializeSelectionParam,
-  type ThemeRef,
+  type SelectionRef,
 } from "@/hooks/scenario-usage-filters";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
-import { convexErrMessage } from "@/lib/convex-error";
-
-/**
- * Did `cancelJourneyRun` refuse because the run had already settled?
- *
- * The backend answers `ConvexError({ code: 'CONFLICT' })` for any run whose
- * status is no longer `running`. Matched on the structured `code` rather than
- * on the text: Convex redacts `err.message` for an application error to a
- * Request-ID string, so a message regex would silently never match in prod —
- * the payload on `err.data` is the only reliable carrier.
- */
-export function isRunAlreadySettled(reason: unknown): boolean {
-  if (!reason || typeof reason !== "object" || !("data" in reason)) {
-    return false;
-  }
-  const data = (reason as { data: unknown }).data;
-  return (
-    !!data &&
-    typeof data === "object" &&
-    (data as { code?: unknown }).code === "CONFLICT"
-  );
-}
 import {
-  SWARM_MUTATIONS,
+  StopSwarmRunButton,
+  useStopSwarmRun,
+} from "@/components/swarms/swarm-stop-run";
+import {
   SWARM_QUERIES,
   type SwarmOverview,
   type SwarmOverviewFinding,
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useRunInsights } from "@/hooks/use-run-insights";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -78,14 +53,20 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
-
-const DETAIL_TAB_OPTIONS = [
-  { value: "findings" as const, label: "Findings" },
-  { value: "insights" as const, label: "Insights" },
-  { value: "sessions" as const, label: "Sessions" },
-] as const;
+import {
+  narratedWaveSummary,
+  waveNarration,
+} from "@/components/swarms/findings/findings-headline";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
+import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
+import {
+  DETAIL_TAB_OPTIONS,
+  launchedRunsFromWave,
+  resolveSwarmRunDetailTab,
+} from "@/components/swarms/swarm-run-detail-model";
 
 export interface SwarmRunDetailProps {
+  organizationId?: string;
   swarmId: string;
   projectId: string | null;
   /** Avatar-look fields are optional pass-through: SwarmsTab already hands
@@ -108,11 +89,12 @@ export interface SwarmRunDetailProps {
    * confirmation with no link, never a dead one.
    */
   onRunAgain: (
-    journeyRefIds: string[]
+    journeyRefIds: string[],
   ) => Promise<{ swarmRunGroupId?: string } | void>;
 }
 
 export function SwarmRunDetail({
+  organizationId,
   swarmId,
   projectId,
   personas,
@@ -126,49 +108,49 @@ export function SwarmRunDetail({
   const findingParam = useCurrentSearchParam("finding");
   // Pass both tab and session: a `?session=` deep-link without `tab` must open
   // Sessions. Building `?tab=` alone used to strip session and land on Insights.
-  const tab: SwarmDetailTab = parseSwarmDetailTab(
+  const parsedTab: SwarmDetailTab = parseSwarmDetailTab(
     (() => {
       const search = new URLSearchParams();
       if (tabParam) search.set("tab", tabParam);
       if (sessionParam) search.set("session", sessionParam);
       const query = search.toString();
       return query ? `?${query}` : "";
-    })()
+    })(),
   );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
   >(null);
   const [runAgainBusy, setRunAgainBusy] = useState(false);
-  const [stopBusy, setStopBusy] = useState(false);
-  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
-  /**
-   * This viewer stopped the run, in this visit.
-   *
-   * `getSwarmOverview` projects `status` but not the `error` marker that
-   * separates a deliberate stop from a failure, so the wave read cannot tell
-   * them apart — it will settle on `failed`. Reporting "Failed" in red to the
-   * person who just pressed Stop says their action broke something. This is the
-   * one piece of positive evidence available, so it is used, and only for as
-   * long as it is trustworthy: a reload has no memory of the click and honestly
-   * falls back to what the data supports.
-   */
-  const [stoppedHere, setStoppedHere] = useState(false);
 
   const queryable = shouldQueryProjectId(projectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any
+    (queryable ? { projectId } : "skip") as any,
   ) as SwarmOverview | undefined;
 
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
-    [overview]
+    [overview],
   );
   const wave = useMemo(
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
-    [overview, waves, swarmId]
+    [overview, waves, swarmId],
   );
+  const launchedRuns = useMemo(
+    () => (wave ? launchedRunsFromWave(wave.runs, personas) : []),
+    [personas, wave],
+  );
+  const liveProgress = useMemo(
+    () => (wave ? waveLiveProgress(wave.runs) : null),
+    [wave],
+  );
+  const tab = resolveSwarmRunDetailTab({
+    parsed: parsedTab,
+    tabParam,
+    sessionParam,
+    live: liveProgress !== null,
+  });
 
   // The Findings tab consumes this alongside the wave data. Keep the
   // subscription at the detail-page level so switching tabs does not discard
@@ -178,8 +160,34 @@ export function SwarmRunDetail({
     SWARM_QUERIES.getWaveSignals as any,
     (queryable && waveGroupId
       ? { projectId, swarmRunGroupId: waveGroupId }
-      : "skip") as any
+      : "skip") as any,
   ) as SwarmWaveSignals | null | undefined;
+
+  // Lane A's wave narration, READ-ONLY (`autoRequest: false`). Findings is the
+  // default landing tab, so an auto-request here would bill a generation for
+  // merely opening a swarm. Generation stays where a person asks for it (the
+  // Insights tab) or where the backend schedules it on wave settle
+  // (`insightAutoTrigger.checkWaveTerminalAndRequestInsights`).
+  const waveInsights = useRunInsights(
+    queryable && waveGroupId
+      ? {
+          kind: "swarm",
+          projectId: projectId as string,
+          swarmRunGroupId: waveGroupId,
+        }
+      : null,
+    { autoRequest: false },
+  );
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
+  const narration = waveNarration(waveInsights.status, waveInsights.insights);
+  const findingsEnvelope = useInsightsEnvelope({
+    kind: "journey_run",
+    projectId,
+    runId: wave?.anchor.runId,
+  });
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -188,10 +196,10 @@ export function SwarmRunDetail({
           tab: next,
           sel: selParam ?? undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleShare = useCallback(async () => {
@@ -216,11 +224,21 @@ export function SwarmRunDetail({
           session: sessionId,
           sel: selParam ?? undefined,
           finding: criterionId,
-        })
+        }),
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
+
+  const handleOpenFindings = useCallback(() => {
+    navigate(
+      buildSwarmPath(swarmId, {
+        tab: "findings",
+        sel: selParam ?? undefined,
+      }),
+      { replace: true },
+    );
+  }, [navigate, selParam, swarmId]);
 
   /**
    * Drop the focused session and show the run itself. Deliberately NOT
@@ -232,33 +250,35 @@ export function SwarmRunDetail({
   const handleBackToRun = useCallback(() => {
     navigate(
       buildSwarmPath(swarmId, {
-        tab,
+        tab: liveProgress
+          ? "run"
+          : parsedTab === "run"
+          ? "findings"
+          : parsedTab,
         sel: selParam ?? undefined,
-      })
+      }),
     );
-  }, [navigate, selParam, swarmId, tab]);
+  }, [liveProgress, navigate, parsedTab, selParam, swarmId]);
 
   const handleSelectionChange = useCallback(
-    (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null
-    ) => {
+    (themes: ReadonlyArray<SelectionRef> | null) => {
       navigate(
         buildSwarmPath(swarmId, {
           tab,
           session: sessionParam ?? undefined,
           sel: themes ? serializeSelectionParam(themes) : undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, sessionParam, swarmId, tab]
+    [navigate, sessionParam, swarmId, tab],
   );
 
   const launchableJourneyIds = useMemo(() => {
     if (!wave) return [];
     return [
       ...new Set(
-        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId)
+        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId),
       ),
     ];
   }, [wave]);
@@ -288,16 +308,12 @@ export function SwarmRunDetail({
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not start swarm run"
+        err instanceof Error ? err.message : "Could not start swarm run",
       );
     } finally {
       setRunAgainBusy(false);
     }
   }, [launchableJourneyIds, navigate, onRunAgain]);
-
-  const cancelJourneyRun = useMutation(
-    SWARM_MUTATIONS.cancelJourneyRun as any,
-  );
 
   const runningRunIds = useMemo(() => {
     if (!wave) return [];
@@ -305,74 +321,11 @@ export function SwarmRunDetail({
       .filter((run) => run.status === "running" || run.status === "pending")
       .map((run) => run.runId);
   }, [wave]);
-
-  /**
-   * Stop every still-running goal in this wave.
-   *
-   * A wave is N journey-runs, and the backend cancels ONE run per call, so a
-   * partial outcome is possible: `allSettled` rather than `all`, and the report
-   * names how many actually stopped instead of claiming the whole wave on the
-   * strength of the first success.
-   *
-   * Three outcomes per goal, not two. `cancelJourneyRun` throws `CONFLICT` for
-   * a goal that settled between the click and the call, and that is neither a
-   * success nor a refusal: nothing is running, so it is not a goal that "could
-   * not be stopped", but this viewer did not stop it either. Counting it as a
-   * failure produced an error toast for a run that had, in the viewer's terms,
-   * already done what they asked; counting it as a success would put "Stopped"
-   * over a goal that COMPLETED, which the backend calls materially wrong.
-   */
-  const handleStopRun = useCallback(async () => {
-    if (runningRunIds.length === 0) return;
-    setStopConfirmOpen(false);
-    setStopBusy(true);
-    try {
-      const results = await Promise.allSettled(
-        runningRunIds.map((runId) =>
-          cancelJourneyRun({ journeyRunId: runId } as any),
-        ),
-      );
-      const rejections = results.flatMap((r) =>
-        r.status === "rejected" ? [r.reason] : [],
-      );
-      // A goal that settled between the click and the call answers `CONFLICT`.
-      // That is not a refusal — nothing is running any more, which is what the
-      // viewer asked for — so it must not be counted as a goal that "could not
-      // be stopped". Read off the structured `code`, not the message: for an
-      // application error Convex redacts `err.message` to a Request-ID string,
-      // which is also why the toast below goes through `convexErrMessage`.
-      const refused = rejections.filter(
-        (reason) => !isRunAlreadySettled(reason),
-      );
-      const canceled = results.length - rejections.length;
-
-      // A real refusal outranks the already-settled case. With nothing stopped
-      // and one goal genuinely refused, ordering these the other way reported
-      // "already finished" and buried the failure the viewer has to act on.
-      if (canceled === 0 && refused.length > 0) {
-        toast.error(convexErrMessage(refused[0], "Could not stop the run"));
-        return;
-      }
-      if (canceled === 0) {
-        // Every goal had already finished on its own. Nothing is running, but
-        // this viewer did not stop it — claiming otherwise would be wrong for a
-        // goal that COMPLETED, and would leave the strip reading "Stopped" over
-        // a run that succeeded. So: no `stoppedHere`, and not an error either.
-        toast.info("Run had already finished");
-        return;
-      }
-      setStoppedHere(true);
-      toast.success(
-        refused.length === 0
-          ? "Run stopped"
-          : `Run stopped — ${refused.length} ${
-              refused.length === 1 ? "goal" : "goals"
-            } could not be stopped`,
-      );
-    } finally {
-      setStopBusy(false);
-    }
-  }, [cancelJourneyRun, runningRunIds]);
+  const {
+    stop: handleStopRun,
+    busy: stopBusy,
+    stoppedHere,
+  } = useStopSwarmRun(runningRunIds);
 
   if (overview === undefined) {
     return (
@@ -406,7 +359,7 @@ export function SwarmRunDetail({
   }
 
   const title = swarmWaveTitle(wave);
-  const live = waveLiveProgress(wave.runs);
+  const live = liveProgress;
   const dataRunState = waveRunState(wave.runs);
   // `stoppedHere` only overrides a TERMINAL read: between the cancel resolving
   // and the wave query catching up, the runs still say `running`, and claiming
@@ -420,9 +373,9 @@ export function SwarmRunDetail({
    * to no banner rather than to a stale sentence.
    */
   const followedFinding: SwarmOverviewFinding | null = findingParam
-    ? (wave.runs
+    ? wave.runs
         .flatMap((run) => run.findings)
-        .find((finding) => finding.criterionId === findingParam) ?? null)
+        .find((finding) => finding.criterionId === findingParam) ?? null
     : null;
   // 0% until the fan-out is known — a live run with no session total yet is
   // starting, not complete.
@@ -437,7 +390,7 @@ export function SwarmRunDetail({
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
-    wave.runs.map((r) => [r.journeyRefId, r.journeyName])
+    wave.runs.map((r) => [r.journeyRefId, r.journeyName]),
   );
 
   return (
@@ -459,8 +412,47 @@ export function SwarmRunDetail({
             {title}
           </h1>
         }
+        meta={
+          live ? undefined : (
+            <div
+              className="flex items-center gap-2"
+              data-testid="swarm-run-detail-state"
+              data-run-state={showStopped ? "stopped" : dataRunState}
+              role="status"
+            >
+              <span
+                className={
+                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
+                  (showStopped
+                    ? "bg-muted text-muted-foreground"
+                    : swarmWaveRunStateChipClass(dataRunState))
+                }
+                data-testid="swarm-run-detail-state-label"
+              >
+                {showStopped ? "Stopped" : swarmWaveRunStateLabel(dataRunState)}
+              </span>
+              <span className="truncate text-sm text-muted-foreground">
+                {sessionTotals.total > 0
+                  ? `${sessionTotals.succeeded} of ${sessionTotals.total}`
+                  : "None ran"}
+              </span>
+            </div>
+          )
+        }
         actions={
           <>
+            {!live && sessionParam ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0 rounded-lg"
+                onClick={() => handleBackToRun()}
+                data-testid="swarm-run-detail-back-to-run"
+              >
+                Back to the run
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="sm"
@@ -495,11 +487,8 @@ export function SwarmRunDetail({
         }}
       />
 
-      {/* Rendered OUTSIDE the tab switch, so a session opened from a finding
-          still has the run's state on screen above it — and ALWAYS rendered,
-          terminal included: a viewer returning to this page had no way to tell
-          an active run from a finished one, and the way back out of a focused
-          session existed only while the run happened to still be going. */}
+      {/* Live only. Settled outcome lives in the header so a finished wave
+          does not spend a second row repeating Complete + the session tally. */}
       {live ? (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 bg-primary/[0.04] px-8 py-2"
@@ -531,50 +520,13 @@ export function SwarmRunDetail({
             />
           </div>
           {/* Confirmed, because a stop cannot be undone: the sessions still
-              queued never run, so their results never exist. A Popover rather
-              than a modal, so the run stays visible behind the decision. */}
-          <Popover open={stopConfirmOpen} onOpenChange={setStopConfirmOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="shrink-0 rounded-lg"
-                disabled={stopBusy || runningRunIds.length === 0}
-                data-testid="swarm-run-detail-stop"
-              >
-                {stopBusy ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : null}
-                Stop run
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-72 max-w-[90vw] p-3">
-              <p className="text-sm text-foreground">
-                Stop this run? Sessions that have not started yet will not run.
-                Results already collected are kept.
-              </p>
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setStopConfirmOpen(false)}
-                >
-                  Keep running
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => void handleStopRun()}
-                  data-testid="swarm-run-detail-stop-confirm"
-                >
-                  Stop run
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
+              queued never run, so their results never exist. */}
+          <StopSwarmRunButton
+            runningCount={runningRunIds.length}
+            busy={stopBusy}
+            onConfirm={() => void handleStopRun()}
+            testIdPrefix="swarm-run-detail"
+          />
           {sessionParam ? (
             <Button
               type="button"
@@ -588,44 +540,7 @@ export function SwarmRunDetail({
             </Button>
           ) : null}
         </div>
-      ) : (
-        <div
-          className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 px-8 py-2"
-          data-testid="swarm-run-detail-state"
-          data-run-state={showStopped ? "stopped" : dataRunState}
-          role="status"
-        >
-          <span
-            className={
-              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
-              (showStopped
-                ? "bg-muted text-muted-foreground"
-                : swarmWaveRunStateChipClass(dataRunState))
-            }
-            data-testid="swarm-run-detail-state-label"
-          >
-            {showStopped ? "Stopped" : swarmWaveRunStateLabel(dataRunState)}
-          </span>
-          <span className="text-sm text-muted-foreground">
-            {sessionTotals.total > 0
-              ? `${sessionTotals.succeeded} of ${sessionTotals.total} sessions succeeded`
-              : "No sessions ran"}
-          </span>
-          <span className="flex-1" />
-          {sessionParam ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="shrink-0 rounded-lg"
-              onClick={() => handleBackToRun()}
-              data-testid="swarm-run-detail-back-to-run"
-            >
-              Back to the run
-            </Button>
-          ) : null}
-        </div>
-      )}
+      ) : null}
 
       {/* What the viewer followed in on. Without this, clicking a finding
           handed over a transcript with the claim removed — the evidence, minus
@@ -651,6 +566,23 @@ export function SwarmRunDetail({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {tab === "run" && projectId ? (
+          <NewSwarmRunningStep
+            organizationId={organizationId}
+            projectId={projectId}
+            runs={launchedRuns}
+            fallbackColumns={[]}
+            hosts={hosts}
+            chrome="page"
+            onLeave={handleOpenFindings}
+            onOpenSession={handleOpenSession}
+          />
+        ) : null}
+        {tab === "run" && !projectId ? (
+          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+            Sign in to watch this run.
+          </div>
+        ) : null}
         {tab === "findings" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
             <SwarmFindingsTab
@@ -659,16 +591,17 @@ export function SwarmRunDetail({
               personas={personas}
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
+              generatedSummary={generatedWaveSummary}
+              narration={narration}
+              journeyFindings={findingsEnvelope?.journeyFindings}
+              journeyFindingsJob={findingsEnvelope?.journeyFindingsJob}
             />
           </div>
         ) : null}
         {tab === "insights" ? (
-          // Scroll the whole Insights tab instead of locking it to the
-          // viewport: the Session-flow Sankey was crushed into a sliver on
-          // shorter windows, and its many themes could only be reached by
-          // dragging a cramped inner scroll. The workbench renders its body at
-          // natural height (bodyLayout="scroll") and this container owns the
-          // one scrollbar.
+          // Findings can scroll this tab. Session flow fills the leftover
+          // column and scrolls its own ribbons, so this page scrollbar
+          // cannot walk through the middle of the diagram.
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-4">
             {/* Flex column at least as tall as the scroll viewport, so the
                 workbench grows past it (page scrolls) while its empty state can
@@ -691,7 +624,6 @@ export function SwarmRunDetail({
                 onOpenSessionsTab={() => handleTabChange("sessions")}
                 urlSelection={urlSelection}
                 onSelectionChange={handleSelectionChange}
-                autoBackfillTopicMap
                 bodyLayout="scroll"
                 emptyState={
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

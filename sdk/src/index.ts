@@ -26,6 +26,7 @@ export type {
   LiveClientState,
   UnauthorizedRefreshHandler,
   UnauthorizedRefreshResult,
+  RefreshTokensRotatedHandler,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -262,6 +263,11 @@ export {
   normalizeRetryPolicy,
   retryWithPolicy,
 } from "./retry.js";
+// The other half of the retry contract: `isRetryableTransientError` already
+// consults this marker, and a caller composing its own classification on top
+// has to consult it too — the marking is a WeakSet keyed on object IDENTITY,
+// so anything that reshapes an error must check the ORIGINAL first.
+export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
 export type {
@@ -395,6 +401,30 @@ export type {
   SuiteFileLoadSuccess,
   SuiteFileLocation,
 } from "./suite-file-loader.js";
+
+// ── the one grading policy: SDK integration seam ────────────────────────────
+/**
+ * How a suite file, a hosted suite read and a reported run each reach the
+ * canonical grading-policy contract, and how an edit gets back to the hosted
+ * API. The model and the pure adapters live in `@mcpjam/sdk/contract`; these
+ * are the functions that connect them to the loader, the platform DTO and the
+ * PATCH body — including the capability refusal for a deployment that cannot
+ * say which criterion decides a suite.
+ */
+export {
+  GRADING_POLICY_READ_REFUSALS,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  gradingPolicyForReportedRun,
+  gradingPolicyFromLoadedSuiteFile,
+  gradingPolicyFromPlatformSuiteSettings,
+  planPlatformSuiteGradingUpdate,
+} from "./eval-grading-policy.js";
+export type {
+  GradingPolicyReadRefusal,
+  GradingPolicyReadResult,
+  GradingPolicyUpdateBody,
+  GradingPolicyUpdatePlan,
+} from "./eval-grading-policy.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
@@ -897,6 +927,7 @@ export type {
 // EvalSuite - Groups multiple EvalTests
 export { EvalSuite } from "./EvalSuite.js";
 export type {
+  EvalSuiteClientOptions,
   EvalSuiteConfig,
   EvalSuiteResult,
   TestResult,
@@ -908,6 +939,7 @@ export {
   reportEvalResultsSafely,
 } from "./report-eval-results.js";
 export { createEvalRunReporter } from "./eval-run-reporter.js";
+export { reportEvalResultsWithReceipt } from "./eval-reporting-receipt.js";
 export type {
   CreateEvalRunReporterInput,
   EvalRunReporter,
@@ -920,6 +952,8 @@ export type {
 export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
+  EvalReportingReceipt,
+  EvalReportingWarning,
   EvalTraceInput,
   EvalTraceSpanCategory,
   EvalTraceSpanInput,
@@ -928,6 +962,7 @@ export type {
   EvalWidgetSnapshotInput,
   EvalResultInput,
   MCPServerReplayConfig,
+  SelectedEvalClient,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
@@ -939,6 +974,14 @@ export {
   traceIndicatesToolExecutionFailure,
   traceMessagePartIndicatesToolFailure,
 } from "./eval-tool-execution.js";
+
+// `executeTool` returns `CallToolResult | Record<string, unknown>`, so reading
+// `.content` off it does not type-check. These are the narrowings the manager
+// itself uses; a caller in TypeScript needs one of them to get past the union.
+export {
+  assertCallToolResult,
+  isCallToolResult,
+} from "./mcp-client-manager/result-guards.js";
 export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
@@ -1048,8 +1091,11 @@ export {
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
+  summarizeBearerChallenge,
+  bodyKindFromContentType,
 } from "./error-describer/index.js";
 export type {
+  BearerChallengeSummary,
   DescribeContext,
   ErrorOrigin,
   NormalizedError,
@@ -1302,6 +1348,47 @@ export type {
   ScorerRole,
 } from "./contract/index.js";
 
+// The same contract under the canonical evaluator vocabulary — an evaluator is
+// an assertion or a judge, and both report one result shape. Additive: every
+// name above keeps working, and the definitions underneath are the same objects
+// with the same hash payload, so nothing an author already wrote changes
+// identity by adopting these. See `docs/evals-vocabulary-consolidation.md`.
+export {
+  EVALUATOR_KINDS,
+  EVALUATOR_RESULT_SCHEMA_VERSION,
+  allGatingEvaluatorsPassed,
+  errorEvaluatorResult,
+  evaluatorDefinitionHash,
+  evaluatorKindOf,
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
+  evaluatorResultSchema,
+  evaluatorStatusSchema,
+  finalizeEvaluatorResult,
+  fromEvaluatorResult,
+  notApplicableEvaluatorResult,
+  resolveEvaluatorDefinition,
+  skippedEvaluatorResult,
+  toEvaluatorResult,
+  toScoreRawOutcome,
+} from "./contract/index.js";
+export type {
+  Assertion,
+  AssertionResult,
+  AssertionScope,
+  EvaluatorConfigSnapshot,
+  EvaluatorContextV1,
+  EvaluatorDefinition,
+  EvaluatorErrorPolicy,
+  EvaluatorIdSource,
+  EvaluatorKind,
+  EvaluatorRawOutcome,
+  EvaluatorResult,
+  EvaluatorRole,
+  EvaluatorStatus,
+  ResolvedEvaluatorDefinition,
+} from "./contract/index.js";
+
 // The v2 run verdict policy (browser-safe; exported in full from
 // `@mcpjam/sdk/contract`). Re-exported here for the same reason as the scoring
 // contract above: a code-first author reading a decision should not need a
@@ -1343,6 +1430,41 @@ export type {
   ResolvedEvalValidityPolicy,
 } from "./contract/index.js";
 
+// Execution budgets — the eval/swarm clock contract (§3.1). Re-exported from
+// the main entry because the inspector server and the CLI both resolve budgets,
+// and `@mcpjam/sdk/contract` is the browser-safe subset the client uses.
+export {
+  EXECUTION_BUDGET_CEILINGS,
+  EXECUTION_BUDGET_DEFAULTS,
+  EXECUTION_BUDGET_EXCEEDS_CEILING,
+  RESOLVED_EXECUTION_BUDGET_FIELDS,
+  UNIT_TIMEOUT_FIELD,
+  evalExecutionBudgetsSchema,
+  lowerExecutionBudgetCeilings,
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  resolveExecutionBudgetsForSurface,
+  resolvedExecutionBudgetsSchema,
+  swarmExecutionBudgetsSchema,
+} from "./contract/index.js";
+export type {
+  AuthoredExecutionBudgets,
+  EvalExecutionBudgets,
+  ExecutionBudgetResolution,
+  ExecutionBudgetSource,
+  ExecutionBudgetSurface,
+  ExecutionBudgetViolation,
+  ResolvedExecutionBudgetField,
+  ResolvedExecutionBudgets,
+  ResolvedExecutionBudgetValues,
+  SwarmExecutionBudgets,
+} from "./contract/index.js";
+
+// The run supervisor's signal plumbing. `withDeadline` in the inspector server
+// composes with this, and the swarm runner's hand-rolled twin is replaced by it.
+export { composeAbortSignals } from "./compose-abort-signals.js";
+
 // The scorer runtime. Main-entry only — `judgeScorer` reaches the model
 // factory, which is not browser-safe.
 export {
@@ -1361,6 +1483,30 @@ export type {
   Scorer,
   ScorerRunOptions,
 } from "./scorers/index.js";
+
+// The evaluator runtime (main entry only — `judge()` reaches the model factory,
+// which is not browser-safe). `assertion()` and `judge()` build their
+// definitions through the same functions `predicateScorer` and `judgeScorer`
+// use, so a case migrated one rule at a time keeps every evaluator identity it
+// had. See `docs/evals-vocabulary-consolidation.md`.
+export {
+  DEFAULT_EVALUATOR_CONCURRENCY,
+  DEFAULT_EVALUATOR_TIMEOUT_MS,
+  assertion,
+  evaluatorsPassed,
+  judge,
+  runEvaluators,
+  runEvaluatorsProjected,
+  toEvaluatorRawOutcome,
+} from "./evaluators/index.js";
+export type {
+  AnyEvaluator,
+  AssertionEvaluator,
+  Evaluator,
+  EvaluatorRunOptions,
+  JudgeEvaluator,
+  JudgeOptions,
+} from "./evaluators/index.js";
 
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
@@ -1598,3 +1744,77 @@ export {
   collapseImmediateRepeats,
   toolNamesFromPathKey,
 } from "./contract/tool-path.js";
+
+export { evalTestVariants } from "./eval-variants.js";
+export type { EvalVariantEntry } from "./eval-variants.js";
+export type { EvalSelectionManifest } from "./eval-selection.js";
+export { formatRunSummaryTable } from "./eval-summary.js";
+export { buildRunUrl } from "./report-eval-results.js";
+
+// MCPJam-hosted inference for `mcpjam/…` models — the eval that needs no
+// provider key. `EvalSuite.run` already revokes at teardown; export the
+// release so a suite built by hand (a vitest `afterAll`, say) can too.
+export {
+  releaseMcpjamModelLeases,
+  McpjamLeaseClient,
+  McpjamLeaseError,
+} from "./mcpjam-model-lease.js";
+export type {
+  McpjamModelLease,
+  McpjamLeaseClientOptions,
+} from "./mcpjam-model-lease.js";
+export type { EvaluatorOverride } from "./EvalTest.js";
+export type {
+  EvalExecutionContext,
+  ReportedMeasurement,
+  ReportedEvidence,
+} from "./eval-reported.js";
+export {
+  buildRunEvaluatorContext,
+  runEvaluatorContextFromIterations,
+  selectionStability,
+  argumentConsistency,
+  evaluateCaseRun,
+} from "./run-evaluators.js";
+export type {
+  CaseRunEvaluation,
+  RunEvaluator,
+  RunEvaluatorContextV1,
+  RunIterationEvidence,
+  RunEvaluatorObservation,
+} from "./run-evaluators.js";
+
+export { detectEvalGitMetadata } from "./eval-git.js";
+
+export {
+  runVariants,
+  compareVariantPreferences,
+} from "./eval-execution-variants.js";
+export type {
+  EvalExecutionVariantInput,
+  EvalExecutionVariantResult,
+  EvalExecutionVariantsResult,
+  PairwiseJudge,
+  PairwisePreferenceResult,
+} from "./eval-execution-variants.js";
+
+export {
+  captureOpenAIProfile,
+  findOpenAIProfileTool,
+  isOpenAIProfile,
+} from "./openai-profile/capture.js";
+export type {
+  OpenAIProfile,
+  OpenAIProfileCapture,
+} from "./openai-profile/capture.js";
+export {
+  connectionKey,
+  parseConnectionKey,
+} from "./mcp-client-manager/connection-key.js";
+export { mergeConnectionToolsets } from "./mcp-client-manager/multi-connection-tools.js";
+export type {
+  McpToolConnection,
+  ConnectionsByServerId,
+  ConnectionRoutingSnapshot,
+  ConnectionToolMetadata,
+} from "./mcp-client-manager/multi-connection-tools.js";

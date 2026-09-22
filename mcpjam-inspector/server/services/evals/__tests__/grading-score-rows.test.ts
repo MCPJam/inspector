@@ -15,6 +15,7 @@ import {
   resetShadowMismatchStateForTests,
 } from "../shadow-mismatch.js";
 import { logger } from "../../../utils/logger.js";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 
 // =============================================================================
 // The mode gate, from the outside. The three properties that make "ships at
@@ -352,30 +353,37 @@ describe("the judge's role comes from the verdict", () => {
       ?.definitionHash).toBe(ADVISORY_JUDGE_DEFINITION_HASH);
   });
 
-  test("role gating produces a gating definition, same implementation", () => {
+  test("either spelling of a required role produces one definition", () => {
     const advisory = buildHostedScoreContract({
       predicateResults,
       evaluation,
       judgeVerdict: { score: 0.2, threshold: 0.8, status: "scored" },
     });
-    const gating = buildHostedScoreContract({
-      predicateResults,
-      evaluation,
-      judgeVerdict: {
-        score: 0.2,
-        threshold: 0.8,
-        status: "scored",
-        role: "gating",
-      },
-    });
+    const build = (role: "gating" | "required") =>
+      buildHostedScoreContract({
+        predicateResults,
+        evaluation,
+        judgeVerdict: { score: 0.2, threshold: 0.8, status: "scored", role },
+      });
+    // The backend stamped `"gating"` on every verdict written before the
+    // rename and stamps `"required"` after it, and this projection reads
+    // historical evidence. Both must produce the SAME definition — a
+    // comparator that took one word would silently un-gate every hosted judge
+    // on one side of that line.
+    const gating = build("gating");
+    expect(build("required").evaluationConfig).toEqual(
+      gating.evaluationConfig
+    );
     const advisoryDef = advisory.evaluationConfig.definitions.find(
       (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
     );
     const gatingDef = gating.evaluationConfig.definitions.find(
       (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
     );
-    expect(gatingDef?.role).toBe("gating");
-    expect(gatingDef?.label).toBe("goal completion (gating)");
+    expect(gatingDef?.role).toBe(authoredRequiredRole());
+    expect(gatingDef?.label).toBe(
+      `goal completion (${authoredRequiredRole()})`
+    );
     // `resolveScoreDefinition` supplies these from the role, so the backend
     // finalizer reads exactly the rule the contract states rather than a
     // second copy of it in this repo.

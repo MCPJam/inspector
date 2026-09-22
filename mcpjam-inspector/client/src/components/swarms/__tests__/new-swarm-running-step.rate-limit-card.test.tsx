@@ -1,3 +1,4 @@
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 /**
  * BB-172: a 429 on the user's OWN provider key, surfaced per session.
  *
@@ -10,6 +11,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
+const appNavigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", () => ({ useAppNavigate: () => appNavigate }));
 
 const streamState = {
   sessions: {} as Record<string, unknown>,
@@ -107,6 +110,8 @@ const runFixture = {
 } as unknown as JourneyRun;
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useMutation: () => vi.fn(),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -159,6 +164,7 @@ function renderStep(
   return render(
     <div className="h-[40rem]">
       <NewSwarmRunningStep
+        organizationId="org-1"
         projectId="proj-1"
         runs={[
           {
@@ -200,6 +206,24 @@ async function openTheSession() {
 }
 
 describe("NewSwarmRunningStep — provider rate-limit card", () => {
+  it("targets the swarm organization when an attempt automatically opens recovery", () => {
+    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage = "Credits exhausted";
+
+    renderStep();
+
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+      isOpen: true,
+      intent: "topup",
+      organizationId: "org-1",
+      outOfCreditsOrganizationId: "org-1",
+      surface: "swarm",
+    });
+    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
+  });
+
   beforeEach(() => {
     attempts = [attempt];
     sessionRows = [sessionRow];
@@ -211,6 +235,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     attempt.status = "rate_limited";
     attempt.errorCode = null;
     attempt.errorMessage = null;
+    runFixture.summary = { total: 1, succeeded: 0, failed: 0, rateLimited: 1 };
     streamState.cellStatus = { "environment:env-1:0": "rate_limited" };
     streamState.sessions = {
       [CHAT_SESSION_ID]: {
@@ -257,7 +282,8 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     // so the provider copy would send the user to the wrong place. The attempt
     // row carries the denial, which is what both surfaces have to read: the
     // live stream text alone leaves the run banner naming a provider.
-    const accountLimit = "Daily credit limit reached. (user_rate_limit, HTTP 429)";
+    const accountLimit =
+      "Daily credit limit reached. (user_rate_limit, HTTP 429)";
     attempt.errorMessage = accountLimit;
     attempt.errorCode = "user_rate_limit";
     (
@@ -275,6 +301,69 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
       "Daily credit limit reached.",
     );
+  });
+
+  it("does NOT name a provider for MCPJam's daily limit stored under the generic code", async () => {
+    // The row a real Haiku swarm wrote before the runner kept the denial code:
+    // the humanized sentence under a bare `rate_limited`. The banner read that
+    // as the user's key and printed "Anthropic rate-limited this key."
+    const sentence =
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.";
+    attempt.errorCode = "rate_limited";
+    attempt.errorMessage = sentence;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = sentence;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains an account limit above the table when other sessions succeeded", async () => {
+    // With a success in the wave the run banner stays silent, so without this
+    // the stopped sessions would be amber chips with no reason given.
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage =
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+    runFixture.summary = { total: 2, succeeded: 1, failed: 0, rateLimited: 1 };
+    renderStep();
+
+    const banner = await screen.findByTestId("new-swarm-running-account-limit");
+    expect(banner).toHaveTextContent(
+      "1 completed, 0 failed, 1 stopped at an organization usage limit.",
+    );
+    expect(banner).toHaveTextContent("Out of MCPJam credits.");
+    expect(banner).not.toHaveTextContent("Use BYOK");
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the credit callout for an all-limited run", async () => {
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage =
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+    renderStep();
+
+    const failure = await screen.findByTestId(
+      "new-swarm-running-account-limit",
+    );
+    expect(failure).toHaveTextContent("Out of MCPJam credits.");
+    expect(failure).toHaveTextContent(
+      "MCPJam credits ran out after 0 of 1 sessions",
+    );
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
   });
 
   it("does NOT show the provider card for a spend cap stored as a bare code", async () => {
@@ -444,4 +533,56 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(card).toHaveTextContent("Your provider hit its limit");
     expect(card).toHaveTextContent("Anthropic rate-limited this key.");
   });
+});
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
+  }),
+}));
+
+it("shows cause counts and billing links for mixed server failures and exhausted credits", async () => {
+  attempt.errorCode = "user_rate_limit";
+  attempt.errorMessage = "Daily MCPJam model limit reached.";
+  attempts = [
+    {
+      ...attempt,
+      sessionIdx: 1,
+      status: "failed",
+      errorCode: "session_failed",
+      errorMessage: "Server tool failed.",
+    },
+    attempt,
+  ];
+  runFixture.summary = { total: 2, succeeded: 0, failed: 1, rateLimited: 1 };
+  renderStep();
+  const banner = await screen.findByTestId("new-swarm-running-account-limit");
+  expect(banner).toHaveTextContent(
+    "0 completed, 1 failed, 1 stopped at an organization usage limit",
+  );
+  expect(screen.getByRole("button", { name: "View credit options" })).toBeInTheDocument();
+  expect(banner).toHaveTextContent("Completed results are saved");
+  expect(banner).not.toHaveTextContent("Use BYOK");
+  // The banner states the non-limit cause with its count; the limit itself is
+  // the callout's to state, so the banner does not repeat it.
+  const failure = screen.getByTestId("new-swarm-running-failure");
+  expect(failure).toHaveTextContent("1 session: Server tool failed.");
+  expect(failure).not.toHaveTextContent("Daily MCPJam model limit");
+  useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+  fireEvent.click(screen.getByRole("button", { name: "View credit options" }));
+  expect(useMCPJamLimitDialogStore.getState()).toMatchObject({ organizationId: "org-1", surface: "swarm" });
+});
+
+it("does not offer a credit purchase for an organization spend budget", async () => {
+  attempt.errorCode = "spend_budget_reached";
+  attempt.errorMessage = "An owner or admin must raise the organization spend budget.";
+  renderStep();
+  const banner = await screen.findByTestId("new-swarm-running-account-limit");
+  expect(banner).toHaveTextContent("raise the organization spend budget");
+  expect(screen.queryByRole("button", { name: "View credit options" })).not.toBeInTheDocument();
 });

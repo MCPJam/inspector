@@ -1824,6 +1824,37 @@ describe("first-class page tools in prepareChatV2", () => {
     expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
   });
 
+  it.each([false, true])(
+    "explains inspector aliases even when browser tools may grow: %s",
+    async (mayGrow) => {
+      const result = await prepareChatV2({
+        ...base(),
+        mcpClientManager: mockManager({}),
+        pageTools: [
+          {
+            alias: "page_1a2b3c4d",
+            sessionId: "s",
+            toolKey: "add_topping",
+            rawName: "add_topping",
+            origin: "https://pizza.test",
+          },
+        ],
+        pageToolsMayGrow: mayGrow,
+      } as any);
+      expect(result.allTools.page_1a2b3c4d).toBeDefined();
+      expect(result.allTools.webmcp_add_topping).toBeUndefined();
+      expect(result.enhancedSystemPrompt).toContain(
+        "exact names in the current tool definitions",
+      );
+      expect(result.enhancedSystemPrompt).toContain(
+        "including any `page_` aliases",
+      );
+      expect(result.enhancedSystemPrompt).not.toContain(
+        "None are available right now",
+      );
+    },
+  );
+
   it("explains page tools AHEAD of their arrival when the set may grow", async () => {
     // The model navigates on one step and sees `webmcp_*` tools on the next.
     // A section that appeared only once a tool existed would leave it reading
@@ -1844,5 +1875,80 @@ describe("first-class page tools in prepareChatV2", () => {
     expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
     expect(result.enhancedSystemPrompt).toContain("None are available right now");
     expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+  });
+});
+
+describe("account routing snapshots", () => {
+  it("keeps an in-flight turn on its selected account after a default change", async () => {
+    const { jsonSchema } = await import("ai");
+    const { setManagerConnections } = await import("../mcp-connections.js");
+    const a = {
+      serverId: "server",
+      connectionId: "a".repeat(32),
+      key: "server",
+      label: "Acme",
+      isDefault: true,
+    };
+    const b = {
+      serverId: "server",
+      connectionId: "b".repeat(32),
+      key: "server#" + "b".repeat(32),
+      label: "Side",
+      isDefault: false,
+    };
+    const executeA = vi.fn(async () => ({
+      content: [{ type: "text", text: "A" }],
+    }));
+    const executeB = vi.fn(async () => ({
+      content: [{ type: "text", text: "B" }],
+    }));
+    const schema = jsonSchema({ type: "object", properties: {} });
+    const manager = mockManager({});
+    manager.getToolsForAiSdkByServer = vi
+      .fn()
+      .mockResolvedValue({
+        [a.key]: { search: { inputSchema: schema, execute: executeA } },
+        [b.key]: { search: { inputSchema: schema, execute: executeB } },
+      });
+    setManagerConnections(manager, { server: [a, b] });
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    setManagerConnections(manager, {
+      server: [
+        { ...a, key: "other", isDefault: false },
+        { ...b, key: "server", isDefault: true },
+      ],
+    });
+    await result.allTools.search.execute!(
+      { link_id: b.connectionId },
+      { toolCallId: "b-call", messages: [] },
+    );
+    expect(executeA).not.toHaveBeenCalled();
+    expect(executeB).toHaveBeenCalledOnce();
+    expect(result.toolConnections?.get("b-call")).toMatchObject({
+      connectionId: b.connectionId,
+      key: b.key,
+    });
+    expect(JSON.parse(JSON.stringify(result.connectionsAtTurn))).toEqual(
+      [a, b].map((c) => ({
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+      })),
+    );
+    // Eval callers explicitly opt out even when using a local manager with aliases.
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      connectionsByServerId: {},
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+      ["server"],
+      undefined,
+    );
   });
 });

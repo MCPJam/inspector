@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import type { EvalIteration } from "@/components/evals/types";
@@ -55,6 +54,27 @@ const rowFor = (label: string) =>
     .getAllByTestId("trial-scorecard-row")
     .find((row) => row.textContent?.includes(label))!;
 
+/** The rail's stages, in the order it lists them. */
+const railStages = () =>
+  screen
+    .queryAllByTestId("stage-rail-item")
+    .map((item) => item.getAttribute("data-stage"));
+
+const railItem = (stage: string) =>
+  screen
+    .getAllByTestId("stage-rail-item")
+    .find((item) => item.getAttribute("data-stage") === stage)!;
+
+/** The section on screen for a stage, or `null` when another one is open. */
+const sectionFor = (stage: string) =>
+  document.querySelector(`[data-stage-group="${stage}"]`) as HTMLElement | null;
+
+const openStage = (stage: string) => fireEvent.click(railItem(stage));
+
+/** The state word on the open section, or `undefined` when it has none. */
+const stateWordIn = (section: HTMLElement) =>
+  within(section).queryByTestId("scorecard-group-state")?.textContent;
+
 describe("TrialScorecard", () => {
   it.each(["pending", "running"] as const)(
     "withholds stage results while %s and reveals them when complete",
@@ -71,7 +91,7 @@ describe("TrialScorecard", () => {
         "aria-busy",
         "true",
       );
-      expect(screen.queryByTestId("trial-chain-panel")).toBeNull();
+      expect(screen.queryByTestId("scorecard-group-state")).toBeNull();
       expect(screen.queryByTestId("trial-scorecard-row")).toBeNull();
       rerender(
         <TrialScorecard
@@ -82,14 +102,16 @@ describe("TrialScorecard", () => {
         />,
       );
       expect(screen.queryByTestId("trial-scorecard-loading")).toBeNull();
-      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("scorecard-group-state")).toHaveTextContent(
+        "passed",
+      );
     },
   );
   it("shows a skeleton before a live iteration exists", () => {
     renderCard({ iteration: null, isRunning: true });
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
   });
-  it("keeps each stage's recorded checks in its selected detail panel", async () => {
+  it("opens on the break, and keeps the other stages one click away", () => {
     const chain = {
       status: "verified",
       firstFailedStage: "selection",
@@ -108,61 +130,86 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     renderCard({ chain });
+    // Chain order; a stage the chain measured but nothing grades still gets a
+    // cell, and the authored stages keep theirs.
+    expect(railStages()).toEqual([
+      "connection",
+      "selection",
+      "response",
+      "userValue",
+    ]);
+    // The contract's first failed stage is open, and it is the only one open:
+    // a failed stage whose rows recorded nothing says why from the chain.
     expect(
-      screen.queryByRole("heading", { name: "User value chain" }),
-    ).toBeNull();
-    const report = screen.getByRole("region", {
-      name: "User value chain — default assertions",
-    });
-    expect(within(report).queryByTestId("scorecard-group-state")).toBeNull();
-    expect(
-      within(screen.getByTestId("trial-stage-detail-card")).getAllByTestId(
-        "trial-scorecard-row",
-      ).length,
-    ).toBeGreaterThan(0);
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /01 Connection:/ }));
-    expect(screen.getByTestId("trial-stage-detail-card")).toHaveTextContent(
-      "No separate connection assertion was recorded.",
+      Array.from(document.querySelectorAll("[data-stage-group]")).map((node) =>
+        node.getAttribute("data-stage-group"),
+      ),
+    ).toEqual(["selection"]);
+    const selection = sectionFor("selection")!;
+    expect(stateWordIn(selection)).toBe("failed");
+    expect(within(selection).getByTestId("stage-reason")).toHaveTextContent(
+      "Failed because an expected tool call was never made.",
     );
-    expect(within(report).queryByTestId("trial-scorecard-row")).toBeNull();
+    expect(railItem("selection")).toHaveAttribute("aria-pressed", "true");
+
+    openStage("connection");
+    const connection = sectionFor("connection")!;
+    expect(stateWordIn(connection)).toBe("passed");
+    expect(
+      within(connection).queryAllByTestId("trial-scorecard-row"),
+    ).toHaveLength(0);
+    expect(sectionFor("selection")).toBeNull();
   });
 
-  it("puts default chain assertions above explicitly added assertions", () => {
+  it("returns to the break when the pane swaps to another iteration", () => {
+    const chain = {
+      status: "verified",
+      firstFailedStage: "selection",
+      stages: [
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "selection", state: "failed", reason: "missingToolCall" },
+      ],
+    } as never;
+    const { rerender } = renderCard({ chain });
+    openStage("connection");
+    expect(sectionFor("connection")).not.toBeNull();
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={{ ...iteration(), _id: "it2" } as EvalIteration}
+        steps={steps}
+        chain={chain}
+      />,
+    );
+    // A different iteration is a different chain: a carried selection would
+    // open a stage this one may never have broken at.
+    expect(sectionFor("connection")).toBeNull();
+    expect(sectionFor("selection")).not.toBeNull();
+  });
+
+  it("files every evaluator under its stage once, in chain order", () => {
     renderCard();
-    const defaults = screen.getByRole("region", {
-      name: "User value chain — default assertions",
-    });
-    const added = screen.getByRole("region", { name: "Added assertions" });
-    const defaultKeys = within(defaults)
-      .getAllByTestId("trial-scorecard-row")
-      .map((row) => row.getAttribute("data-row-key"));
-    expect(defaultKeys).toEqual(["route", "judge:goalCompletion"]);
-    const addedKeys = within(added)
+    expect(screen.queryByText("Added assertions")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Added assertions" })).toBeNull();
+    const keys = screen
       .getAllByTestId("trial-scorecard-row")
       .map((row) => row.getAttribute("data-row-key"));
     const authoredKeys = buildCaseScorecard(authored)
       .groups.flatMap((group) => group.rows)
-      .filter((row) => row.provenance === "step" || row.provenance === "case")
       .map((row) => row.key);
-    expect(addedKeys).toEqual(authoredKeys);
-    expect(
-      defaults.compareDocumentPosition(added) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(keys).toEqual(authoredKeys);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("shows an empty added-assertions section for a prompt-only case", () => {
+  it("leads with the tally for a prompt-only case", () => {
     renderCard({
       authored: { steps: [steps[0]], toolsChoice: "unset" },
       steps: [steps[0]],
     });
-    expect(
-      within(
-        screen.getByRole("region", { name: "Added assertions" }),
-      ).getByText("No extra assertions added."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("No extra assertions added.")).toBeNull();
+    expect(screen.getByTestId("trial-scorecard-summary")).toHaveTextContent(
+      "No evaluators ran",
+    );
   });
 
   it("shows the judge's recorded passing rationale without expanding a row", () => {
@@ -194,9 +241,6 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     const { rerender } = renderCard({ chain });
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /User value:/ }));
     expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
       "All three diagram labels were visible.",
     );
@@ -243,12 +287,11 @@ describe("TrialScorecard", () => {
       "notMeasured",
     );
     expect(screen.getByTestId("trial-scorecard-summary").textContent).toBe(
-      "No scorers ran",
+      "No evaluators ran",
     );
   });
 
-  it("shows why a step failed", () => {
-    const user = userEvent.setup();
+  it("shows why a step failed, without a click", () => {
     renderCard({
       iteration: iteration({
         stepResults: [
@@ -264,13 +307,10 @@ describe("TrialScorecard", () => {
     });
     const row = rowFor("No tool errors so far");
     expect(row).toHaveAttribute("data-state", "failed");
-    return user
-      .click(within(row).getByRole("button", { name: /^Why/ }))
-      .then(() => {
-        expect(screen.getByTestId("trial-scorecard-reason").textContent).toBe(
-          "get_me returned isError",
-        );
-      });
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(
+      within(row).getByTestId("trial-scorecard-reason").textContent,
+    ).toBe("get_me returned isError");
   });
 
   it("wears an advisory miss as a warning, and keeps it out of the gate count", () => {
@@ -304,13 +344,13 @@ describe("TrialScorecard", () => {
         steps={steps}
       />,
     );
-    const row = rowFor("Final message non-empty");
+    const row = rowFor("Catch an empty answer");
     expect(row).toHaveAttribute("data-state", "failed");
-    expect(row).toHaveAttribute("data-role", "warn");
-    expect(within(row).getByLabelText("Missed · warning")).toBeInTheDocument();
+    expect(row).toHaveAttribute("data-role", "advisory");
+    expect(within(row).getByText("Missed · advisory")).toBeInTheDocument();
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
-    expect(summary).toContain("1 of 1 gate passed");
-    expect(summary).toContain("1 warn");
+    expect(summary).toContain("1 of 1 required passed");
+    expect(summary).toContain("1 advisory");
   });
 
   it("never claims a verdict of its own", () => {
@@ -325,7 +365,7 @@ describe("TrialScorecard", () => {
     });
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
     expect(summary).not.toMatch(/^Passed|^Failed/);
-    expect(summary).toBe("1 of 1 gate passed");
+    expect(summary).toBe("1 of 1 required passed");
   });
 
   it("keeps the score-row view reachable but out of the way", () => {
@@ -342,7 +382,7 @@ describe("TrialScorecard", () => {
     renderCard({
       judgeSlot: <div data-testid="judge-panel">Judge score hidden</div>,
     });
-    const judge = rowFor("Judge · Goal completion");
+    const judge = rowFor("Outcome achieved");
     expect(within(judge).getByTestId("judge-panel")).toBeInTheDocument();
   });
 
@@ -353,7 +393,7 @@ describe("TrialScorecard", () => {
       .filter((row) => row.getAttribute("data-state") === "notMeasured");
     expect(unmeasured.length).toBeGreaterThan(0);
     for (const row of unmeasured) {
-      expect(within(row).getByLabelText("Not measured")).toBeInTheDocument();
+      expect(within(row).getByText("Not measured")).toBeInTheDocument();
     }
     expect(container.textContent).not.toMatch(/toolCalledAtLeastOnce/);
   });
@@ -361,34 +401,35 @@ describe("TrialScorecard", () => {
 
 describe("summaryLine", () => {
   const base = {
-    gates: { passed: 0, counted: 0 },
-    warn: 0,
-    report: 0,
+    required: { passed: 0, counted: 0 },
+    advisory: 0,
     errors: 0,
     notMeasured: 0,
     pending: 0,
   };
 
-  it("counts gates and names the rest without promoting it", () => {
+  it("counts required rows and names the rest without promoting it", () => {
     expect(
-      summaryLine({ ...base, gates: { passed: 2, counted: 2 }, warn: 1 }),
-    ).toBe("2 of 2 gates passed · 1 warn");
+      summaryLine({ ...base, required: { passed: 2, counted: 2 }, advisory: 1 }),
+    ).toBe("2 of 2 required passed · 1 advisory");
   });
 
-  it("says a case has no gates rather than reporting 0 of 0", () => {
-    expect(summaryLine({ ...base, warn: 1 })).toBe("No gates ran · 1 warn");
-    expect(summaryLine(base)).toBe("No scorers ran");
+  it("says a case has no required rows rather than reporting 0 of 0", () => {
+    expect(summaryLine({ ...base, advisory: 1 })).toBe(
+      "No required assertions ran · 1 advisory",
+    );
+    expect(summaryLine(base)).toBe("No evaluators ran");
   });
 
   it("names an unevaluable scorer as such, not as a failure", () => {
     expect(
-      summaryLine({ ...base, gates: { passed: 0, counted: 1 }, errors: 1 }),
-    ).toBe("0 of 1 gate passed · 1 could not be evaluated");
+      summaryLine({ ...base, required: { passed: 0, counted: 1 }, errors: 1 }),
+    ).toBe("0 of 1 required passed · 1 could not be evaluated");
   });
 
   it("never uses a pass word for a state that is not a pass", () => {
     expect(PASS_WORDS.test(summaryLine(base))).toBe(false);
-    expect(PASS_WORDS.test(summaryLine({ ...base, warn: 2 }))).toBe(false);
+    expect(PASS_WORDS.test(summaryLine({ ...base, advisory: 2 }))).toBe(false);
   });
 });
 
@@ -406,34 +447,103 @@ describe("the chain lives inside the Scorecard", () => {
     firstFailedStage: "selection",
   } as never;
 
-  it("renders the shared iteration stage report above the rows", () => {
+  it("gives every measured stage a heading with its state word", () => {
     renderCard({ chain });
-    const card = screen.getByTestId("trial-scorecard");
-    expect(within(card).getByTestId("trial-chain-panel")).toBeTruthy();
+    expect(railStages()).toEqual([
+      "connection",
+      "discovery",
+      "selection",
+      "call",
+      "response",
+      "userValue",
+    ]);
+    const states = [
+      ["connection", "passed"],
+      ["discovery", "passed"],
+      ["selection", "failed"],
+      ["call", "never ran (an earlier stage failed)"],
+      ["response", "never ran (an earlier stage failed)"],
+      ["userValue", "never ran (an earlier stage failed)"],
+    ] as const;
+    for (const [stage, word] of states) {
+      openStage(stage);
+      expect(stateWordIn(sectionFor(stage)!)).toBe(word);
+    }
   });
 
-  it("puts the verdict WORD on the group heading, not on the chip", () => {
+  it("puts the state on the rail for a screen reader, not as a second word", () => {
     renderCard({ chain });
-    const states = screen
-      .getAllByTestId("scorecard-group-state")
-      .map((el) => el.textContent);
-    expect(states).toContain("failed");
+    // The dot is a colour; the word reaches a reader through the cell's name.
+    expect(railItem("selection")).toHaveAttribute(
+      "aria-label",
+      "03 Selection: failed",
+    );
+    expect(railItem("connection")).toHaveAttribute(
+      "aria-label",
+      "01 Connection: Session connected",
+    );
+    // And the rail itself never prints it, so nothing says it twice.
+    expect(screen.getByRole("navigation").textContent).not.toMatch(/failed/i);
+  });
+
+  it("explains a failed stage once, not once per source", () => {
+    renderCard({ chain });
+    const selection = sectionFor("selection")!;
+    expect(within(selection).getByTestId("stage-reason")).toHaveTextContent(
+      "Failed because an expected tool call was never made.",
+    );
+    expect(within(selection).queryByTestId("stage-floor")).toBeNull();
+    // A stage that did not fail has no sentence of its own to add.
+    openStage("connection");
     expect(
-      screen.getByRole("button", { name: /03 Selection:/ }).textContent,
-    ).not.toContain("failed");
+      within(sectionFor("connection")!).queryByTestId("stage-reason"),
+    ).toBeNull();
   });
 
   it("shows no group state when the trial has no chain", () => {
     renderCard({});
     expect(screen.queryAllByTestId("scorecard-group-state")).toHaveLength(0);
-    expect(screen.queryByTestId("trial-chain-panel")).toBeNull();
+    expect(screen.queryByTestId("stage-reason")).toBeNull();
+    // No verified chain, no rail: the sections stack, and every one of them is
+    // readable without a click that has nothing to key off.
+    expect(railStages()).toEqual([]);
+    expect(
+      document.querySelectorAll("[data-stage-group]").length,
+    ).toBeGreaterThan(1);
   });
 });
 
 describe("blind review hides the judge row's own output", () => {
+  const judgeCase = {
+    status: "completed",
+    passed: false,
+    score: 0.2,
+    reason: "Private judge rationale",
+  } as never;
+
   it("withholds the score and the reason", () => {
-    renderCard({ judgeHidden: true });
+    renderCard({ judgeHidden: true, judgeCase });
     expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+    expect(screen.queryByText("Private judge rationale")).toBeNull();
+  });
+
+  it("withholds nothing when the judge never graded the trial", () => {
+    // The model call failed, so there is no verdict to leak and no label
+    // control to lift the mask. The stage's own explanation must show.
+    const providerFailed = {
+      status: "verified",
+      stages: [
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "discovery", state: "passed", reason: "observed" },
+        { stage: "selection", state: "passed", reason: "observed" },
+        { stage: "call", state: "passed", reason: "observed" },
+        { stage: "response", state: "notMeasured", reason: "providerError" },
+        { stage: "userValue", state: "notMeasured", reason: "providerError" },
+      ],
+    } as never;
+    renderCard({ chain: providerFailed, judgeHidden: true, judgeCase: null });
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
   });
 
   it("shows them once the reviewer has revealed", () => {
@@ -451,5 +561,241 @@ describe("blind review hides the judge row's own output", () => {
     // Only the judge row withholds; a deterministic check has no verdict to
     // leak and hiding it would just make the trial unreadable.
     expect(withheld.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("blind review keeps the chain and masks one card", () => {
+  const stages = (userValue: Record<string, unknown>) =>
+    [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      { stage: "selection", state: "failed", reason: "missingToolCall" },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "passed", reason: "observed" },
+      { stage: "userValue", ...userValue },
+    ] as never[];
+  const judgeDecided = {
+    status: "verified",
+    firstFailedStage: "selection",
+    stages: stages({
+      state: "failed",
+      reason: "judgeFailed",
+      evidence: { judgeReasons: ["Private judge rationale"] },
+    }),
+  } as never;
+  const assertionDecided = {
+    status: "verified",
+    firstFailedStage: "selection",
+    stages: stages({ state: "passed", reason: "observed" }),
+  } as never;
+  const judgeCase = {
+    status: "completed",
+    passed: false,
+    score: 0.2,
+    reason: "Private judge rationale",
+  } as never;
+
+  it("keeps every stage, masks User value, and still withholds the judge row", () => {
+    renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
+    // Every stage is still reachable, and User value is the one open: the
+    // label control lives in its section, and the opening is a rule rather
+    // than a consequence of which stage the judge decided.
+    expect(railStages()).toHaveLength(6);
+    const userValue = sectionFor("userValue")!;
+    // No state word, no stage sentence, no tally: each would say the verdict.
+    expect(within(userValue).queryByTestId("scorecard-group-state")).toBeNull();
+    expect(within(userValue).queryByTestId("stage-reason")).toBeNull();
+    expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
+    expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+    expect(screen.queryByText("Private judge rationale")).toBeNull();
+    expect(screen.queryByText(/below the partial floor/)).toBeNull();
+    expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
+    // Nor does its cell leak the verdict a red dot would publish.
+    expect(railItem("userValue")).toHaveAttribute(
+      "aria-label",
+      "06 User value: hidden until you label this iteration",
+    );
+    // The other five stages are the runner's, and stay readable.
+    openStage("selection");
+    expect(stateWordIn(sectionFor("selection")!)).toBe("failed");
+  });
+
+  it("does not put the masked stage's state on its group heading", () => {
+    renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
+    expect(stateWordIn(sectionFor("userValue")!)).toBeUndefined();
+    // Selection's own failure is the runner's, and stays on its heading.
+    openStage("selection");
+    expect(stateWordIn(sectionFor("selection")!)).toBe("failed");
+  });
+
+  it("masks nothing when an assertion decided User value", () => {
+    renderCard({ chain: assertionDecided, judgeHidden: true, judgeCase });
+    const userValue = document.querySelector(
+      '[data-stage-group="userValue"]',
+    ) as HTMLElement;
+    expect(within(userValue).getByTestId("scorecard-group-state")).toHaveTextContent(
+      "passed",
+    );
+    // The judge row is still the judge's even when the chain was not, so its
+    // own output is still withheld.
+    expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+  });
+
+  it("drops the mask once the reviewer has revealed", () => {
+    renderCard({ chain: judgeDecided, judgeHidden: false, judgeCase });
+    // With nothing to withhold the rail opens on the break again, and User
+    // value reads as the judge decided it.
+    expect(sectionFor("selection")).not.toBeNull();
+    openStage("userValue");
+    expect(stateWordIn(sectionFor("userValue")!)).toBe("failed");
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+  });
+});
+
+describe("what the scorecard says about its AI explanations", () => {
+  const verifiedChain = {
+    status: "verified",
+    stages: [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      { stage: "selection", state: "passed", reason: "observed" },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "failed", reason: "toolError" },
+      { stage: "userValue", state: "failed", reason: "predicateFailed" },
+    ],
+  } as never;
+
+  const toolErrorTrace = {
+    messages: [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "create_journey",
+            result: {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text: "VALIDATION_ERROR: A journey must target at least one host",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  it("offers Analyze on a settled iteration with no report", () => {
+    renderCard({ chain: verifiedChain });
+    expect(screen.getByTestId("report-availability")).toHaveTextContent(
+      "Analyze this run to add AI explanations to these rows.",
+    );
+  });
+
+  it("counts the read in progress instead of promising nothing", () => {
+    renderCard({
+      chain: verifiedChain,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "pending",
+        progress: { done: 4, total: 40 },
+        rows: [],
+      } as never,
+    });
+    const line = screen.getByTestId("report-availability");
+    expect(line).toHaveTextContent("Reading iterations 4 of 40…");
+    expect(line).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("names what stopped the analysis, and keeps the recorded page", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "failed",
+        reason: "trace_too_large",
+        rows: [],
+      } as never,
+    });
+    expect(screen.getByTestId("report-availability")).toHaveTextContent(
+      "This iteration's trace was too large to analyze.",
+    );
+    // The deterministic floor does not depend on the model having run.
+    // The tool name renders as code, so assert on the words, not the marks.
+    const floor = screen.getByTestId("stage-floor");
+    expect(within(floor).getByText("create_journey").tagName).toBe("CODE");
+    expect(floor).toHaveTextContent(
+      "returned an error: VALIDATION_ERROR: A journey must target at least one host",
+    );
+  });
+
+  it("quotes the server on a failed stage with no report at all", () => {
+    renderCard({ chain: verifiedChain, trace: toolErrorTrace });
+    expect(screen.getByTestId("stage-floor")).toHaveAttribute(
+      "data-narrative-source",
+      "recorded",
+    );
+  });
+
+  it("yields the stage to an AI explanation rather than saying it twice", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "ready",
+        rows: [],
+        stageNotes: [
+          {
+            stage: "response",
+            actual: "The journey call was rejected for having no host.",
+            citations: ["tc:call-1"],
+          },
+        ],
+      } as never,
+    });
+    expect(screen.queryByTestId("stage-floor")).toBeNull();
+    expect(screen.queryByTestId("report-availability")).toBeNull();
+    expect(
+      screen.getByText("The journey call was rejected for having no host."),
+    ).toBeVisible();
+  });
+
+  it("promises a reviewer nothing while they are labelling blind", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      judgeHidden: true,
+      judgeCase: {
+        status: "completed",
+        passed: false,
+        score: 0.2,
+      } as never,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "pending",
+        progress: { done: 1, total: 4 },
+        rows: [],
+      } as never,
+    });
+    expect(screen.queryByTestId("report-availability")).toBeNull();
+    expect(screen.queryByTestId("stage-floor")).toBeNull();
   });
 });

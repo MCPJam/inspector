@@ -15,7 +15,7 @@ The Home dashboard is available in the hosted app at [app.mcpjam.com](https://ap
 When you open MCPJam, the Home tab loads at `/home` (also the root `/`). If you don't have an active organization yet, the page shows a **Get started** prompt that takes you to the Organizations page.
 
 <Note>
-If you are signing in for the first time, MCPJam routes you to the [Playground](/inspector/playground) instead of Home so you can start exploring right away. After your first visit to the Playground, subsequent logins land on Home as normal.
+If you are signing in for the first time, MCPJam shows a **Welcome** overlay on Home that guides you through connecting your first server. Once you complete onboarding and open the Playground, subsequent logins land on Home as normal.
 </Note>
 
 With an organization selected, the dashboard shows:
@@ -92,6 +92,8 @@ The agent acts by driving the inspector UI directly — every action it takes is
 | **App snapshot** | Reads the current state of the UI to observe before acting |
 | **Documentation & web search** | Answers questions about MCPJam features and MCP concepts |
 | **Clarifying questions** | Asks a multiple-choice question inline when a request is genuinely ambiguous, then continues the same turn with your answer |
+
+The same inspector actions are also available to browser-native WebMCP agents via `document.modelContext`, so an external agent can navigate, connect servers, and run playground actions without opening the Ask MCPJam panel. Browser support (Chrome with WebMCP enabled) is a prerequisite; where the API is absent, Ask MCPJam is unaffected.
 
 For server management, adding and connecting are always two separate steps — the agent saves the server first, then connects it, so you can see each change as it happens. If a server requires OAuth authorization, the agent reports that and waits for you to click **Authorize** yourself; it never redirects the page on your behalf. Removing a server is irreversible from chat, so it always pauses for approval even when the **Tool approval** toggle is off.
 

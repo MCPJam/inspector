@@ -1,3 +1,4 @@
+import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
@@ -63,13 +64,13 @@ export interface UpgradeReturnTicket {
 export function stashUpgradeReturnToken(
   organizationId: string,
   origin: UpgradeOrigin,
-  userId: string
+  userId: string,
 ): void {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(
       upgradeReturnTokenKey(userId),
-      JSON.stringify({ organizationId, origin, issuedAt: Date.now() })
+      JSON.stringify({ organizationId, origin, issuedAt: Date.now() }),
     );
   } catch {
     // Storage can be unavailable (private mode, blocked cookies). Checkout
@@ -88,7 +89,7 @@ export function stashUpgradeReturnToken(
  * `clearUpgradeReturnToken`, once the outcome is known.
  */
 export function readUpgradeReturnToken(
-  currentUserId: string | null
+  currentUserId: string | null,
 ): UpgradeReturnTicket | null {
   if (typeof window === "undefined") return null;
   // No identity to check against yet (auth still resolving, or signed out).
@@ -97,7 +98,7 @@ export function readUpgradeReturnToken(
   if (!currentUserId) return null;
   try {
     const raw = window.sessionStorage.getItem(
-      upgradeReturnTokenKey(currentUserId)
+      upgradeReturnTokenKey(currentUserId),
     );
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
@@ -136,7 +137,7 @@ export function markUpgradeReturnWaited(userId: string): void {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     window.sessionStorage.setItem(
       key,
-      JSON.stringify({ ...parsed, waited: true })
+      JSON.stringify({ ...parsed, waited: true }),
     );
   } catch {
     // Best effort: losing this only downgrades a "late" report to "immediate".
@@ -181,7 +182,7 @@ function formatMoney(cents: number, currency: string): string {
 export function formatSeatMonthlyPrice(
   amountInCents: number | null,
   currency: string | undefined,
-  interval: BillingInterval
+  interval: BillingInterval,
 ): string | null {
   if (amountInCents == null || !currency) return null;
   if (interval === "monthly") {
@@ -209,7 +210,7 @@ export interface UpgradeStartResult {
 export function resolveUpgradeInterval(
   selected: BillingInterval,
   annualSupported: boolean,
-  monthlySupported: boolean
+  monthlySupported: boolean,
 ): BillingInterval | null {
   if (selected === "annual" && annualSupported) return "annual";
   if (selected === "monthly" && monthlySupported) return "monthly";
@@ -240,7 +241,14 @@ export function useUpgradeCheckout({
   const { user } = useAuth();
   const userId = user?.id ?? null;
 
-  const teamEntry = planCatalog?.plans.team;
+  const targetPlan =
+    billingStatus?.effectivePlan === "free" &&
+    (["monthly", "annual"] as const).some((candidate) =>
+      canCheckoutPlan(planCatalog, "pro", candidate),
+    )
+      ? "pro"
+      : "team";
+  const teamEntry = planCatalog?.plans[targetPlan];
   // One rule for the whole path: an interval is offered only if the catalog
   // both supports it and has priced it, so checkout can never buy something
   // the card didn't name. `checkout: null` means no self-serve intervals at
@@ -248,8 +256,8 @@ export function useUpgradeCheckout({
   // to trust yet, so both cards render as placeholders and `isLoadingPrices`
   // keeps checkout closed.
   const supportedIntervals: BillingInterval[] = teamEntry
-    ? (teamEntry.checkout?.supportedIntervals ?? []).filter(
-        (candidate) => teamEntry.prices[candidate] != null
+    ? (teamEntry.checkout?.supportedIntervals ?? []).filter((candidate) =>
+        canCheckoutPlan(planCatalog, targetPlan, candidate),
       )
     : ["monthly", "annual"];
   const annualSupported = supportedIntervals.includes("annual");
@@ -258,14 +266,14 @@ export function useUpgradeCheckout({
   // Annual leads: it's the cheaper per-seat figure and matches the pricing
   // page. Both prices render at once, so nothing is hidden behind the choice.
   const [interval, setInterval] = useState<BillingInterval>(
-    annualSupported ? "annual" : "monthly"
+    annualSupported ? "annual" : "monthly",
   );
 
   useEffect(() => {
     const availableInterval = resolveUpgradeInterval(
       interval,
       annualSupported,
-      monthlySupported
+      monthlySupported,
     );
     if (availableInterval && availableInterval !== interval) {
       setInterval(availableInterval);
@@ -275,12 +283,12 @@ export function useUpgradeCheckout({
   const annualPriceLabel = formatSeatMonthlyPrice(
     teamEntry?.prices.annual ?? null,
     planCatalog?.currency,
-    "annual"
+    "annual",
   );
   const monthlyPriceLabel = formatSeatMonthlyPrice(
     teamEntry?.prices.monthly ?? null,
     planCatalog?.currency,
-    "monthly"
+    "monthly",
   );
 
   const currentPlan = billingStatus?.plan ?? "free";
@@ -316,7 +324,7 @@ export function useUpgradeCheckout({
       organizationId,
       origin,
       teamEntry?.prices,
-    ]
+    ],
   );
 
   const start = useCallback(async (): Promise<UpgradeStartResult> => {
@@ -330,7 +338,7 @@ export function useUpgradeCheckout({
     const checkoutInterval = resolveUpgradeInterval(
       interval,
       annualSupported,
-      monthlySupported
+      monthlySupported,
     );
     if (!checkoutInterval) {
       toast.error("Checkout is not available for this plan right now.");
@@ -359,11 +367,11 @@ export function useUpgradeCheckout({
       // analytics, and track() is failure-isolated.
       const resultPromise = startPlanChange(
         url.toString(),
-        "team",
+        targetPlan,
         checkoutInterval,
         {
           confirmPaidPlanChange: false,
-        }
+        },
       );
       track("plan_limit_upgrade_clicked", {
         location: "plan_limit_dialog",
@@ -389,7 +397,7 @@ export function useUpgradeCheckout({
           // leaving it open behind a page that will never navigate.
           window.open(nextUrl, "_blank", "noopener,noreferrer");
           toast.info(
-            "Finish checkout in your browser. Your new plan unlocks here automatically."
+            "Finish checkout in your browser. Your new plan unlocks here automatically.",
           );
           return { redirected: true, shouldDismiss: true };
         }
@@ -403,8 +411,8 @@ export function useUpgradeCheckout({
       if (result.kind === "updated") {
         toast.success(
           `Plan updated to ${formatPlanName(
-            result.subscription.plan ?? "team"
-          )}.`
+            result.subscription.plan ?? "team",
+          )}.`,
         );
       } else {
         toast.success("Plan change scheduled for renewal.");
@@ -425,7 +433,7 @@ export function useUpgradeCheckout({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Couldn't start checkout. Please try again."
+          : "Couldn't start checkout. Please try again.",
       );
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
@@ -454,6 +462,7 @@ export function useUpgradeCheckout({
     origin,
     startPlanChange,
     teamEntry,
+    targetPlan,
     userId,
   ]);
 
@@ -462,10 +471,20 @@ export function useUpgradeCheckout({
     setInterval: selectInterval,
     annualPriceLabel,
     monthlyPriceLabel,
-    annualDiscountPct: getAnnualDiscountPercent(planCatalog),
+    annualDiscountPct: getAnnualDiscountPercent(planCatalog, targetPlan),
     annualSupported,
     monthlySupported,
+    priceUnit:
+      teamEntry?.billingModel === "flat" ? "per month" : "per seat/month",
+    isFlatPlan: teamEntry?.billingModel === "flat",
     teamName: teamEntry?.displayName ?? "Team",
+    creditUpgradePlans: [
+      planCatalog?.plans.pro,
+      planCatalog?.plans.team,
+    ].filter(
+      (plan): plan is NonNullable<typeof plan> =>
+        !!plan && plan.topUp?.eligible === true,
+    ),
     /** Team's monthly eval cap, straight from the catalog so it can't go stale
      * in the copy. The backend applies this amount per seat. */
     teamEvalIterations: teamEntry?.limits.maxEvalIterationsPerMonth ?? null,
@@ -473,6 +492,9 @@ export function useUpgradeCheckout({
     // is actually receiving. During a Team trial the persisted billing plan is
     // still Free, while the effective plan (and its limits) is Team.
     effectivePlan,
+    pricingVersion:
+      billingStatus?.pricingVersion ??
+      (billingStatus?.catalogPlanId?.endsWith("_v2") ? "v2" : undefined),
     // Keep the persisted plan separate for real billing/checkout decisions.
     currentPlan,
     organizationName: billingStatus?.organizationName ?? "your organization",

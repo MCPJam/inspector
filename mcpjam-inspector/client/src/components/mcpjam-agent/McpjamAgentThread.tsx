@@ -55,6 +55,7 @@ import {
   loadRecentMcpjamAgentSessions,
 } from "@/components/mcpjam-agent/recent-sessions";
 import { pendingAgentPromptKey } from "@/lib/mcpjam-agent/pending-prompt";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 
 export interface McpjamAgentThreadProps {
   sessionId: string;
@@ -322,7 +323,7 @@ export function McpjamAgentThread({
         ready={canAccept}
         loadingMessage={
           scopeMissing
-            ? "Case context is missing. Your message is kept here."
+            ? "This test case couldn’t be loaded. Your message is still here."
             : contextLoading
             ? "Connecting to your case… Your message is kept here."
             : "Loading project…"
@@ -520,7 +521,9 @@ export function McpjamAgentThread({
                   isSidebar && "w-full px-3",
                 )}
               >
-                {session.error.message ?? "Something went wrong."}
+                {describeMCPJamLimitMessage(session.error.message) ??
+                  session.error.message ??
+                  "Something went wrong."}
               </p>
             )}
           </div>

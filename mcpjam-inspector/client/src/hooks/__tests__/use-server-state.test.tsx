@@ -35,6 +35,7 @@ const {
   getInitializationInfoMock,
   importHostedOAuthTokensMock,
   tryResolveProjectServerMock,
+  listOAuthConnectionsMock,
   mockConvexQuery,
   mockCreateServer,
   mockCreateServerIfMissing,
@@ -45,6 +46,7 @@ const {
   mockUseDbUserReady,
   mockHostedMode,
 } = vi.hoisted(() => ({
+  listOAuthConnectionsMock: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   toastWarning: vi.fn(),
@@ -133,6 +135,13 @@ vi.mock("@/lib/apis/web/context", () => ({
   tryGetHostedServerDisplayName: vi.fn(),
   tryResolveProjectServer: tryResolveProjectServerMock,
 }));
+
+vi.mock("@/lib/apis/web/oauth-connections", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/apis/web/oauth-connections")
+  >();
+  return { ...actual, listOAuthConnections: listOAuthConnectionsMock };
+});
 
 vi.mock("@/lib/apis/hosted-oauth-import-tokens-api", async (importOriginal) => {
   const actual = await importOriginal<
@@ -307,6 +316,11 @@ async function flushAsyncWork(iterations = 5): Promise<void> {
 }
 
 beforeEach(() => {
+  listOAuthConnectionsMock.mockReset().mockResolvedValue({
+    connections: [],
+    shared: false,
+  });
+  readStoredOAuthConfigMock.mockReset();
   mockHostedMode.mockReturnValue(false);
   mockUseDbUserReady.mockReturnValue(true);
   vi.mocked(authFetch).mockReset();
@@ -1599,6 +1613,45 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it("does not publish a late connect result after a runtime disconnect", async () => {
+    let resolveConnection!: (value: { success: true; initInfo: null }) => void;
+    testConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConnection = resolve;
+        })
+    );
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    let connectPromise!: Promise<void>;
+    act(() => {
+      connectPromise = result.current.handleConnect({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      } as any);
+    });
+    await waitFor(() => expect(testConnectionMock).toHaveBeenCalledOnce());
+
+    act(() => result.current.handleRuntimeDisconnect("demo-server"));
+    await act(async () => {
+      resolveConnection({ success: true, initInfo: null });
+      await connectPromise;
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "DISCONNECT",
+      name: "demo-server",
+    });
+    expect(
+      dispatch.mock.calls.some(
+        ([action]) =>
+          action.type === "CONNECT_SUCCESS" || action.type === "CONNECT_FAILURE"
+      )
+    ).toBe(false);
+  });
+
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
     // Regression: switching an existing OAuth server from 2026 back to 2025
     // must not recover the stale 2026 pin from the stored server.config /
@@ -1758,7 +1811,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
     expect(toastWarning).toHaveBeenCalledWith(
-      expect.stringContaining("can't auto-refresh in hosted mode")
+      expect.stringContaining("hosted web app can’t renew this connection automatically")
     );
   });
 
@@ -2085,6 +2138,49 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("preserves onboarding toast suppression through an OAuth callback", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        projectId: "project-1",
+        serverId: "server-1",
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        returnPath: "/home",
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+        startedAt: Date.now(),
+      }),
+    );
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_SUCCESS",
+          name: "demo-server",
+        }),
+      );
+    });
+    expect(toastSuccess).not.toHaveBeenCalledWith(
+      "OAuth connection successful! Connected to demo-server.",
+    );
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("syncs the hosted OAuth profile against the marker-pinned project, not the ambient active project", async () => {
@@ -2486,6 +2582,59 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
+  it("suppresses an error toast when an inline surface owns the failure", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Detailed transport failure",
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "new-server",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { suppressErrorToast: true }
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "new-server",
+        error: "Detailed transport failure",
+      })
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a success toast when an inline surface owns the result", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "new-server",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { suppressSuccessToast: true }
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_SUCCESS",
+        name: "new-server",
+      })
+    );
+    expect(toastSuccess).not.toHaveBeenCalledWith("Connected successfully!");
+  });
+
   it("blocks connect while the active project is still provisioning", async () => {
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, createAppState(), {
@@ -2581,6 +2730,56 @@ describe("useServerState OAuth callback failures", () => {
         name: "Excalidraw (App)",
       })
     );
+  });
+
+  it("does not publish a sync result after a runtime disconnect", async () => {
+    let resolveSync!: (serverId: string) => void;
+    mockCreateServerIfMissing.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveSync = resolve;
+        })
+    );
+    tryResolveProjectServerMock.mockReturnValue(null);
+    const appState = createCloudCliAppState();
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "proj_cloud",
+      activeProjectServersFlat: [],
+    });
+
+    let connectPromise!: Promise<void>;
+    act(() => {
+      connectPromise = result.current.handleConnect({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+    await waitFor(() => expect(mockCreateServerIfMissing).toHaveBeenCalled());
+
+    act(() => result.current.handleRuntimeDisconnect("Excalidraw (App)"));
+    await act(async () => {
+      resolveSync("srv_excalidraw");
+      await connectPromise;
+    });
+
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(injectHostedServerMapping).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "DISCONNECT",
+      name: "Excalidraw (App)",
+    });
+    expect(
+      dispatch.mock.calls.some(
+        ([action]) =>
+          action.type === "CONNECT_SUCCESS" || action.type === "CONNECT_FAILURE"
+      )
+    ).toBe(false);
   });
 
   it("applies project connection defaults on local reconnect", async () => {
@@ -3248,6 +3447,27 @@ describe("useServerState OAuth callback failures", () => {
       ),
       { duration: 8000 }
     );
+  });
+
+  it("replaces the default hosted account without clearing the active server", async () => {
+    listOAuthConnectionsMock.mockResolvedValue({
+      connections: [{ connectionId: "default-account", isDefault: true }],
+      shared: false,
+    });
+    const { deleteServer } = await import("@/state/mcp-api");
+    const { result } = renderUseServerState();
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+    expect(listOAuthConnectionsMock).toHaveBeenCalledWith(
+      "project_default",
+      "srv_demo"
+    );
+    expect(initiateOAuthMock).toHaveBeenCalled();
+    expect(clearOAuthDataMock).not.toHaveBeenCalled();
+    expect(deleteServer).not.toHaveBeenCalled();
   });
 
   it("keeps saved registry OAuth settings when forcing a fresh reconnect", async () => {

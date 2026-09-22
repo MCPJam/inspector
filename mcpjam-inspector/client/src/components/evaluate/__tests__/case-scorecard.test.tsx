@@ -81,15 +81,15 @@ describe("CaseScorecard", () => {
 
   it("says who wrote each scorer", () => {
     renderCard();
-    expect(rowFor("First tool called was… get_me")).toHaveAttribute(
+    expect(rowFor("Require this tool to be reached first")).toHaveAttribute(
       "data-provenance",
       "step",
     );
-    expect(rowFor("Final message non-empty")).toHaveAttribute(
+    expect(rowFor("Catch an empty answer")).toHaveAttribute(
       "data-provenance",
       "case",
     );
-    expect(rowFor("Token budget under 4000")).toHaveAttribute(
+    expect(rowFor("Track increases in token usage")).toHaveAttribute(
       "data-provenance",
       "suite",
     );
@@ -104,7 +104,7 @@ describe("CaseScorecard", () => {
 
   it("sends an inherited scorer to the suite instead of editing it here", () => {
     const { onOpenSuiteSettings } = renderCard();
-    const suite = rowFor("Token budget under 4000");
+    const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).queryByRole("button", { name: /^Remove/ }),
     ).not.toBeInTheDocument();
@@ -149,7 +149,7 @@ describe("CaseScorecard — the left rail", () => {
     expect(
       within(step).getAllByTestId("scorecard-row-marker")[0],
     ).toHaveAttribute("title", "Step 3 — graded when the run reaches it");
-    const suite = rowFor("Token budget under 4000");
+    const suite = rowFor("Track increases in token usage");
     expect(
       within(suite).getAllByTestId("scorecard-row-marker")[0],
     ).toHaveAttribute("title", "Graded once, over the finished transcript");
@@ -157,7 +157,7 @@ describe("CaseScorecard — the left rail", () => {
       within(screen.getByTestId("case-judge-block")).getAllByTestId(
         "scorecard-row-marker",
       )[0],
-    ).toHaveAttribute("title", "Runs last, after every check");
+    ).toHaveAttribute("title", "Runs last, after every assertion");
   });
 });
 
@@ -166,15 +166,15 @@ describe("CaseScorecard — roles", () => {
     scorers: { checkPolicy: true },
   } as unknown as SuiteCapabilities;
 
-  it("offers Gate / Warn / Report only when the backend accepts a role", () => {
+  it("offers Required / Advisory only when the backend accepts a role", () => {
     renderCard({ checkPolicy: false });
     expect(
-      screen.queryByRole("group", { name: /^Role for/ }),
+      screen.queryByRole("group", { name: "Assertion role" }),
     ).not.toBeInTheDocument();
 
     renderCard({ checkPolicy: true });
     expect(
-      screen.getAllByRole("group", { name: /^Role for/ }).length,
+      screen.getAllByRole("group", { name: "Assertion role" }).length,
     ).toBeGreaterThan(0);
   });
 
@@ -197,12 +197,12 @@ describe("CaseScorecard — roles", () => {
         },
       },
     });
-    expect(rowFor("Final message non-empty")).toHaveAttribute(
+    expect(rowFor("Catch an empty answer")).toHaveAttribute(
       "data-role",
-      "warn",
+      "advisory",
     );
     expect(
-      within(rowFor("Final message non-empty")).getByText("Warn"),
+      within(rowFor("Catch an empty answer")).getByText("Advisory"),
     ).toBeInTheDocument();
   });
 
@@ -212,19 +212,19 @@ describe("CaseScorecard — roles", () => {
       checkPolicy: true,
     });
     const row = rowFor("No tool errors so far");
-    await user.click(within(row).getByRole("button", { name: "Warn" }));
+    await user.click(within(row).getByRole("button", { name: "Advisory" }));
+    // No `severity`: a new advisory write no longer carries one.
     expect(onStepPredicateChange).toHaveBeenCalledWith("a2", {
       type: "noToolErrors",
       role: "advisory",
-      severity: "warn",
     });
     expect(onCasePredicateChange).not.toHaveBeenCalled();
   });
 
-  it("withholds Gate from an observation, the way the suite table does", () => {
+  it("withholds Required from an observation, the way the suite table does", () => {
     // An observation is a heuristic, and the Zod schema REFUSES a gating one
     // on save. Offering the segment here made the case page — the surface with
-    // the most authoring traffic — a control that lies: click Gate, get a
+    // the most authoring traffic — a control that lies: click Required, get a
     // rejected write with no explanation.
     renderCard({
       checkPolicy: true,
@@ -242,14 +242,13 @@ describe("CaseScorecard — roles", () => {
         },
       },
     });
-    const row = rowFor("Final message does not end with a question");
-    const group = within(row).getByRole("group", { name: /^Role for/ });
-    expect(within(group).queryByRole("button", { name: "Gate" })).toBeNull();
+    const row = rowFor("Catch an answer that ends by asking");
+    const group = within(row).getByRole("group", { name: "Assertion role" });
     expect(
-      within(group).getByRole("button", { name: "Warn" }),
-    ).toBeInTheDocument();
+      within(group).queryByRole("button", { name: "Required" }),
+    ).toBeNull();
     expect(
-      within(group).getByRole("button", { name: "Report" }),
+      within(group).getByRole("button", { name: "Advisory" }),
     ).toBeInTheDocument();
   });
 
@@ -257,9 +256,9 @@ describe("CaseScorecard — roles", () => {
     renderCard({ checkPolicy: true });
     const route = screen.getByTestId("case-route-row");
     expect(
-      within(route).queryByRole("group", { name: /Role/ }),
+      within(route).queryByRole("group", { name: /role/i }),
     ).not.toBeInTheDocument();
-    expect(within(route).getByText("Gate")).toBeInTheDocument();
+    expect(within(route).getByText("Required")).toBeInTheDocument();
   });
 });
 
@@ -267,7 +266,7 @@ describe("CaseScorecard — the library", () => {
   it("adds one case-level scorer, open, from a single menu", async () => {
     const user = userEvent.setup();
     const { onAddScorer } = renderCard();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     expect(onAddScorer).toHaveBeenCalledWith({ type: "noToolErrors" });
   });
@@ -275,7 +274,7 @@ describe("CaseScorecard — the library", () => {
   it("does not offer the kind the route question owns", async () => {
     const user = userEvent.setup();
     renderCard();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     expect(
       screen.queryByTestId("add-step-item-check:toolCalledWith"),
     ).toBeNull();
@@ -344,7 +343,7 @@ describe("CaseScorecard — read-only", () => {
       },
     });
     expect(
-      screen.queryByRole("button", { name: "Add scorer" }),
+      screen.queryByRole("button", { name: "Add assertion" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("switch", { name: "Skip the judge for this case" }),

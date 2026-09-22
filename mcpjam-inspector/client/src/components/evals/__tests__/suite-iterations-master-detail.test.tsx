@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
   suiteHeader: vi.fn(),
   runOverview: vi.fn(),
+  evaluateRunContent: vi.fn(),
+  runDetailView: vi.fn(),
 }));
 
 const cloudState = vi.hoisted(() => ({
@@ -24,6 +26,10 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => cloudState.environments,
+}));
+
+vi.mock("../test-template-editor", () => ({
+  TestTemplateEditor: ({ readOnly, openCompareIterationId }: {readOnly?: boolean; openCompareIterationId?: string}) => <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} />,
 }));
 
 vi.mock("convex/react", () => ({
@@ -143,8 +149,15 @@ vi.mock("../suite-dashboard", () => ({
   ),
 }));
 
+vi.mock("../../evaluate/evaluate-run-content", () => ({
+  EvaluateRunContent: (props: Record<string, unknown>) => {
+    mocks.evaluateRunContent(props);
+    return <div data-testid="evaluate-run-content" />;
+  },
+}));
+
 vi.mock("../run-detail-view", () => ({
-  RunDetailView: () => <div data-testid="run-detail-view" />,
+  RunDetailView: (props: unknown) => { mocks.runDetailView(props); return <div data-testid="run-detail-view" />; },
 }));
 
 vi.mock("../test-cases-overview", () => ({
@@ -472,21 +485,21 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     );
   });
   /*
-   * `suite.delete` IS in the backend's CI-locked set, so the trash on a
-   * CI-owned suite is a button whose only outcome is a `409` — the exact
-   * failure this change exists to replace, reached by the one verb that is
-   * not spelled "edit".
+   * DELETE SURVIVES BOTH LOCKS, and that is the whole point of this pair.
    *
-   * The prop answers by ROLE, and role is not the question: an org owner holds
-   * `suite.delete` on a CI-owned suite and still cannot use it.
+   * The test above passes `readOnlyConfig`; this one passes `configLocked`.
+   * Neither is about deleting. `readOnlyConfig` means "this surface does not
+   * offer suite controls"; `configLocked` means "this suite's configuration
+   * lives in a repository". Deleting edits no configuration — it removes the
+   * row — so the ROLE prop is the whole answer, and `suite.delete` is no
+   * longer in the backend's CI-locked set either.
    *
-   * Note the pairing with the test above: that one passes `readOnlyConfig` and
-   * still expects `true`. The two are deliberately different — `readOnlyConfig`
-   * is about editing configuration, and the platform refuses delete for
-   * ownership, not for that. Wiring delete to `editingDisabled` would pass this
-   * test and break that one, which is why both are here.
+   * Wiring delete back to `editingDisabled` or `configLocked` would restore
+   * the dead end from issue #5381: a suite the SDK re-mints on every
+   * `suiteName` change, with duplicate as the only "way out" and the original
+   * left behind. Both tests are here so that regression fails loudly.
    */
-  it("withholds suite delete from RunOverview when CI owns the suite", () => {
+  it("keeps suite delete on RunOverview when CI owns the suite", () => {
     render(
       withDataRouter(
       <SuiteIterationsView
@@ -521,7 +534,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
     expect(mocks.runOverview).toHaveBeenCalledWith(
       expect.objectContaining({
-        canDeleteSuite: false,
+        canDeleteSuite: true,
       })
     );
   })
@@ -572,12 +585,13 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,)
     );
 
-    // `RunOverview` takes no `configLocked` — every control it renders runs or
-    // stops a run, none edits — so the lock shows up here as the withdrawn
-    // delete, and on the header as the withheld case authoring.
+    // `RunOverview` takes no `configLocked` — every control it renders runs,
+    // stops a run, or deletes the suite, and none of those edits the suite —
+    // so delete is untouched here and the lock shows up on the header as the
+    // withheld case authoring.
     expect(mocks.runOverview).toHaveBeenCalledWith(
       expect.objectContaining({
-        canDeleteSuite: false,
+        canDeleteSuite: true,
       })
     );
 
@@ -913,6 +927,43 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     createdAt: 1,
     completedAt: 2,
   };
+
+  it.each(["test-edit", "test-detail"] as const)("opens locked SDK %s routes in the new read-only workspace", (type) => {
+    renderOverview({
+      suite: { ...baseSuite, source: "sdk" },
+      suiteDetailOverview: true,
+      evaluateCaseEditor: true,
+      route: { type, suiteId: "suite-1", testId: "case-1", iteration: "iter-1" },
+    });
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-readonly", "true");
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-iteration", "iter-1");
+    expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
+  });
+
+  it("opens a locked SDK case from the run sidebar in the workspace", () => {
+    const navigation = {...noopNav, toTestEdit: vi.fn()};
+    renderOverview({suite: {...baseSuite, source: "sdk"}, evaluateCaseEditor: true, suiteDetailOverview: true,
+      runs: [detailRun], route: {type: "run-detail", suiteId: "suite-1", runId: "run-1"}}, navigation);
+    mocks.runDetailView.mock.calls.at(-1)![0].onSelectTestCase({testCaseId: "case-1"});
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
+
+  it("lets locked SDK run titles open their definition without enabling evaluator edits", () => {
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+    renderOverview({
+      suite: { ...baseSuite, source: "sdk" },
+      configLocked: true,
+      projectId: "project-1",
+      suiteDetailOverview: true,
+      runs: [{ ...detailRun, source: "sdk" }],
+      route: { type: "run-detail", suiteId: "suite-1", runId: "run-1" },
+    }, navigation);
+    const props = mocks.evaluateRunContent.mock.calls.at(-1)?.[0];
+    expect(props.onEditCase).toEqual(expect.any(Function));
+    expect(props.onEditEvaluator).toBeUndefined();
+    props.onEditCase("case-1");
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
 
   it("opens Evaluate (New) run page instead of the unified split", () => {
     renderOverview({

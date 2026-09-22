@@ -1,4 +1,9 @@
-vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+vi.mock("@/components/browser/LocalBrowserOnboarding", () => ({
+  LocalBrowserOnboarding: () => null,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -9,8 +14,12 @@ import { act, render, screen } from "@testing-library/react";
 // `loadingState` branch that decides whether the branded first-run loading
 // screen shows, so neutralize everything else and drive `loadingState`.
 
-vi.mock("@/hooks/useComputersEnabled", () => ({ useBrowserWorkspaceEnabledState: () => true, useBrowserEnabledState: () => true }));
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useBrowserWorkspaceEnabledState: () => true,
+  useBrowserEnabledState: () => true,
+}));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
+const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
 }));
@@ -30,10 +39,11 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: false }),
+  useQuery: () => undefined,
 }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ themeMode: "light" }),
+    selector({ themeMode: "light", hostStyle: "claude" }),
 }));
 vi.mock("@/hooks/useClients", () => ({ useHost: () => ({ host: null }) }));
 vi.mock("@/hooks/use-previewed-client-id", () => ({
@@ -58,40 +68,12 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
     consent: null,
   }),
 }));
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => {},
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
 }));
-vi.mock("@/lib/scenario-client-style", () => ({
-  getScenarioShellStyle: () => ({}),
-}));
-vi.mock("@/lib/client-config-v2", () => ({
-  gateMcpToolResultImageRenderingByModelVisibility: () => undefined,
-}));
-
-// The non-skeleton branch renders a deep provider/panel tree; stub each piece
-// to a trivial passthrough so a "ready" render doesn't need the whole app.
-vi.mock("@/contexts/scenario-client-style-context", () => ({
-  ScenarioChatUiOverrideProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-  ScenarioHostStyleProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-  ScenarioHostThemeProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-}));
-vi.mock("@/contexts/scenario-client-capabilities-override-context", () => ({
-  ScenarioHostCapabilitiesOverrideProvider: ({
-    children,
-  }: {
-    children?: ReactNode;
-  }) => children,
-}));
-vi.mock("@/contexts/active-mcp-profile-context", () => ({
-  ActiveMcpProfileProvider: ({ children }: { children?: ReactNode }) =>
-    children,
-}));
-vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
-  ActiveHostCapsResolverScope: ({ children }: { children?: ReactNode }) =>
-    children,
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => ({ catalog: null }),
 }));
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children?: ReactNode }) => children,
@@ -106,9 +88,33 @@ vi.mock("@/components/playground/PlaygroundRightRail", () => ({
 }));
 // Relative to PlaygroundTab.tsx, so "../X" from this __tests__ dir resolves to
 // the same module the source imports as "./X".
-vi.mock("../PlaygroundCenter", () => ({
-  PlaygroundCenter: () => <div data-testid="playground-center" />,
-}));
+vi.mock("../PlaygroundCenter", async () => {
+  const style = await import("@/contexts/scenario-client-style-context");
+  const caps = await import(
+    "@/contexts/scenario-client-capabilities-override-context"
+  );
+  const profile = await import("@/contexts/active-mcp-profile-context");
+  const resolver = await import(
+    "@/contexts/active-host-client-capabilities-context"
+  );
+  return {
+    PlaygroundCenter: (props: unknown) => {
+      mockPlaygroundCenter(props);
+      return (
+        <div data-testid="playground-center">
+          {JSON.stringify({
+            style: style.useScenarioHostStyle(),
+            theme: style.useScenarioHostTheme(),
+            chatUi: style.useScenarioChatUiOverride(),
+            capabilities: caps.useScenarioHostCapabilitiesOverride(),
+            profile: profile.useActiveMcpProfile(),
+            clientCapabilities: resolver.useActiveHostCapsResolver()(),
+          })}
+        </div>
+      );
+    },
+  };
+});
 vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
 }));
@@ -125,19 +131,42 @@ const baseProps: ComponentProps<typeof PlaygroundTab> = {
 
 describe("PlaygroundTab loading branch", () => {
   beforeEach(() => {
-    useActiveChatSessionStore.setState({ sessionId: null, restoredSession: null, restorationPending: false });
+    useActiveChatSessionStore.setState({
+      sessionId: null,
+      restoredSession: null,
+      restorationPending: false,
+    });
     useBrowserWorkspaceStore.setState({ conversations: {} });
     mockLoadingScreen.mockClear();
+    mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
+    mockUseAutoConnectProjectServers.mockClear();
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<PlaygroundTab {...baseProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
+    );
   });
 
   it("does not close a persisted panel while conversation metadata is restoring", () => {
-    useActiveChatSessionStore.setState({ sessionId: "wire", restorationPending: true });
+    useActiveChatSessionStore.setState({
+      sessionId: "wire",
+      restorationPending: true,
+    });
     useBrowserWorkspaceStore.getState().openBrowser("wire");
     render(<PlaygroundTab {...baseProps} />);
-    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(true);
-    act(() => useActiveChatSessionStore.getState().setRestorationPending(false));
-    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(false);
+    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(
+      true,
+    );
+    act(() =>
+      useActiveChatSessionStore.getState().setRestorationPending(false),
+    );
+    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(
+      false,
+    );
   });
   it("shows the branded 'Setting things up...' screen during the first-run skeleton", () => {
     mockLoadingState.current = { kind: "skeleton" };
@@ -160,5 +189,47 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockLoadingScreen).not.toHaveBeenCalled();
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
+  });
+
+  it("passes the one-shot first-run prompt into the Playground center", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const onFirstRunPromptConsumed = vi.fn();
+
+    render(
+      <PlaygroundTab
+        {...baseProps}
+        firstRunPrompt="What can this server do?"
+        onFirstRunPromptConsumed={onFirstRunPromptConsumed}
+      />,
+    );
+
+    expect(mockPlaygroundCenter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+        onFirstRunPromptConsumed,
+      }),
+    );
+  });
+});
+
+it("keeps the project host's style, overrides, profile, and saved capabilities", () => {
+  mockLoadingState.current = { kind: "ready" };
+  const host = {
+    hostStyle: "codex",
+    chatUiOverride: { label: "Custom" },
+    hostCapabilitiesOverride: { tools: {} },
+    mcpProfile: { version: 1 },
+    clientCapabilities: { extensions: { "test/saved": {} } },
+  } as any;
+  render(<PlaygroundTab {...baseProps} activeHost={host} />);
+  expect(
+    JSON.parse(screen.getByTestId("playground-center").textContent!),
+  ).toMatchObject({
+    style: "codex",
+    theme: "light",
+    chatUi: host.chatUiOverride,
+    capabilities: host.hostCapabilitiesOverride,
+    profile: host.mcpProfile,
+    clientCapabilities: host.clientCapabilities,
   });
 });

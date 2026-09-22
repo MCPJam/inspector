@@ -20,6 +20,7 @@
  * newer backend added are optional here so an older backend still parses.
  */
 import type { ConvexHttpClient } from "convex/browser";
+import { logger } from "../../utils/logger.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 export interface ResolvedEnvironmentForLaunch {
@@ -123,6 +124,28 @@ export function environmentServerNames(
 }
 
 /**
+ * Connectable refs for a manager that may key its servers by DISPLAY NAME.
+ *
+ * An environment resolves Convex server IDs, but `/api/mcp` managers register
+ * each server under its display name (see the `managerKey` note in
+ * `local-server-resolver.ts`) — so on the local route every id misses and an
+ * env-backed run reports a connected server as "not connected". Falls back to
+ * the healed name ONLY for an id the manager doesn't hold: hosted managers key
+ * by id and resolve exactly as before, and a server that is genuinely absent
+ * still fails to resolve, now under the name a human recognizes.
+ */
+export function environmentServerRefsForManager(
+  resolved: ResolvedEnvironmentForLaunch,
+  manager: { hasServer(serverId: string): boolean }
+): string[] {
+  const serverIds = environmentServerIds(resolved);
+  const serverNames = environmentServerNames(resolved);
+  return serverIds.map((serverId, index) =>
+    manager.hasServer(serverId) ? serverId : serverNames[index] ?? serverId
+  );
+}
+
+/**
  * The effective server set to echo as `expectedEnvironmentServerIds`. This is
  * the STORED closed set the backend compares against, so it is deliberately
  * NOT the live-healed projection: the backend's drift check re-derives the same
@@ -135,9 +158,27 @@ export function environmentEffectiveServerIds(
   return resolved.effectiveServerIds ?? resolved.selectedServerIds;
 }
 
+/**
+ * The eval launch rule: an eval run connects the server group selected on the
+ * environment (plus its explicit plugin pins) and NOTHING else. Passed by every
+ * eval launch and generation site, and by no other caller — the generic
+ * environment preview, journeys and scenarios keep inheriting the client's own
+ * servers. One constant so those sites cannot drift from each other, or from
+ * the value `startTestSuiteRun` hard-codes: the preflight and the mutation must
+ * resolve the same set or the launch fails its drift check.
+ */
+export const EVAL_LAUNCH_SERVER_SOURCE = "environment_only" as const;
+
+/** One line per process, not per failed launch. */
+let loggedServerSourceDowngrade = false;
+
 export async function resolveEnvironmentForLaunch(
   convexClient: ConvexHttpClient,
-  args: { projectId: string; environmentId: string }
+  args: {
+    projectId: string;
+    environmentId: string;
+    serverSource?: typeof EVAL_LAUNCH_SERVER_SOURCE;
+  }
 ): Promise<ResolvedEnvironmentForLaunch> {
   let raw: unknown;
   try {
@@ -155,7 +196,29 @@ export async function resolveEnvironmentForLaunch(
         "This deployment cannot resolve project environments yet. Retry after the backend deploys."
       );
     }
-    throw error;
+    // DEPLOY SKEW, the other direction: this inspector knows `serverSource` and
+    // the backend does not, so its validator refuses the whole query rather
+    // than ignoring an unknown field. Retrying once without it gives an older
+    // backend its old behavior instead of failing every environment eval
+    // launch. Matched on the validator's own wording, and only when we actually
+    // sent the field — never a blanket retry.
+    if (
+      args.serverSource &&
+      /Object contains extra field [`'"]?serverSource(?:[`'"]|\b)/i.test(message)
+    ) {
+      if (!loggedServerSourceDowngrade) {
+        loggedServerSourceDowngrade = true;
+        logger.warn(
+          "[evals] Backend does not accept serverSource yet; eval launches fall back to the client's own servers until it deploys."
+        );
+      }
+      raw = await convexClient.query(
+        "projectEnvironments:resolveEnvironmentForLaunch" as any,
+        { projectId: args.projectId, environmentId: args.environmentId }
+      );
+    } else {
+      throw error;
+    }
   }
   const resolved = raw as ResolvedEnvironmentForLaunch | null;
   if (
@@ -360,4 +423,44 @@ export function environmentLaunchConflictError(error?: unknown): WebRouteError {
     ErrorCode.ENVIRONMENT_REVISION_CONFLICT,
     message
   );
+}
+
+/**
+ * Map a launch-resolution failure onto the public envelope. The environment
+ * exists and is readable, but cannot currently produce a runnable
+ * configuration (a pinned plugin was disabled, the host was deleted, a selected
+ * server group is gone) — that is a 409 conflict, not bad input, and the
+ * machine-readable `ENV_*` code rides along in `details` so callers can branch
+ * on the reason. Mirrors `/v1/projects/:p/environments/:e/resolve`.
+ *
+ * Lives here rather than on one route because EVERY eval launch surface needs
+ * it. An untranslated ConvexError reaches `mapRuntimeError` as an unrecognized
+ * failure and leaves as a 500, which the 5xx monitors count as an MCPJam fault
+ * — that is the 500 the hosted run route answered, having no translation.
+ */
+export function translateEnvironmentResolveError(error: unknown): unknown {
+  if (error instanceof WebRouteError) return error;
+  const data = (error as { data?: unknown } | null)?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const code = (data as { code?: unknown }).code;
+    const message = (data as { message?: unknown }).message;
+    if (typeof code === "string" && code.startsWith("ENV_")) {
+      if (code === "ENV_NOT_FOUND" || code === "ENV_CROSS_PROJECT") {
+        return new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Environment not found"
+        );
+      }
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        typeof message === "string"
+          ? message
+          : "Environment cannot be launched right now.",
+        { code }
+      );
+    }
+  }
+  return error;
 }

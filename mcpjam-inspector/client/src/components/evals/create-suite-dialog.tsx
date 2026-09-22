@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -30,7 +37,7 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "./client-attachments-editor";
-import { ServerAttachmentPicker } from "./server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 
 export type CreateSuitePayload = {
   name: string;
@@ -77,16 +84,15 @@ export function CreateSuiteDialog({
   initialName = null,
 }: CreateSuiteDialogProps) {
   const [name, setName] = useState("");
-  const [hostAttachments, setHostAttachments] = useState<
-    HostAttachmentDraft[]
-  >([]);
+  const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
+    [],
+  );
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null,
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [target, setTarget] = useState<EnvironmentComposerState>(
-    emptyComposerState,
-  );
+  const [target, setTarget] =
+    useState<EnvironmentComposerState>(emptyComposerState);
 
   /**
    * Born in environment mode. A suite created legacy can be converted from the
@@ -146,12 +152,7 @@ export function CreateSuiteDialog({
     if (serverAttachmentId === null && serverAttachments.length > 0) {
       setServerAttachmentId(serverAttachments[0]._id);
     }
-  }, [
-    composeMode,
-    shouldFetchDefaults,
-    serverAttachmentId,
-    serverAttachments,
-  ]);
+  }, [composeMode, shouldFetchDefaults, serverAttachmentId, serverAttachments]);
 
   useEffect(() => {
     if (!shouldFetchDefaults) return;
@@ -213,7 +214,7 @@ export function CreateSuiteDialog({
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
-        : "Pick a server group first.";
+        : "Pick a server or group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
       return "Attach at least one client first.";
@@ -248,7 +249,7 @@ export function CreateSuiteDialog({
           ...new Set(resolved.environments.map((env) => env.hostId)),
         ];
         const resolvedGroups = new Set(
-          resolved.environments.map((env) => env.serverAttachmentId ?? null)
+          resolved.environments.map((env) => env.serverAttachmentId ?? null),
         );
         const fallbackServerAttachmentId =
           resolvedGroups.size === 1
@@ -307,8 +308,8 @@ export function CreateSuiteDialog({
         <DialogHeader>
           <DialogTitle>Create suite</DialogTitle>
           <DialogDescription>
-            Name your suite and pick what it runs against. You can change
-            this later.
+            Name your suite and pick what it runs against. You can change this
+            later.
           </DialogDescription>
         </DialogHeader>
 
@@ -331,11 +332,14 @@ export function CreateSuiteDialog({
                   Where it runs
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Start from a client, or build one here. Each client fans
-                  out into its own run.
+                  Start from a client, or build one here. Each client fans out
+                  into its own run.
                 </p>
               </div>
               <EnvironmentComposer
+                // Evals take servers from the group alone, so the empty slot
+                // cannot claim the client's own servers here.
+                emptyServerLabel="Servers · none"
                 projectId={projectId}
                 environments={composerEnvironments ?? []}
                 value={target}
@@ -346,14 +350,11 @@ export function CreateSuiteDialog({
                 inModal
                 slots={EVALS_COMPOSER_SLOTS}
                 environmentsVocabulary="client"
-                clientDefaultLabel={
-                  (() => {
-                    const previewed =
-                      hosts.find((h) => h.hostId === previewedHostId) ??
-                      hosts[0];
-                    return previewed?.modelId ?? null;
-                  })()
-                }
+                clientDefaultLabel={(() => {
+                  const previewed =
+                    hosts.find((h) => h.hostId === previewedHostId) ?? hosts[0];
+                  return previewed?.modelId ?? null;
+                })()}
               />
             </div>
           ) : hostsEnabled && projectId ? (
@@ -368,11 +369,14 @@ export function CreateSuiteDialog({
                   </p>
                 </div>
                 <div className="shrink-0">
-                  <ServerAttachmentPicker
+                  <ServerPicker
                     projectId={projectId}
                     value={serverAttachmentId}
                     onChange={setServerAttachmentId}
+                    // The X only where Create would accept none; the callback
+                    // always, so a delete in the picker reaches this form.
                     onClearSelection={() => setServerAttachmentId(null)}
+                    offerClear={!attachmentsRequired}
                     inModal
                     disabled={isSaving}
                   />

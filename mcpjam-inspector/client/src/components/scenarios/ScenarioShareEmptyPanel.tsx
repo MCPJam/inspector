@@ -2,6 +2,11 @@
  * {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers a
  * self-serve run plus the same invite / copy-link actions.
  *
+ * Copy says STUDY, never "scenario". The product renamed the thing this panel
+ * describes; the component, its props and the Convex tables under it did not
+ * (see `UserTestingTab`), so the two vocabularies sit side by side in this
+ * file on purpose — identifiers are internal, sentences are the product's.
+ *
  * This is the only share affordance in the page BODY. The header's `Share`
  * button owns the general case ({@link ScenarioShareDialog}), and full access
  * / invite management lives on the Edit route ({@link ScenarioShareSection}).
@@ -259,7 +264,7 @@ export function ScenarioShareEmptyPanel({
           Insights start with the first session.
         </h2>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          Once someone runs this scenario, this page maps where they reached
+          Once someone runs this study, this page maps where they reached
           their goal, where they stalled, and the themes that repeat across
           sessions.
         </p>
@@ -277,7 +282,7 @@ export function ScenarioShareEmptyPanel({
                 href={share.shareLink!}
                 target="_blank"
                 rel="noreferrer"
-                aria-label="Try the scenario yourself — opens the live scenario in a new tab"
+                aria-label="Try the study yourself. Opens the live study in a new tab"
                 data-testid="user-testing-share-empty-preview"
                 className={cn(
                   "relative flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm",
@@ -286,7 +291,7 @@ export function ScenarioShareEmptyPanel({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                  Try it yourself — ask it something
+                  Try it yourself. Ask it something
                   <span
                     aria-hidden
                     className="ml-1 inline-block h-[1.05em] w-px translate-y-[0.2em] bg-primary animate-[blink_1.15s_ease-in-out_infinite]"
@@ -298,7 +303,7 @@ export function ScenarioShareEmptyPanel({
               </a>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground/80">
-              Opens the live scenario in a new tab. Your run lands here like any
+              Opens the live study in a new tab. Your run lands here like any
               tester&apos;s.
             </p>
           </>
@@ -309,7 +314,7 @@ export function ScenarioShareEmptyPanel({
           >
             {share.shareLink ? (
               <>
-                This scenario can&apos;t be opened right now — its environment
+                This study can&apos;t be opened right now. Its environment
                 isn&apos;t resolving, so the link won&apos;t load for you or a
                 tester.
                 {/* The BACKEND'S OWN reason, not just the fact of a failure.

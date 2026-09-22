@@ -84,8 +84,12 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => null,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => null,
+}));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({

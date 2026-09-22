@@ -200,6 +200,19 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
   const RUNTIME_REVEAL_TIMEOUT_MS = 10_000;
+  // A scenario grant authorizes using an MCP server, not downloading its
+  // credentials. Convex requires infrastructure authentication in addition
+  // to the viewer's bearer before delivering scenario secrets to this process.
+  const scenarioServiceToken = args.scenarioId
+    ? process.env.INSPECTOR_SERVICE_TOKEN
+    : undefined;
+  if (args.scenarioId && !scenarioServiceToken) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing INSPECTOR_SERVICE_TOKEN for scenario secret delivery",
+    );
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -210,6 +223,9 @@ export async function fetchRuntimeServerSecrets(args: {
   try {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...(scenarioServiceToken
+        ? { "x-inspector-service-token": scenarioServiceToken }
+        : {}),
     };
     if (args.workosApiKeyActingAs) {
       const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;

@@ -77,6 +77,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // server as the failing boundary. Keep protocol codes that can also be
   // caused by the client or transport out of this bucket.
   "jsonrpc/internal_error": "user_server",
+  "jsonrpc/invalid_response_format": "user_server",
   // Parse errors, missing methods, invalid params, and unsupported versions
   // are direction-dependent protocol signals. A client can send malformed
   // JSON, call an unadvertised method, or request a version the server does
@@ -100,9 +101,14 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "auth/http_401": "user_config",
   "auth/http_403": "user_config",
   "auth/missing_bearer": "user_config",
+  // The credential is fine as far as the wire shows; the grant is too narrow.
+  "auth/insufficient_scope": "user_config",
   // Default only. A refresh failure on a credential MCPJam itself holds is
   // ours — callers pass `credentialOwner: "mcpjam"` to say so.
   "auth/oauth_refresh_failed": "user_config",
+  // Nothing has failed on the wire: the user simply has not granted consent
+  // yet. Config-side because only the user can complete it.
+  "auth/consent_required": "user_config",
   "oauth/invalid_client": "user_config",
   "oauth/invalid_grant": "user_config",
   "oauth/redirect_mismatch": "user_config",
@@ -113,6 +119,8 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Deliberately NOT credential-owned: MCPJam holds the key, but a spent
   // allowance is an account state the user resolves, never an outage of ours.
   "provider/mcpjam_limit": "user_config",
+  "provider/mcpjam_platform_budget": "user_config",
+  "account/suspended": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   // The MCP server under test throttled US. That is the server's own
@@ -138,7 +146,18 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "sdk/not_yet_supported_in_stateless": "mcpjam",
   "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
 
+  // A missing challenge alone does not establish who must act.
+  "oauth/no_bearer_challenge": "ambiguous",
+  "oauth/non_compliant_challenge": "user_server",
+
   // --- Not settled by the evidence ----------------------------------------
+  // A refresh that could not reach the authorization server: the AS may be
+  // down, or the credential owner's egress may be. Callers that refresh a
+  // credential MCPJam holds pass `credentialOwner: "mcpjam"` and it becomes
+  // ours; a BYO refresh stays ambiguous.
+  "auth/authorization_server_unreachable": "ambiguous",
+  // HTML is evidence of the response format, not of which hop authored it.
+  "auth/proxy_rejected": "ambiguous",
   // Either peer can drop a connection or run out of time.
   "jsonrpc/connection_closed": "ambiguous",
   "jsonrpc/request_timeout": "ambiguous",
@@ -158,6 +177,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // noise problem this field exists to remove. Callers that know the failure
   // happened on an internal boundary escalate it themselves.
   "internal/unknown": "ambiguous",
+  "provider/empty_response": "ambiguous",
 };
 
 function entry(
@@ -256,6 +276,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Retry the request once the server is healthy.",
     ],
     "internal-error",
+  ),
+  "jsonrpc/invalid_response_format": entry(
+    "jsonrpc/invalid_response_format",
+    "Invalid response format (-32603)",
+    "The server replied, but the result was not a valid MCP tool, resource, or prompt payload.",
+    [
+      "The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).",
+    ],
+    [
+      "Inspect the result in the Traffic Log and compare it to the MCP result shape.",
+      "Return `{ content: [{ type: \"text\", text: \"...\" }] }` from the handler, or the matching resource/prompt result.",
+    ],
+    "invalid-response-format",
   ),
   "jsonrpc/connection_closed": entry(
     "jsonrpc/connection_closed",
@@ -511,6 +544,26 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "oauth-refresh-failed",
   ),
+  /**
+   * Not a failure. The server is reachable and nothing was rejected — the
+   * user has simply not authorized MCPJam yet, or a reconnect ran on a path
+   * that deliberately refuses to open the consent window unprompted.
+   *
+   * `warning`, not `error`: rendering an expected, one-click state in the
+   * same red as a dead transport is what made this surface read as broken.
+   */
+  "auth/consent_required": entry(
+    "auth/consent_required",
+    "Sign-in required",
+    "This server needs your permission before it can connect.",
+    [
+      "Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.",
+    ],
+    ["Click Reconnect and approve the request in the window that opens."],
+    "consent-required",
+    "warning",
+  ),
+
   "auth/missing_bearer": entry(
     "auth/missing_bearer",
     "Missing bearer token",
@@ -525,7 +578,79 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "missing-bearer",
   ),
 
+  "auth/insufficient_scope": entry(
+    "auth/insufficient_scope",
+    "Insufficient scope (403)",
+    "The server reported insufficient_scope: the grant does not cover this operation.",
+    [
+      "The authorization did not request the scopes the server now requires.",
+      "The server added a scope requirement after the grant was issued.",
+    ],
+    [
+      "Re-authorize and grant the scopes the server names in its challenge.",
+    ],
+    "insufficient-scope",
+  ),
+  "auth/authorization_server_unreachable": entry(
+    "auth/authorization_server_unreachable",
+    "Authorization server unreachable",
+    "The stored token could not be refreshed because the authorization server was unreachable or did not return a usable response.",
+    [
+      "The authorization server is down or slow.",
+      "The refresh request could not leave the network it was made from.",
+    ],
+    [
+      "Retry in a minute; if it persists, check the authorization server's status.",
+      "Reconnect the server to obtain a fresh token once the authorization server is reachable.",
+    ],
+    "authorization-server-unreachable",
+    "warning",
+  ),
+  "auth/proxy_rejected": entry(
+    "auth/proxy_rejected",
+    "HTML access rejection (403)",
+    "The response was HTTP 403 with an HTML content type and no authentication challenge; a proxy or firewall may be involved.",
+    [
+      "An IP allowlist or WAF blocks the address the request came from.",
+      "A corporate proxy or SSO portal intercepted the request.",
+    ],
+    [
+      "Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.",
+      "Open the server URL in a browser from the same network to see what answers.",
+    ],
+    "proxy-rejected",
+  ),
+
   // --- OAuth ---
+  "oauth/no_bearer_challenge": entry(
+    "oauth/no_bearer_challenge",
+    "401 without a Bearer challenge",
+    "The response was HTTP 401 without a Bearer challenge. This response did not explain how to authorize.",
+    [
+      "The server or an intermediary omitted a Bearer challenge.",
+      "The server expects a static API key and does not implement OAuth.",
+    ],
+    [
+      "Check OAuth discovery, including the well-known metadata fallback supported by newer MCP versions.",
+      "If the server expects an API key, configure it as a header on the server instead of OAuth.",
+    ],
+    "no-bearer-challenge",
+  ),
+  "oauth/non_compliant_challenge": entry(
+    "oauth/non_compliant_challenge",
+    "Bearer challenge on the wrong status",
+    "The response reported invalid_token with HTTP 403; MCP requires HTTP 401 for an invalid or expired token.",
+    [
+      "The server maps every authorization failure to 403.",
+      "A gateway rewrites the server's 401 to 403.",
+    ],
+    [
+      "Re-authorize the server to replace the rejected token.",
+      "Report the status mismatch to the server author; invalid-token recovery expects HTTP 401.",
+    ],
+    "non-compliant-challenge",
+    "warning",
+  ),
   "oauth/invalid_grant": entry(
     "oauth/invalid_grant",
     "OAuth: invalid grant",
@@ -634,7 +759,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Disable progressive tool discovery for this server, or move headers into the server config.",
     ],
-    "paginated-tool-header-discovery-unsupported",
+    "paginated-tool-and-header-discovery-unsupported",
     "warning",
   ),
 
@@ -674,50 +799,62 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   // names no period.
   "provider/mcpjam_limit_daily": entry(
     "provider/mcpjam_limit_daily",
-    "Daily MCPJam limit reached",
-    "This account's free daily MCPJam allowance is spent. It resets tomorrow.",
+    "Out of MCPJam credits",
+    "Your organization's daily MCPJam credits are used up. They reset tomorrow.",
     [
       "Chat, evals and swarm generation all draw on one daily bucket, shared across the organization.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the daily allowance to reset.",
       // Named precisely because the generic advice costs people an afternoon:
       // a swarm's generation and persona-driver calls are platform-billed and
       // have no BYOK path, so adding a key does nothing for them.
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/mcpjam_limit_monthly": entry(
     "provider/mcpjam_limit_monthly",
-    "Monthly MCPJam credits spent",
-    "This team's monthly MCPJam credits are spent for the current billing period.",
+    "Out of MCPJam credits",
+    "Your organization's available MCPJam credits are used up for this billing period.",
     [
-      "Team plans draw on one monthly per-seat allowance instead of the daily bucket, and it renews when the billing period does.",
+      "Paid plans include a monthly credit allowance shared across the organization. It renews with the billing period.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the billing period to renew.",
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
+  ),
+  "provider/mcpjam_platform_budget": entry(
+    "provider/mcpjam_platform_budget", "MCPJam shared free allowance unavailable",
+    "The shared free allowance is exhausted or temporarily paused.",
+    ["This limit applies across free usage, not just your account."],
+    ["Wait until the supplied reset time, if present.", "Use purchased credits or your own provider key for chat."],
+    "mcpjam-platform-budget", "warning",
+  ),
+  "account/suspended": entry(
+    "account/suspended", "Account suspended",
+    "This account has been suspended by MCPJam.", ["Support has suspended this account."],
+    ["Contact founders@mcpjam.com for support."], "account-suspended", "warning",
   ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",
-    "MCPJam model limit reached",
-    "This account's MCPJam model allowance is spent, so the call was refused before it reached a provider.",
+    "Out of MCPJam credits",
+    "Your organization is out of MCPJam credits, so this request could not continue.",
     [
       "Chat, evals and swarm generation all draw on the same MCPJam allowance.",
     ],
     [
-      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the allowance to reset.",
-      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/quota": entry(
@@ -753,6 +890,15 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "server-rate-limited",
     "warning",
+  ),
+
+  "provider/empty_response": entry(
+    "provider/empty_response",
+    "Model returned no response",
+    "The model returned no response, so the turn could not complete.",
+    ["The model request ended without usable content."],
+    ["Rerun the affected cases. If this recurs, report it with the run details."],
+    "model-empty-response",
   ),
 
   // --- Internal / unknown ---

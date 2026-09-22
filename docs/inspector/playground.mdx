@@ -107,7 +107,16 @@ The picker opens on the tab that matches your currently selected model. When you
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
 
-If the out-of-credits dialog appears, clicking **Bring your own key** closes the dialog and opens the model picker directly on the **Your providers** tab so you can switch to an own-key model without leaving the chat.
+If the out-of-credits dialog appears, the actions available depend on your plan and role:
+
+- **Free plan (owner)** — The dialog shows **Compare plans** (opens your organization's Plans settings) and **Learn more about BYOK** (opens the BYOK and credits explainer under Usage & billing).
+- **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
+- **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
+- **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+
+### Frontier models and sign-in
+
+Some frontier models require a signed-in account. If you select a frontier model as a guest, a sign-in prompt appears showing the supported providers. You can sign in to get access, or choose **Not now** to continue with a standard model. This prompt does not affect your credit balance.
 
 ## Multi-Model Compare
 
@@ -359,6 +368,13 @@ Others never pause even when it is on: read-only lookups of your own project, th
 
 Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
 
+**Message history**
+Press **Up** in the composer to recall your last sent message. Press **Up** again to step further back through your previous messages, and **Down** to walk forward. Past the newest entry, **Down** returns the draft you had started before the walk began.
+
+The history is the conversation itself — the user messages already on screen — so it cannot drift from what you see, and a session reopened from the Sessions rail brings its history along automatically. A fresh thread starts with empty history.
+
+Arrow keys only reach history at the edge of the draft: inside a multi-line message they move the caret as usual. Modifier keys (`Shift`, `Alt`, `Ctrl`, `Cmd`) are never intercepted — `Shift+Up` still selects text.
+
 **Voice input**
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
 
@@ -399,7 +415,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers or spend credits. Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers. (The readiness starts consume no credits; the approval is about dialling somebody else's server, not about money.) Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
 
 <Note>
   These tools are only available when you are signed in as a project member.
@@ -438,7 +454,20 @@ When a server requires multiple interactions before a tool can run, the notice w
 
 ## Browser
 
+When you open Playground on a local installation where the browser is available but not yet set up, a dialog appears asking **"Let agents use your browser?"** — even over a restored conversation and without requiring a saved client or connected MCP server.
+
+- **Allow browser access** — grants device permission and enables browser tools for eligible clients. The dialog stays open until setup finishes; closing or pressing Escape while setup is in progress is blocked.
+- **Not now** / **Close** / **Escape** — dismisses the dialog and remembers that choice across tabs and remounts. The dialog does not reappear for that installation.
+
+If device permission was already granted on a previous visit but client setup was never completed, the dialog reappears once with the title **"Finish enabling browser tools"** and a **Finish setup** button instead of Allow.
+
+If setup fails partway through, the error stays visible and a **Retry setup** button appears so you can try again without re-granting device permission.
+
+After dismissing the dialog, you can still enable browser tools from the **Browser tab** in the right rail or from a client's **Browser settings**.
+
 Playground follows the selected client's saved Browser enablement. Turn Browser on or off in the client's [Browser tab](/inspector/clients#browser-settings). A **Browser settings** link in the browser panel header opens that tab when a client is selected.
+
+Browser tools are visible in the Tools rail as soon as the project's browser setting is on — a saved default client configuration is not required. If a specific client has browser tools explicitly disabled, the Tools rail shows a note explaining that and links to that client's Browser settings rather than showing another Allow prompt.
 
 ## Related Features
 

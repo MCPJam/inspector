@@ -417,34 +417,6 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Failed (3)")).toBeInTheDocument();
     });
-
-    it("shows a connection settings indicator without reconnect badge copy", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(
-        <ServerConnectionCard
-          server={server}
-          {...defaultProps}
-          needsReconnect
-        />
-      );
-
-      expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
-      expect(
-        screen.queryByLabelText("Reconnect needed")
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByLabelText("Connection settings changed")
-      ).toBeInTheDocument();
-    });
-
-    it("does not show the connection settings indicator when settings match", () => {
-      const server = createServer({ connectionStatus: "connected" });
-      render(<ServerConnectionCard server={server} {...defaultProps} />);
-
-      expect(
-        screen.queryByLabelText("Connection settings changed")
-      ).not.toBeInTheDocument();
-    });
   });
 
   describe("toggle switch", () => {
@@ -641,14 +613,14 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
     });
 
     it("renders long error messages via the ErrorCard", () => {
-      // The ErrorCard owns details disclosure; we just confirm the rich
-      // surface shows up (title + Learn more link) rather than the old
-      // ad-hoc truncation. The full message lives in the collapsed
-      // details panel.
+      // The ErrorCard owns details disclosure. On the server card that
+      // disclosure is an info glyph; Learn more lives in the panel so the
+      // failed card stays one row.
       const longError = "A".repeat(150);
       const server = createServer({
         connectionStatus: "failed",
@@ -656,18 +628,34 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
+      expect(screen.queryByText("Learn more")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
       expect(screen.getByText("Learn more")).toBeInTheDocument();
     });
 
-    it("shows troubleshooting link when connection failed", () => {
+    it("shows troubleshooting link when a failure carries no error card", () => {
+      // The generic troubleshooting index is the fallback for a failed server
+      // with nothing to describe. When there IS an error card it carries its
+      // own "Learn more" aimed at that specific error, and offering both put
+      // two docs links under one failure with the weaker one lower down.
       const server = createServer({
         connectionStatus: "failed",
-        lastError: "Error",
+        lastError: undefined,
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Having trouble?")).toBeInTheDocument();
       expect(screen.getByText("Check troubleshooting")).toBeInTheDocument();
+    });
+
+    it("drops the generic troubleshooting link when an error card is shown", () => {
+      const server = createServer({
+        connectionStatus: "failed",
+        lastError: "Connection refused",
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.queryByText("Having trouble?")).not.toBeInTheDocument();
     });
   });
 

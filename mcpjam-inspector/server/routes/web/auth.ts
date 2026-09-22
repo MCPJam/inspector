@@ -1,3 +1,13 @@
+import {
+  connectionKey,
+  type McpToolConnection,
+  type ConnectionsByServerId,
+} from "@mcpjam/sdk";
+import {
+  connectionLabels,
+  type AuthorizedOAuthConnection,
+} from "../../../shared/oauth-connections.js";
+import { setManagerConnections } from "../../utils/mcp-connections.js";
 import { z } from "zod";
 import type { Context } from "hono";
 import {
@@ -12,12 +22,15 @@ import type {
   ElicitationCallback,
   HttpExchangeLogger,
   HttpServerConfig,
+  MCPServerConfig,
   MrtrInputCollector,
   RpcLogger,
   UnauthorizedRefreshHandler,
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
@@ -401,6 +414,7 @@ export type ConvexAuthorizeResponse = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthConnections?: AuthorizedOAuthConnection[];
   permissions: {
     chatOnly: boolean;
   };
@@ -458,18 +472,44 @@ export type ConvexBatchAuthorizeFailure = {
   message: string;
 };
 
+/**
+ * Why there is no `oauthAccessToken`, when the reason is actionable rather
+ * than "nothing stored". Mirrored by hand from the backend
+ * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
+ * on older backends, which is why every read treats absence as "no idea".
+ *
+ * Each member has its own branch in PASS 1 below. A reason with no branch
+ * falls through to the explicit-OAuth refusal and tells the user to complete
+ * an OAuth flow, which is wrong for every reason here except the credential
+ * that really was cleared — so widening this union without widening that
+ * dispatch is a silent regression.
+ */
+export type ConvexOAuthUnavailableReason =
+  /** The credential is fine; only this machine can reach its authorization server. */
+  | "private_authorization_server"
+  /** The credential is fine; the authorization server never answered usably. */
+  | "authorization_server_unreachable"
+  /** Another refresh holds the lease. Retry after `oauthRetryAfterMs`. */
+  | "refresh_in_progress"
+  /**
+   * The server's URL was repointed, so the backend refuses to hand a
+   * credential bound to the old destination to the new one.
+   */
+  | "credential_origin_mismatch";
+
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthConnections?: AuthorizedOAuthConnection[];
+  oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
-   * Why there is no `oauthAccessToken`, when the reason is actionable rather
-   * than "nothing stored". Mirrored by hand from the backend
-   * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
-   * on older backends, which is why every read treats absence as "no idea".
+   * How long to wait before retrying, when the reason is transient. Sent with
+   * `refresh_in_progress` — the lease the other refresh holds expires after
+   * roughly this long.
    */
-  oauthUnavailableReason?: "private_authorization_server";
+  oauthRetryAfterMs?: number | null;
   permissions: {
     chatOnly: boolean;
   };
@@ -481,7 +521,8 @@ export type ConvexBatchAuthorizeSuccess = {
 };
 
 export type ConvexBatchAuthorizeResult =
-  ConvexBatchAuthorizeFailure | ConvexBatchAuthorizeSuccess;
+  | ConvexBatchAuthorizeFailure
+  | ConvexBatchAuthorizeSuccess;
 
 export type ConvexBatchAuthorizeResponse = {
   organizationId?: string | null;
@@ -618,6 +659,9 @@ export async function authorizeServer(
   projectId: string,
   serverId: string,
   options?: {
+    connectionId?: string;
+    connectionIds?: Record<string, string>;
+    includeConnections?: boolean;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
@@ -639,6 +683,13 @@ export async function authorizeServer(
       headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
       body: JSON.stringify({
         projectId,
+        ...(options?.connectionId
+          ? { connectionId: options.connectionId }
+          : {}),
+        ...(options?.connectionIds
+          ? { connectionIds: options.connectionIds }
+          : {}),
+        ...(options?.includeConnections ? { includeConnections: true } : {}),
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -695,6 +746,9 @@ export async function authorizeBatch(
   projectId: string,
   serverIds: string[],
   options?: {
+    connectionId?: string;
+    connectionIds?: Record<string, string>;
+    includeConnections?: boolean;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
@@ -716,6 +770,13 @@ export async function authorizeBatch(
       headers: buildConvexAuthHeaders(caller, bearerToken),
       body: JSON.stringify({
         projectId,
+        ...(options?.connectionId
+          ? { connectionId: options.connectionId }
+          : {}),
+        ...(options?.connectionIds
+          ? { connectionIds: options.connectionIds }
+          : {}),
+        ...(options?.includeConnections ? { includeConnections: true } : {}),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -942,7 +1003,7 @@ export function toHttpConfig(
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "This server runs over stdio and requires the local runtime (desktop app); hosted mode cannot spawn local processes.",
+      "To connect to a STDIO server, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app. STDIO connections aren’t available in MCPJam’s hosted web app.",
       { readiness: "local_runtime_required", transport: "stdio" },
     );
   }
@@ -1024,6 +1085,7 @@ export function toHttpConfig(
 }
 
 export interface AuthorizedManagerResult {
+  connectionsByServerId?: ConnectionsByServerId;
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
   oauthServerUrls: Record<string, string>;
@@ -1115,6 +1177,8 @@ export async function createAuthorizedManager(
   oauthTokens?: Record<string, string>,
   clientCapabilities?: Record<string, unknown>,
   options?: {
+    multiConnection?: boolean;
+    connectionIds?: Record<string, string>;
     accessScope?: "project_member" | "chat_v2";
     /**
      * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
@@ -1298,17 +1362,56 @@ export async function createAuthorizedManager(
   }
 
   const oauthServerUrls: Record<string, string> = {};
+  let authorizedUserId: string | null = null;
   const batch = await authorizeBatch(
-    caller,
+    {
+      ...caller,
+      setLogContext(partial) {
+        if (partial.userId) authorizedUserId = partial.userId;
+        caller.setLogContext?.(partial);
+      },
+    },
     bearerToken,
     projectId,
     uniqueServerIds,
     {
+      includeConnections: options?.multiConnection,
+      connectionIds: options?.connectionIds,
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
     },
   );
+  const connectionsByServerId: Record<string, McpToolConnection[]> = {};
+  if (options?.multiConnection) {
+    for (const [id, auth] of Object.entries(batch.results)) {
+      if (auth.ok && auth.oauthConnections?.length) {
+        const live = auth.oauthConnections.filter(
+          (c) => c.accessToken && !c.needsReauth,
+        );
+        // A disconnected default must not hide another usable account.
+        auth.oauthAccessToken ||= live[0]?.accessToken;
+        // Every row dead (no token, or all needing reauthorization) is NOT a
+        // multi-connection server. Recording an empty group here would drop
+        // the server from the manager entirely, which contradicts the
+        // discover/auto path that deliberately allows a tokenless anonymous
+        // connection so public tools stay usable and a live 401 can start
+        // OAuth.
+        if (!live.length) continue;
+        // Labelled as a GROUP: two accounts on one email must not read the
+        // same, or the model is choosing between identical strings.
+        const groupLabels = connectionLabels(live);
+        connectionsByServerId[id] = live.map((c, index) => ({
+          serverId: id,
+          connectionId: c.connectionId,
+          key: connectionKey(id, c.connectionId, c.isDefault),
+          label: groupLabels[index],
+          profile: c.profile,
+          isDefault: c.isDefault,
+        }));
+      }
+    }
+  }
 
   // PASS 1 — validate the WHOLE batch before any server does side-effecting
   // work. The mint pass below runs concurrently (Promise.all), so a check
@@ -1469,21 +1572,76 @@ export async function createAuthorizedManager(
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
+    //
+    // When the backend named a reason for withholding the token, that reason
+    // decides the answer. Only `credential_origin_mismatch` is about the
+    // user's authorization; the default would send the other two off to
+    // complete an OAuth flow that was never the problem.
     if (
       effectiveAuth === "oauth" &&
       !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
     ) {
-      throw new WebRouteError(
-        401,
-        ErrorCode.UNAUTHORIZED,
-        `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-        {
-          oauthRequired: true,
-          serverId,
-          serverName: serverNamesById?.[serverId] ?? null,
-          serverUrl: auth.serverConfig.url,
-        },
-      );
+      const errorDetails = {
+        serverId,
+        serverName: serverNamesById?.[serverId] ?? null,
+        serverUrl: auth.serverConfig.url,
+      };
+      switch (auth.oauthUnavailableReason) {
+        // The server's URL was repointed. The stored credential belongs to the
+        // old destination, so the backend refuses to send it to the new one —
+        // a real reauthorize, but the user has to be told which destination
+        // they are authorizing and why the old grant stopped counting.
+        case "credential_origin_mismatch":
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.`,
+            { oauthRequired: true, ...errorDetails },
+          );
+        // The credential is intact; the authorization server never answered.
+        // Authorizing again means talking to the same unreachable host, so
+        // saying "reconnect" would send the user in a circle.
+        case "authorization_server_unreachable":
+          throw new WebRouteError(
+            503,
+            ErrorCode.SERVER_UNREACHABLE,
+            `The authorization server for "${displayServerName}" did not respond, so its access token could not be refreshed. Authorizing again will not change that. Try again shortly.`,
+            errorDetails,
+          );
+        // Another refresh holds the lease. Refusing here would be a regression
+        // from a retry: the token this connect wants is being minted right
+        // now, and the backend says how long that takes.
+        case "refresh_in_progress": {
+          const retryAfterMs =
+            typeof auth.oauthRetryAfterMs === "number" &&
+            Number.isFinite(auth.oauthRetryAfterMs) &&
+            auth.oauthRetryAfterMs > 0
+              ? auth.oauthRetryAfterMs
+              : null;
+          const retryAfterSeconds =
+            retryAfterMs === null ? null : Math.ceil(retryAfterMs / 1000);
+          const error = new WebRouteError(
+            429,
+            ErrorCode.RATE_LIMITED,
+            `Credentials for "${displayServerName}" are being refreshed by another request.${
+              retryAfterSeconds === null
+                ? " Try again shortly."
+                : ` Try again in ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}.`
+            }`,
+            errorDetails,
+          );
+          throw retryAfterSeconds === null
+            ? error
+            : error.withHeaders({ "Retry-After": String(retryAfterSeconds) });
+        }
+        default:
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+            { oauthRequired: true, ...errorDetails },
+          );
+      }
     }
   }
 
@@ -1700,6 +1858,7 @@ export async function createAuthorizedManager(
               bearerToken,
               projectId,
               serverId,
+              connectionId: options?.connectionIds?.[serverId],
               serverName: displayServerName,
               accessScope: options?.accessScope,
               shareToken: (options as { shareToken?: string })?.shareToken,
@@ -1765,6 +1924,7 @@ export async function createAuthorizedManager(
               error,
               {
                 serverId,
+                connectionId: options?.connectionIds?.[serverId],
                 serverName: displayServerName,
                 resource: auth.serverConfig.url,
                 projectId,
@@ -1803,6 +1963,7 @@ export async function createAuthorizedManager(
           if (!isXaaMintErrorReported(error)) {
             logger.error("[XAA connect] mint failed", error, {
               serverId,
+              connectionId: options?.connectionIds?.[serverId],
               serverName: displayServerName,
               resource: auth.serverConfig.url,
             });
@@ -1854,7 +2015,7 @@ export async function createAuthorizedManager(
               serverName: serverNamesById?.[serverId] ?? null,
               serverUrl: auth.serverConfig.url,
             },
-          );
+          ).withSetupFailureSource("authorization_required");
         };
       }
 
@@ -1928,7 +2089,72 @@ export async function createAuthorizedManager(
     throw error;
   });
 
-  const manager = new MCPClientManager(Object.fromEntries(configEntries), {
+  const connectionEntries = configEntries.flatMap<
+    readonly [string, MCPServerConfig]
+  >(([serverId, config]) => {
+    const group = connectionsByServerId[serverId];
+    if (!group?.length) return [[serverId, config] as const];
+    const auth = batch.results[serverId] as ConvexBatchAuthorizeSuccess;
+    return group.map((connection) => {
+      const credential = auth.oauthConnections!.find(
+        (c) => c.connectionId === connection.connectionId,
+      )!;
+      const requestHeaders = new Headers(
+        (config as HttpServerConfig).requestInit?.headers,
+      );
+      requestHeaders.set("Authorization", `Bearer ${credential.accessToken}`);
+      return [
+        connection.key,
+        {
+          ...(config as HttpServerConfig),
+          requestInit: {
+            ...(config as HttpServerConfig).requestInit,
+            headers: requestHeaders,
+          },
+          onUnauthorized: buildHostedOAuthUnauthorizedHandler({
+            bearerToken,
+            projectId,
+            serverId,
+            connectionId: connection.connectionId,
+            serverName: connection.label,
+            accessScope: options?.accessScope,
+            scenarioId: options?.scenarioId,
+            accessVersion: options?.accessVersion,
+            allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
+          }),
+        },
+      ] as const;
+    });
+  });
+
+  // Each server owns its capture even when two configs use the same URL.
+  // Install before construction: the manager starts connecting eagerly.
+  const connectionsByKey = new Map(
+    Object.values(connectionsByServerId).flat().map((connection) => [connection.key, connection]),
+  );
+  const observedConfigs = Object.fromEntries(
+    connectionEntries.map(([id, config]) => {
+      const connection = connectionsByKey.get(id);
+      const serverId = connection?.serverId ?? id;
+      const authorization = batch.results[serverId];
+      let baseFetch = config.baseFetch ?? hostedMcpBaseFetch();
+      try {
+        if (authorization?.ok && authorization.accessLevel === "project_member" &&
+            authorization.serverConfig.transportType === "http") {
+          baseFetch = hostedMcpBackpressureFetch({
+            fetch: baseFetch, projectId, serverId, userId: authorizedUserId,
+            connectionId: connection?.connectionId ?? options?.connectionIds?.[serverId],
+          });
+        }
+      } catch (error) {
+        releasePluginLeases();
+        throw error;
+      }
+      return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
+    }),
+
+  );
+  const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
@@ -1975,15 +2201,24 @@ export async function createAuthorizedManager(
   // MRTR collector before the constructor's connects run, so `buildCapabilities`
   // advertises `elicitation` on the initialize wire for MRTR-capable servers.
   if (options?.mrtrInputCollectorForServer) {
-    for (const serverId of uniqueServerIds) {
-      const collector = options.mrtrInputCollectorForServer(serverId);
+    for (const [serverId] of connectionEntries) {
+      const baseServerId =
+        Object.entries(connectionsByServerId).find(([, group]) =>
+          group.some((connection) => connection.key === serverId),
+        )?.[0] ?? serverId;
+      const collector = options.mrtrInputCollectorForServer(baseServerId);
       if (collector) {
         manager.setMrtrInputCollector(serverId, collector);
       }
     }
   }
+  if (Object.keys(connectionsByServerId).length)
+    setManagerConnections(manager, connectionsByServerId);
   return {
     manager,
+    ...(Object.keys(connectionsByServerId).length
+      ? { connectionsByServerId }
+      : {}),
     oauthServerUrls,
     authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
   };
@@ -2140,7 +2375,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
 
   const rawProtocolVersionsByServerId = raw.mcpProtocolVersionsByServerId;
   const mcpProtocolVersionsByServerId:
-    Record<string, McpProtocolVersion> | undefined =
+    | Record<string, McpProtocolVersion>
+    | undefined =
     rawProtocolVersionsByServerId &&
     typeof rawProtocolVersionsByServerId === "object" &&
     !Array.isArray(rawProtocolVersionsByServerId)

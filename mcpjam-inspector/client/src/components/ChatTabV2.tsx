@@ -45,6 +45,7 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
@@ -66,6 +67,7 @@ import {
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
   STARTER_PROMPTS,
+  shouldShowStarterPrompts,
   formatErrorMessage,
   buildMcpPromptMessages,
   buildSkillToolMessages,
@@ -2226,9 +2228,20 @@ export function ChatTabV2({
     setFileAttachments([]);
   };
 
+  /**
+   * What Up/Down walk through in the composer (BB-183): this thread's own user
+   * messages, newest first. Derived from what is already on screen — no store,
+   * no query, and it follows a session restored from the history rail for free.
+   */
+  const chatInputHistory = useMemo(
+    () => collectInputHistory(messages),
+    [messages],
+  );
+
   const sharedChatInputProps = {
     value: input,
     onChange: setInput,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
@@ -2296,8 +2309,13 @@ export function ChatTabV2({
     onManageOrgProviders: manageOrgProviders,
   };
 
-  const showStarterPrompts =
-    !showDisabledCallout && !effectiveHasMessages && !isAuthLoading;
+  // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
+  const showStarterPrompts = shouldShowStarterPrompts({
+    hasMessages: effectiveHasMessages,
+    isAuthLoading,
+    showDisabledCallout,
+    hostedScenarioId,
+  });
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -2423,6 +2441,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -2692,6 +2711,7 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                               onTopUp={handleOpenTopupDialog}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
@@ -2839,6 +2859,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -3100,6 +3121,7 @@ export function ChatTabV2({
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
           organizationId={organizationId}
+          organizationName={sortedOrganizations.find((org) => org._id === organizationId)?.name}
           source="chat_banner"
         />
       )}

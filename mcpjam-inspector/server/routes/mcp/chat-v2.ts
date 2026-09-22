@@ -1,3 +1,5 @@
+import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
 import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
@@ -41,8 +43,8 @@ import type { RuntimeStandaloneSkill } from "../../services/environments/effecti
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -71,6 +73,11 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import {
+  createEmptyTurnWatcher,
+  hasSettledToolCallThisPrompt,
+} from "../../utils/empty-step-failure.js";
+import { emitError } from "../../utils/chat-stream-chunks.js";
 import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
@@ -330,6 +337,12 @@ function buildLocalScopeStepUpResume(input: {
         claimed.toolName
       ];
       if (
+        (claimed.connectionId &&
+          toolConnectionAttribution(
+            originalTool,
+            claimed.input,
+            claimed.toolCallId,
+          )?.connectionId !== claimed.connectionId) ||
         !originalTool ||
         typeof originalTool.execute !== "function" ||
         (typeof originalTool._serverId === "string" &&
@@ -635,6 +648,14 @@ function streamDirectChatWithLiveTrace(options: {
         traceEvents: buildDirectChatTraceCallbacks(writer),
       });
 
+      // `streamText` finishes an empty last step as if it were a reply, which
+      // left a blank bubble and no record. Same verdict as the hosted engine.
+      const emptyTurn = createEmptyTurnWatcher({
+        settledToolBeforeStream: hasSettledToolCallThisPrompt(
+          turnOptions.messageHistory,
+          handle.traceTurn.promptMessageStartIndex,
+        ),
+      });
       try {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
@@ -663,6 +684,27 @@ function streamDirectChatWithLiveTrace(options: {
           if (
             isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
           ) {
+            continue;
+          }
+          emptyTurn.observe(chunk);
+          const emptyTurnMessage =
+            chunk.type === "finish" && !handle.isAborted()
+              ? emptyTurn.failureFor(chunk)
+              : undefined;
+          if (emptyTurnMessage) {
+            // The error REPLACES the finish chunk, as on the hosted engine,
+            // and is written before the report so a reporter throw cannot
+            // swallow it.
+            emitError(writer, emptyTurnMessage);
+            reportRouteFailure(
+              "[mcp/chat-v2] direct step returned no content",
+              new Error(emptyTurnMessage),
+              {
+                source: "mcp.chat-v2.direct-empty-step",
+                hop: "user_server_hop",
+                context: { provider, modelId: handle.modelId },
+              },
+            );
             continue;
           }
           writer.write(
@@ -859,6 +901,9 @@ chatV2.post("/", async (c) => {
           // where the client's `readRouteError` looks. Only the access
           // verdicts carry one; every other status keeps the pre-existing
           // shape.
+          if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
+            return c.json({ error: runtime.error, code: runtime.code }, 401);
+          }
           if (runtime.code === "SCENARIO_ACCESS_STALE") {
             return c.json(
               { error: failClosedMessage, code: "SCENARIO_ACCESS_STALE" },
@@ -927,17 +972,30 @@ chatV2.post("/", async (c) => {
     });
     let localBrowserSettingsUnavailable = false;
     if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
-      let enabled = typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
-        ? hostRuntimeConfig.localBrowserEnabled : undefined;
-      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization") && !isGuestChatRequest(c.req.header("authorization"))) {
+      let enabled =
+        typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+          ? hostRuntimeConfig.localBrowserEnabled
+          : undefined;
+      if (
+        !hostRuntimeConfig &&
+        typeof body.projectId === "string" &&
+        body.projectId &&
+        c.req.header("authorization") &&
+        !isGuestChatRequest(c.req.header("authorization"))
+      ) {
         try {
-          enabled = await readLocalBrowserSetting(await getConvexBearerForRequest(c), body.projectId);
+          enabled = await readLocalBrowserSetting(
+            await getConvexBearerForRequest(c),
+            body.projectId,
+          );
         } catch {
           localBrowserSettingsUnavailable = true;
         }
       }
       resolvedExecution.builtInToolIds = resolveLocalBrowserTools(
-        resolvedExecution.builtInToolIds, enabled, true,
+        resolvedExecution.builtInToolIds,
+        enabled,
+        true,
       );
     }
     // Preserve the per-field warnings the inline code emitted — the
@@ -1099,13 +1157,12 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
-    // Provider-aware, matching streamWebChatTurn's dispatch: bare hosted ids
-    // (`gpt-5-nano` + `openai`) only canonicalize to their prefixed MCPJam form
-    // with the provider — a provider-blind check here routes them into
-    // org/BYOK below even after they passed the harness preflight.
+    // Matches streamWebChatTurn's dispatch: the whole definition, so a bare
+    // hosted id (`gpt-5-nano` + `openai`) still canonicalizes to its prefixed
+    // MCPJam form, and the picker's explicit `hosted: false` on a "Your
+    // providers" row with the same bare id still routes to the org's key.
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id &&
-        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+      modelDefinition.id && isHostedModelDefinition(modelDefinition),
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1284,6 +1341,7 @@ chatV2.post("/", async (c) => {
         model: {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
         },
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
@@ -1368,11 +1426,11 @@ chatV2.post("/", async (c) => {
     });
 
     const localBrowserRequested = body.browserEngine === "local";
-    const browserRollout = !localBrowserSettingsUnavailable && resolvedExecution.builtInToolIds?.includes(
-      BROWSER_BUILT_IN_TOOL_ID,
-    )
-      ? await resolveBrowserRollout(c, localBrowserRequested)
-      : { enabled: false, actor: null };
+    const browserRollout =
+      !localBrowserSettingsUnavailable &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+        ? await resolveBrowserRollout(c, localBrowserRequested)
+        : { enabled: false, actor: null };
     const localBrowserGuestId =
       localBrowserRequested &&
       browserRollout.enabled &&
@@ -1861,6 +1919,17 @@ chatV2.post("/", async (c) => {
         : undefined;
     };
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
+    if (
+      (body.messages?.length ?? 0) <= 1 &&
+      builtInAuthHeader &&
+      typeof body.projectId === "string"
+    )
+      void refreshConnectionProfiles(
+        mcpClientManager,
+        builtInAuthHeader.replace(/^Bearer\s+/i, ""),
+        body.projectId,
+      );
+
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
       body.projectId ?? "",
@@ -1889,6 +1958,11 @@ chatV2.post("/", async (c) => {
       );
       const event = createLocalScopeStepUpContinuation({
         bindingKey: scopeStepUpBindingKey,
+        connectionId: toolConnectionAttribution(
+          preparedTools[toolName],
+          toolInput,
+          info.toolCallId,
+        )?.connectionId,
         serverId: info.serverId,
         ...(resourceUrl ? { resourceUrl } : {}),
         toolCallId: info.toolCallId,
@@ -2020,7 +2094,7 @@ chatV2.post("/", async (c) => {
         progressivePlan,
         discoveryState,
         authHeader,
-        clientIp: getClientIp(c),
+        clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
@@ -2144,7 +2218,12 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace: withPageToolsAtTurn(turnTrace),
+                turnTrace: withPageToolsAtTurn({
+                  ...turnTrace,
+                  ...(prepared.connectionsAtTurn
+                    ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                    : {}),
+                }),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -2249,7 +2328,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace: withPageToolsAtTurn(turnTrace),
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -2308,7 +2392,7 @@ chatV2.post("/", async (c) => {
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,
-        clientIp: getClientIp(c),
+        clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
         serverIds: hostConfigServerIds,
@@ -2473,7 +2557,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace: withPageToolsAtTurn(turnTrace),
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

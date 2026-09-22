@@ -1,4 +1,24 @@
 import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "../contract/swarm-finding.js";
+export type PlatformSwarmJourneyFinding = SwarmJourneyFinding;
+export type PlatformSwarmJourneyFindings = SwarmJourneyFindings;
+export type PlatformSwarmJourneyFindingsJob = SwarmJourneyFindingsJob;
+export type { SwarmJourneyFindingsJob };
+
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "../contract/index.js";
+import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type {
+  JudgeRubric,
+  JudgeEvidenceManifest,
+} from "../contract/goal-completion.js";
+import type {
   BrowserAgentCommand,
   BrowserAgentResult,
 } from "./browser-agent-contract.js";
@@ -540,7 +560,17 @@ export interface PlatformTurnUsage {
  */
 export interface PlatformChatTurn {
   chatSessionId?: string;
-  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; effectivePolicy?: { tools: readonly string[] | null; origins: readonly string[] | null }; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
+  browser?: Partial<PlatformSessionBrowser> & {
+    attached: boolean;
+    effectivePolicy?: {
+      tools: readonly string[] | null;
+      origins: readonly string[] | null;
+    };
+    reason?: string;
+    screenshots?: PlatformBrowserScreenshot[];
+    notices?: string[];
+    handoff?: { waited: boolean; resumed: boolean };
+  };
   sessionId: string | null;
   turnId: string;
   /**
@@ -619,7 +649,11 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
-  browser?: { browserSessionId: string; bootId?: string; box?: { sandboxRowId: string } | { computerId: string } };
+  browser?: {
+    browserSessionId: string;
+    bootId?: string;
+    box?: { sandboxRowId: string } | { computerId: string };
+  };
   screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;
@@ -699,7 +733,10 @@ export interface PlatformWidgetRender {
  * and tolerate an unknown value rather than assuming this list is closed.
  */
 export type PlatformSessionSourceType =
-  "direct" | "scenario" | "eval" | "swarm";
+  | "direct"
+  | "scenario"
+  | "eval"
+  | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -893,6 +930,11 @@ export interface PlatformEvalRunAttribution {
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
  */
 export interface PlatformEvalRun {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
+  ciMetadata?: import("../eval-reporting-types.js").EvalCiMetadata;
+  runEvaluationsByCase?: import("../run-evaluators.js").CaseRunEvaluation[];
   id: string;
   suiteId: string;
   runNumber: number | null;
@@ -961,12 +1003,20 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /** Durable execution client; absent on older runs. Distinct from launcher. */
+  client?: {
+    id: string | null;
+    name: string;
+    hostStyle?: string;
+    modelId?: string;
+    source: "environment" | "attached_host" | "suite_default" | "sdk";
+  };
   /** Shared by every per-target run from the same fan-out launch. */
   runGroupId?: string;
   /** Model the run actually executed with. Absent on pre-attribution rows. */
   effectiveModelId?: string;
-  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
-  modelSource?: "client_default" | "override";
+  /** `case` uses the sole snapshot model; the other values describe environment attribution. */
+  modelSource?: "client_default" | "override" | "case";
   /**
    * Which engine executed the run: `"emulated"` (the platform's own turn loop)
    * or `"harness:<id>"` (a real agent runtime such as Claude Code).
@@ -1090,15 +1140,25 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
+  progress?: {
+    total: number;
+    completed: number;
+    errors: number;
+    skipped: number;
+  };
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
   /**
-   * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
-   * failed judge carries no cases, and `status` is what says which.
+   * Per-iteration measurements and unscored errors on terminal jobs.
+   * Pending jobs expose progress; failed jobs retain completed measurements.
    */
   cases: PlatformEvalRunGoalCompletionCase[];
 }
 
-export interface PlatformEvalRunGroundednessJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGroundednessJudge
+  extends PlatformEvalRunJudgeState {
   /** Per-case grades. EMPTY unless `status` is `"completed"`. */
   cases: PlatformEvalRunGroundednessCase[];
 }
@@ -1125,12 +1185,21 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
+  status?: "scored" | "error" | "skipped";
+  gradingKey?: string;
+  errorCode?: string;
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
+  evidenceHash?: string;
+  evidenceManifest?: JudgeEvidenceManifest;
   /** Rubric criteria the answer satisfied. */
   rubricHits: string[];
 }
 
-export interface PlatformEvalRunGroundednessCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGroundednessCase
+  extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
 }
@@ -1177,10 +1246,14 @@ export interface PlatformNotApplicableRailDisclosure {
 }
 
 export type PlatformRailDisclosure =
-  PlatformManagedRailDisclosure | PlatformNotApplicableRailDisclosure;
+  | PlatformManagedRailDisclosure
+  | PlatformNotApplicableRailDisclosure;
 
 export type PlatformDisclosureTenantEgress =
-  "mcpjam-hosted" | "byok-cloud" | "byok-local" | "unknown";
+  | "mcpjam-hosted"
+  | "byok-cloud"
+  | "byok-local"
+  | "unknown";
 
 export interface PlatformByokDisclosure {
   providerKey: string;
@@ -1208,7 +1281,9 @@ export interface PlatformDisclosedModel {
  * a fourth runtime kind.
  */
 export type PlatformDisclosureEngine =
-  "emulated" | "mixed" | `harness:${string}`;
+  | "emulated"
+  | "mixed"
+  | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.
@@ -1219,7 +1294,8 @@ export type PlatformDisclosureEngine =
  * the union defensively — a caller MUST NOT treat it as `hosted: false`.
  */
 export type PlatformEvalRunDisclosureLocus =
-  { known: true; hosted: boolean } | { known: false; reason: string };
+  | { known: true; hosted: boolean }
+  | { known: false; reason: string };
 
 export interface PlatformExecutionDisclosure {
   engine: PlatformDisclosureEngine;
@@ -1241,7 +1317,8 @@ export type PlatformEvalLlmTouchpointId =
   | "groundedness"
   | "serverQuality"
   | "runInsights"
-  | "runGroupQuality";
+  | "runGroupQuality"
+  | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =
   | "auto-on-completion"
@@ -1252,7 +1329,11 @@ export interface PlatformAnalysisTouchpointDisclosure {
   touchpoint: PlatformEvalLlmTouchpointId;
   label: string;
   model: string;
-  rail: { fixed: "openrouter"; because: string };
+  rail: {
+    fixed: "openrouter" | null;
+    because: string;
+    routing?: "gateway_preferred";
+  };
   destinations: readonly string[];
   evidenceSent: readonly string[];
   fires: PlatformDisclosureFires;
@@ -1551,6 +1632,16 @@ export type PlatformEvalSuiteGoalCompletionJudge = {
    */
   threshold?: number;
   /**
+   * Whether the judge's verdict may DECIDE a trial or only describe it.
+   *
+   * Spelled in the vocabulary the request asked for: `required` under
+   * vocabulary 2, `gating` under vocabulary 1. The API has always returned
+   * this; the type omitted it, which left the CLI exporter unable to read
+   * back a role a caller had just written. Absent on a suite that never set
+   * one, and on older API deployments.
+   */
+  role?: "advisory" | "required" | "gating";
+  /**
    * Presentation severity. Legal only with an advisory role. Absent when
    * the suite has none, and on older API deployments.
    */
@@ -1566,14 +1657,7 @@ export type PlatformEvalSuiteGoalCompletionJudge = {
    * agreement with a question nobody is asking. Absent on older API
    * deployments and on suites with no criteria.
    */
-  rubric?: {
-    criteria: Array<{
-      id: string;
-      label: string;
-      description?: string;
-      required?: boolean;
-    }>;
-  } | null;
+  rubric?: JudgeRubric | null;
 };
 
 /**
@@ -1587,15 +1671,28 @@ export type PlatformEvalSuiteGroundednessJudge = {
   severity?: "warn";
 };
 
-export interface PlatformEvalSuiteSettings {
+/**
+ * Everything a suite's settings say in the SAME words under both eval
+ * vocabularies. The two fields whose NAME depends on the vocabulary — the
+ * suite-default rules and the policy-2 default count — live on
+ * {@link PlatformEvalSuiteSettings} (vocabulary 1) and
+ * {@link PlatformEvalSuiteSettingsV2} (vocabulary 2).
+ */
+export interface PlatformEvalSuiteSettingsBase {
   /**
-   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   * The SUITE-WIDE accuracy threshold, as a percentage in [0, 100].
+   *
+   * One rate over the whole run must reach this; individual cases have no
+   * threshold of their own. It is not the per-case criterion in other units —
+   * ten cases, nine always passing and one always failing, passes a 90%
+   * suite-wide bar and fails a 0.9 per-case one — so dividing it by 100 moves
+   * the bar for every suite with more than one case.
    *
    * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
-   * still holds: a v2 suite is decided by
-   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
-   * an upgrade leaves behind is read by nothing. Read the threshold from
-   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * still holds: such a suite is decided by
+   * `verdictPolicyDefaults.passThreshold`, and the percent column left behind
+   * by a criterion change is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` there — converting this one would report a
    * threshold no run uses.
    */
   minimumAccuracy: number | null;
@@ -1604,10 +1701,13 @@ export interface PlatformEvalSuiteSettings {
    * this many times (`max(case.iterations, minimumIterations)`). `null` means
    * no floor — the suite's real state, not a stand-in for 1. Absent on older
    * API deployments.
+   *
+   * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
+   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
+   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
-  checks: PublicCheck[];
   /**
    * LLM-as-judge configuration, RESOLVED — every field is layered over the
    * platform defaults, so this is what a run on this suite would actually
@@ -1617,6 +1717,8 @@ export interface PlatformEvalSuiteSettings {
    * `judgeModel`, which is `null` for a suite that never picked one.
    */
   judge: PlatformEvalSuiteGoalCompletionJudge & {
+    contractVersion?: 4;
+    automatic?: boolean;
     /**
      * Stored groundedness, when the suite has a reserved slot. Read-only
      * while execution is unwired — PATCH refuses this key.
@@ -1624,35 +1726,40 @@ export interface PlatformEvalSuiteSettings {
     groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
   /**
-   * The verdict policy this suite's runs are decided under.
+   * The stored spelling of which criterion decides this suite's runs.
    *
-   * `2` is the fraction-and-validity policy: each case is graded against a
-   * `passThreshold` FRACTION over its own `repetitions`, and a run is decided
-   * valid-first (an invalid run is `"inconclusive"`, not failed).
+   * `2` is PER-CASE GRADING: each case is graded against a `passThreshold`
+   * FRACTION over its own `repetitions`, and a run is decided valid-first (an
+   * invalid run is `"inconclusive"`, not failed).
    *
-   * ABSENT means legacy: runs are graded by `minimumAccuracy` (a suite-wide
-   * PERCENT) over `max(case.iterations, minimumIterations)`. The two are not
-   * convertible, which is why absence is reported rather than defaulted —
-   * reading a historical percent as a fraction silently moves every bar.
+   * ABSENT means the SUITE-WIDE ACCURACY THRESHOLD: runs are graded by
+   * `minimumAccuracy` (a suite-wide PERCENT) over
+   * `max(case.iterations, minimumIterations)`, and there is no validity phase
+   * at all, so such a run is never `"inconclusive"`. The two criteria differ
+   * in SCOPE as well as units and are not convertible, which is why absence is
+   * reported rather than defaulted — reading a historical percent as a
+   * fraction silently moves every bar.
+   *
+   * The `2` is a WIRE spelling and stays one. It is not a version a caller
+   * upgrades to and not a thing to render in front of a person; use
+   * {@link policy} to branch, and the SDK's grading vocabulary for the words.
    */
   verdictPolicyVersion?: 2;
   /**
-   * Suite defaults a case inherits under policy 2. Present only with
-   * `verdictPolicyVersion: 2`, and only as a whole: `repetitions` without
-   * `passThreshold` cannot answer what a case is graded against.
-   */
-  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
-  /**
-   * Which policy decides this suite's runs, said in one word.
+   * Which criterion decides this suite's runs, said in one word.
    *
    * The same fact `verdictPolicyVersion`'s presence carries, without the
-   * inference — and without the ambiguity, since a v2 suite whose stored
+   * inference — and without the ambiguity, since a per-case suite whose stored
    * defaults fail validation projects no version either. It is also the field
    * that tells a writer which threshold to send: `minimumAccuracy` (a percent)
-   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused.
+   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused,
+   * because there is no edit that means both.
    *
    * Absent on older API deployments; read absence as `legacy` only after
-   * checking `verdictPolicyVersion`.
+   * checking `verdictPolicyVersion`. When NEITHER is present the deployment
+   * predates both and cannot say which criterion decides ANY suite — the two
+   * are indistinguishable in its response, so the SDK refuses to read a policy
+   * there rather than guessing (`gradingPolicyFromPlatformSuiteSettings`).
    */
   policy?: "legacy" | "v2";
   /**
@@ -1662,10 +1769,35 @@ export interface PlatformEvalSuiteSettings {
   qualityGate?: SuiteGatePolicyV1 | null;
 }
 
-/** Suite-level defaults under verdict policy 2. Fractions, never percents. */
-export interface PlatformEvalVerdictPolicyDefaults {
-  /** Trials per case unless the case overrides `repetitions`. */
-  repetitions: number;
+/** A suite's settings as vocabulary 1 (no header) spells them. */
+export interface PlatformEvalSuiteSettings
+  extends PlatformEvalSuiteSettingsBase {
+  checks: PublicCheck[];
+  /**
+   * Suite defaults a case inherits under policy 2. Present only with
+   * `verdictPolicyVersion: 2`, and only as a whole: `repetitions` without
+   * `passThreshold` cannot answer what a case is graded against.
+   */
+  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+}
+
+/**
+ * A suite's settings as vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`) spells
+ * them: the suite-default rules are `defaultAssertions` and the policy-2
+ * default count is `iterations`. Same facts, canonical words.
+ */
+export interface PlatformEvalSuiteSettingsV2
+  extends PlatformEvalSuiteSettingsBase {
+  defaultAssertions: PublicCheck[];
+  /** As {@link PlatformEvalSuiteSettings.verdictPolicyDefaults}, spelled canonically. */
+  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaultsV2;
+}
+
+/**
+ * The parts of the policy-2 suite defaults both vocabularies spell alike.
+ * Fractions, never percents.
+ */
+export interface PlatformEvalVerdictPolicyDefaultsBase {
   /** Fraction of a case's trials that must pass, in [0, 1]. */
   passThreshold: number;
   /**
@@ -1682,6 +1814,20 @@ export interface PlatformEvalVerdictPolicyDefaults {
     minCompletionRate?: number;
     maxEvaluatorErrorRate?: number;
   };
+}
+
+/** Suite-level defaults under verdict policy 2, as vocabulary 1 spells them. */
+export interface PlatformEvalVerdictPolicyDefaults
+  extends PlatformEvalVerdictPolicyDefaultsBase {
+  /** Trials per case unless the case overrides `repetitions`. */
+  repetitions: number;
+}
+
+/** Suite-level defaults under verdict policy 2, as vocabulary 2 spells them. */
+export interface PlatformEvalVerdictPolicyDefaultsV2
+  extends PlatformEvalVerdictPolicyDefaultsBase {
+  /** Iterations per case unless the case overrides `iterations`. */
+  iterations: number;
 }
 
 /** The sandbox image a suite's eval runs boot from. */
@@ -1736,7 +1882,12 @@ export interface PlatformEvalSuiteSchedule {
  * shape — the route layer maps this to/from the internal Convex suite. Tolerant
  * reader: unknown fields pass through.
  */
-export interface PlatformEvalSuiteDetail {
+/**
+ * A suite's detail minus its settings — the one member whose SHAPE depends on
+ * the eval vocabulary the request spoke. See {@link PlatformEvalSuiteDetail}
+ * and {@link PlatformEvalSuiteDetailV2}.
+ */
+export interface PlatformEvalSuiteDetailBase {
   id: string;
   /**
    * The suite's declared file identity (`suite.id` in a suite file). Present
@@ -1750,8 +1901,9 @@ export interface PlatformEvalSuiteDetail {
    * `"ci"` means it is owned by a committed suite file or by SDK ingest, and
    * the platform REFUSES configuration writes to it — name, settings,
    * environments, schedule, models, skills, execution config and cases — with
-   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying
-   * and comparing are unaffected.
+   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying,
+   * comparing and DELETING are unaffected — deleting a suite is not editing
+   * one, and it is the only cleanup an SDK-created suite has.
    *
    * To change one: edit its file and send that file's `suite.id` as
    * `declaredSuiteId` on the write, or duplicate the suite for an editable
@@ -1794,7 +1946,6 @@ export interface PlatformEvalSuiteDetail {
   } | null;
   /** Host attachments (multi-host). */
   hosts: PlatformEvalSuiteHost[];
-  settings: PlatformEvalSuiteSettings;
   schedule: PlatformEvalSuiteSchedule;
   /**
    * How many committed edits this suite has had, or `null` on a deployment
@@ -1809,6 +1960,19 @@ export interface PlatformEvalSuiteDetail {
   revisionNumber?: number | null;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/** A suite's detail as vocabulary 1 (no header) returns it. */
+export interface PlatformEvalSuiteDetail extends PlatformEvalSuiteDetailBase {
+  settings: PlatformEvalSuiteSettings;
+}
+
+/**
+ * A suite's detail as vocabulary 2 returns it — what a client constructed with
+ * `evalVocabulary: 2` reads back from `getEvalSuite` and the suite writes.
+ */
+export interface PlatformEvalSuiteDetailV2 extends PlatformEvalSuiteDetailBase {
+  settings: PlatformEvalSuiteSettingsV2;
 }
 
 /**
@@ -1826,7 +1990,13 @@ export interface PlatformEvalSuiteRevision {
   revisionNumber: number;
   /** Where the edit came from. `unattributed` is a write nothing claimed. */
   source:
-    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
+    | "ui"
+    | "api"
+    | "cli"
+    | "file_sync"
+    | "import"
+    | "system"
+    | "unattributed";
   /** The user id, or `null` for a write with no human actor. */
   createdBy: string | null;
   /** A display name when one is resolvable; `null` otherwise. */
@@ -1885,7 +2055,14 @@ export interface PlatformEvalStep {
  * (prompt / toolCall / interact / assert). Public-model shape; the route maps
  * to/from the internal case.
  */
-export interface PlatformEvalCase {
+/**
+ * Everything a case says in the SAME words under both eval vocabularies. The
+ * three fields whose name depends on the vocabulary — the legacy floor, the
+ * exact count and the rule override — live on {@link PlatformEvalCase}
+ * (vocabulary 1) and {@link PlatformEvalCaseV2} (vocabulary 2).
+ */
+export interface PlatformEvalCaseBase {
+  judge?: CaseJudgeSettings;
   id: string;
   /**
    * The case's effective DECLARED id — what it answers to in a suite file, an
@@ -1902,18 +2079,6 @@ export interface PlatformEvalCase {
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
-  /** Iterations to run per eval run (← internal runs). */
-  iterations: number;
-  /**
-   * Trials this case runs under verdict policy 2, overriding the suite
-   * default. Absent means the case inherits it.
-   *
-   * NOT a second spelling of `iterations`: that one is the legacy count, which
-   * the legacy resolver reads as a FLOOR (`max(iterations, minimumIterations)`)
-   * and which a policy-2 case still reports for compatibility. This one is
-   * exact.
-   */
-  repetitions?: number;
   /**
    * Fraction of this case's trials that must pass, in [0, 1], overriding the
    * suite default. Absent means the case inherits it.
@@ -1927,7 +2092,7 @@ export interface PlatformEvalCase {
   /** Execution models (plural — preserves compare behavior). */
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
-  checks?: PublicCheckOverride;
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * The converter's CLAIM about this case, when it was imported rather than
    * authored here. ABSENT means natively authored — a different fact from
@@ -1939,6 +2104,49 @@ export interface PlatformEvalCase {
   source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/** A case as vocabulary 1 (no header) returns it. */
+export interface PlatformEvalCase extends PlatformEvalCaseBase {
+  /** Iterations to run per eval run (← internal runs). */
+  iterations: number;
+  /**
+   * Trials this case runs under verdict policy 2, overriding the suite
+   * default. Absent means the case inherits it.
+   *
+   * NOT a second spelling of `iterations`: that one is the legacy count, which
+   * the legacy resolver reads as a FLOOR (`max(iterations, minimumIterations)`)
+   * and which a policy-2 case still reports for compatibility. This one is
+   * exact.
+   */
+  repetitions?: number;
+  checks?: PublicCheckOverride;
+}
+
+/**
+ * A case as vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`) returns it — the
+ * canonical spellings from `docs/evals-vocabulary-consolidation.md`.
+ *
+ * The three renamed fields are the same three facts as on
+ * {@link PlatformEvalCase}: `legacyIterations` is vocabulary 1's `iterations`
+ * (the legacy floor, stored as `runs`), `iterations` is vocabulary 1's
+ * `repetitions` (the exact policy-2 count), `assertions` is `checks`.
+ */
+export interface PlatformEvalCaseV2 extends PlatformEvalCaseBase {
+  /**
+   * The legacy per-case count, which the legacy resolver reads as a FLOOR
+   * (`max(legacyIterations, minimumIterations)`). Always reported, as
+   * vocabulary 1's `iterations` is.
+   */
+  legacyIterations: number;
+  /**
+   * The exact number of iterations this case runs under verdict policy 2,
+   * overriding the suite default. Absent means the case inherits it. Not a
+   * spelling of `legacyIterations`: an exact count and a floor are two fields.
+   */
+  iterations?: number;
+  /** The case's rule override; vocabulary 1's `checks`. */
+  assertions?: PublicCheckOverride;
 }
 
 /**
@@ -2118,6 +2326,34 @@ export interface PlatformScoreContractScorer {
   errorCount: { base: number; compare: number };
 }
 
+/**
+ * `ResolvedScoreDefinition` as the PUBLIC API returns it.
+ *
+ * Declared here so `openapi-types-parity` can pin it against the published
+ * schema — which is the point: `role` is the field the vocabulary negotiation
+ * projects, and without a twin to compare against, the published enum and the
+ * one the boundary actually serves could drift apart silently.
+ *
+ * `role` carries the WIRE spelling, not the effective one. A response says
+ * `"gating"` unless the request sent `x-mcpjam-eval-vocabulary: 2`; only then
+ * does it say `"required"`. A reader compares with `isRequiredRole`, never a
+ * literal.
+ */
+export interface PlatformResolvedScoreDefinition {
+  scorerId: string;
+  idSource: "explicit" | "generated" | "platform";
+  scorerVersion: string;
+  implementationHash: string;
+  label?: string;
+  deterministic: boolean;
+  passThreshold: number;
+  role: "gating" | "advisory" | "required";
+  onError: "fail" | "ignore";
+  onSkipped: "fail" | "ignore";
+  model?: string;
+  scope?: Record<string, unknown>;
+}
+
 export interface PlatformScoreContractDiff {
   base: PlatformScoreContractSide;
   compare: PlatformScoreContractSide;
@@ -2205,8 +2441,9 @@ export interface PlatformRunCompareSide {
     passRate: number;
   } | null;
   environment?: { id: string; name: string | null };
+  client?: { name: string };
   effectiveModelId?: string;
-  modelSource?: "client_default" | "override";
+  modelSource?: "client_default" | "override" | "case";
 }
 
 /**
@@ -2295,7 +2532,10 @@ export interface PlatformRunCompare {
 
 /** Delivery channel a pinned skill reached a run through. */
 export type PlatformRunCompareSkillChannel =
-  "host" | "environment" | "plugin" | "mcp-server";
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export interface PlatformRunCompareSkillSide {
@@ -2391,6 +2631,9 @@ export interface PlatformClient {
 
 /** Full client detail, including the resolved config DTO and its read-backs. */
 export interface PlatformClientDetail {
+  /** Saved configuration revision, read atomically with config. */
+  versionId?: string;
+  versionNumber?: number;
   id: string;
   name: string;
   /** The concurrency token — see {@link PlatformClient.configId}. */
@@ -2778,7 +3021,8 @@ export interface PlatformEnvironmentSecretSelection {
 
 /** Why a skill cannot be pinned into an environment's `skillSelection`. */
 export type PlatformSkillPinnability =
-  { ok: true } | { ok: false; reason: string };
+  | { ok: true }
+  | { ok: false; reason: string };
 
 /** One skill visible to the caller: project-shared, or their own draft. */
 export interface PlatformProjectSkill {
@@ -3189,6 +3433,19 @@ export interface PlatformEvalStepResult {
 }
 
 /**
+ * A page of step results, plus whether the evidence read behind them actually
+ * completed.
+ *
+ * The route serves verdicts even when the trace blob cannot be loaded, so an
+ * item with no `evidence` is ambiguous on its own: the step may have produced
+ * none, or the blob loader may be down. `"unavailable"` says the second one
+ * happened. Optional so a caller tolerates a backend that predates the marker.
+ */
+export type PlatformEvalStepsPage = PlatformPage<PlatformEvalStepResult> & {
+  evidence?: "resolved" | "unavailable";
+};
+
+/**
  * Share link for a scenario. The URL embeds the access token; it is visible
  * to any caller who can read the scenario (same audience as the hosted UI).
  */
@@ -3304,6 +3561,7 @@ export interface PlatformJourney {
   /** Sessions run against EACH target. Total sessions = targets x this. */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -3327,6 +3585,8 @@ export interface PlatformJourneyRunAttempt {
 }
 
 export interface PlatformJourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   id: string;
   projectId: string;
   journeyId: string;
@@ -3376,6 +3636,23 @@ export interface PlatformJourneyRun {
 }
 
 export interface PlatformJourneyRunSession {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /**
    * The session's document id — the same value `listChatSessions` returns as
    * `id`, so a session found here can be looked up there.
@@ -3395,7 +3672,7 @@ export interface PlatformJourneyRunSession {
   /**
    * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
    * forever unless archived, so this says nothing about how it went. Read
-   * `outcome` for the verdict.
+   * `verdict` for goal grading and execution lifecycle. `outcome` is legacy execution only.
    */
   status: string | null;
   /**
@@ -3722,7 +3999,8 @@ export interface PlatformTraceDestinationHealth {
  * a caller can size the gap — NOTHING was queued while it was paused, and the
  * only way to fill the window is a backfill.
  */
-export interface PlatformTraceDestinationResumed extends PlatformTraceDestination {
+export interface PlatformTraceDestinationResumed
+  extends PlatformTraceDestination {
   pausedSince: number | null;
 }
 
@@ -3785,6 +4063,7 @@ export interface PlatformSwarm {
   environmentIds: string[];
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -3930,7 +4209,11 @@ export interface PlatformFindingDismissed {
  * - Reads never trigger generation; `status` is observational.
  */
 export type PlatformInsightsStatus =
-  "not_available" | "not_requested" | "pending" | "completed" | "failed";
+  | "not_available"
+  | "not_requested"
+  | "pending"
+  | "completed"
+  | "failed";
 
 export type PlatformInsightScope =
   | { kind: "eval_run"; id: string }
@@ -3960,7 +4243,9 @@ export type PlatformInsightActionTarget =
   | "environment";
 
 export type PlatformInsightActionability =
-  "informational" | "investigate" | "ready";
+  | "informational"
+  | "investigate"
+  | "ready";
 
 export interface PlatformActionableFindingEvidence {
   sessionId?: string;
@@ -4027,7 +4312,212 @@ export interface PlatformActionableFinding {
   evidence: PlatformActionableFindingEvidence[];
 }
 
+/**
+ * How much of the population an OBSERVATION describes.
+ *
+ * Additive and separate from `status`, which describes a model GENERATION.
+ * A deployment that predates findings omits it, and a consumer must read
+ * absence as "this server does not report observations", never as
+ * `unavailable`.
+ */
+export type PlatformInsightsObservationState =
+  | "ready"
+  | "partial"
+  | "unavailable";
+
+/** Coverage for `currentFindings`, describing its OWN population. */
+export interface PlatformInsightsObservationCoverage {
+  unit: "iterations";
+  analyzed: number;
+  total: number;
+  gradedCount: number;
+  /** Counted reasons an iteration was left out. Open map: a new exclusion
+   * class must not require a consumer change to keep validating. */
+  exclusions: Record<string, number>;
+}
+
+/** Where a finding's observation came from, and how complete it is. */
+export interface PlatformInsightsFindingProvenance {
+  recurrence?: {
+    claimId: string;
+    occurrences: number;
+    analyzedRuns: number;
+    firstSeenAt: number;
+    firstSourceId: string;
+    previousSourceId?: string;
+    novelty: "measured" | "notMeasured";
+  };
+  candidateId: string;
+  stage?: import("../contract/chain.js").UserValueStage;
+  reason?: import("../contract/stage-derivation.js").StageReason;
+  groupKind: string;
+  basis: "measured" | "judged" | "mixed" | "unknown";
+  /**
+   * How the CATEGORY was decided: `schema` proved it against the tool's
+   * pinned input schema, `error_code` read a standardized JSON-RPC/HTTP code,
+   * `error_text` matched keywords in prose a server author wrote freely,
+   * `none` did not decide.
+   */
+  classificationBasis?: "schema" | "error_code" | "error_text" | "none";
+  /** `sampled` ⇒ tool identity came from inspected exemplars only, so no
+   * run-wide mechanism rate is claimed. */
+  mechanismBasis: "complete" | "sampled" | "none";
+  affectedIterationIds: string[];
+  /** For a mechanism consolidated across error groups: the deterministic
+   * candidates it was merged from. */
+  sourceCandidateIds?: string[];
+  /**
+   * Per-member verification of an AI mechanism. Every trial the mechanism
+   * proposed was checked against its own recorded evidence; `confirmed` is
+   * the published count, and the others are disclosed, never counted.
+   * Absent on deterministic groups and on older backends.
+   */
+  verification?: {
+    proposed: number;
+    confirmed: number;
+    unsupported: number;
+    inconclusive: number;
+    unchecked: number;
+    members?: Array<{
+      iterationId: string;
+      verdict: "supported" | "unsupported" | "inconclusive" | "unchecked";
+      reason?: string;
+    }>;
+  };
+  /** Per-prose-field origin for the view this provenance accompanies.
+   * Producer-owned: a deterministic fallback sentence and a model that wrote
+   * the same sentence are indistinguishable to a consumer. */
+  proseOrigin?: {
+    observed: "deterministic" | "ai" | "unknown";
+    title: "deterministic" | "ai" | "unknown";
+    rootCause: "deterministic" | "ai" | "unknown";
+    recommendation: "deterministic" | "ai" | "unknown";
+    acceptanceCriteria: "deterministic" | "ai" | "unknown";
+  };
+  judgeCoverage?: {
+    evaluatorId: string;
+    evaluatorLabel: string;
+    graded: number;
+    eligible: number;
+    nonGraded: { pending: number; skipped: number; errored: number };
+  };
+  populationCaveat?: string;
+}
+
+/**
+ * Why one iteration has no model-written report.
+ *
+ * Closed so a reader gets an instruction rather than a code: "Trace too large
+ * to analyze" and "the daily analysis budget is spent" are different next
+ * steps. The producer narrows an unknown value to `analysis_unavailable`, so a
+ * newer server can add a reason without breaking an older client's label table.
+ */
+export type PlatformEvalIterationReportUnavailableReason =
+  | "trace_too_large"
+  | "context_too_large"
+  | "budget"
+  | "missing_trace"
+  | "extraction_rejected"
+  | "analysis_unavailable";
+
+/**
+ * One iteration's trace report, as the run page's iteration drawer reads it.
+ *
+ * `pending` is the state a reader meets most often on a large run: the read
+ * phase is still working through the population and THIS iteration's row has
+ * not been written yet. It is distinct from the absent report (`null` from the
+ * query) that means nobody ever analyzed the run.
+ *
+ * Pinned against the producer by `tests/fixtures/eval-iteration-report/wire.json`
+ * in mcpjam-backend, mirrored here — these declarations are hand-mirrored and
+ * nothing else notices them drifting.
+ */
+export interface PlatformEvalIterationReport {
+  schemaVersion: 1;
+  iterationId: string;
+  runRevision: string;
+  builtAt: number;
+  modelUsed?: string;
+  status: "ready" | "stale" | "failed" | "pending";
+  reason?: PlatformEvalIterationReportUnavailableReason;
+  /** Present on `pending` only: iterations read so far, of the population. */
+  progress?: { done: number; total: number };
+  rows: Array<{
+    joinKey: string;
+    stage: import("../contract/chain.js").UserValueStage;
+    verdictSeen: string;
+    actual: string;
+    citations: string[];
+  }>;
+  stageNotes?: Array<{
+    stage: import("../contract/chain.js").UserValueStage;
+    actual: string;
+    citations: string[];
+  }>;
+}
+
+/** The trace analysis pipeline's progress, while one exists for the run. */
+export interface PlatformEvalFindingsAnalysis {
+  phase: "reading" | "grouping" | "checking" | "done" | "failed";
+  progress: { done: number; total: number; unit: "iterations" };
+  models: string[];
+  completeness: {
+    iterationReports: number;
+    embedded?: number;
+    unindexed?: number;
+    total: number;
+    missingTraces: number;
+  };
+}
+
+/**
+ * An eval run's findings. Shaped so a consumer can tell an older server
+ * (field absent on the envelope) from a run with no snapshot yet
+ * (`snapshot: null`).
+ */
+export interface PlatformUnifiedFindings {
+  capability: "unified_findings_v1";
+  analysis?: PlatformEvalFindingsAnalysis;
+  snapshot: {
+    builtAt: number;
+    sourceRevision: string;
+    minerVersion: number;
+    omittedGroups: number;
+    /** The zero-AI view, kept reachable after a model succeeds. */
+    deterministicFindings: PlatformActionableFinding[];
+    provenance: PlatformInsightsFindingProvenance[];
+    trim?: { droppedEvidence: number; droppedCandidates: number };
+    enrichment: null | {
+      status: "ready" | "stale";
+      generatedAt: number;
+      modelUsed: string;
+      /** What the pipeline inspected; counts describe inspected evidence. */
+      discovery: {
+        reviewedIterations: number;
+        totalIterations: number;
+        reviewedFailedIterations: number;
+        totalFailedIterations: number;
+        missingTraces: number;
+        truncatedTraces: number;
+        omittedEvidence: number;
+      };
+    };
+  } | null;
+  job: null | {
+    kind: "build" | "enrich";
+    status: "pending" | "completed" | "failed";
+    startedAt: number;
+    updatedAt: number;
+    errorCode?: string;
+    errorMessage?: string;
+  };
+  canBuild: boolean;
+  canEnrich: boolean;
+}
+
 export interface PlatformInsightsEnvelope {
+  journeyFindings?: PlatformSwarmJourneyFindings | null;
+  journeyFindingsJob?: PlatformSwarmJourneyFindingsJob | null;
   schemaVersion: 1;
   scope: PlatformInsightScope;
   status: PlatformInsightsStatus;
@@ -4047,6 +4537,17 @@ export interface PlatformInsightsEnvelope {
     lowConfidence: boolean;
   };
   findings: PlatformActionableFinding[];
+  /**
+   * The always-available observation view, populated independently of
+   * `status`. Optional: absent on a server that predates it. An explicit `[]`
+   * is a real "nothing here needs a change" and must NOT fall back to
+   * `findings`.
+   */
+  currentFindings?: PlatformActionableFinding[];
+  observationState?: PlatformInsightsObservationState;
+  observationCoverage?: PlatformInsightsObservationCoverage;
+  /** The run's findings; absent on a server that predates them. */
+  unifiedFindings?: PlatformUnifiedFindings;
   /** Swarm only. Launch outcomes never appear as findings. */
   runHealth?: {
     targets: Array<{
@@ -4204,6 +4705,26 @@ export interface PlatformCapabilities {
     features: Record<string, unknown>;
   } | null;
   /**
+   * The eval vocabulary this deployment understands: what a request sending
+   * `x-mcpjam-eval-vocabulary: 2` may spell, and the legacy spellings such a
+   * body may still use per canonical field. Absent on a deployment that
+   * predates the negotiation, which then speaks only vocabulary 1.
+   */
+  vocabulary?: {
+    version: number;
+    evaluatorKinds: string[];
+    assertionKinds: string[];
+    /**
+     * Canonical field name → the legacy spellings a vocabulary-2 body may
+     * still use for it. Keyed by name rather than declared field-by-field
+     * so this type does not spell the canonical names before the platform
+     * operations do — the vocabulary codemod reads this file, and a canonical
+     * name written here ahead of its rename step is what that scanner exists
+     * to refuse.
+     */
+    fields: Record<string, string[]>;
+  };
+  /**
    * The booleans to branch on. Note that the exposure-REDUCING ones
    * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
    * that has lost the beta — losing the feature is exactly when stopping it
@@ -4352,7 +4873,8 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
-export interface PlatformUserTestingScenarioDetail extends PlatformUserTestingScenario {
+export interface PlatformUserTestingScenarioDetail
+  extends PlatformUserTestingScenario {
   environmentId: string | null;
   /**
    * Present when the caller may have it. The envelope is gated on workspace
@@ -4482,7 +5004,8 @@ export type PlatformReadinessKind = "claude" | "openai";
  * in this type would let a caller write a request the server refuses.
  */
 export type PlatformReadinessSubmissionMode =
-  "mcp-only" | "mcp-imported-skills";
+  | "mcp-only"
+  | "mcp-imported-skills";
 
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
@@ -4531,6 +5054,10 @@ export interface PlatformReadinessStageResult {
  *
  * `billing_limit_reached` is the value a client keys a top-up prompt on — it
  * is machine-readable precisely so nobody has to string-match `detail`.
+ *
+ * `platform_cap_reached` is its deliberate opposite: MCPJam's own daily budget
+ * for observations is spent. Observations are MCPJam-paid, so there is nothing
+ * for the customer to buy, and a client must NOT offer a top-up for it.
  */
 export interface PlatformReadinessObservationState {
   status:
@@ -4543,6 +5070,7 @@ export interface PlatformReadinessObservationState {
   reason?:
     | "not_requested"
     | "billing_limit_reached"
+    | "platform_cap_reached"
     | "provider_error"
     | "provider_timeout"
     | "schema_invalid"
@@ -4619,7 +5147,8 @@ export interface PlatformReadinessStartBody {
   includeLlmObservations?: boolean;
 }
 
-export interface PlatformOpenAIReadinessStartBody extends PlatformReadinessStartBody {
+export interface PlatformOpenAIReadinessStartBody
+  extends PlatformReadinessStartBody {
   /**
    * The DECLARED submission shape. REQUIRED, and never inferred.
    *

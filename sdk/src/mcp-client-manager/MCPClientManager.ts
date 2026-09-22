@@ -1,3 +1,4 @@
+import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
  */
@@ -22,6 +23,7 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
 
 import type {
   MCPClientManagerConfig,
@@ -320,6 +322,7 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  private readonly toolDeclarationCapture = new ToolDeclarationCapture();
   private readonly toolsAnnotationsCache = new Map<
     string,
     Map<string, Record<string, unknown> | undefined>
@@ -808,6 +811,7 @@ export class MCPClientManager {
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
@@ -861,6 +865,7 @@ export class MCPClientManager {
         }
         return result;
       } catch (error) {
+        this.toolDeclarationCapture.clear(serverId);
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
           this.toolsAnnotationsCache.set(serverId, new Map());
@@ -959,6 +964,11 @@ export class MCPClientManager {
    * An empty map is still a valid populated response for a server with no
    * tools; callers must distinguish that from a cold or invalidated cache.
    */
+  /** Raw declarations before SDK aggregation, name merging, or schema filtering. */
+  getCapturedToolDeclarations(serverId: string) {
+    return this.toolDeclarationCapture.read(serverId);
+  }
+
   hasCachedToolAnnotations(serverId: string): boolean {
     return this.toolsAnnotationsCache.has(serverId);
   }
@@ -970,7 +980,7 @@ export class MCPClientManager {
    * @param options - Schema options
    * @returns AiSdkTool compatible with Vercel AI SDK's generateText()
    */
-  async getToolsForAiSdk(
+  async getToolsForAiSdkByServer(
     serverIds?: string[] | string,
     options: {
       schemas?: ToolSchemaOverrides | "automatic";
@@ -1010,7 +1020,7 @@ export class MCPClientManager {
        */
       toolDescriptionOverrides?: Readonly<Record<string, string>>;
     } = {}
-  ): Promise<AiSdkTool> {
+  ): Promise<Record<string, AiSdkTool>> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
@@ -1108,12 +1118,17 @@ export class MCPClientManager {
       })
     );
 
-    // Flatten (last-in wins for name collisions)
-    const flattened: AiSdkTool = {};
-    for (const toolset of perServerTools) {
-      Object.assign(flattened, toolset);
-    }
-    return flattened;
+    return Object.fromEntries(
+      ids.map((id, index) => [id, perServerTools[index]])
+    );
+  }
+
+  async getToolsForAiSdk(
+    serverIds?: string[] | string,
+    options: Parameters<MCPClientManager["getToolsForAiSdkByServer"]>[1] = {}
+  ): Promise<AiSdkTool> {
+    const perServer = await this.getToolsForAiSdkByServer(serverIds, options);
+    return Object.assign({}, ...Object.values(perServer));
   }
 
   /**
@@ -2753,7 +2768,8 @@ export class MCPClientManager {
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
         trimmedRefresh,
-        trimmedClientSecret
+        trimmedClientSecret,
+        config.onTokensRotated
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider
@@ -2780,7 +2796,10 @@ export class MCPClientManager {
         // (hosted inherits it, since hosted builds transports through here).
         // The same seam captures HTTP headers for the wire log when a
         // `httpLogger` is configured — see `buildTransportFetch`.
-        fetch: this.buildTransportFetch(serverId, config),
+        fetch: wrapFetchForHttpErrors(
+          this.buildTransportFetch(serverId, config),
+          effectiveAuthProvider !== undefined
+        ),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
@@ -3185,6 +3204,7 @@ export class MCPClientManager {
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
       this.toolsAnnotationsCache.delete(serverId);
+      this.toolDeclarationCapture.clear(serverId);
       this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
@@ -3208,6 +3228,7 @@ export class MCPClientManager {
     }
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3240,6 +3261,7 @@ export class MCPClientManager {
     }
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3724,12 +3746,28 @@ export class MCPClientManager {
       : undefined;
   }
 
-  private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {
-    if (config.rpcLogger) return config.rpcLogger;
-    if (config.logJsonRpc || this.defaultLogJsonRpc)
-      return createDefaultRpcLogger();
-    if (this.defaultRpcLogger) return this.defaultRpcLogger;
-    return undefined;
+  private resolveRpcLogger(config: MCPServerConfig): RpcLogger {
+    const logger =
+      config.rpcLogger ??
+      (config.logJsonRpc || this.defaultLogJsonRpc
+        ? createDefaultRpcLogger()
+        : this.defaultRpcLogger);
+    // Always a function now, so every connection goes through
+    // `wrapTransportForLogging`, logger or not. That wrapper is transparent:
+    // it forwards onmessage/onclose/onerror, sessionId, hasPerRequestStream
+    // and setProtocolVersion, and swallows logger throws — so the only cost
+    // is one observe() per frame, and no consumer's error or close semantics
+    // change.
+    return (event) => {
+      // Observation is local only. It neither enables body logging nor sends
+      // another discovery request. Failure must not interfere with transport.
+      try {
+        this.toolDeclarationCapture.observe(event);
+      } catch {
+        this.toolDeclarationCapture.clear(event.serverId);
+      }
+      logger?.(event);
+    };
   }
 
   /**
@@ -4210,9 +4248,7 @@ export class MCPClientManager {
      * call's day-long timer with nothing to end it: the await driver's own
      * deadline abandons the in-flight promise rather than aborting its request.
      */
-    readRequestOptions:
-      | { signal?: AbortSignal; timeout?: number }
-      | undefined;
+    readRequestOptions: { signal?: AbortSignal; timeout?: number } | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
     // Resolve the era from what the connection actually negotiated — the same
@@ -4425,9 +4461,9 @@ export class MCPClientManager {
       await this.ensureConnected(serverId);
       const client = this.getClientOrThrow(serverId);
       const list = await client.listTools();
-      const tool = list.tools.find((candidate) => candidate.name === toolName) as
-        | { outputSchema?: unknown }
-        | undefined;
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { outputSchema?: unknown } | undefined;
       outputSchema = tool?.outputSchema;
     } catch {
       return;

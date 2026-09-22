@@ -1,6 +1,7 @@
 import { useAction, useQuery } from "convex/react";
 import { useCallback, useMemo, useState } from "react";
 import { track } from "@/lib/analytics";
+import { toast } from "@/lib/toast";
 
 export interface CreditTopupPreset {
   packageId: string;
@@ -25,6 +26,10 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
  * `window.location.assign` would otherwise navigate the user anywhere.
  */
 const ALLOWED_CHECKOUT_URL_PREFIX = "https://checkout.stripe.com/";
+
+function isDesktopApp(): boolean {
+  return typeof window !== "undefined" && window.isElectron === true;
+}
 
 export function isAllowedCheckoutUrl(url: unknown): url is string {
   return typeof url === "string" && url.startsWith(ALLOWED_CHECKOUT_URL_PREFIX);
@@ -159,11 +164,16 @@ export type CreditTopupSource = "chat_banner" | "billing_page" | "limit_modal";
 interface StartCheckoutInput {
   organizationId: string;
   packageId: string;
-  priceCents: number;
+  priceCents: number | null;
   chatSessionId: string;
   lastUserMessage: string;
   returnUrl?: string;
   source: CreditTopupSource;
+}
+
+export interface StartCheckoutResult {
+  /** Desktop only: checkout opened elsewhere, so this window never navigates. */
+  handedOffToBrowser: boolean;
 }
 
 export interface UseCreditTopupPresetsOptions {
@@ -178,7 +188,7 @@ export function useCreditTopupPresets(options?: UseCreditTopupPresetsOptions): {
   const skip = options?.skip === true;
   const presetsRaw = useQuery(
     "billing:getCreditTopupPresets" as any,
-    skip ? "skip" : (undefined as any)
+    skip ? "skip" : (undefined as any),
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized array stays
@@ -193,7 +203,7 @@ export function useCreditTopup() {
   const { presets, isLoading: presetsLoading } = useCreditTopupPresets();
 
   const createCheckoutSession = useAction(
-    "billing:createCreditCheckoutSession" as any
+    "billing:createCreditCheckoutSession" as any,
   );
 
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
@@ -208,7 +218,7 @@ export function useCreditTopup() {
       lastUserMessage,
       returnUrl,
       source,
-    }: StartCheckoutInput): Promise<void> => {
+    }: StartCheckoutInput): Promise<StartCheckoutResult> => {
       setIsStartingCheckout(true);
       setError(null);
       stashPendingTopup({ chatSessionId, message: lastUserMessage });
@@ -240,15 +250,29 @@ export function useCreditTopup() {
         const checkoutUrl = result?.checkoutUrl;
         if (typeof checkoutUrl !== "string" || checkoutUrl.length === 0) {
           errorKind = "missing_url";
-          throw new Error("Checkout URL missing from response");
+          throw new Error("Checkout couldn’t open. Try purchasing credits again.");
         }
         if (!isAllowedCheckoutUrl(checkoutUrl)) {
           // Defense-in-depth: don't navigate to URLs that aren't on the
           // allowed checkout host even if the server told us to.
           errorKind = "invalid_url";
-          throw new Error("Refusing to redirect to non-Stripe checkout URL");
+          throw new Error("The payment link couldn’t be verified. Try purchasing credits again.");
+        }
+        if (isDesktopApp()) {
+          // The shell sends any cross-origin navigation to the system browser,
+          // so `location.assign` here would do nothing and the return URL would
+          // land in a different session. Hand checkout over explicitly and say
+          // so, rather than leaving the dialog open over a page that will never
+          // navigate. Credits land through the same Convex subscription the
+          // balance already reads, so the app updates without the return trip.
+          window.open(checkoutUrl, "_blank", "noopener,noreferrer");
+          toast.info(
+            "Finish checkout in your browser. Your credits appear here automatically.",
+          );
+          return { handedOffToBrowser: true };
         }
         window.location.assign(checkoutUrl);
+        return { handedOffToBrowser: false };
       } catch (err) {
         clearPendingTopup();
 
@@ -269,7 +293,7 @@ export function useCreditTopup() {
         setIsStartingCheckout(false);
       }
     },
-    [createCheckoutSession]
+    [createCheckoutSession],
   );
 
   return {

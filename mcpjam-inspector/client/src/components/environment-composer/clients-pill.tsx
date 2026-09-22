@@ -7,7 +7,8 @@
  */
 import { useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { ChevronDown, UserPlus, Users } from "lucide-react";
+import { ChevronDown, Plus, UserPlus, Users } from "lucide-react";
+import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -20,7 +21,6 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
-import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { cn } from "@/lib/utils";
@@ -52,16 +52,22 @@ export function ClientsPill({
    * Render the popover INLINE rather than portalled, for callers inside a Radix
    * Dialog — a portalled popover lands outside the dialog, where the modal
    * overlay swallows every click. Same escape hatch, same name, as
-   * `EnvironmentPicker` and `ServerGroupPicker`.
+   * `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const [open, setOpen] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
 
   const single = max === 1;
   const selected = value;
+  const canSelectAnother =
+    single ||
+    (selected.length < max &&
+      (budget == null ||
+        (selected.length + 1) * budget.choiceCount <= budget.maxTargets));
   const selectedHosts = selected.map((hostId) => ({
     hostId,
     host: hosts.find((item) => item.hostId === hostId),
@@ -86,7 +92,7 @@ export function ClientsPill({
       return;
     }
     if (checked) {
-      if (selected.includes(hostId) || selected.length >= max) return;
+      if (selected.includes(hostId) || !canSelectAnother) return;
       onChange([...selected, hostId]);
     } else {
       onChange(selected.filter((id) => id !== hostId));
@@ -94,7 +100,8 @@ export function ClientsPill({
   };
 
   return (
-    <Popover
+    <>
+      <Popover
       open={open}
       onOpenChange={(next) => {
         // CLOSE always goes through, even when disabled: a menu open at the
@@ -169,10 +176,7 @@ export function ClientsPill({
                 !checked &&
                 budget != null &&
                 (selected.length + 1) * budget.choiceCount > budget.maxTargets;
-              const capBlocked =
-                !single &&
-                !checked &&
-                (productBlocked || (budget == null && selected.length >= max));
+              const capBlocked = !checked && !canSelectAnother;
               return (
                 <Label
                   key={host.hostId}
@@ -211,16 +215,32 @@ export function ClientsPill({
         <div className="pt-0.5">
           <button
             type="button"
+            data-testid="clients-pill-add"
             onClick={() => {
               setOpen(false);
-              navigateApp(routePaths.hosts);
+              setShowCreate(true);
             }}
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
           >
-            Manage clients…
+            <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+            Add clients
           </button>
         </div>
       </PopoverContent>
-    </Popover>
+      </Popover>
+      <CreateHostDialog
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        projectId={projectId}
+        onCreated={(hostId) => {
+          if (single) {
+            onChange([hostId]);
+            return;
+          }
+          if (!canSelectAnother || selected.includes(hostId)) return;
+          onChange([...selected, hostId]);
+        }}
+      />
+    </>
   );
 }

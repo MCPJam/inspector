@@ -1,3 +1,4 @@
+import type { UserValueStage } from "@mcpjam/sdk/contract";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 export type UsageFilterPreset =
@@ -33,7 +34,11 @@ export type UsageDimensionKey =
   // (`<criterionId>:pass|fail|ungraded`), because the key is a closed union
   // and criterion ids are minted at authoring time. `chipGroupKey` re-splits
   // them so each criterion behaves as its own boolean dimension.
-  | "criterion";
+  | "criterion"
+  // One stage of the measured user value chain. Same shape as `criterion` and
+  // for the same reason: the key is a closed union, so the stage's identity
+  // travels in the chip VALUE (`<stage>:passed` | `:failed`).
+  | "stage";
 
 /** Chip-value verdicts for the `criterion` dimension. */
 export const CRITERION_PASS = "pass";
@@ -45,9 +50,34 @@ export type CriterionVerdict = "pass" | "fail" | "ungraded";
 /** Build a criterion chip value. Mirrors `criterionChipValue` on the server. */
 export function criterionChipValue(
   criterionId: string,
-  verdict: CriterionVerdict
+  verdict: CriterionVerdict,
 ): string {
   return `${criterionId}:${verdict}`;
+}
+
+/**
+ * Chip-value suffixes for the `stage` dimension.
+ *
+ * Only the two ELIGIBLE states. `notMeasured`, `notApplicable` and `notReached`
+ * are three different reasons a stage has no verdict, and the funnel excludes
+ * all three from `eligible` — offering them would open a list longer than the
+ * count that offered it.
+ */
+export type StageChipState = "passed" | "failed";
+
+/**
+ * Build a stage chip value. Mirrors `stageChipValue` on the server.
+ *
+ * Build only. The state a stage chip goes into is handed straight to the
+ * server and never to a client-side matcher, so there is nothing here to keep
+ * in step — `convex/lib/usageInsights/filters.ts` is the only thing that reads
+ * one back, and it is tested there.
+ */
+export function stageChipValue(
+  stage: UserValueStage,
+  state: StageChipState,
+): string {
+  return `${stage}:${state}`;
 }
 
 /**
@@ -64,7 +94,7 @@ export function criterionChipValue(
  * the user selected.
  */
 export function parseCriterionChipValue(
-  value: string
+  value: string,
 ): { criterionId: string; verdict: CriterionVerdict } | null {
   const idx = value.lastIndexOf(":");
   if (idx <= 0) return null;
@@ -115,7 +145,7 @@ const PRIMARY_BEHAVIOR_PRIORITY = [
 
 /** The single behavior value for a thread, or null when it has no tags. */
 export function primaryBehaviorTag(
-  tags: readonly string[] | undefined | null
+  tags: readonly string[] | undefined | null,
 ): string | null {
   if (!tags || tags.length === 0) return null;
   for (const candidate of PRIMARY_BEHAVIOR_PRIORITY) {
@@ -145,7 +175,17 @@ export const SIGNAL_DIMENSIONS = [
 
 export type SignalDimension = (typeof SIGNAL_DIMENSIONS)[number];
 
+export type QuestionSelection = {
+  questionId: string;
+  version: number;
+  value: boolean;
+  label?: string;
+};
+export type SelectionRef =
+  | Pick<ThemeRef, "dimension" | "clusterId">
+  | QuestionSelection;
 export type UsageFilterChip =
+  | ({ kind: "question" } & QuestionSelection)
   | {
       kind: "cluster";
       clusterId: string;
@@ -225,7 +265,7 @@ function threadFeedbackBucket(thread: SharedChatThread): string {
 
 export function threadMatchesUsageFilter(
   thread: SharedChatThread,
-  filter: UsageFilterPreset
+  filter: UsageFilterPreset,
 ): boolean {
   if (filter === "all") return true;
 
@@ -249,8 +289,10 @@ export function threadMatchesUsageFilter(
 
 export function threadMatchesChip(
   thread: SharedChatThread,
-  chip: UsageFilterChip
+  chip: UsageFilterChip,
 ): boolean {
+  // Question answers are resolved against current scope metadata on the server.
+  if (chip.kind === "question") return false;
   if (chip.kind === "cluster") {
     return threadThemeId(thread, chip.dimension ?? "goal") === chip.clusterId;
   }
@@ -314,12 +356,17 @@ export function threadMatchesChip(
       if (result === undefined) return false;
       return result.passed === (parsed.verdict === CRITERION_PASS);
     }
+    // No `stage` case on purpose. Stage chips are built for the server and
+    // come back as a page, so nothing reaches this matcher — a branch here
+    // would be unreachable code encoding a staleness rule nobody could see
+    // break.
     default:
       return false;
   }
 }
 
 function chipGroupKey(chip: UsageFilterChip): string {
+  if (chip.kind === "question") return `question:${chip.questionId}`;
   // Theme chips group PER AXIS. Chips OR within a group and AND across groups,
   // so lumping every theme into one group would turn a flow selection —
   // this goal AND this behavior — into "either", a strictly wider cohort than
@@ -340,7 +387,7 @@ function chipGroupKey(chip: UsageFilterChip): string {
 
 export function threadMatchesFilterState(
   thread: SharedChatThread,
-  filter: UsageFilterState
+  filter: UsageFilterState,
 ): boolean {
   if (!threadMatchesUsageFilter(thread, filter.preset)) return false;
   // Chips are AND'd across dimensions but OR'd within the same dimension.
@@ -363,7 +410,7 @@ export function threadMatchesFilterState(
 
 export function toggleChip(
   filter: UsageFilterState,
-  chip: UsageFilterChip
+  chip: UsageFilterChip,
 ): UsageFilterState {
   const matches = filter.chips.findIndex((c) => chipKey(c) === chipKey(chip));
   if (matches >= 0) {
@@ -376,6 +423,8 @@ export function toggleChip(
 }
 
 export function chipKey(chip: UsageFilterChip): string {
+  if (chip.kind === "question")
+    return `question:${chip.questionId}:${chip.version}:${chip.value}`;
   // The dimension is part of the identity: the same cluster id read against a
   // different axis is a different filter, and collapsing them would make
   // dedupe and identity-subtraction remove the wrong chip.
@@ -387,7 +436,7 @@ export function chipKey(chip: UsageFilterChip): string {
 /** The theme a session carries on one axis; `themeClusterId` is the goal one. */
 export function threadThemeId(
   thread: SharedChatThread,
-  dimension: SignalDimension
+  dimension: SignalDimension,
 ): string | undefined {
   switch (dimension) {
     case "goal":
@@ -431,18 +480,45 @@ export type ThemeRef = {
  * independently before the whole value is handed to URLSearchParams.
  */
 export function serializeSelectionParam(
-  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[]
+  themes: readonly SelectionRef[],
 ): string {
-  return themes
+  if (themes.some((ref) => "questionId" in ref))
+    return `v2:${JSON.stringify(themes)}`;
+  return (themes as readonly Pick<ThemeRef, "dimension" | "clusterId">[])
     .map(
       ({ dimension, clusterId }) =>
-        `${dimension}:${encodeURIComponent(clusterId)}`
+        `${dimension}:${encodeURIComponent(clusterId)}`,
     )
     .join(",");
 }
 
 /** Parse a serialized flow selection, rejecting malformed or unknown axes. */
-export function parseSelectionParam(value: string | null): ThemeRef[] | null {
+export function parseSelectionParam(
+  value: string | null,
+): SelectionRef[] | null {
+  if (value?.startsWith("v2:")) {
+    try {
+      const refs: unknown = JSON.parse(value.slice(3));
+      if (!Array.isArray(refs) || !refs.length) return null;
+      return refs.every(
+        (ref) =>
+          ref &&
+          typeof ref === "object" &&
+          ((typeof ref.questionId === "string" &&
+            ref.questionId.length > 0 &&
+            Number.isSafeInteger(ref.version) &&
+            ref.version > 0 &&
+            typeof ref.value === "boolean") ||
+            (SIGNAL_DIMENSIONS.includes(ref.dimension) &&
+              typeof ref.clusterId === "string" &&
+              ref.clusterId.length > 0)),
+      )
+        ? refs
+        : null;
+    } catch {
+      return null;
+    }
+  }
   if (!value) return null;
   const themes: ThemeRef[] = [];
   for (const part of value.split(",")) {
@@ -473,22 +549,29 @@ export function parseSelectionParam(value: string | null): ThemeRef[] | null {
  */
 export type InsightsSelection = {
   themes: ThemeRef[];
+  questions?: QuestionSelection[];
 };
 
 export function isEmptySelection(selection: InsightsSelection): boolean {
-  return selection.themes.length === 0;
+  return selection.themes.length === 0 && !selection.questions?.length;
 }
 
 /** The chips that express a selection. */
 export function selectionChips(
-  selection: InsightsSelection
+  selection: InsightsSelection,
 ): UsageFilterChip[] {
-  return selection.themes.map((theme) => ({
-    kind: "cluster" as const,
-    clusterId: theme.clusterId,
-    dimension: theme.dimension,
-    label: theme.label,
-  }));
+  return [
+    ...selection.themes.map((theme) => ({
+      kind: "cluster" as const,
+      clusterId: theme.clusterId,
+      dimension: theme.dimension,
+      label: theme.label,
+    })),
+    ...(selection.questions ?? []).map((question) => ({
+      ...question,
+      kind: "question" as const,
+    })),
+  ];
 }
 
 /**
@@ -504,7 +587,7 @@ export function selectionChips(
  */
 export function removeChipsByKeys(
   filter: UsageFilterState,
-  keys: readonly string[]
+  keys: readonly string[],
 ): UsageFilterState {
   if (keys.length === 0) return filter;
   const drop = new Set(keys);
@@ -520,11 +603,11 @@ export function removeChipsByKeys(
  */
 export function selectionChipsToAdd(
   filter: UsageFilterState,
-  selection: InsightsSelection
+  selection: InsightsSelection,
 ): UsageFilterChip[] {
   const existing = new Set(filter.chips.map(chipKey));
   return selectionChips(selection).filter(
-    (chip) => !existing.has(chipKey(chip))
+    (chip) => !existing.has(chipKey(chip)),
   );
 }
 
@@ -541,7 +624,7 @@ export function selectionChipsToAdd(
 export function applySelection(
   filter: UsageFilterState,
   next: InsightsSelection,
-  previousOwnedKeys: readonly string[] = []
+  previousOwnedKeys: readonly string[] = [],
 ): UsageFilterState {
   const base = removeChipsByKeys(filter, previousOwnedKeys);
   return {
@@ -553,7 +636,7 @@ export function applySelection(
 /** Whether every chip this selection implies is currently active. */
 export function isSelectionSelected(
   filter: UsageFilterState,
-  selection: InsightsSelection
+  selection: InsightsSelection,
 ): boolean {
   if (isEmptySelection(selection)) return false;
   const active = new Set(filter.chips.map(chipKey));
@@ -563,7 +646,7 @@ export function isSelectionSelected(
 /** Structural equality, used to decide whether a click re-opens or closes. */
 export function isSameSelection(
   a: InsightsSelection | null,
-  b: InsightsSelection | null
+  b: InsightsSelection | null,
 ): boolean {
   if (a === null || b === null) return a === b;
   const left = selectionChips(a).map(chipKey).sort();
@@ -575,7 +658,7 @@ export function isSameSelection(
 
 export function removeChipByKey(
   filter: UsageFilterState,
-  key: string
+  key: string,
 ): UsageFilterState {
   return {
     ...filter,
@@ -585,7 +668,7 @@ export function removeChipByKey(
 
 export function compareThreadsForUsageList(
   a: SharedChatThread,
-  b: SharedChatThread
+  b: SharedChatThread,
 ): number {
   const score = (t: SharedChatThread) => {
     let s = 0;

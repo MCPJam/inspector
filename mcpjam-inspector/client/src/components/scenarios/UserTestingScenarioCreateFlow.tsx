@@ -27,6 +27,8 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { convexErrMessage } from "@/lib/convex-error";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
 import { useEffectiveSharePolicy } from "@/hooks/useOrgSharePolicy";
@@ -47,6 +49,7 @@ import type {
   ScenarioPerTurnFeedbackStyle,
   ScenarioTaskItem,
 } from "@/types/chatUi";
+import { useGuestSharingSignUp } from "@/hooks/useGuestSharingSignUp";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -134,6 +137,25 @@ export function composedSetupHasServers(args: {
 }
 
 /**
+ * Whether a failed publish is "that study name is taken".
+ *
+ * The backend answers with `{code: 'CONFLICT', field: 'name'}` so a client can
+ * put the message where the problem is instead of in a toast the reader then
+ * has to act on from memory. Matched on the STRUCTURE, not the copy: the
+ * sentence is the backend's to word, and a client that greps it breaks the
+ * next time someone improves it.
+ */
+export function isStudyNameTakenError(error: unknown): boolean {
+  const data =
+    error && typeof error === "object" && "data" in error
+      ? (error as { data?: unknown }).data
+      : undefined;
+  if (!data || typeof data !== "object") return false;
+  const shape = data as { code?: unknown; field?: unknown };
+  return shape.code === "CONFLICT" && shape.field === "name";
+}
+
+/**
  * `/user-testing/new` — create a scenario by publishing an ENVIRONMENT behind
  * a share link, in TWO steps: **Study**, then an optional **Tasks** list.
  *
@@ -148,7 +170,7 @@ export function composedSetupHasServers(args: {
  * on naming a study and again on an empty client picker — "People block when
  * you're making them name things", "Here you don't have a default client
  * picked", "Don't put that in my way". So a client is preselected, the name is
- * suggested off it, and Continue is pressable the moment the screen settles.
+ * suggested off it, and Continue carries the screen the moment it settles.
  * A cleared name is not a wall either: Save falls back to the suggestion.
  *
  * **Step 2 is a LIST, not a wizard.** It authors the "what to try" checklist a
@@ -186,14 +208,18 @@ export function composedSetupHasServers(args: {
  * local state — Continue only moves the stepper — and the writes happen once,
  * at the end. Leaving from either step leaves nothing behind.
  *
- * **The environment is REQUIRED, and now says so.** A scenario is a link handed
- * to a person, and without an environment there is nothing behind that link —
- * the tester is the one who finds out. Continue has always been gated on a
- * target, but silently: a disabled button that never explains itself reads as
- * "I can create a scenario without an environment", which is how this was
- * reported. The gate names itself here (marked labels, plus the hint under the
- * strip), and `ScenarioShareSection` holds the other end — a scenario whose
- * environment stops resolving issues no tester link.
+ * **The environment is REQUIRED, and Continue says so ON PRESS.** A scenario is
+ * a link handed to a person, and without an environment there is nothing behind
+ * that link — the tester is the one who finds out. The button is therefore
+ * live, not disabled: pressing it is how someone asks "am I done?", and a
+ * button that cannot be pressed answers nothing. The press validates and names
+ * what is missing — no client, or a client with no servers — and only then
+ * moves the stepper. Nothing is nagged before the ask, which is the half a
+ * permanently-inert button got wrong: it read as "I can create a scenario
+ * without an environment", which is how this was reported. Marked labels still
+ * carry the requirement ahead of the press, and `ScenarioShareSection` holds
+ * the other end — a scenario whose environment stops resolving issues no
+ * tester link.
  */
 interface UserTestingScenarioCreateFlowProps {
   projectId: string;
@@ -208,8 +234,12 @@ interface UserTestingScenarioCreateFlowProps {
    * The primary write path: publishes the environment, applying the name and
    * access mode in the same mutation so the scenario is never briefly live in
    * a mode nobody asked for. Resolves to the new scenario's id, plus whether
-   * this call actually created it (`false` ⇒ the environment was already
-   * published and the existing scenario is what opens).
+   * this call actually created it.
+   *
+   * `created: false` means the backend refused: publishing is idempotent per
+   * environment, so this setup already has a study and none was made. The
+   * caller must NOT navigate in that case — this screen reports it and the
+   * creator stays on their draft.
    */
   onCreateScenario: (draft: {
     environmentId: string;
@@ -262,6 +292,21 @@ export function UserTestingScenarioCreateFlow({
     projectId,
   });
   const { policy: effectiveSharePolicy } = useEffectiveSharePolicy(projectId);
+  /**
+   * Publishing a study is PROJECT-ADMIN gated on the backend — a study is
+   * shared mutable execution config and a spend surface, so
+   * `scenarios:publishEnvironmentScenario` refuses anyone below
+   * `canManageProjectMembers`. `canManageMembers` resolves to that SAME
+   * authority, so asking here means an editor is told on the step that holds
+   * the choices instead of at the last click, with a task list they then have
+   * to retype somewhere else.
+   *
+   * Fails closed while the query is in flight, and `roleLoading` keeps that
+   * window out of the copy: showing the refusal before the role is known
+   * would tell an admin they are not one for as long as the round trip takes.
+   */
+  const { canManageMembers: canPublish, isLoading: roleLoading } =
+    useProjectMembers({ isAuthenticated, projectId });
   const [step, setStep] = useState<CreateStep>("study");
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
@@ -394,6 +439,12 @@ export function UserTestingScenarioCreateFlow({
     hostsLoading,
   });
 
+  // The PUBLISH gate — step 2's Create study button. Step 1's Continue no
+  // longer reads it: it validates on press and names what is missing
+  // (`continueBlocker` below). Both ask the same questions; only Create is
+  // allowed to answer them by refusing the click, because past it there is
+  // a link in someone's hands.
+  //
   // Deliberately NOT gated on the name. A prefilled suggestion plus a
   // fallback means "empty" is a state the creator can pass through, not a
   // wall they have to satisfy first (BB-176).
@@ -413,9 +464,71 @@ export function UserTestingScenarioCreateFlow({
   const canAdvance =
     environmentsSettled &&
     !hostsLoading &&
+    !roleLoading &&
+    canPublish &&
     hasTarget &&
     setupHasServers !== false &&
     !isSaving;
+
+  /**
+   * What Continue would refuse over, or `null` when it would carry.
+   *
+   * Read live rather than frozen at press time, so fixing the problem clears
+   * the message the moment it is fixed rather than leaving an error standing
+   * over a form that no longer has one.
+   */
+  const continueBlocker:
+    "loading" | "permission" | "client" | "servers" | null =
+    !environmentsSettled || hostsLoading || roleLoading
+      ? "loading"
+      : // Ranked above the two choices, because it is not one: telling an
+        // editor to pick a client first would send them to fix something that
+        // was never the reason this screen cannot finish.
+        !canPublish
+        ? "permission"
+        : !hasTarget
+          ? "client"
+          : setupHasServers === false
+            ? "servers"
+            : null;
+  /**
+   * Whether to say, on sight, that this account cannot publish here.
+   *
+   * Unlike the client and server messages this is NOT press-triggered. Those
+   * name a choice the creator can still make on this screen, so they wait
+   * until Continue asks the question. This one names something no control
+   * here can change, and a creator who fills in a whole study before learning
+   * that is a creator whose work we wasted.
+   */
+  const publishForbidden = !roleLoading && !canPublish;
+  /**
+   * Whether Continue has been pressed on a setup it could not carry.
+   *
+   * The button itself is never disabled: pressing the thing that moves on is
+   * how someone asks whether they are done, and finding out THERE what is
+   * missing beats scanning a form for whatever keeps a grey button grey.
+   */
+  const [continueAttempted, setContinueAttempted] = useState(false);
+  /**
+   * The name the backend refused as already taken.
+   *
+   * Held rather than only toasted: the fix is one field away, and a message
+   * that names the problem should sit next to the input that carries it.
+   * Cleared by typing, so it cannot outlive the name it was about.
+   */
+  const [nameTaken, setNameTaken] = useState<string | null>(null);
+  const showClientError = continueAttempted && continueBlocker === "client";
+  const showServersError = continueAttempted && continueBlocker === "servers";
+
+  const handleContinue = () => {
+    setContinueAttempted(true);
+    // "loading" is not the creator's mistake and is never dressed as one — the
+    // loading line under the strip already says it. The press is still
+    // remembered, so an answer arriving a moment later lands on the right
+    // message instead of on silence.
+    if (continueBlocker) return;
+    setStep("tasks");
+  };
 
   const handleTargetChange = (next: EnvironmentComposerState) => {
     // A pick of their own settles the question the default was answering.
@@ -453,6 +566,8 @@ export function UserTestingScenarioCreateFlow({
     onCreateEnvironment();
   };
 
+  const { handleGuestSharingError, guestSharingPrompt } = useGuestSharingSignUp();
+
   const handleSave = async () => {
     if (!hasTarget || savingRef.current) return;
     // Never an empty name in the database: the field is allowed to be empty,
@@ -481,52 +596,86 @@ export function UserTestingScenarioCreateFlow({
         mode: settingsFromScenarioAccessPreset(accessPreset).mode,
       });
 
-      // Only for a study this call actually created. Publishing is idempotent
-      // per environment, so on a collision the existing study keeps its own
-      // settings — silently rewriting its rating widget or replacing its task
-      // list would be this screen reconfiguring someone else's study.
+      // Nothing was created. On a CURRENT backend this cannot happen — a
+      // setup may back as many studies as you like, and the only refusal is a
+      // taken name (handled in the catch below). Against an older deployment
+      // publishing is still idempotent per environment, and the two repos ship
+      // separately, so this stays: reporting someone else's study as the one
+      // just created is the bug this whole path exists to stop.
+      if (!created) {
+        toast.error(
+          "This client and server already have a study on this deployment. Change the setup, or open the existing study from User Testing.",
+        );
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+
+      // Past the refusal above, so this is always a study THIS call created —
+      // which is the only one whose ratings and task list are ours to write.
       let surfacesFailed = false;
-      if (created) {
-        try {
-          await onApplyStudySurfaces(scenarioId, {
-            perTurnFeedback: {
-              enabled: perTurnRatings,
-              style: ratingStyle,
-            },
-            tasks: { items: scenarioTasksFromDrafts(taskDrafts) },
-          });
-        } catch {
-          // The study exists; only its chatUi settings did not land. Say which
-          // half failed and where to fix it, rather than reporting a failed
-          // creation the user can see succeeded.
-          surfacesFailed = true;
-          toast.error(
-            "Study created, but its ratings and task list didn't save. Set them from the study's settings.",
-          );
-        }
+      try {
+        await onApplyStudySurfaces(scenarioId, {
+          perTurnFeedback: {
+            enabled: perTurnRatings,
+            style: ratingStyle,
+          },
+          tasks: { items: scenarioTasksFromDrafts(taskDrafts) },
+        });
+      } catch {
+        // The study exists; only its chatUi settings did not land. Say which
+        // half failed and where to fix it, rather than reporting a failed
+        // creation the user can see succeeded.
+        surfacesFailed = true;
+        toast.error(
+          "Study created, but its ratings and task list didn't save. Set them from the study's settings.",
+        );
       }
 
       // The error above already opens with "Study created" — pairing it with a
       // bare success toast makes the screen say two things about one outcome
       // and reads like one of them is stale.
       if (!surfacesFailed) {
-        toast.success(
-          created
-            ? "Study created"
-            : // Publishing is idempotent per environment, and composing makes a
-              // collision likelier: an identical setup resolves to the SAME row,
-              // whose scenario keeps its own name, access and tasks.
-              "This setup is already published — opening its study, with the name and access it already has",
-        );
+        toast.success("Study created");
       }
     } catch (err) {
-      // Surface the backend's copy verbatim: publishing is project-admin
-      // gated, and "you need admin" is a different problem than "it failed".
-      // `ComposerResolveError` is an Error too, and its message already tells a
-      // user on an older backend to pick a saved environment instead.
-      toast.error(
-        err instanceof Error ? err.message : "Failed to create the study",
-      );
+      if (handleGuestSharingError(err)) {
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+      // A taken name is not a failure to report and walk away from — it is one
+      // input to change. The message goes ON the field, the draft stays whole,
+      // and the step with the field is the one we land on: refusing from step 2
+      // while the name lives on step 1 would be a correction nobody can reach.
+      if (isStudyNameTakenError(err)) {
+        setNameTaken(effectiveName);
+        setStep("study");
+        // Put the refused name IN the field. An empty field publishes under the
+        // placeholder, and quoting that name back at a blank input leaves
+        // nothing to correct — pressing Create again would send the same name
+        // and fail the same way. Where the field already held it this only
+        // trims, which is what was submitted anyway.
+        setName(effectiveName);
+        userEditedNameRef.current = true;
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+      // Otherwise surface the backend's copy verbatim: publishing is
+      // project-admin gated, and "you need admin" is a different problem than
+      // "it failed". `ComposerResolveError` is an Error too, and its message
+      // already tells a user on an older backend to pick a saved environment
+      // instead.
+      //
+      // Through `convexErrMessage`, NOT `err.message`. A production Convex
+      // deployment redacts the message of EVERY throw, `ConvexError`
+      // included, to "[Request ID: …] Server Error"; only `err.data` crosses.
+      // Reading `.message` here printed that banner over a refusal that had
+      // said exactly what was wrong ("requires project admin"), so the one
+      // person who could act on it — the creator — was the only one who never
+      // saw it.
+      toast.error(convexErrMessage(err, "Failed to create the study"));
       savingRef.current = false;
       setIsSaving(false);
     }
@@ -541,6 +690,7 @@ export function UserTestingScenarioCreateFlow({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      {guestSharingPrompt}
       <div className="mx-auto w-full max-w-2xl px-6 py-6 sm:px-8">
         <button
           type="button"
@@ -586,6 +736,16 @@ export function UserTestingScenarioCreateFlow({
               Users try your server in ChatGPT, Claude, or another client. You
               read what happened.
             </p>
+            {publishForbidden ? (
+              <p
+                className="mt-3 text-sm text-destructive"
+                role="alert"
+                data-testid="user-testing-create-admin-required"
+              >
+                Creating a study needs project admin. Ask an admin of this
+                project to create it, or to give you that role.
+              </p>
+            ) : null}
 
             <div className="mt-6 space-y-5">
               <div className="space-y-2">
@@ -613,14 +773,20 @@ export function UserTestingScenarioCreateFlow({
                   }}
                   onChange={(e) => {
                     userEditedNameRef.current = true;
+                    setNameTaken(null);
                     setName(e.target.value);
                   }}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Suggested from the client you picked — keep it or write your
-                  own. What you&apos;ll recognize this study by; renaming the
-                  environment later won&apos;t rename it.
-                </p>
+                {nameTaken ? (
+                  <p
+                    className="text-xs text-destructive"
+                    role="alert"
+                    data-testid="user-testing-create-name-taken"
+                  >
+                    A study named &ldquo;{nameTaken}&rdquo; already exists in
+                    this project. Give this one a different name.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">
@@ -651,23 +817,29 @@ export function UserTestingScenarioCreateFlow({
                     data-testid="user-testing-create-new-environment"
                     className="text-xs text-primary hover:underline"
                   >
-                    None of these fit — build a new environment
+                    None of these fit. Build a new environment
                   </button>
                 ) : null}
-                {/* Why Continue is inert, said where the choice is made. Only
-                    once the list has SETTLED: before that the loading line
-                    below is the honest answer, and two hints would contradict
-                    each other. */}
-                {environmentsSettled && !hasTarget ? (
+                {/* Why Continue did not carry, said where the choice is made
+                    and only once it has been asked for. `role="alert"` because
+                    it arrives in response to a press: a sighted user watches it
+                    land, and a screen reader user is told.
+
+                    Flag-on and flag-off say the SAME thing. The composer shows
+                    client pills either way, so "a client" is what is missing on
+                    both; a saved environment is one way to supply it, not a
+                    second thing to ask for.
+
+                    Names the missing thing rather than the fix: two errors, one
+                    shape, so a creator reads which of the two required choices
+                    is outstanding and not a pair of instructions to follow. */}
+                {showClientError ? (
                   <p
-                    className="text-xs text-muted-foreground"
+                    className="text-xs text-destructive"
+                    role="alert"
                     data-testid="user-testing-create-environment-required"
                   >
-                    {environmentsEnabled
-                      ? "Required — pick a saved environment or compose one."
-                      : "Required — pick the client a tester will see. Its server group is optional, and covers every server you want them to reach."}{" "}
-                    A scenario without one has nothing for a tester to run, so
-                    it isn&apos;t created and no tester link is issued.
+                    No client picked
                   </p>
                 ) : null}
                 {!environmentsSettled ? (
@@ -681,16 +853,21 @@ export function UserTestingScenarioCreateFlow({
                 {/* The gate that would have saved a broken study: a setup with
                     no servers publishes fine and then refuses to open, and
                     neither the creator's nor the tester's error names the
-                    cause. Said here, where the fix is one click away. */}
-                {hasTarget && setupHasServers === false ? (
+                    cause. Said on press, directly under the server group that
+                    fixes it.
+
+                    One message for one problem — "this setup reaches no
+                    server". Whether that is because the client carries none of
+                    its own or because no group is attached is a distinction the
+                    creator cannot act on differently: the fix is the same
+                    control either way. */}
+                {showServersError ? (
                   <p
-                    className="text-xs text-amber-600 dark:text-amber-500"
+                    className="text-xs text-destructive"
+                    role="alert"
                     data-testid="user-testing-create-servers-required"
                   >
-                    This client has no servers of its own, so there would be
-                    nothing for a tester to reach — pick a server group above. A
-                    study with no servers is created but never opens, for you or
-                    a tester.
+                    No server picked
                   </p>
                 ) : null}
                 {computersEnabled ? (
@@ -699,7 +876,7 @@ export function UserTestingScenarioCreateFlow({
                     data-testid="user-testing-create-cloud-note"
                   >
                     Tester-session computer commands run in MCPJam cloud
-                    sandboxes — never on the machine serving this inspector.
+                    sandboxes, never on the machine serving this inspector.
                   </p>
                 ) : null}
               </div>
@@ -831,9 +1008,9 @@ export function UserTestingScenarioCreateFlow({
               <Button variant="ghost" onClick={onCancel} disabled={isSaving}>
                 Cancel
               </Button>
+              {/* Never disabled — see `handleContinue`. */}
               <Button
-                onClick={() => setStep("tasks")}
-                disabled={!canAdvance}
+                onClick={handleContinue}
                 data-testid="user-testing-create-continue"
               >
                 Continue

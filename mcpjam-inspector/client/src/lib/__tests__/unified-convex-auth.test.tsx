@@ -13,6 +13,7 @@ const mockState = vi.hoisted(() => ({
   getOrCreateGuestSession: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
   markGuestActivated: vi.fn(),
+  getGuestSessionRefusal: vi.fn(() => null as { until: number } | null),
   reportCaught: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("@/lib/guest-session", () => ({
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
   forceRefreshGuestSession: mockState.forceRefreshGuestSession,
   markGuestActivated: mockState.markGuestActivated,
+  getGuestSessionRefusal: mockState.getGuestSessionRefusal,
 }));
 
 describe("useUnifiedConvexAuth", () => {
@@ -38,6 +40,7 @@ describe("useUnifiedConvexAuth", () => {
     mockState.workos.isLoading = false;
     mockState.workos.user = null;
     mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getGuestSessionRefusal.mockReturnValue(null);
     useSessionRefreshStore.setState({
       status: "idle",
       kind: null,
@@ -80,6 +83,24 @@ describe("useUnifiedConvexAuth", () => {
       id: "__guest__",
     });
     expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("stops after one attempt and does not report when the server refused to create a guest", async () => {
+    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+    mockState.getGuestSessionRefusal.mockReturnValue({
+      until: Date.now() + 600_000,
+    });
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
   });
 
   it("reports once after guest session bootstrap exhausts every attempt", async () => {
@@ -411,5 +432,97 @@ describe("useUnifiedConvexAuth", () => {
         }),
       );
     });
+  });
+});
+
+describe("useUnifiedConvexAuth on a vanity landing", () => {
+  const originalLocation = window.location;
+
+  function setHostname(hostname: string) {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, hostname },
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mockState.workos.isLoading = false;
+    mockState.workos.user = null;
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getGuestSessionRefusal.mockReturnValue(null);
+    useSessionRefreshStore.setState({
+      status: "idle",
+      kind: null,
+      retryNonce: 0,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  });
+
+  it("mints no guest session on caniuse.dev and settles signed out", async () => {
+    setHostname("caniuse.dev");
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
+    // Settled, not spinning: the surface renders instead of waiting on a
+    // bootstrap that will never run.
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
+
+    // Past the whole retry ladder, still nothing — and no error reported.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("mints no guest session on caniuse.dev when a retry is requested", async () => {
+    setHostname("caniuse.dev");
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      useSessionRefreshStore.setState({ retryNonce: 1 });
+      await Promise.resolve();
+    });
+
+    expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
+  });
+
+  it("still mints a guest session on score.mcpjam.com", async () => {
+    setHostname("score.mcpjam.com");
+    mockState.getOrCreateGuestSession.mockResolvedValue({
+      guestId: "guest-1",
+      token: "guest-token",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).not.toBeNull();
   });
 });

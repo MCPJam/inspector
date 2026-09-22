@@ -27,6 +27,7 @@ import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
 import {
   buildUserTestingScenarioPath,
+  defaultUserTestingDetailTab,
   parseUserTestingDetailTab,
   routePaths,
   useAppNavigate,
@@ -457,8 +458,13 @@ export function UserTestingTab({
         detailTab:
           activeView === "edit"
             ? "edit"
-            : parseUserTestingDetailTab(
+            : // Same landing-tab rule the detail view reads, from the same
+              // counter: the snapshot has to name the tab the human is
+              // actually looking at, and on an empty study a bare URL is
+              // Insights, not Findings.
+              parseUserTestingDetailTab(
                 typeof window === "undefined" ? "" : window.location.search,
+                defaultUserTestingDetailTab(scenarioRow?.sessionCount),
               ),
         selectedScenarioId: scenarioId ?? null,
         selectedHostId: scenario?.namedHostId ?? null,
@@ -490,7 +496,7 @@ export function UserTestingTab({
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
           title="Select a project first"
-          body="Scenarios belong to a project — pick one, then create a scenario in it."
+          body="Scenarios belong to a project. Pick one, then create a scenario in it."
           onBack={goOverview}
         />
       );
@@ -517,9 +523,16 @@ export function UserTestingTab({
             name,
             mode,
           });
-          navigate(buildUserTestingScenarioPath(result.scenarioId), {
-            replace: true,
-          });
+          // ONLY when this call created it. An idempotent hit means the
+          // creator asked for a new study and got none; walking them into the
+          // one that already exists answers a question they did not ask, and
+          // loses the draft they were holding. The create screen reports it
+          // and keeps them there.
+          if (result.created) {
+            navigate(buildUserTestingScenarioPath(result.scenarioId), {
+              replace: true,
+            });
+          }
           return { scenarioId: result.scenarioId, created: result.created };
         }}
         onApplyStudySurfaces={async (scenarioId, surfaces) => {
@@ -615,6 +628,10 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         scenario={scenario}
+        // From the LIST row: the detail query carries no activity counters,
+        // and this only gates an edit — a stale-by-one count cannot lose data
+        // in either direction.
+        sessionCount={scenarioRow?.sessionCount}
         editMode={editOpen}
         onBack={goOverview}
         onDeleted={goOverview}
@@ -633,10 +650,18 @@ export function UserTestingTab({
           <h1 className="text-xl font-bold tracking-tight text-foreground">
             User Testing
           </h1>
-          <Button size="sm" onClick={goCreate}>
-            <Plus className="mr-1.5 size-4" />
-            Create new study
-          </Button>
+          {/* Hidden while the list is empty (REEV-6, Vig in review): the
+              empty state below has its own centred button, and two create
+              buttons on one screen is the duplication he flagged. It returns
+              as soon as there is a study to sit beside, because by then the
+              empty state's button is gone. Also hidden while loading, so it
+              does not appear and then vanish for an empty project. */}
+          {scenarios !== undefined && rows.length > 0 ? (
+            <Button size="sm" onClick={goCreate}>
+              <Plus className="mr-1.5 size-4" />
+              Create new study
+            </Button>
+          ) : null}
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Create a study with real users or internal testers, then read what

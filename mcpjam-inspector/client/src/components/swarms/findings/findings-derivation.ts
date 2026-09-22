@@ -1,533 +1,422 @@
-/**
- * Pure derivation of the Findings tab model — personas → goals → 6-stage
- * tones + evidence — from data the swarm detail page ALREADY holds. No
- * queries, no LLM lanes: every sentence here is a deterministic template over
- * backend counts, and the copy rules of the Overview panel apply throughout
- * (graded/slice denominators only, absent is unknown, never 0%).
- *
- * "ok" is earned, never inferred: a stage is green only when positive
- * evidence landed on it (all sessions launched, every graded session
- * passed). Silence renders as "none" — the legend says "do not infer pass".
- */
-
-import type {
-  SwarmOverviewRun,
-  SwarmWaveDetectorId,
-  SwarmWaveSignalCandidate,
-  SwarmWaveSignals,
-} from "@/lib/swarm-api";
-import { signalSentence } from "@/components/shared/usage-insights/run-insights";
+/** Presentation joins for the canonical swarm findings contract. */
 import {
-  findingName,
-  findingSeverity,
-  findingSessionLabel,
-  waveSessionTotals,
-} from "@/components/swarms/swarm-overview-panel";
+  SWARM_FINDING_DISPOSITIONS,
+  SWARM_FINDING_DISPOSITION_LABELS,
+  SWARM_FINDING_SIGNAL_LABELS,
+  SWARM_FINDING_TONE_OF_DISPOSITION,
+  type SwarmFindingDisposition,
+  type SwarmFindingTone,
+  type SwarmJourneyFinding,
+  type SwarmFindingSignal,
+  type SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
+import type { SwarmOverviewRun } from "@/lib/swarm-api";
 import {
   JOURNEY_STAGES,
-  journeyStageIndex,
-  journeyStageTitle,
+  JOURNEY_STAGE_BY_CHAIN,
   type JourneyStageId,
 } from "./journey-stages";
+import type {
+  FindingsPersonaDoc,
+  SwarmFindingsModel,
+  GoalFindingsModel,
+  GoalStageModel,
+  StageState,
+  PersonaFindingsModel,
+} from "./findings-derivation-legacy";
+export * from "./findings-derivation-legacy";
 
-// ── Model ───────────────────────────────────────────────────────────────────
-
-export type StageTone = "fail" | "warn" | "ok";
-/** A stage with no evidence is `none` — rendered as unknown, never as pass. */
-export type StageState = StageTone | "none";
-
-export type SentimentTone = "fail" | "warn" | "ok" | "muted";
-
-export interface SentimentPillModel {
-  label: string;
-  tone: SentimentTone;
+/**
+ * Tone is a function of disposition. The client derives it rather than
+ * trusting the row, so a producer bug can never paint a met goal red.
+ */
+export function toneOfDisposition(
+  disposition: SwarmFindingDisposition,
+): SwarmFindingTone {
+  return SWARM_FINDING_TONE_OF_DISPOSITION[disposition];
 }
 
-export interface StageEvidence {
-  tone: StageTone;
-  /** Deterministic sentence — detector phrasing reuses `signalSentence`. */
-  observation: string;
-  /** Denominator line ("2 of 3 sessions") or the launch-outcome caveat. */
-  meta: string;
-  /** Evidence fanned from a persona-scoped detector, not this goal's slice. */
-  personaScoped?: boolean;
-  /** Worst exemplar session, when the detector named one. */
-  sessionId?: string;
+/** How bad a tone reads. `muted` is not good news: it outranks `ok`. */
+const TONE_SEVERITY: Record<SwarmFindingTone, number> = {
+  fail: 3,
+  warn: 2,
+  muted: 1,
+  ok: 0,
+};
+
+/** Worst wins. `none` (unmeasured) never overwrites a measured state. */
+const STAGE_STATE_RANK: Record<StageState, number> = {
+  fail: 3,
+  warn: 2,
+  ok: 1,
+  none: 0,
+};
+
+function worseStage(a: StageState, b: StageState): StageState {
+  return STAGE_STATE_RANK[b] > STAGE_STATE_RANK[a] ? b : a;
 }
 
-export interface GoalStageModel {
-  state: StageState;
-  evidence: StageEvidence[];
+function dispositionIndex(disposition: SwarmFindingDisposition): number {
+  return SWARM_FINDING_DISPOSITIONS.indexOf(disposition);
 }
 
-export interface GoalFindingsModel {
-  journeyRefId: string;
-  runId: string;
-  title: string;
-  sessions: number;
-  sentiment: SentimentPillModel;
-  stages: Record<JourneyStageId, GoalStageModel>;
-  /** Earliest stage with failure evidence, else null. */
-  diagnosisStage: JourneyStageId | null;
-  diagnosis: { title: string; detail: string };
-  /** Stage to select when the goal expands. */
-  defaultStage: JourneyStageId;
+/**
+ * The row that speaks for a goal, independent of wire order: the goal-scoped
+ * row when there is one, else the worst row by tone, ties broken by the
+ * contract's disposition order and finally by id.
+ */
+export function representativeGoalRow(
+  rows: readonly SwarmJourneyFinding[],
+): SwarmJourneyFinding | undefined {
+  return [...rows].sort((a, b) => {
+    const scope =
+      Number(b.scopeLevel === "goal") - Number(a.scopeLevel === "goal");
+    if (scope !== 0) return scope;
+    const tone =
+      TONE_SEVERITY[toneOfDisposition(b.disposition)] -
+      TONE_SEVERITY[toneOfDisposition(a.disposition)];
+    if (tone !== 0) return tone;
+    const order =
+      dispositionIndex(a.disposition) - dispositionIndex(b.disposition);
+    if (order !== 0) return order;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  })[0];
 }
 
-export interface PersonaFindingsModel {
-  name: string;
-  role?: string;
-  /** Avatar identity: persona `_id` when the doc matched, else the name. */
-  avatarSeed: string;
-  avatarShape?: number;
-  avatarPalette?: number;
-  sessionsAuthored: number;
-  sentiment: SentimentPillModel;
-  /** Experience-blaming one-liner — the persona is never the failure's subject. */
-  issue: string;
-  goals: GoalFindingsModel[];
-}
-
-export interface SwarmFindingsModel {
-  personas: PersonaFindingsModel[];
-  /** Headline denominator — `waveSignals.sessionCount`, else wave totals. */
+/**
+ * The one cause the card speaks for.
+ *
+ * The producer fans a single mechanism into one row per persona, goal and
+ * target, so the rows sharing a `mechanismId` ARE one cause and are ranked
+ * together by how many distinct sessions support them. Ranking individual rows
+ * instead — which is what the fix slot used to do — lets a cause that touched
+ * four sessions of one goal outrank a cause that touched six across three.
+ *
+ * Headline and fix both read this, so the fix on the card is always the fix
+ * for the cause the card just named. Ties break on mechanism id, so the choice
+ * does not depend on wire order.
+ */
+export type WireLeadMechanism = {
+  mechanismId: string;
+  rows: SwarmJourneyFinding[];
   sessionCount: number;
-  /** First persona with a failing goal, else 0 — the default selected tab. */
-  defaultPersonaIndex: number;
-}
-
-// ── Detector → stage attribution ────────────────────────────────────────────
-
-/**
- * Exhaustive over `SwarmWaveDetectorId` ON PURPOSE: a new detector fails the
- * typecheck here until someone decides which stage its evidence lands on.
- * Detectors never map to "ok" — a mined anomaly is trouble by construction.
- */
-export const DETECTOR_STAGE_MAP: Record<
-  SwarmWaveDetectorId,
-  { stage: JourneyStageId; tone: Exclude<StageTone, "ok"> }
-> = {
-  hallucinated_tool: { stage: "discovery", tone: "fail" },
-  no_tools_used: { stage: "selection", tone: "warn" },
-  tool_errors: { stage: "response", tone: "fail" },
-  target_failures: { stage: "response", tone: "fail" },
-  error_recovered_pass: { stage: "response", tone: "warn" },
-  latency_outlier: { stage: "response", tone: "warn" },
-  criterion_fail: { stage: "value", tone: "fail" },
-  marginal_pass: { stage: "value", tone: "warn" },
-  turn_cap_grind: { stage: "value", tone: "warn" },
-  token_outlier: { stage: "value", tone: "warn" },
-  persona_struggles: { stage: "value", tone: "warn" },
+  goalRunIds: string[];
+  mechanismPhrase: string | null;
+  fixPhrase: string | null;
+  chainStage: SwarmJourneyFinding["chainStage"];
+  chainStageBasis: SwarmJourneyFinding["chainStageBasis"];
 };
 
-const TONE_RANK: Record<StageTone, number> = { fail: 2, warn: 1, ok: 0 };
-const DEMO_SENTIMENTS: SentimentPillModel[] = [
-  { label: "Stalled", tone: "fail" },
-  { label: "Landed", tone: "ok" },
-  { label: "On Track", tone: "ok" },
-  { label: "Relieved", tone: "ok" },
-  { label: "Frustrated", tone: "fail" },
-  { label: "Lost", tone: "fail" },
-];
-
-function worstTone(evidence: readonly StageEvidence[]): StageState {
-  if (evidence.length === 0) return "none";
-  return evidence.reduce<StageTone>(
-    (worst, e) => (TONE_RANK[e.tone] > TONE_RANK[worst] ? e.tone : worst),
-    "ok"
-  );
-}
-
-function emptyStages(): Record<JourneyStageId, StageEvidence[]> {
-  return {
-    connection: [],
-    discovery: [],
-    selection: [],
-    call: [],
-    response: [],
-    value: [],
-  };
-}
-
-const TERMINAL_EXCLUDED = new Set(["running", "pending"]);
-
-/**
- * A run is settled unless it is still in flight. Exported because the Findings
- * summary needs a wave-level answer when no signals carry one.
- */
-export function runIsTerminal(run: SwarmOverviewRun): boolean {
-  return !TERMINAL_EXCLUDED.has(run.status);
-}
-
-function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
-}
-
-/** The launch-outcome caveat every connection row carries, verbatim. */
-export const CONNECTION_CAVEAT =
-  "Launch outcomes — not a finding about the server";
-
-// ── Per-goal evidence ───────────────────────────────────────────────────────
-
-function connectionEvidence(run: SwarmOverviewRun): StageEvidence | null {
-  const { total, succeeded, failed, rateLimited } = run.summary;
-  if (failed > 0 || rateLimited > 0) {
-    const parts: string[] = [];
-    if (failed > 0) {
-      parts.push(`${failed} of ${plural(total, "session")} failed to launch`);
-    }
-    if (rateLimited > 0) {
-      parts.push(`${rateLimited} rate limited`);
-    }
-    return {
-      tone: "warn",
-      observation: parts.join(", "),
-      meta: CONNECTION_CAVEAT,
-    };
-  }
-  if (runIsTerminal(run) && total > 0 && succeeded === total) {
-    return {
-      tone: "ok",
-      observation: `All ${plural(total, "session")} launched`,
-      meta: CONNECTION_CAVEAT,
-    };
-  }
-  return null;
-}
-
-function rubricEvidence(run: SwarmOverviewRun): StageEvidence[] {
-  return run.findings.map((finding) => ({
-    tone: findingSeverity(finding) === "blocking" ? "fail" : ("warn" as const),
-    observation: `Rubric check "${findingName(finding)}" failed`,
-    meta: findingSessionLabel(finding),
-  }));
-}
-
-function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
-  const rollup = run.goalScoreSummary;
-  // A zero graded count contributes NOTHING — absent is unknown, never ok.
-  if (!rollup || rollup.gradedCount <= 0) return null;
-  const { gradedCount, passedCount } = rollup;
-  if (passedCount >= gradedCount) {
-    return {
-      tone: "ok",
-      observation: "Goal completion passed for every graded session",
-      meta: `${passedCount} of ${plural(gradedCount, "graded session")}`,
-    };
-  }
-  const missed = gradedCount - passedCount;
-  return {
-    tone: passedCount / gradedCount < 0.5 ? "fail" : "warn",
-    observation: `Goal completion missed in ${plural(
-      missed,
-      "graded session"
-    )}`,
-    meta: `${missed} of ${plural(gradedCount, "graded session")}`,
-  };
-}
-
-function detectorEvidence(
-  candidate: SwarmWaveSignalCandidate,
-  opts: { personaScoped: boolean }
-): { stage: JourneyStageId; evidence: StageEvidence } | null {
-  // Guard beyond the type: a newer server may mine detectors this build has
-  // no id for, and an unmapped one has no stage to land on.
-  const mapping = DETECTOR_STAGE_MAP[candidate.detector];
-  if (!mapping) return null;
-  return {
-    stage: mapping.stage,
-    evidence: {
-      tone: mapping.tone,
-      observation: signalSentence(candidate),
-      meta: `${candidate.affectedSessions} of ${plural(
-        candidate.sliceTotal,
-        "session"
-      )}${opts.personaScoped ? " · persona-scoped" : ""}`,
-      ...(opts.personaScoped ? { personaScoped: true } : {}),
-      ...(candidate.exemplarSessionIds[0]
-        ? { sessionId: candidate.exemplarSessionIds[0] }
-        : {}),
-    },
-  };
-}
-
-// ── Sentiment + diagnosis ───────────────────────────────────────────────────
-
-function goalSentiment(
-  stages: Record<JourneyStageId, GoalStageModel>,
-  demoVariant = false,
-  variantIndex = 0
-): SentimentPillModel {
-  const states = JOURNEY_STAGES.map((s) => stages[s.id].state);
-  if (states.includes("fail")) {
-    return demoVariant
-      ? DEMO_SENTIMENTS[variantIndex % DEMO_SENTIMENTS.length]!
-      : { label: "Stalled", tone: "fail" };
-  }
-  if (states.includes("warn")) return { label: "Uneasy", tone: "warn" };
-  if (stages.value.state === "ok") return { label: "Landed", tone: "ok" };
-  return { label: "Unscored", tone: "muted" };
-}
-
-/** Feeling word for the EARLIEST failing stage across a persona's goals. */
-const FAIL_STAGE_SENTIMENT: Record<JourneyStageId, string> = {
-  connection: "Stuck",
-  discovery: "Lost",
-  selection: "Lost",
-  call: "Annoyed",
-  response: "Frustrated",
-  value: "Stalled",
+/** Confidence order, so a group can only claim the weakest basis any row had. */
+const BASIS_STRENGTH: Record<SwarmJourneyFinding["chainStageBasis"], number> = {
+  unmeasured: 0,
+  reported: 1,
+  derived: 2,
 };
 
-function personaSentiment(
-  goals: readonly GoalFindingsModel[],
-  demoVariant = false,
-  variantIndex = 0
-): SentimentPillModel {
-  let earliestFail: JourneyStageId | null = null;
-  let sawWarn = false;
-  let sawLanded = false;
-  for (const goal of goals) {
-    for (const stage of JOURNEY_STAGES) {
-      const state = goal.stages[stage.id].state;
-      if (state === "fail") {
-        if (
-          earliestFail === null ||
-          journeyStageIndex(stage.id) < journeyStageIndex(earliestFail)
-        ) {
-          earliestFail = stage.id;
-        }
-      } else if (state === "warn") {
-        sawWarn = true;
-      }
-    }
-    if (goal.sentiment.label === "Landed") sawLanded = true;
-  }
-  if (earliestFail) {
-    return demoVariant
-      ? DEMO_SENTIMENTS[variantIndex % DEMO_SENTIMENTS.length]!
-      : { label: FAIL_STAGE_SENTIMENT[earliestFail], tone: "fail" };
-  }
-  if (sawWarn) return { label: "Uneasy", tone: "warn" };
-  if (sawLanded) return { label: "Relieved", tone: "ok" };
-  return { label: "Unscored", tone: "muted" };
-}
-
-function goalDiagnosis(stages: Record<JourneyStageId, GoalStageModel>): {
-  diagnosisStage: JourneyStageId | null;
-  diagnosis: { title: string; detail: string };
+/**
+ * The stage a grouped mechanism can honestly claim.
+ *
+ * The rows of one mechanism are the same cause seen per persona, goal and
+ * target, and they need not agree on where it was noticed. Taking `rows[0]`
+ * let payload order decide which stage the card named. When they disagree the
+ * answer is no stage at all; when they agree, the basis is the weakest any row
+ * had, because "recorded at" claims the chain worker measured it and one row
+ * where it did not is enough to make that untrue.
+ */
+function agreedStage(rows: readonly SwarmJourneyFinding[]): {
+  chainStage: SwarmJourneyFinding["chainStage"];
+  chainStageBasis: SwarmJourneyFinding["chainStageBasis"];
 } {
-  for (const stage of JOURNEY_STAGES) {
-    if (stages[stage.id].state === "fail") {
-      return {
-        diagnosisStage: stage.id,
-        diagnosis: {
-          title: stage.title,
-          detail: `${stage.title} is the earliest stage with failure evidence for this goal.`,
-        },
-      };
-    }
-  }
-  // Launch outcomes are not a finding about the server (CONNECTION_CAVEAT),
-  // so a successful launch alone never earns "Landed" — it is not grading.
-  const gradedStages = JOURNEY_STAGES.filter(
-    (stage) => stage.id !== "connection" && stages[stage.id].state !== "none"
-  );
-  if (gradedStages.length > 0) {
-    const sawWarn = gradedStages.some(
-      (stage) => stages[stage.id].state === "warn"
+  const stages = new Set(rows.map((row) => row.chainStage));
+  const stage = stages.size === 1 ? [...stages][0]! : null;
+  if (!stage) return { chainStage: null, chainStageBasis: "unmeasured" };
+  const basis = rows
+    .map((row) => row.chainStageBasis)
+    .reduce((weakest, next) =>
+      BASIS_STRENGTH[next] < BASIS_STRENGTH[weakest] ? next : weakest,
     );
-    return {
-      diagnosisStage: null,
-      diagnosis: sawWarn
-        ? {
-            title: "Friction",
-            detail:
-              "No stage broke outright, but at least one measured stage showed friction.",
-          }
-        : {
-            title: "Landed",
-            detail: "Every measured stage held for this goal.",
-          },
+  return { chainStage: stage, chainStageBasis: basis };
+}
+
+export function selectLeadWireMechanism(
+  wire: SwarmJourneyFindings,
+): WireLeadMechanism | null {
+  const groups = new Map<string, SwarmJourneyFinding[]>();
+  for (const row of wire.findings) {
+    if (row.basis !== "verifiedMechanism" || !row.mechanismId) continue;
+    groups.set(row.mechanismId, [...(groups.get(row.mechanismId) ?? []), row]);
+  }
+  let lead: WireLeadMechanism | null = null;
+  for (const [mechanismId, rows] of groups) {
+    const sessionCount = new Set(rows.flatMap((row) => row.sessionIds)).size;
+    if (
+      lead &&
+      (sessionCount < lead.sessionCount ||
+        (sessionCount === lead.sessionCount && mechanismId >= lead.mechanismId))
+    )
+      continue;
+    const withPhrase = rows.find((row) => row.mechanismPhrase?.trim());
+    const withFix = rows.find((row) => row.fixPhrase?.trim());
+    lead = {
+      mechanismId,
+      rows,
+      sessionCount,
+      goalRunIds: [...new Set(rows.map((row) => row.goal.runId))],
+      mechanismPhrase: withPhrase?.mechanismPhrase?.trim() ?? null,
+      // The SELECTED cause's fix or none. Borrowing another cause's
+      // recommendation would tell a reader to fix something the headline
+      // never mentioned.
+      fixPhrase: withFix?.fixPhrase?.trim() ?? null,
+      ...agreedStage(rows),
     };
   }
-  return {
-    diagnosisStage: null,
-    diagnosis: {
-      title: "Nothing graded yet",
-      detail: "No finding landed on any stage of this goal.",
-    },
-  };
+  return lead;
+}
+
+/** The suggested fix, always belonging to the cause the headline named. */
+export function wireRecommendation(wire: SwarmJourneyFindings): string | null {
+  return selectLeadWireMechanism(wire)?.fixPhrase ?? null;
 }
 
 /**
- * The persona aside's one-liner, templated from the worst goal. The
- * experience is always the failure's subject — never the persona.
+ * Rows reporting a recorded fact, aggregated by the fact. Used when no cause
+ * was confirmed: a wave still has to be able to say what was observed.
  */
-function personaIssue(goals: readonly GoalFindingsModel[]): string {
-  const failing = goals
-    .filter((g) => g.diagnosisStage !== null)
-    .sort(
-      (a, b) =>
-        journeyStageIndex(a.diagnosisStage!) -
-        journeyStageIndex(b.diagnosisStage!)
-    );
-  const worst = failing[0];
-  if (worst) {
-    const stageWord = journeyStageTitle(worst.diagnosisStage!).toLowerCase();
-    return `"${worst.title}" broke at ${stageWord} before it could deliver.`;
-  }
-  const uneasy = goals.find((g) => g.sentiment.label === "Uneasy");
-  if (uneasy) {
-    return `No goal broke outright, but "${uneasy.title}" showed friction.`;
-  }
-  if (goals.some((g) => g.sentiment.label === "Landed")) {
-    return "Every measured stage held across their goals.";
-  }
-  return "Nothing has been graded for their sessions yet.";
-}
-
-// ── The derivation ──────────────────────────────────────────────────────────
-
-export interface FindingsPersonaDoc {
-  _id: string;
-  name: string;
-  role?: string;
-  avatarShape?: number;
-  avatarPalette?: number;
-}
-
-export function deriveSwarmFindingsModel(args: {
-  runs: readonly SwarmOverviewRun[];
-  signals: SwarmWaveSignals | null | undefined;
-  personas: ReadonlyArray<FindingsPersonaDoc>;
-  /** Presentation-only variety for demos; never changes severity or evidence. */
-  demoVariant?: boolean;
-}): SwarmFindingsModel {
-  const { runs, signals, personas, demoVariant = false } = args;
-
-  // One run = one goal; evidence accumulates per goal keyed by run id (a
-  // journeyRefId can appear twice in pathological waves, runId cannot).
-  const goalEvidence = new Map<
-    string,
-    Record<JourneyStageId, StageEvidence[]>
+export function wireSignalTotals(
+  wire: SwarmJourneyFindings,
+): Array<{ signal: SwarmFindingSignal; count: number; total: number }> {
+  const totals = new Map<
+    SwarmFindingSignal,
+    { count: number; total: number }
   >();
-  const forRun = (runId: string) => {
-    let existing = goalEvidence.get(runId);
-    if (!existing) {
-      existing = emptyStages();
-      goalEvidence.set(runId, existing);
-    }
-    return existing;
+  for (const row of wire.findings) {
+    if (!row.signal) continue;
+    const previous = totals.get(row.signal) ?? { count: 0, total: 0 };
+    totals.set(row.signal, {
+      count: previous.count + row.population.count,
+      total: previous.total + row.population.total,
+    });
+  }
+  return [...totals.entries()]
+    .map(([signal, counts]) => ({ signal, ...counts }))
+    .sort((a, b) => b.count - a.count || a.signal.localeCompare(b.signal));
+}
+
+function stageStateOf(row: SwarmJourneyFinding): StageState {
+  if (row.chainStageState === "failed") return "fail";
+  if (row.chainStageState === "passed") return "ok";
+  return "none";
+}
+
+/**
+ * What this persona says happened, and which session said it.
+ *
+ * A verified mechanism intentionally carries `reportExcerpt: null` — it speaks
+ * for a group, and no single session's words are the group's. So the lead is
+ * kept as the diagnostic, and the prose comes from a SUPPORTING session: same
+ * persona, same goal, same target, and a session id the mechanism actually
+ * counted. Preferring a row that has an account, then the lowest session id,
+ * keeps the choice stable no matter what order the wire arrived in.
+ *
+ * It describes that one representative session, never every member of the
+ * group, which is why its source session travels with it.
+ */
+function personaAccount(
+  rows: readonly SwarmJourneyFinding[],
+  goals: readonly GoalFindingsModel[],
+): Pick<
+  PersonaFindingsModel,
+  "issue" | "account" | "accountSessionId" | "cited" | "signal"
+> {
+  const leadGoal = goals.find((goal) => goal.diagnosisStage);
+  /**
+   * The account as it will actually be RENDERED, which is the only version
+   * worth ranking by. `account` is a nullable free-prose field: a whitespace-
+   * only one is truthy, so ranking on the raw value could pick a row over one
+   * with real words, and the trim below would then hand the card nothing.
+   */
+  const accountOf = (row: SwarmJourneyFinding | null | undefined) =>
+    row?.reportExcerpt?.account?.trim() || undefined;
+  const reportsFor = (lead: SwarmJourneyFinding | null) =>
+    (lead
+      ? rows.filter(
+          (row) =>
+            row.basis === "sessionReport" &&
+            row.goal.runId === lead.goal.runId &&
+            row.target.id === lead.target.id &&
+            row.sessionIds.some((id) => lead.sessionIds.includes(id)),
+        )
+      : rows.filter((row) => row.basis === "sessionReport")
+    ).sort((a, b) => {
+      const account = Number(!!accountOf(b)) - Number(!!accountOf(a));
+      if (account !== 0) return account;
+      return (a.sessionIds[0] ?? "").localeCompare(b.sessionIds[0] ?? "");
+    })[0] ?? null;
+  /**
+   * The lead and its quote are chosen TOGETHER.
+   *
+   * One diagnosed goal can carry several verified rows, one per target, and
+   * only some of their sessions may have written an account. Ranking the lead
+   * alone — by id, or by whatever the payload listed first — could land on a
+   * target whose sessions said nothing, and the card would fall back to
+   * diagnostic prose while a real quote sat one row away. So candidates are
+   * ranked by whether they actually yield an account, and only then by id,
+   * which keeps the choice stable without letting it be empty for no reason.
+   */
+  const rankLead = (candidates: readonly SwarmJourneyFinding[]) =>
+    [...candidates]
+      .filter((row) => !leadGoal || row.goal.runId === leadGoal.runId)
+      .map((row) => ({ row, report: reportsFor(row) }))
+      .sort((a, b) => {
+        const account =
+          Number(!!accountOf(b.report)) - Number(!!accountOf(a.report));
+        if (account !== 0) return account;
+        return a.row.id.localeCompare(b.row.id);
+      })[0] ?? null;
+  const chosen =
+    rankLead(rows.filter((row) => row.basis === "verifiedMechanism")) ??
+    rankLead(rows.filter((row) => row.signal)) ??
+    null;
+  const lead = chosen?.row ?? null;
+  const supporting = chosen ? chosen.report : reportsFor(null);
+  const account = accountOf(supporting);
+  return {
+    // Never empty on this path. The old expression bottomed out at `""`
+    // whenever no goal had a located failure, which rendered as an empty
+    // paragraph with a border above it.
+    issue:
+      account ??
+      lead?.outcomePhrase ??
+      leadGoal?.diagnosis.detail ??
+      goals[0]?.diagnosis.detail ??
+      "No session evidence available.",
+    ...(account ? { account } : {}),
+    ...(account && supporting?.sessionIds[0]
+      ? { accountSessionId: supporting.sessionIds[0] }
+      : {}),
+    ...(supporting?.reportExcerpt
+      ? {
+          cited: {
+            actual: supporting.reportExcerpt.actual,
+            citations: [...supporting.reportExcerpt.citations],
+          },
+        }
+      : {}),
+    ...(lead?.signal ? { signal: lead.signal } : {}),
   };
+}
 
-  for (const run of runs) {
-    const stages = forRun(run.runId);
-    const connection = connectionEvidence(run);
-    if (connection) stages.connection.push(connection);
-    stages.value.push(...rubricEvidence(run));
-    const judge = judgeEvidence(run);
-    if (judge) stages.value.push(judge);
-  }
-
-  // Detector candidates: journey subjects land on their goal, persona
-  // subjects fan to that persona's goals (labeled). Global subjects
-  // (tool/criterion/environment/host) are wave-wide and skipped in v1 —
-  // pinning them to one goal would invent attribution the miner never made.
-  const personaByName = new Map(personas.map((p) => [p.name, p]));
-  for (const candidate of signals?.candidates ?? []) {
-    if (candidate.subjectKind === "journey") {
-      const attributed = detectorEvidence(candidate, { personaScoped: false });
-      if (!attributed) continue;
-      for (const run of runs) {
-        if (run.journeyRefId !== candidate.subjectId) continue;
-        forRun(run.runId)[attributed.stage].push(attributed.evidence);
-      }
-    } else if (candidate.subjectKind === "persona") {
-      const attributed = detectorEvidence(candidate, { personaScoped: true });
-      if (!attributed) continue;
-      // The candidate subject is a personaRefId; runs carry names. Match
-      // through the persona doc, falling back to the display label.
-      const doc = personas.find((p) => p._id === candidate.subjectId);
-      const personaName = doc?.name ?? candidate.subjectLabel;
-      for (const run of runs) {
-        if (run.personaName !== personaName) continue;
-        forRun(run.runId)[attributed.stage].push(attributed.evidence);
-      }
-    }
-  }
-
-  // Group goals under personas, alphabetical.
-  const byPersona = new Map<string, SwarmOverviewRun[]>();
-  for (const run of runs) {
-    const list = byPersona.get(run.personaName);
-    if (list) list.push(run);
-    else byPersona.set(run.personaName, [run]);
-  }
-
-  const personaModels: PersonaFindingsModel[] = [...byPersona.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, personaRuns], personaIndex) => {
-      const doc = personaByName.get(name);
-      const goals: GoalFindingsModel[] = personaRuns.map((run, goalIndex) => {
-        const evidence = forRun(run.runId);
-        const stages = Object.fromEntries(
-          JOURNEY_STAGES.map((stage) => [
-            stage.id,
-            {
-              state: worstTone(evidence[stage.id]),
-              evidence: evidence[stage.id],
-            },
-          ])
-        ) as Record<JourneyStageId, GoalStageModel>;
-        const { diagnosisStage, diagnosis } = goalDiagnosis(stages);
-        const firstMeasured = JOURNEY_STAGES.find(
-          (stage) => stages[stage.id].state !== "none"
-        );
-        return {
-          journeyRefId: run.journeyRefId,
-          runId: run.runId,
-          title: run.journeyName,
-          sessions: run.summary.total,
-          sentiment: goalSentiment(
-            stages,
-            demoVariant,
-            personaIndex + goalIndex
-          ),
-          stages,
-          diagnosisStage,
-          diagnosis,
-          defaultStage: diagnosisStage ?? firstMeasured?.id ?? "value",
-        };
+export function deriveSwarmFindingsModelFromWire({
+  journeyFindings: wire,
+  personas,
+  runs,
+}: {
+  journeyFindings: SwarmJourneyFindings;
+  personas: ReadonlyArray<FindingsPersonaDoc>;
+  runs: readonly SwarmOverviewRun[];
+}): SwarmFindingsModel {
+  const models = wire.personas.map((persona) => {
+    const doc =
+      personas.find((p) => p._id === persona.persona.personaRefId) ??
+      personas.find((p) => p.name === persona.persona.name);
+    const personaRows = wire.findings.filter(
+      (row) =>
+        row.persona.name === persona.persona.name &&
+        row.persona.personaRefId === persona.persona.personaRefId,
+    );
+    const goals: GoalFindingsModel[] = persona.goalRunIds.map((runId) => {
+      const rows = personaRows.filter((row) => row.goal.runId === runId);
+      const run = runs.find((candidate) => candidate.runId === runId);
+      const lead = representativeGoalRow(rows);
+      const emptyStage = (): GoalStageModel => ({
+        state: "none",
+        evidence: [],
       });
+      const stages: Record<JourneyStageId, GoalStageModel> = {
+        connection: emptyStage(),
+        discovery: emptyStage(),
+        selection: emptyStage(),
+        call: emptyStage(),
+        response: emptyStage(),
+        value: emptyStage(),
+      };
+      for (const row of rows) {
+        if (!row.chainStage) continue;
+        const stage = stages[JOURNEY_STAGE_BY_CHAIN[row.chainStage]];
+        stage.state = worseStage(stage.state, stageStateOf(row));
+        const tone = toneOfDisposition(row.disposition);
+        if (tone !== "muted")
+          stage.evidence.push({
+            tone,
+            observation:
+              row.mechanismPhrase ??
+              // A recorded fact has no mechanism and no excerpt; without this
+              // it would render as a feeling word ("Frustrated") rather than
+              // as the thing that was actually observed.
+              (row.signal ? SWARM_FINDING_SIGNAL_LABELS[row.signal] : null) ??
+              row.reportExcerpt?.actual ??
+              SWARM_FINDING_DISPOSITION_LABELS[row.disposition],
+            meta: `${row.population.count} of ${row.population.total} sessions`,
+            sessionId: row.sessionIds[0],
+          });
+      }
+      const diagnosisStage =
+        JOURNEY_STAGES.find((stage) => stages[stage.id].state === "fail")?.id ??
+        null;
+      const disposition = lead?.disposition ?? "notMeasured";
       return {
-        name,
-        ...(doc?.role !== undefined ? { role: doc.role } : {}),
-        avatarSeed: doc?._id ?? name,
-        ...(doc?.avatarShape !== undefined
-          ? { avatarShape: doc.avatarShape }
-          : {}),
-        ...(doc?.avatarPalette !== undefined
-          ? { avatarPalette: doc.avatarPalette }
-          : {}),
-        sessionsAuthored: personaRuns.reduce(
-          (sum, run) => sum + run.summary.total,
-          0
-        ),
-        sentiment: personaSentiment(goals, demoVariant, personaIndex),
-        issue: personaIssue(goals),
-        goals,
+        runId,
+        journeyRefId: lead?.goal.journeyRefId ?? run?.journeyRefId ?? "",
+        title: lead?.goal.title ?? run?.journeyName ?? "Untitled goal",
+        sessions: new Set(rows.flatMap((row) => row.sessionIds)).size,
+        notRun: disposition === "notRun",
+        sentiment: {
+          label: SWARM_FINDING_DISPOSITION_LABELS[disposition],
+          tone: toneOfDisposition(disposition),
+        },
+        stages,
+        diagnosisStage,
+        diagnosis: {
+          title: SWARM_FINDING_DISPOSITION_LABELS[disposition],
+          detail:
+            lead?.mechanismPhrase ??
+            lead?.reportExcerpt?.actual ??
+            "No session evidence available.",
+        },
+        defaultStage: diagnosisStage ?? "value",
       };
     });
-
-  const defaultPersonaIndex = Math.max(
-    0,
-    personaModels.findIndex((p) => p.sentiment.tone === "fail")
-  );
-
+    return {
+      name: persona.persona.name,
+      role: doc?.role,
+      avatarSeed: persona.persona.personaRefId ?? persona.persona.name,
+      avatarShape: doc?.avatarShape,
+      avatarPalette: doc?.avatarPalette,
+      sessionsAuthored: new Set(personaRows.flatMap((row) => row.sessionIds))
+        .size,
+      sentiment: {
+        label: SWARM_FINDING_DISPOSITION_LABELS[persona.disposition],
+        tone: toneOfDisposition(persona.disposition),
+      },
+      ...personaAccount(personaRows, goals),
+      goals,
+    };
+  });
+  const { configured, started, limited } = wire.population;
   return {
-    personas: personaModels,
-    sessionCount: signals?.sessionCount ?? waveSessionTotals(runs).total,
-    defaultPersonaIndex,
+    personas: models,
+    launch: {
+      total: configured,
+      succeeded: started,
+      failed: Math.max(0, configured - started - limited),
+      rateLimited: limited,
+    },
+    neverLaunched: wire.summaryKind === "notLaunched",
+    sessionCount: started,
+    defaultPersonaIndex: Math.max(
+      0,
+      models.findIndex((p) => p.sentiment.tone === "fail"),
+    ),
   };
 }

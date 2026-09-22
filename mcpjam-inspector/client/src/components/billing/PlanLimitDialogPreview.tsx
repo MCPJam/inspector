@@ -1,3 +1,5 @@
+import { FrontierSignInDialogView } from "./FrontierSignInDialogView";
+import { GuestCreditWallView } from "./GuestCreditWallView";
 import { useState } from "react";
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 import {
@@ -43,7 +45,7 @@ type CreditsVariant = {
   note: string;
   props: Omit<
     CreditsLimitDialogViewProps,
-    SharedHandlers | "onBuyCredits" | "onUseOwnKey"
+    "onDismiss" | "modal" | "onBuyCredits" | "onUseOwnKey" | "onExplorePlans"
   >;
 };
 
@@ -123,26 +125,19 @@ const VARIANTS: PreviewVariant[] = [
 
 const CREDITS_SHARED = {
   organizationName: "Acme Robotics",
-  annualPriceLabel: "$30",
-  monthlyPriceLabel: "$38",
-  annualDiscountPct: 21,
-  annualSupported: true,
-  monthlySupported: true,
   teamName: "Team",
-  isStarting: false,
 };
 
 const CREDITS_VARIANTS: CreditsVariant[] = [
   {
     id: "credits-free-owner",
     label: "Free, can upgrade",
-    note: "Upgrade leads. Buying credits stays available one step down, and bring-your-own-key drops to a link, because both of those keep the org on Free.",
+    note: "Free organizations can explore plans or learn how BYOK and MCPJam credits work.",
     props: {
       ...CREDITS_SHARED,
       description:
-        "Free credits reset daily. The Team plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.",
+        "Your Free credits reset daily. Get more monthly credits and top-ups with Pro or Team.",
       isKnownNonManager: false,
-      showUpgrade: true,
       requestRecipients: [],
     },
   },
@@ -153,9 +148,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Buy credits to keep your team going, or use your own API key.",
+        "Add shared credits to keep your team testing.",
       isKnownNonManager: false,
-      showUpgrade: false,
       requestRecipients: [],
     },
   },
@@ -166,9 +160,8 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Ask an organization owner or admin to buy credits or upgrade the plan.",
+        "Ask an owner to add shared credits and keep your team testing.",
       isKnownNonManager: true,
-      showUpgrade: false,
       requestRecipients: [
         { email: "dana@acmerobotics.com", name: "Dana Ruiz" },
       ],
@@ -177,15 +170,19 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
 ];
 
 const WALLS = [
-  { id: "evals" as const, label: "Eval iterations" },
+  { id: "evals" as const, label: "Eval iterations (legacy)" },
   { id: "credits" as const, label: "Credits" },
+  { id: "guest" as const, label: "Guest sign-up" },
+  { id: "frontier" as const, label: "Frontier sign-in" },
 ];
 
 export function PlanLimitDialogPreview() {
-  const [wall, setWall] = useState<"evals" | "credits">("evals");
+  const [wall, setWall] = useState<"evals" | "credits" | "guest" | "frontier">(
+    "evals",
+  );
   const [variantId, setVariantId] = useState(VARIANTS[0].id);
   const [creditsVariantId, setCreditsVariantId] = useState(
-    CREDITS_VARIANTS[0].id
+    CREDITS_VARIANTS[0].id,
   );
   const [interval, setInterval] = useState<BillingInterval>("annual");
   const [lastAction, setLastAction] = useState<string | null>(null);
@@ -193,11 +190,23 @@ export function PlanLimitDialogPreview() {
   const creditsVariant =
     CREDITS_VARIANTS.find((v) => v.id === creditsVariantId) ??
     CREDITS_VARIANTS[0];
-  const activeVariants = wall === "evals" ? VARIANTS : CREDITS_VARIANTS;
+  const activeVariants =
+    wall === "guest" || wall === "frontier"
+      ? []
+      : wall === "evals"
+      ? VARIANTS
+      : CREDITS_VARIANTS;
   const activeVariantId = wall === "evals" ? variantId : creditsVariantId;
   const setActiveVariantId =
     wall === "evals" ? setVariantId : setCreditsVariantId;
-  const activeNote = wall === "evals" ? variant.note : creditsVariant.note;
+  const activeNote =
+    wall === "frontier"
+      ? "Preview: Sign in to use frontier models, or choose a standard model. Actions do not start authentication."
+      : wall === "guest"
+      ? "Guest sign-up presentation; buttons report actions without starting authentication."
+      : wall === "evals"
+      ? variant.note
+      : creditsVariant.note;
 
   return (
     <div className="min-h-screen bg-background p-6 text-foreground">
@@ -269,7 +278,22 @@ export function PlanLimitDialogPreview() {
         </div>
       </div>
 
-      {wall === "evals" ? (
+      {wall === "frontier" ? (
+        <FrontierSignInDialogView
+          modal={false}
+          onSignIn={() => setLastAction("sign_in")}
+          onDismiss={() => setLastAction("dismissed")}
+        />
+      ) : wall === "guest" ? (
+        <GuestCreditWallView
+          isTreatment
+          modal={false}
+          onDismiss={() => setLastAction("dismiss")}
+          onCreateAccount={() => setLastAction("create_account")}
+          onSignIn={() => setLastAction("sign_in")}
+          onSeePlans={() => setLastAction("see_plans")}
+        />
+      ) : wall === "evals" ? (
         <PlanLimitDialogView
           key={variant.id}
           {...variant.props}
@@ -284,18 +308,15 @@ export function PlanLimitDialogPreview() {
         />
       ) : (
         <CreditsLimitDialogView
+          isFreePlan={creditsVariantId === "credits-free-owner"}
           key={creditsVariant.id}
           {...creditsVariant.props}
           modal={false}
-          interval={interval}
-          onIntervalChange={setInterval}
-          onUpgrade={() => setLastAction(`checkout would start (${interval})`)}
           onBuyCredits={() =>
             setLastAction("would open the buy-credits dialog")
           }
-          onUseOwnKey={() =>
-            setLastAction("would open the model picker's providers tab")
-          }
+          onUseOwnKey={() => setLastAction("BYOK and credits")}
+          onExplorePlans={() => setLastAction("Plans settings")}
           onDismiss={() => setLastAction("dismissed")}
         />
       )}

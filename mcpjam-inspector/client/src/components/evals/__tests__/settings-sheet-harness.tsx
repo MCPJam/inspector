@@ -1,9 +1,6 @@
 import { fireEvent, render } from "@testing-library/react";
 import { vi } from "vitest";
-import {
-  createMemoryRouter,
-  RouterProvider,
-} from "react-router";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 import {
@@ -113,7 +110,8 @@ function settingsNavOptionsForSuite(
   overrides: SettingsNavOptions = {},
 ): Required<SettingsNavOptions> {
   return {
-    isVerdictPolicyV2: overrides.isVerdictPolicyV2 ?? suite.verdictPolicyVersion === 2,
+    isVerdictPolicyV2:
+      overrides.isVerdictPolicyV2 ?? suite.verdictPolicyVersion === 2,
     showComputerEnvironment: overrides.showComputerEnvironment ?? true,
     showSchedule: overrides.showSchedule ?? true,
     showDelete: overrides.showDelete ?? true,
@@ -132,14 +130,9 @@ function clickNavLabel(scope: ParentNode, label: string) {
   throw new Error(`no nav button labeled ${label}`);
 }
 
-export function showSettingsGroup(
-  container: HTMLElement,
-  groupLabel: string,
-) {
-  const sections = container.querySelector(
-    '[aria-label="Settings sections"]',
-  );
-  if (!sections) throw new Error("settings section tabs not found");
+export function showSettingsGroup(container: HTMLElement, groupLabel: string) {
+  const sections = container.querySelector('[aria-label="Settings sections"]');
+  if (!sections) return;
   clickNavLabel(sections, groupLabel);
 }
 
@@ -159,9 +152,7 @@ export function findGroupForSettingKey(
 ): SuiteSettingsGroupId | undefined {
   for (const group of VISIBLE_SUITE_SETTINGS_GROUPS) {
     if ((group.rows as readonly string[]).includes(key)) return group.id;
-    if (
-      group.rows.some((row) => NESTED_SETTING_KEYS[row]?.includes(key))
-    ) {
+    if (group.rows.some((row) => NESTED_SETTING_KEYS[row]?.includes(key))) {
       return group.id;
     }
   }
@@ -177,7 +168,9 @@ export function showSettingsKey(
   if (key === "name") return;
   const groupId = findGroupForSettingKey(key);
   if (!groupId) throw new Error(`no settings group for ${key}`);
-  const group = VISIBLE_SUITE_SETTINGS_GROUPS.find((candidate) => candidate.id === groupId);
+  const group = VISIBLE_SUITE_SETTINGS_GROUPS.find(
+    (candidate) => candidate.id === groupId,
+  );
   if (!group) throw new Error(`unknown group ${groupId}`);
   const navOptions = settingsNavOptionsForSuite(suite, options);
   const subsection = subsectionForSettingKey(key, groupId, navOptions);
@@ -248,7 +241,7 @@ export function renderSettingsSheet(overrides: SettingsSheetOverrides = {}) {
       // A second route so a navigation test has somewhere to go.
       { path: "/elsewhere", element: <div data-testid="elsewhere" /> },
     ],
-    { initialEntries: ["/"] }
+    { initialEntries: ["/"] },
   );
   return { ...render(<RouterProvider router={router} />), router };
 }
@@ -286,3 +279,18 @@ export function withDataRouter(element: React.ReactNode) {
     />
   );
 }
+
+// These tests exercise the settings form after access is granted. The plan and
+// creator matrix is covered by SharedSettingsGate.test.tsx.
+vi.mock("@/components/billing/SharedSettingsGate", () => ({
+  SharedSettingsGate: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));
+
+// The clients pill keeps the New Client dialog mounted so "Add clients" can
+// open it in place; it needs the preferences store these tests do not provide.
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));

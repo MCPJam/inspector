@@ -1,3 +1,4 @@
+import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 
@@ -75,6 +76,19 @@ export interface RequestLogContext extends CommonLogContext {
   requestId: string;
   route: string;
   method: string;
+  /**
+   * The caller's `user-agent`, sanitized and capped.
+   *
+   * A LOG FIELD, never an identity. It is caller-supplied text: this server
+   * already removed UA-derived attribution once because a client can write
+   * whatever it likes there, and re-introducing it here is only safe while
+   * nothing branches on it.
+   *
+   * Omitted rather than defaulted when the header is absent — a row with no
+   * user-agent is a caller that sent none, which is not the same claim as
+   * "unknown client" and should not be counted as one.
+   */
+  userAgent?: string;
 }
 
 export interface SystemLogContext extends CommonLogContext {
@@ -439,6 +453,7 @@ export type SystemEventMap = {
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
+  "launch.engagement": LaunchEngagement;
   "relay.stats": {
     requests: number;
     res2xx: number;

@@ -13,6 +13,7 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
+import { unwrapEraNegotiationCause } from "../mcp-client-manager/errors.js";
 import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
@@ -24,6 +25,7 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
+import type { BearerChallengeSummary } from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
   /**
@@ -39,6 +41,31 @@ export type NormalizedError = ErrorCatalogEntry & {
    * Captured `.cause` chain head — only `name` + `message`, redacted.
    */
   cause?: { name: string; message: string };
+  /**
+   * The thrown value’s own constructor name ("WebApiError", "TypeError"),
+   * when a consumer attached one. The catalog `title` says what went wrong
+   * for a reader; this says what the runtime actually threw, which is what a
+   * bug report needs. Populated client-side alongside {@link stack}.
+   */
+  errorType?: string;
+  /**
+   * Redacted stack, when a consumer attached one.
+   *
+   * NOT populated by `describeError`, deliberately. The server describes its
+   * own errors and puts the result straight into the JSON error body, so
+   * capturing a stack here would ship server stacks to every browser — the
+   * leak `WebRouteError` avoids by attaching its `cause` non-enumerably. The
+   * client fills this in from errors it already holds.
+   */
+  stack?: string;
+  /**
+   * The `x-request-id` of the failing request — the join key to its Axiom
+   * row.
+   *
+   * This is the field that makes a stackless 5xx reportable, so it is the one
+   * a details view shows when {@link stack} is absent.
+   */
+  requestId?: string;
 };
 
 /**
@@ -158,6 +185,15 @@ function maybePromoteRawMessage(
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
 }
 
+/**
+ * `describeEmptyStepFailure` (inspector engine) and the eval runner's fallback
+ * open every empty-model-step message with one of these, verbatim.
+ */
+const EMPTY_STEP_SENTINELS = [
+  "Backend step returned no content (stream error or empty response)",
+  "Backend step returned no messages (stream error or empty response)",
+] as const;
+
 function inspectorSentinelSlug(message: string): string | undefined {
   if (/NotYetSupportedInStateless/i.test(message)) {
     return "sdk/not_yet_supported_in_stateless";
@@ -219,6 +255,25 @@ function resolveDashThirtyTwoThousandOne(message: string): string {
     return "jsonrpc/header_mismatch";
   }
   return "jsonrpc/request_timeout";
+}
+
+/**
+ * `-32603` is overloaded: JSON-RPC Internal Error, plus the MCP SDK's
+ * "Invalid response format" when a handler return value fails the result
+ * schema. Disambiguate by message, same as the `-32001` overload above.
+ */
+const INVALID_RESPONSE_FORMAT =
+  /^(?:MCP error -32603:\s*)?invalid response format$/i;
+
+function isInvalidResponseFormat(message: string): boolean {
+  return INVALID_RESPONSE_FORMAT.test(message.trim());
+}
+
+function resolveInternalError(message: string): string {
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
+  return "jsonrpc/internal_error";
 }
 
 function nodeErrnoToSlug(errno: string): string | undefined {
@@ -286,6 +341,9 @@ function messageSlug(message: string): string | undefined {
   if (/Invalid tool name/i.test(message)) {
     return "provider/invalid_tool_name";
   }
+  if (isInvalidResponseFormat(message)) {
+    return "jsonrpc/invalid_response_format";
+  }
   return undefined;
 }
 
@@ -349,8 +407,10 @@ function oauthResponseErrorCode(error: unknown): string | undefined {
 }
 
 function pickOauthBody(
-  error: unknown,
-): { error?: unknown; error_code?: unknown; error_description?: unknown } | undefined {
+  error: unknown
+):
+  | { error?: unknown; error_code?: unknown; error_description?: unknown }
+  | undefined {
   if (!error || typeof error !== "object") return undefined;
   // Some sources stash the body under `.body` or `.data`.
   const body =
@@ -369,7 +429,7 @@ function captureCause(error: unknown): NormalizedError["cause"] {
   if (!cause || typeof cause !== "object") return undefined;
   const name =
     typeof (cause as { name?: unknown }).name === "string"
-      ? ((cause as { name: string }).name)
+      ? (cause as { name: string }).name
       : "Error";
   const message =
     typeof (cause as { message?: unknown }).message === "string"
@@ -420,8 +480,13 @@ function classifyHttpStatus(status: number): string | undefined {
 }
 
 function classifyByMessageHttp(message: string): string | undefined {
-  if (/\b(?:http|status)[:\s-]*401\b/i.test(message)) return "auth/http_401";
-  if (/\b(?:http|status)[:\s-]*403\b/i.test(message)) return "auth/http_403";
+  // A bare 401 / 403 counts, on the same terms as the 429 below: the transport
+  // phrasings that reach the UI as prose — "401 Unauthorized", "Non-200 status
+  // code (401)" — carry the status with no `http`/`status` word in front of it,
+  // and without this they fell through to `internal/unknown`, so the error
+  // toast's "Learn more" pointed at the unknown-error docs section.
+  if (/(?:^|[^\w.:])401\b/.test(message)) return "auth/http_401";
+  if (/(?:^|[^\w.:])403\b/.test(message)) return "auth/http_403";
   // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
   // the status field and leaves only this wording. Narrower than "rate limit"
   // on purpose: that also matches MCPJam's own account limit, a different slug.
@@ -441,9 +506,23 @@ function resolveSlug(error: unknown): {
   rawCode?: number | string;
 } {
   const message = getErrorMessage(error);
+  const record =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; data?: { code?: unknown } })
+      : null;
+  const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
+  if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.
+  // The empty-step sentinel is matched as a literal prefix: the engine and
+  // the eval runner both open with exactly this sentence and append detail.
+  if (
+    EMPTY_STEP_SENTINELS.some((sentinel) => message.startsWith(sentinel))
+  ) {
+    return { slug: "provider/empty_response" };
+  }
   const sentinel = inspectorSentinelSlug(message);
   if (sentinel) return { slug: sentinel };
 
@@ -456,6 +535,9 @@ function resolveSlug(error: unknown): {
   if (numericCode !== undefined) {
     if (numericCode === -32001) {
       return { slug: resolveDashThirtyTwoThousandOne(message), rawCode: numericCode };
+    }
+    if (numericCode === MCP_ERROR_CODES.InternalError) {
+      return { slug: resolveInternalError(message), rawCode: numericCode };
     }
     const slug = JSONRPC_SLUG_BY_CODE[numericCode];
     if (slug) return { slug, rawCode: numericCode };
@@ -493,6 +575,8 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
+
   // Same shape of problem as the bearer gate above, and the same surface: the
   // swarm create flow renders `err.message`, so the 429 and its `code` are
   // gone by the time this runs. Without the pre-check a spent MCPJam
@@ -506,23 +590,15 @@ function resolveSlug(error: unknown): {
   // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
   // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
   // and this message comes off the wire. Real copy puts one space here.
-  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
-    message,
-  );
-  if (limitPeriod) {
-    return {
-      slug:
-        limitPeriod[1]!.toLowerCase() === "monthly"
-          ? "provider/mcpjam_limit_monthly"
-          : "provider/mcpjam_limit_daily",
-    };
-  }
-  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
-    return { slug: "provider/mcpjam_limit" };
-  }
+  const limitSlug = mcpjamLimitSlugForMessage(message);
+  if (limitSlug) return { slug: limitSlug };
 
-  // (e) HTTP status field (`statusCode` / `status`).
-  const httpStatus = getHttpStatus(error);
+  // (e) HTTP status field (`statusCode` / `status`), read through the cause
+  // chain: an auto-activation probe against an OAuth-gated server surfaces as
+  // `SdkError(EraNegotiationFailed)` wrapping the real `UnauthorizedError`, and
+  // a plain connect failure keeps the 401 on `.cause`. Reading only the outer
+  // error classified both as `internal/unknown`.
+  const httpStatus = httpStatusOf(error);
   if (httpStatus !== undefined) {
     const slug = classifyHttpStatus(httpStatus);
     if (slug) return { slug, rawCode: httpStatus };
@@ -539,6 +615,17 @@ function resolveSlug(error: unknown): {
   // Refresh-failed phrasing.
   if (/refresh\s+token/i.test(message) && /(failed|invalid|expired|revoked)/i.test(message)) {
     return { slug: "auth/oauth_refresh_failed" };
+  }
+
+  // MCPJam's own consent-prompt wording. The orchestrator now attaches a
+  // normalized block directly, so a live consent state never reaches here —
+  // this catches the strings already persisted in client state from earlier
+  // sessions, and any future caller that still hands over bare prose.
+  if (
+    /consent\s+is\s+required/i.test(message) ||
+    /^\s*reauthenticate\b[\s\S]*\bto\s+continue\b/i.test(message)
+  ) {
+    return { slug: "auth/consent_required" };
   }
   // Note: "missing bearer" wording is checked earlier (step d.5) so it
   // wins over the generic HTTP status check; no duplicate here.
@@ -565,6 +652,7 @@ const CREDENTIAL_OWNED_SLUGS: ReadonlySet<string> = new Set([
   "auth/http_403",
   "auth/missing_bearer",
   "auth/oauth_refresh_failed",
+  "auth/authorization_server_unreachable",
   "oauth/invalid_client",
   "oauth/invalid_grant",
   "provider/auth_error",
@@ -589,7 +677,131 @@ export type DescribeContext = {
    * talking to an MCP server should say so.
    */
   surface?: "provider" | "mcpServer";
+  /**
+   * The parsed `WWW-Authenticate` challenge of the response that failed,
+   * when the caller captured one. Only a caller at the fetch boundary can
+   * know it — the transport error carries the status and the body text but
+   * never the header. This records what the response said without assuming
+   * that an absent header makes well-known discovery unavailable.
+   */
+  challenge?: BearerChallengeSummary;
+  /**
+   * The outcome of a token refresh the caller attempted before giving up.
+   * `authorization_server_unreachable` is the refresh that never got an
+   * answer; `token_rejected` is the one the authorization server refused.
+   */
+  refresh?: {
+    outcome: "token_rejected" | "authorization_server_unreachable";
+  };
 };
+
+/**
+ * The HTTP status a connection error carries, wherever it carries it:
+ * `statusCode` (MCPAuthError), `status` (WebRouteError), or a numeric `code`
+ * in the HTTP range (StreamableHTTPError).
+ */
+function httpStatusOf(error: unknown): number | undefined {
+  const seen = new Set<unknown>();
+  let current = error;
+  for (
+    let depth = 0;
+    depth < 5 && current && typeof current === "object" && !seen.has(current);
+    depth++
+  ) {
+    seen.add(current);
+    const field = getHttpStatus(current);
+    if (field !== undefined) return field;
+    const code = getNumericCode(current);
+    if (code !== undefined && code >= 100 && code <= 599) return code;
+    if ((current as { name?: string }).name === "UnauthorizedError") return 401;
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current =
+      unwrapped !== current
+        ? unwrapped
+        : (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * A slug the CONTEXT settles before the error is even looked at.
+ *
+ * Runs ahead of `resolveSlug` because the resolver's evidence — class name,
+ * status, message — reads the same for "our stored token was rejected" and
+ * "the server never told us how to authorize". Only the challenge and the
+ * refresh outcome tell those apart, and only the caller has them.
+ */
+function contextSlug(
+  error: unknown,
+  context: DescribeContext | undefined
+): string | undefined {
+  if (!context) return undefined;
+  if (context.refresh?.outcome === "authorization_server_unreachable") {
+    return "auth/authorization_server_unreachable";
+  }
+  if (context.refresh?.outcome === "token_rejected") {
+    return "auth/oauth_refresh_failed";
+  }
+  const challenge = context.challenge;
+  if (!challenge) return undefined;
+  const status = httpStatusOf(error);
+  if (status === 401 && challenge.scheme !== "bearer") {
+    return "oauth/no_bearer_challenge";
+  }
+  if (status === 401) return "auth/http_401";
+  if (status === 403) {
+    if (
+      challenge.scheme === "bearer" &&
+      challenge.error === "insufficient_scope"
+    ) {
+      return "auth/insufficient_scope";
+    }
+    if (challenge.scheme === "bearer" && challenge.error === "invalid_token") {
+      return "oauth/non_compliant_challenge";
+    }
+    if (challenge.scheme === "none" && challenge.bodyKind === "html") {
+      return "auth/proxy_rejected";
+    }
+    return "auth/http_403";
+  }
+  return undefined;
+}
+
+/**
+ * Fold what the challenge said into the one-line for the two generic auth
+ * slugs, so "Unauthorized (401)" reads "… (the server reported invalid_token)"
+ * when the header said so. Catalog copy is otherwise untouched.
+ */
+function annotateWithChallenge(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  context: DescribeContext | undefined
+): ErrorCatalogEntry {
+  if (
+    slug === "auth/insufficient_scope" &&
+    context?.challenge?.scopes?.length
+  ) {
+    return {
+      ...entry,
+      oneLine: truncateOneLine(
+        redactString(
+          `${entry.oneLine} Required scopes: ${context.challenge.scopes.join(
+            " "
+          )}.`
+        )
+      ),
+    };
+  }
+  const error = context?.challenge?.error;
+  if (!error) return entry;
+  if (slug !== "auth/http_401" && slug !== "auth/http_403") return entry;
+  return {
+    ...entry,
+    oneLine: truncateOneLine(
+      redactString(`${entry.oneLine} The server reported \`${error}\`.`)
+    ),
+  };
+}
 
 /**
  * Read an origin off a normalized error, defaulting a missing value to
@@ -659,11 +871,17 @@ export function describeError(
   // Crash-safe: every branch is wrapped so the describer never throws.
   try {
     const rawMessage = redactString(getErrorMessage(error));
-    const resolved = resolveSlug(error);
+    const fromContext = contextSlug(error, context);
+    const resolved = fromContext ? { slug: fromContext } : resolveSlug(error);
     const slug = retargetQuotaForSurface(resolved.slug, context);
-    const rawCode = resolved.rawCode;
+    const rawCode =
+      resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
     const entry = applyOriginContext(
-      maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+      annotateWithChallenge(
+        maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+        slug,
+        context
+      ),
       slug,
       context,
     );
@@ -738,4 +956,24 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
     ...maybePromoteRawMessage(fallback, "internal/unknown", rawMessage),
     rawMessage,
   };
+}
+
+export function mcpjamLimitSlugForMessage(
+  message: string
+):
+  | "provider/mcpjam_limit"
+  | "provider/mcpjam_limit_daily"
+  | "provider/mcpjam_limit_monthly"
+  | undefined {
+  const limitPeriod =
+    /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
+  if (limitPeriod) {
+    return limitPeriod[1]!.toLowerCase() === "monthly"
+      ? "provider/mcpjam_limit_monthly"
+      : "provider/mcpjam_limit_daily";
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return "provider/mcpjam_limit";
+  }
+  return undefined;
 }

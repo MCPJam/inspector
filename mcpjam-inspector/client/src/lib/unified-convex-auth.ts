@@ -8,7 +8,9 @@ import {
   getCachedGuestSession,
   getOrCreateGuestSession,
   markGuestActivated,
+  getGuestSessionRefusal,
 } from "@/lib/guest-session";
+import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
 
 /**
  * Stable hook fed to `<ConvexProviderWithAuthKit useAuth={...}>`.
@@ -68,6 +70,13 @@ async function fetchTokenWithRetry(
   opts: {
     source: string;
     isTerminalError?: (error: unknown) => boolean;
+    /**
+     * A null token that will stay null for the rest of the window (the
+     * server refused to create a guest). Stops the retry ladder without
+     * reporting and without the "session expired" banner — the refusal has
+     * its own banner.
+     */
+    isTerminalNull?: () => boolean;
   },
 ): Promise<string | null> {
   let lastError: unknown;
@@ -84,6 +93,7 @@ async function fetchTokenWithRetry(
         useSessionRefreshStore.getState().clear();
         return token;
       }
+      if (opts.isTerminalNull?.()) return null;
       lastError = undefined;
     } catch (error) {
       if (opts.isTerminalError?.(error)) {
@@ -119,6 +129,11 @@ function markActiveGuest(): void {
 
 export function useUnifiedConvexAuth() {
   const workos = useWorkOSAuth();
+  // caniuse.dev renders from the public host catalog and needs no identity,
+  // so it must not spend from the per-IP daily guest budget. Read per render
+  // rather than at module load: it is a Set lookup, and a module-level
+  // constant would freeze the hostname before a test could stub it.
+  const skipGuest = shouldSkipGuestSession();
   // Bumped when the user presses Retry on the session-refresh banner. It feeds
   // both the memo below (new `getAccessToken` identity → Convex re-runs
   // `setAuth`) and the guest bootstrap effect (a fully-lapsed guest has
@@ -128,14 +143,22 @@ export function useUnifiedConvexAuth() {
   const [guestToken, setGuestToken] = useState<string | null>(
     () => getCachedGuestSession()?.token ?? null,
   );
+  // `false` under `skipGuest`: the lazy initializer is what makes a cold
+  // visit start in a loading state, and with no bootstrap to clear it the
+  // surface would sit on a spinner forever.
   const [guestLoading, setGuestLoading] = useState(
-    () => getCachedGuestSession()?.token == null,
+    () => !skipGuest && getCachedGuestSession()?.token == null,
   );
 
   // Fetch a guest token whenever there is no signed-in WorkOS user. Reset
   // when a user does sign in so subsequent renders favor the WorkOS path.
   useEffect(() => {
     if (workos.isLoading) {
+      return;
+    }
+    if (skipGuest) {
+      setGuestToken(null);
+      setGuestLoading(false);
       return;
     }
     if (workos.user) {
@@ -171,6 +194,15 @@ export function useUnifiedConvexAuth() {
           return;
         }
 
+        // A refused creation (per-IP daily cap) is deterministic for the rest
+        // of its window: retrying cannot succeed and is not an error worth
+        // paging on. The banner offers sign-in instead.
+        if (getGuestSessionRefusal()) {
+          setGuestToken(null);
+          setGuestLoading(false);
+          return;
+        }
+
         if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
           reportCaught(
             new Error("Guest session bootstrap exhausted without a token"),
@@ -197,7 +229,7 @@ export function useUnifiedConvexAuth() {
     return () => {
       cancelled = true;
     };
-  }, [workos.isLoading, workos.user, retryNonce]);
+  }, [skipGuest, workos.isLoading, workos.user, retryNonce]);
 
   return useMemo(() => {
     if (workos.user) {
@@ -222,6 +254,10 @@ export function useUnifiedConvexAuth() {
     return {
       isLoading: workos.isLoading || guestLoading,
       user: guestToken ? GUEST_USER_PLACEHOLDER : null,
+      // Deliberately NOT guarded by `skipGuest`, even though it can mint a
+      // guest of its own below: the adapter only calls this once `user` is
+      // truthy, and under `skipGuest` `guestToken` never becomes non-null, so
+      // it is unreachable there.
       getAccessToken: async (opts?: {
         forceRefreshToken?: boolean;
       }): Promise<string | null> => {
@@ -239,7 +275,10 @@ export function useUnifiedConvexAuth() {
         if (opts?.forceRefreshToken) {
           const refreshed = await fetchTokenWithRetry(
             () => forceRefreshGuestSession(),
-            { source: "guest_token_refresh" },
+            {
+              source: "guest_token_refresh",
+              isTerminalNull: () => getGuestSessionRefusal() !== null,
+            },
           );
           setGuestToken(refreshed);
           return activate(refreshed);
@@ -259,7 +298,10 @@ export function useUnifiedConvexAuth() {
         // arguments and so never sets `forceRefreshToken`.
         const minted = await fetchTokenWithRetry(
           () => getOrCreateGuestSession().then((s) => s?.token ?? null),
-          { source: "guest_token_refresh" },
+          {
+            source: "guest_token_refresh",
+            isTerminalNull: () => getGuestSessionRefusal() !== null,
+          },
         );
         setGuestToken(minted);
         return activate(minted);
