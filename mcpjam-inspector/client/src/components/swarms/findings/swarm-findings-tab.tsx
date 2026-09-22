@@ -43,8 +43,6 @@ import {
   clampNarration,
   composeFindingsSummary,
   composeWireFindingsSummary,
-  deriveHonestyFootnotes,
-  wireFindingsFootnotes,
   type SwarmNarration,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
@@ -62,7 +60,6 @@ export function SwarmFindingsTab({
   generatedSummary,
   journeyFindings,
   journeyFindingsJob,
-  narration,
 }: {
   wave: SwarmWave;
   waveSignals: SwarmWaveSignals | null | undefined;
@@ -136,18 +133,6 @@ export function SwarmFindingsTab({
     summary.kind === "not_launched" || journeyFindings
       ? null
       : clampNarration(generatedSummary);
-  const footnotes = useMemo(
-    () =>
-      journeyFindings
-        ? wireFindingsFootnotes(journeyFindings)
-        : deriveHonestyFootnotes({
-            narration,
-            signals: waveSignals,
-            hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
-            launch: model.launch,
-          }),
-    [waveSignals, wave.runs, model.launch, journeyFindings, narration],
-  );
 
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
   // alphabetically, so a live wave adding a persona would shift indices under
@@ -219,7 +204,6 @@ export function SwarmFindingsTab({
           summary={summary.lines}
           recommendation={recommendation}
           narration={waveProse}
-          footnotes={footnotes}
         />
       </div>
     );
@@ -243,7 +227,6 @@ export function SwarmFindingsTab({
         summary={summary.lines}
         recommendation={recommendation}
         narration={waveProse}
-        footnotes={footnotes}
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">

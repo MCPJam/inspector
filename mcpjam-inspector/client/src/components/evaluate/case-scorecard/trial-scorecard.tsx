@@ -15,14 +15,19 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
  * with the trial's result beside it. Same model, same labels, same
  * provenance — so "what I asked for" and "what happened" line up row for row.
  *
- * LAYOUT. One column, one section per stage of the user-value chain, in chain
- * order. A section's heading carries the stage's state word from the verified
- * chain; under it, at most one sentence about the stage as a whole (the AI
- * note, else the recorded floor, else the chain's own reason for a failure
- * no row explains); then the evaluators that grade that stage, each as an
- * EXPECTED / ACTUAL pair. Nothing is split by where a check came from: a
+ * LAYOUT. The chain's six links as a rail down the left, one stage open
+ * beside it. The open section's heading carries that stage's state word from
+ * the verified chain; under it, at most one sentence about the stage as a
+ * whole (the AI note, else the recorded floor, else the chain's own reason for
+ * a failure no row explains); then the evaluators that grade that stage, each
+ * as an EXPECTED / ACTUAL pair. Nothing is split by where a check came from: a
  * default check and an authored one grade the same stage, so they file
  * together.
+ *
+ * The rail needs a verified chain to be a rail — six links whose states came
+ * from somewhere. Without one there is nothing to hang the sections on and no
+ * break to open at, so they stack instead, which is also what the authoring
+ * pane does before a run exists.
  *
  * The judge's row hosts the existing review panel as its BODY rather than
  * reimplementing it, which is what keeps the blind-label protocol intact: the
@@ -30,7 +35,7 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
  * so the score rows below hide too.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
@@ -56,7 +61,11 @@ import {
   type JoinedScorecardRow,
 } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
-import { judgeDecidedStage } from "../stage-trial-model";
+import { StageRail, buildStageRailCells } from "./stage-rail";
+import {
+  defaultSelectedTrialStage,
+  judgeDecidedStage,
+} from "../stage-trial-model";
 import { TrialScorecardRow } from "./trial-scorecard-row";
 import { reportAvailability } from "./report-availability";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
@@ -104,6 +113,45 @@ function chainReasonSentence(row: StageResultRow | undefined): string | null {
   if (!row || row.state !== "failed" || !row.reason) return null;
   const reason = STAGE_REASON_LABELS[row.reason];
   return reason ? `Failed because ${reason}.` : null;
+}
+
+/**
+ * Which stage the rail opens on, before the reader has chosen one.
+ *
+ * PURE, and derived at render: on the trace pane the chain arrives after mount,
+ * so an opening computed once from an empty chain would open `01` on every
+ * iteration and never on the break.
+ */
+export function openingStage({
+  chain,
+  stages,
+  judgeHidden,
+  maskedStage,
+}: {
+  chain: EvalRunDecisionChain | null | undefined;
+  /** The stages that have a section, in chain order. */
+  stages: readonly UserValueStage[];
+  judgeHidden: boolean;
+  maskedStage: UserValueStage | null;
+}): UserValueStage | null {
+  const shown = (stage: UserValueStage | null | undefined) =>
+    stage && stages.includes(stage) ? stage : null;
+  // Blind review outranks the break. The judge row and its label control live
+  // in User value's section, and a reviewer who has to go and find it labels a
+  // different thing on every iteration. The choice is a RULE, so it leaks
+  // nothing about whether the judge is the stage that failed.
+  if (judgeHidden) {
+    return shown(maskedStage) ?? shown("userValue") ?? shown(stages[0]);
+  }
+  if (!chain || chain.status !== "verified") return shown(stages[0]);
+  // The contract's own first break, never re-derived here.
+  const atBreak = shown(defaultSelectedTrialStage(chain));
+  if (atBreak) return atBreak;
+  // Nothing broke, so open the END of the chain: the question a reader brings
+  // to a delivered iteration is whether the request was satisfied, not whether
+  // the session connected. Where the story finished, not a claim about it.
+  const last = chain.stages[chain.stages.length - 1]?.stage;
+  return shown(last) ?? shown(stages[0]);
 }
 
 export function TrialScorecard({
@@ -210,6 +258,14 @@ export function TrialScorecard({
       ));
 
   const summary = summarizeTrialScorecard(groups);
+
+  /**
+   * The stage the reader picked off the rail, or `null` for "has not picked" —
+   * the opening is then derived at render. A different iteration is a different
+   * chain, so a carried selection would open a stage this one never broke at.
+   */
+  const [chosenStage, setChosenStage] = useState<UserValueStage | null>(null);
+  useEffect(() => setChosenStage(null), [iteration?._id]);
 
   /**
    * Blind review masks ONE stage, and only when the judge decided it. The
@@ -321,6 +377,26 @@ export function TrialScorecard({
     ];
   });
 
+  /**
+   * A rail needs a verified chain behind it: six links whose states came from
+   * somewhere, and a first break to open at. Without one, six neutral dots
+   * hiding five of six sections is a worse answer than the stack.
+   */
+  const railed = chain?.status === "verified" && sections.length > 0;
+  const sectionStages = sections.map((section) => section.stage);
+  const selectedStage =
+    chosenStage && sectionStages.includes(chosenStage)
+      ? chosenStage
+      : openingStage({
+          chain,
+          stages: sectionStages,
+          judgeHidden,
+          maskedStage,
+        });
+  const visibleSections = railed
+    ? sections.filter((section) => section.stage === selectedStage)
+    : sections;
+
   const inProgress =
     isRunning ||
     iteration?.status === "pending" ||
@@ -338,14 +414,21 @@ export function TrialScorecard({
         <p className="text-sm text-muted-foreground">
           Run in progress. The report will appear when it finishes.
         </p>
-        <div className="space-y-6" aria-hidden="true">
-          {Array.from({ length: 3 }, (_, index) => (
-            <div key={index} className="space-y-3">
-              <Skeleton className="h-6 w-40" />
-              <Skeleton className="h-4 w-72" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ))}
+        {/* The shape it will settle into: a rail, and one stage beside it. */}
+        <div
+          className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]"
+          aria-hidden="true"
+        >
+          <div className="space-y-1">
+            {Array.from({ length: USER_VALUE_STAGES.length }, (_, index) => (
+              <Skeleton key={index} className="h-9 w-full" />
+            ))}
+          </div>
+          <div className="space-y-3">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-72" />
+            <Skeleton className="h-40 w-full" />
+          </div>
         </div>
       </div>
     );
@@ -359,6 +442,61 @@ export function TrialScorecard({
     : reportAvailability(report, {
         runSettled: iteration?.status === "completed",
       });
+
+  function renderSection(section: (typeof sections)[number]) {
+    const sentence = stageSentence(section.stage, section.rows);
+    return (
+      <ScorecardGroupSection
+        key={section.stage}
+        layout="report"
+        stage={section.stage}
+        label={section.label}
+        question={section.question}
+        state={stageState(section.stage)}
+        evidence={
+          sentence ? (
+            <p
+              className="text-sm leading-relaxed"
+              data-narrative-source={
+                sentence.source === "chain" ? "recorded" : sentence.source
+              }
+              {...(sentence.source === "recorded"
+                ? { "data-testid": "stage-floor" }
+                : sentence.source === "chain"
+                  ? { "data-testid": "stage-reason" }
+                  : {})}
+            >
+              <FindingText text={sentence.text} />
+            </p>
+          ) : undefined
+        }
+        footer={
+          section.stage === "userValue" && showUserValueEvidence ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="user-value-pass-evidence"
+            >
+              {userValueEvidence.length
+                ? userValueEvidence.join(" ")
+                : "This run recorded a pass without supporting evidence."}
+            </p>
+          ) : undefined
+        }
+      >
+        {section.rows.map((row) => (
+          <TrialScorecardRow
+            key={row.key}
+            layout="report"
+            row={row}
+            body={row.provenance === "judge" ? judgeSlot : undefined}
+            hideJudgeResult={judgeHidden}
+            syncedStepId={syncedStepId}
+            onSyncStep={onSyncStep}
+          />
+        ))}
+      </ScorecardGroupSection>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
@@ -388,60 +526,24 @@ export function TrialScorecard({
             {availability.line}
           </p>
         )}
-        {sections.map((section) => {
-          const sentence = stageSentence(section.stage, section.rows);
-          return (
-            <ScorecardGroupSection
-              key={section.stage}
-              layout="report"
-              stage={section.stage}
-              label={section.label}
-              question={section.question}
-              state={stageState(section.stage)}
-              evidence={
-                sentence ? (
-                  <p
-                    className="text-sm leading-relaxed"
-                    data-narrative-source={
-                      sentence.source === "chain" ? "recorded" : sentence.source
-                    }
-                    {...(sentence.source === "recorded"
-                      ? { "data-testid": "stage-floor" }
-                      : sentence.source === "chain"
-                        ? { "data-testid": "stage-reason" }
-                        : {})}
-                  >
-                    <FindingText text={sentence.text} />
-                  </p>
-                ) : undefined
-              }
-              footer={
-                section.stage === "userValue" && showUserValueEvidence ? (
-                  <p
-                    className="text-xs text-muted-foreground"
-                    data-testid="user-value-pass-evidence"
-                  >
-                    {userValueEvidence.length
-                      ? userValueEvidence.join(" ")
-                      : "This run recorded a pass without supporting evidence."}
-                  </p>
-                ) : undefined
-              }
-            >
-              {section.rows.map((row) => (
-                <TrialScorecardRow
-                  key={row.key}
-                  layout="report"
-                  row={row}
-                  body={row.provenance === "judge" ? judgeSlot : undefined}
-                  hideJudgeResult={judgeHidden}
-                  syncedStepId={syncedStepId}
-                  onSyncStep={onSyncStep}
-                />
-              ))}
-            </ScorecardGroupSection>
-          );
-        })}
+        {railed ? (
+          <div className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]">
+            <StageRail
+              cells={buildStageRailCells({
+                stages: sectionStages,
+                rows: chainRows,
+                maskedStage,
+              })}
+              selected={selectedStage}
+              onSelect={setChosenStage}
+            />
+            <div className="min-w-0 space-y-6">
+              {visibleSections.map(renderSection)}
+            </div>
+          </div>
+        ) : (
+          visibleSections.map(renderSection)
+        )}
         {!judgeHidden ? nextQuestionSlot : null}
       </section>
 
