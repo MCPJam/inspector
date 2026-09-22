@@ -13,6 +13,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
+- **Swarm Confirm now names the target for every swarm, including reuse-only ones** — the **Runs on …** line previously appeared only when a swarm had newly authored goals. A swarm built entirely from existing personas now shows the same line, so the launch target is visible before you approve the spend.
+
+- **Swarm Confirm shows a move notice when reused goals will run somewhere new** — if a persona's goals were authored against one target and this launch will run them against a different one, Confirm lists how many goals are affected and what they were written for. The notice adds a **Different client.** or **Different server group.** callout when the move crosses those boundaries, and a note that the goals were written for another server's tools when the server group changes.
+
+- **Duplicate environment names are disambiguated with a `#n` suffix** — when a project has two environments with the same name, both the environment picker and the Confirm screen append `#1`, `#2`, and so on. The suffix is stable and keyed to the environment's identity, not its position in a list, so the same number appears on every screen that names the environment.
+
 - **Session flow columns can now be reordered and hidden** — drag any column header in the Session flow Sankey to move it next to a different neighbor. Click the **×** on a column header to hide it, and use the **+** menu at the end of the header row to restore hidden columns or add a new yes/no question. Column order and visibility are saved per surface in the browser so the layout persists across page loads.
 
 - **Adding a yes/no question opens a modal** — clicking **Add question** in the Session flow now opens a dialog instead of an inline form in the column header. The dialog has labeled fields for the column label and the yes/no question text.
