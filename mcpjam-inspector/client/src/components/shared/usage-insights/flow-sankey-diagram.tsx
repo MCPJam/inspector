@@ -670,8 +670,11 @@ function SankeyColumnHeaders<S extends string>({
           onDragStart({ active }) {
             return `Picked up the ${stageTitles[active.id as S] ?? active.id} column`;
           },
-          onDragOver() {
-            return;
+          // Silent on purpose: the columns hold position while a header is
+          // dragged, so there is no intermediate move to announce. dnd-kit
+          // types this as `string | undefined`, not `void`.
+          onDragOver(): string | undefined {
+            return undefined;
           },
           onDragEnd({ active, over }) {
             const name = stageTitles[active.id as S] ?? String(active.id);
