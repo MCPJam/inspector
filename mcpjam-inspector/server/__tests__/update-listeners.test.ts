@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// The same `path` the code under test uses, for the same reason: the marker
+// path has to be built, not spelled. See `MARKER` below.
+import path from "path";
 
 const {
   appState,
@@ -1146,7 +1149,15 @@ describe("install refused by Electron", () => {
     lastLoadedModule = null;
   });
 
-  const MARKER = "/tmp/userData/.install-update-on-relaunch";
+  // Built with `path.join`, not written out, because that is what
+  // `relaunchMarkerPath()` does — and `path.join` is platform-dependent while
+  // a literal is not. The `fsState.files` mock is keyed by the raw string the
+  // source hands it, so on Windows the source wrote
+  // `\tmp\userData\.install-update-on-relaunch` while this constant still said
+  // `/tmp/...`, and every marker assertion in this block failed there while
+  // passing in CI. A suite that only holds on the CI runner's OS is one nobody
+  // can run before pushing.
+  const MARKER = path.join("/tmp/userData", ".install-update-on-relaunch");
   const refusedError = () =>
     new Error("No update available, can't quit and install");
 
