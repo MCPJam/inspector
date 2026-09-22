@@ -277,7 +277,7 @@ When a swarm session uses MCP App tools that return widgets, the session viewer 
 
 A run needs three things, all picked from the suite header:
 
-1. **Servers** — one or more attached to the suite. Cases can attach their own subsets if they only need part of the surface.
+1. **Servers** — for environment suites, servers come from the server group selected on the environment (plus any explicit plugin pins). If no group is picked, the suite bar shows a notice and the run starts with zero servers — cases that expect tool calls will fail. For non-environment suites, one or more servers must be attached directly to the suite.
 2. **Models** — the multi-model picker is the whole point. Each model produces its own iteration per case, so you can see where Claude passes and ChatGPT trips.
 3. **Run all** — kicks off every case × every model. **Run one** from a case row runs just that case.
 
