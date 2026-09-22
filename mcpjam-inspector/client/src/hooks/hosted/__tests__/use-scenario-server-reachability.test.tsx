@@ -52,3 +52,36 @@ describe("useScenarioServerReachability under StrictMode", () => {
     expect(call).toBe(3);
   });
 });
+
+describe("useScenarioServerReachability across a session change", () => {
+  it("aborts the previous session's probe instead of letting it retry", async () => {
+    const signals: AbortSignal[] = [];
+    validateMock.mockImplementation((_id, _a, _b, _c, signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      if (signals.length === 1) {
+        // The first session's probe never answers on its own.
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        });
+      }
+      return Promise.resolve({ ok: true } as never);
+    });
+
+    const { result, rerender } = renderHook(
+      ({ sessionKey }) =>
+        useScenarioServerReachability(SERVERS, true, sessionKey),
+      { initialProps: { sessionKey: "session_1" } },
+    );
+    await waitFor(() => expect(signals).toHaveLength(1));
+
+    rerender({ sessionKey: "session_2" });
+
+    await waitFor(() => expect(result.current.srv_1).toBe("reachable"));
+    expect(signals[0].aborted).toBe(true);
+    // Let the stale loop's rejection settle; it must not issue a retry.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(signals).toHaveLength(2);
+  });
+});

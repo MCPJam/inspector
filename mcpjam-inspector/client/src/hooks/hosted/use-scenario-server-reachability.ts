@@ -153,20 +153,24 @@ export function useScenarioServerReachability(
     isUnmountedRef.current = false;
     return () => {
       isUnmountedRef.current = true;
-      // A probe that outlives the page still holds a connection open on the
-      // server for the rest of its connect timeout, and nobody is left to read
-      // its answer.
+      // A probe that outlives the page, or the session it was started for,
+      // still holds a connection open on the server for the rest of its
+      // connect timeout, and nobody is left to read its answer.
       for (const controller of inFlightProbesRef.current) {
         controller.abort();
       }
       inFlightProbesRef.current.clear();
     };
-  }, []);
+  }, [sessionKey]);
 
   useEffect(() => {
     if (!enabled) return;
 
     const probeSessionKey = sessionKey;
+    // The tester moved to another scenario while this ran. The answer is about
+    // a session the page no longer shows, and its map was cleared.
+    const isStale = () =>
+      isUnmountedRef.current || probedSessionKeyRef.current !== probeSessionKey;
 
     for (const server of servers) {
       if (probedServerIdsRef.current.has(server.serverId)) continue;
@@ -201,8 +205,9 @@ export function useScenarioServerReachability(
             break;
           } catch (error) {
             // Nobody is left to read this verdict, and the abort that tore the
-            // probe down says nothing about the server.
-            if (isUnmountedRef.current) return;
+            // probe down says nothing about the server. Checked before the
+            // abort branch below, which would otherwise retry a stale probe.
+            if (isStale()) return;
 
             // StrictMode aborts this probe on the first cleanup and then
             // replays the effect, which skips the server because
@@ -257,16 +262,13 @@ export function useScenarioServerReachability(
             await delay(
               isBootstrap ? BOOTSTRAP_RETRY_DELAY_MS : PROBE_RETRY_DELAY_MS
             );
-            if (isUnmountedRef.current) return;
+            if (isStale()) return;
           } finally {
             inFlightProbesRef.current.delete(controller);
           }
         }
 
-        if (isUnmountedRef.current) return;
-        // The tester moved to another scenario while this ran. The answer is
-        // about a session the page no longer shows, and its map was cleared.
-        if (probedSessionKeyRef.current !== probeSessionKey) return;
+        if (isStale()) return;
         setReachabilityByServerId((previous) => ({
           ...previous,
           [server.serverId]: reachability,
