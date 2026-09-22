@@ -9,12 +9,18 @@ suite:
     run is safe against any deployment. This file owns the suite: edit it here
     and merge, because the hosted copy refuses case edits.
 target:
-  # The PRODUCTION worker, because that is the server this project has a
-  # consented OAuth connection for. A `mcpjam-mcp-staging` server would be the
-  # better target — a pre-deploy gate beats a post-deploy alarm — but the
-  # staging worker trusts a different AuthKit tenant than the staging API, so
-  # nothing can hold a working credential for it yet. Switch this one line once
-  # that is fixed; every case below is read-only and runs the same either way.
+  # The PRODUCTION worker, because that is the server this project already has a
+  # consented OAuth connection for.
+  #
+  # Staging is the better gate target — evaluating the candidate beats alarming
+  # about the promotion — and the promotion workflow points these same cases
+  # there with `--server mcpjam-mcp-staging`, so there is no second copy to
+  # drift. That target needs a saved server plus an OAuth consent, and it has
+  # not been exercised yet: `mcp-staging.mcpjam.com` serves MCP anonymously
+  # (initialize, 165 tools) but advertises the `dynamic-echo-14-staging` AuthKit
+  # tenant, while `staging.mcpjam.com/api/v1` is both pinned to a different
+  # tenant and behind Cloudflare Access. Whether an authenticated tool call
+  # survives that is untested, and one dispatch against staging answers it.
   servers:
     - name: mcpjam-mcp
 defaults:

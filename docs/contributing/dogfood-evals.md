@@ -74,11 +74,17 @@ Two deliberate choices, both written into the file:
 
 ## Things that will trip you up
 
-- **It targets production.** `mcp.mcpjam.com`, because that is the server this
-  project holds a consented OAuth connection for. Staging would be the better
-  target — a pre-deploy gate beats a post-deploy alarm — but the staging worker
-  trusts a different AuthKit tenant than the staging API, so nothing can hold a
-  working credential for it yet. When that is fixed it is a one-line change.
+- **The file targets production; the promotion gate targets staging.** The
+  saved target is `mcp.mcpjam.com`, because that is the server this project
+  holds a consented OAuth connection for. `deploy-mcp-prod.yml` points the same
+  cases at the staging worker with `--server mcpjam-mcp-staging` before it
+  promotes, so one file both gates the candidate and monitors production.
+  Staging has not been exercised yet: it serves MCP anonymously but advertises
+  the `dynamic-echo-14-staging` AuthKit tenant, while `staging.mcpjam.com/api/v1`
+  is pinned to a different tenant and sits behind Cloudflare Access. Whether an
+  authenticated tool call survives both is untested. Create the saved server,
+  consent, and dispatch the eval workflow against it once — that answers it for
+  a few cents, and guessing does not.
 - **Read a negative case's failure before believing it.** On a client with
   progressive tool discovery, the catalog meta-tools (`search_mcp_tools`,
   `load_mcp_tools`) still count as tool calls, so a negative case can fail for
