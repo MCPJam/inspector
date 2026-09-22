@@ -1321,22 +1321,38 @@ function OrganizationPage({
   const handleViewBilling = () => navigateToSection("billing");
 
   const reserveBillingTab = useCallback((): Window | null => {
+    // Electron rejects blank popup reservations in its main-process window
+    // handler. The eventual Stripe URL is opened through the desktop bridge
+    // instead, after the async request returns.
+    if (window.isElectron) return null;
     const reserved = window.open("", "_blank");
     if (reserved) reserved.opener = null;
     return reserved;
   }, []);
 
   const openBillingUrl = useCallback(
-    (
+    async (
       url: string,
       navigation: "new-tab" | "same-tab" = "new-tab",
       reservedTab: Window | null = null,
-    ): boolean => {
+    ): Promise<boolean> => {
       if (navigation === "same-tab") {
         (
           navigateBillingInSameTab ??
           ((nextUrl: string) => window.location.assign(nextUrl))
         )(url);
+        return true;
+      }
+
+      if (window.isElectron) {
+        if (window.electronAPI?.app?.openExternal) {
+          await window.electronAPI.app.openExternal(url);
+        } else {
+          // Older desktop builds do not expose the bridge, but their
+          // main-process window handler still opens safe HTTP(S) URLs in the
+          // system browser.
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
         return true;
       }
 
@@ -1366,7 +1382,7 @@ function OrganizationPage({
     });
     try {
       const billingUrl = await openPortal(getBillingReturnUrl());
-      if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
+      if (!(await openBillingUrl(billingUrl, "new-tab", reservedTab))) {
         throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
       trackBillingEvent("billing_handoff_succeeded", {
@@ -1409,7 +1425,7 @@ function OrganizationPage({
         getBillingReturnUrl(),
         targetBillingInterval,
       );
-      if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
+      if (!(await openBillingUrl(billingUrl, "new-tab", reservedTab))) {
         throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
       trackBillingEvent("billing_handoff_succeeded", {
@@ -1542,7 +1558,7 @@ function OrganizationPage({
     try {
       // Leaving paid entirely is a Stripe cancellation, not a plan change.
       const billingUrl = await openCancellationPortal(getBillingReturnUrl());
-      if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
+      if (!(await openBillingUrl(billingUrl, "new-tab", reservedTab))) {
         throw new BillingPopupBlockedError("Billing portal popup was blocked");
       }
       trackBillingEvent("billing_handoff_succeeded", {
@@ -1631,7 +1647,7 @@ function OrganizationPage({
       const billingUrl =
         result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
       options.onBeforeNavigate?.();
-      if (!openBillingUrl(billingUrl, navigation, reservedTab)) {
+      if (!(await openBillingUrl(billingUrl, navigation, reservedTab))) {
         throw new BillingPopupBlockedError("Billing popup was blocked");
       }
       trackBillingEvent("billing_handoff_succeeded", {
@@ -1738,7 +1754,7 @@ function OrganizationPage({
         const billingUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
         onCheckoutIntentNavigationStarted?.();
-        openBillingUrl(billingUrl, "same-tab");
+        await openBillingUrl(billingUrl, "same-tab");
         trackBillingEvent("billing_handoff_succeeded", {
           location: "organization_billing",
           flow: "plan_change",

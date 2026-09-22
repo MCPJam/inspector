@@ -37,7 +37,7 @@ export function BillingUpsellGate({
   canManageBilling,
   onNavigateToBilling,
 }: BillingUpsellGateProps) {
-  const viewedRef = useRef(false);
+  const viewedKeyRef = useRef<string | null>(null);
   const featureName = formatBillingFeatureName(feature);
   const description =
     FEATURE_DESCRIPTIONS[feature] ??
@@ -48,8 +48,10 @@ export function BillingUpsellGate({
     : `Not included on ${currentLabel}.`;
 
   useEffect(() => {
-    if (viewedRef.current) return;
-    viewedRef.current = true;
+    const surface = window.location.pathname;
+    const viewKey = `${organizationId ?? "unknown"}:${feature}:${surface}`;
+    if (viewedKeyRef.current === viewKey) return;
+    viewedKeyRef.current = viewKey;
     track("billing_upsell_gate_viewed", {
       location: "billing_upsell_gate",
       organization_id: organizationId,
@@ -57,7 +59,7 @@ export function BillingUpsellGate({
       current_plan: currentPlan,
       upgrade_plan: upgradePlan,
       can_manage_billing: canManageBilling,
-      surface: window.location.pathname,
+      surface,
     });
   }, [canManageBilling, currentPlan, feature, organizationId, upgradePlan]);
 

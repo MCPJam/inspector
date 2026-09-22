@@ -153,7 +153,9 @@ export function PaymentsHistorySection({
     isLoading: invoicesLoading,
     error: invoicesError,
   } = useInvoiceHistory(canViewInvoices ? organizationId : null);
-  const viewedRef = useRef(false);
+  const viewedContextRef = useRef<{
+    organizationId: string | null | undefined;
+  } | null>(null);
 
   const rows = useMemo<BillingRow[]>(() => {
     const merged: BillingRow[] = [
@@ -183,14 +185,14 @@ export function PaymentsHistorySection({
   const isLoading =
     (canViewHistory && topupsLoading) || (canViewInvoices && invoicesLoading);
 
-  // Fire the (top-up) view event once per mount when rows first load and aren't
-  // empty. Ref guard defeats StrictMode double-mount and the auth-resolve
-  // re-render that flips isLoading false.
+  // Fire the (top-up) view event once per organization when rows first load
+  // and aren't empty. The keyed guard defeats StrictMode/auth re-renders while
+  // still allowing client-side navigation between organizations to be counted.
   useEffect(() => {
-    if (viewedRef.current) return;
+    if (viewedContextRef.current?.organizationId === organizationId) return;
     if (isLoading) return;
     if (rows.length === 0) return;
-    viewedRef.current = true;
+    viewedContextRef.current = { organizationId };
     const topupList = topups ?? [];
     track("credit_topup_history_viewed", {
       location: "billing_payments_history",

@@ -2229,6 +2229,65 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
+  it("opens Stripe in the system browser from Electron without reserving a blank popup", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+    const previousIsElectron = window.isElectron;
+    const previousElectronAPI = window.electronAPI;
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(window, "open");
+    Object.defineProperty(window, "isElectron", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { app: { openExternal } },
+    });
+
+    try {
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]!);
+      fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
+
+      await waitFor(() =>
+        expect(openExternal).toHaveBeenCalledWith(
+          "https://stripe.test/checkout",
+        ),
+      );
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_handoff_succeeded",
+        expect.objectContaining({
+          flow: "plan_change",
+          outcome: "checkout_handoff",
+        }),
+      );
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "billing_flow_failed",
+        expect.objectContaining({ flow: "plan_change" }),
+      );
+    } finally {
+      openSpy.mockRestore();
+      Object.defineProperty(window, "isElectron", {
+        configurable: true,
+        value: previousIsElectron,
+      });
+      Object.defineProperty(window, "electronAPI", {
+        configurable: true,
+        value: previousElectronAPI,
+      });
+    }
+  });
+
   it("records failure instead of success when the checkout popup is blocked", async () => {
     const startPlanChange = vi.fn().mockResolvedValue({
       kind: "checkout",

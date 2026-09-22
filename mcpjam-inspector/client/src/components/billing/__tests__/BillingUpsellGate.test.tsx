@@ -38,6 +38,48 @@ describe("BillingUpsellGate", () => {
     });
   });
 
+  it("captures a new impression when the organization changes without a remount", () => {
+    const { rerender } = render(
+      <BillingUpsellGate
+        organizationId="org-1"
+        feature="scenarios"
+        currentPlan="free"
+        upgradePlan="team"
+        canManageBilling
+        onNavigateToBilling={vi.fn()}
+      />,
+    );
+
+    rerender(
+      <BillingUpsellGate
+        organizationId="org-1"
+        feature="scenarios"
+        currentPlan="free"
+        upgradePlan="team"
+        canManageBilling
+        onNavigateToBilling={vi.fn()}
+      />,
+    );
+    expect(trackMock).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <BillingUpsellGate
+        organizationId="org-2"
+        feature="scenarios"
+        currentPlan="free"
+        upgradePlan="team"
+        canManageBilling
+        onNavigateToBilling={vi.fn()}
+      />,
+    );
+
+    expect(trackMock).toHaveBeenCalledTimes(2);
+    expect(trackMock).toHaveBeenLastCalledWith(
+      "billing_upsell_gate_viewed",
+      expect.objectContaining({ organization_id: "org-2" }),
+    );
+  });
+
   it("shows Upgrade and calls onNavigateToBilling for billing managers", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
