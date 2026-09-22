@@ -57,6 +57,12 @@ function parseRefreshMaterial(
     return null;
   }
   return {
+    ...(typeof raw.connectionId === "string"
+      ? { connectionId: raw.connectionId }
+      : {}),
+    ...(typeof raw.expectedVaultObjectId === "string"
+      ? { expectedVaultObjectId: raw.expectedVaultObjectId }
+      : {}),
     authorizationServerUrl,
     serverUrl,
     oauthResourceUrl:
@@ -146,6 +152,7 @@ export function __resetPrivateAuthorizationServerMaterialCacheForTests(): void {
 }
 
 export type HostedOAuthRefreshOptions = {
+  connectionId?: string;
   accessScope?: "project_member" | "chat_v2";
   shareToken?: string;
   /**
@@ -204,6 +211,9 @@ export async function forceRefreshHostedOAuthAccessToken(
       body: JSON.stringify({
         projectId,
         serverId,
+        ...(options?.connectionId
+          ? { connectionId: options.connectionId }
+          : {}),
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -304,8 +314,10 @@ async function importRefreshedTokens(
   projectId: string,
   serverId: string,
   material: PrivateAuthorizationServerRefreshMaterial,
-  tokens: OAuthTokens
-): Promise<void> {
+  tokens: OAuthTokens,
+  connectionId?: string,
+): Promise<string | undefined> {
+  connectionId = material.connectionId ?? connectionId;
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) return;
 
@@ -322,6 +334,12 @@ async function importRefreshedTokens(
     body: JSON.stringify({
       projectId,
       serverId,
+      ...(connectionId
+        ? { connectionIntent: { kind: "replace", credentialId: connectionId } }
+        : {}),
+      ...(material.expectedVaultObjectId
+        ? { expectedVaultObjectId: material.expectedVaultObjectId }
+        : {}),
       serverUrl: material.serverUrl,
       ...(material.oauthResourceUrl
         ? { oauthResourceUrl: material.oauthResourceUrl }
@@ -341,6 +359,10 @@ async function importRefreshedTokens(
   if (!response.ok) {
     throw new Error(`import-tokens responded ${response.status}`);
   }
+  const body = await response.json().catch(() => null);
+  return typeof body?.vaultObjectId === "string"
+    ? body.vaultObjectId
+    : undefined;
 }
 
 /**
@@ -359,7 +381,11 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   serverId: string,
   options?: HostedOAuthRefreshOptions
 ): Promise<string> {
-  const cacheKey = `${subjectFingerprint(bearerToken)}:${projectId}:${serverId}`;
+  const cacheKey = `${subjectFingerprint(
+    bearerToken,
+  )}:${projectId}:${serverId}${
+    options?.connectionId ? `#${options.connectionId}` : ""
+  }`;
   let material: PrivateAuthorizationServerRefreshMaterial | null = null;
   // Material read back from the cache is a GUESS about a credential this
   // process does not own — see the failure handling below.
@@ -485,14 +511,25 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   });
 
   try {
-    await importRefreshedTokens(
+    const generation = await importRefreshedTokens(
       bearerToken,
       projectId,
       serverId,
       material,
-      tokensToStore
+      tokensToStore,
+      options?.connectionId,
     );
+    if (generation)
+      privateAuthorizationServerMaterialCache.set(cacheKey, {
+        ...material,
+        expectedVaultObjectId: generation,
+        refreshToken: tokensToStore.refresh_token ?? material.refreshToken,
+      });
   } catch (importError) {
+    if (material.expectedVaultObjectId || options?.connectionId) {
+      privateAuthorizationServerMaterialCache.delete(cacheKey);
+      throw importError;
+    }
     // THIS connect succeeds — the token in hand is good. But if the
     // authorization server rotated the refresh token, the stored one is now
     // dead and the next connect will see invalid_grant, clear, and prompt a
@@ -591,6 +628,7 @@ function translateLocalRefreshFailure(
 }
 
 export type HostedOAuthUnauthorizedHandlerArgs = {
+  connectionId?: string;
   bearerToken: string;
   projectId: string;
   serverId: string;
@@ -631,6 +669,7 @@ export function buildHostedOAuthUnauthorizedHandler(
           args.projectId,
           args.serverId,
           {
+            connectionId: args.connectionId,
             accessScope: args.accessScope,
             shareToken: args.shareToken,
             scenarioId: args.scenarioId,

@@ -1,3 +1,4 @@
+import oauthConnections from "./oauth-connections.js";
 import { Hono } from "hono";
 import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
@@ -220,6 +221,7 @@ web.route("/chat-v2", chatV2);
 web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/apps", apps);
+web.route("/oauth/connections", oauthConnections);
 web.route("/oauth", oauthWeb);
 web.route("/server", serverSecretsWeb);
 web.route("/guest-session", guestSession);

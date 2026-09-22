@@ -295,6 +295,37 @@ describe("composeWireFindingsSummary", () => {
   });
 });
 
+describe("long wire goal headlines", () => {
+  const title =
+    "They want to dig into a specific failing iteration within an eval run by reading its detailed trace. Done when they can see every invocation and outcome.";
+  it.each([true, false])(
+    "bounds the goal quote with a mechanism: %s",
+    (mechanism) => {
+      const wire = brokenWire();
+      wire.findings = wire.findings
+        .filter((row) => mechanism || row.basis !== "verifiedMechanism")
+        .map((row) => ({
+          ...row,
+          goal: { ...row.goal, title },
+          disposition: "goalMissed" as const,
+          tone: "fail" as const,
+          chainStage: null,
+          chainStageState: null,
+          chainStageBasis: "unmeasured" as const,
+        }));
+      const model = derive(wire);
+      const text = composeWireFindingsSummary(wire, model, {
+        terminal: true,
+      }).lines.join(" ");
+      expect(text).toContain(
+        "They want to dig into a specific failing iteration within an eval…",
+      );
+      expect(text).not.toContain("Done when");
+      expect(model.personas[0].goals[0].title).toBe(title);
+    },
+  );
+});
+
 describe("waveNarration", () => {
   it("uses the same gate as the headline", () => {
     expect(

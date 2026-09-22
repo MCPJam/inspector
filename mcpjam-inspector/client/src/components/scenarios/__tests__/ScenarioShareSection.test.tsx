@@ -207,7 +207,7 @@ describe("ScenarioShareSection", () => {
     // The withheld copy, not just the absence of the link: asserting a path is
     // missing would stay green if the path shape ever changed under it.
     expect(screen.getByLabelText("Tester link")).toHaveTextContent(
-      "Withheld — this scenario can't run.",
+      "Withheld: this scenario can't run.",
     );
     expect(screen.getByTestId("scenario-copy-tester-link")).toBeDisabled();
     // Inviting mails the same link out, so it is gated too.

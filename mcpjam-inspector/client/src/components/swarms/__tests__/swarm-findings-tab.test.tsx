@@ -137,8 +137,18 @@ vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: () => <div data-testid="stub-insights-workbench" />,
 }));
 vi.mock("@/components/shared/actionable-insights/actionable-findings", () => ({
-  ActionableFindings: ({ surface }: { surface: { runId: string } }) => (
-    <div data-testid="actionable-findings-mount" data-run-id={surface.runId} />
+  ActionableFindings: ({
+    surface,
+    hideEmpty,
+  }: {
+    surface: { runId: string };
+    hideEmpty?: boolean;
+  }) => (
+    <div
+      data-testid="actionable-findings-mount"
+      data-run-id={surface.runId}
+      data-hide-empty={hideEmpty}
+    />
   ),
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
@@ -690,6 +700,10 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
       "data-run-id",
       wave().anchor.runId,
+    );
+    expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
+      "data-hide-empty",
+      "true",
     );
   });
 

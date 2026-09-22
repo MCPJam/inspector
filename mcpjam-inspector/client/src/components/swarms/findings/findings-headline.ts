@@ -414,17 +414,17 @@ export function deriveHonestyFootnotes(args: {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
     notes.push(
-      "Evaluator findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only: deterministic signals unavailable for this wave",
     );
   } else {
     if (!signals.terminal) {
-      notes.push("This swarm is still running — findings may change");
+      notes.push("This swarm is still running, so findings may change");
     }
     if (signals.truncated) {
-      notes.push("Session scan hit its cap — counts cover a subset");
+      notes.push("Session scan hit its cap, so counts cover a subset");
     }
     if (signals.lowConfidence) {
-      notes.push("Most sessions are unanalyzed — treat counts as partial");
+      notes.push("Most sessions are unanalyzed, so treat counts as partial");
     }
   }
   // Partial launch. Failed-to-launch counts used to chip here; they repeated
@@ -568,7 +568,7 @@ function personaGoalLine(rows: readonly SwarmJourneyFinding[]): string | null {
     names.length > 1
       ? `${names[0]} and ${plural(names.length - 1, "other persona")}`
       : names[0];
-  return `"${lead[1].title}" for ${who}.`;
+  return `"${shortenGoalTitle(lead[1].title, 12)}" for ${who}.`;
 }
 
 /**
@@ -632,8 +632,10 @@ export function composeWireFindingsSummary(
       if (!goal) continue;
       const lines = [
         kind === "broken"
-          ? `"${goal.title}" broke for ${persona.name}.`
-          : `"${goal.title}" showed friction for ${persona.name}.`,
+          ? `"${shortenGoalTitle(goal.title, 12)}" broke for ${persona.name}.`
+          : `"${shortenGoalTitle(goal.title, 12)}" showed friction for ${
+              persona.name
+            }.`,
       ];
       const feeling = feelingLine(persona);
       if (feeling) lines.push(feeling);
