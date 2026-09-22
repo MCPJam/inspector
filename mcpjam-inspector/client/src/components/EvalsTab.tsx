@@ -700,7 +700,7 @@ function EvalsTabContent({
       if (intent === "edit_config" && isCiOwnedSuite(entry.suite)) {
         throw createInspectorCommandClientError(
           "invalid_request",
-          `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+          `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running and deleting it are still available.`,
         );
       }
       return entry;

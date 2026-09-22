@@ -855,7 +855,7 @@ function EvaluateTabContent({
           "invalid_request",
           `Suite "${suiteDisplayName(
             entry.suite,
-          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running and deleting it are still available.`,
         );
       }
       return entry;

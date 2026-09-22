@@ -59,6 +59,21 @@ describe("ConfirmationDialogs — deleting a CI-owned suite", () => {
     expect(screen.getByText(/managed by CI/i)).toBeInTheDocument();
   });
 
+  /*
+   * NOT CI-owned, and the notice still has to appear. A UI-authored suite CI
+   * reports INTO keeps its own cases — nothing recreates them — but its run
+   * history is CI's, and the switcher stopped withholding delete for it, so
+   * this dialog is the only place left that can say so.
+   */
+  it("warns about lost CI history on a suite CI merely reported into", () => {
+    renderDialogs(makeSuite({ lastSdkRunAt: 123 }));
+
+    expect(
+      screen.getByText(/reported runs into this suite/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/managed by CI/i)).not.toBeInTheDocument();
+  });
+
   it("says none of it for an app-authored suite", () => {
     renderDialogs(makeSuite());
 
