@@ -17,10 +17,10 @@ import {
 } from "@/hooks/useInsightsFlowController";
 import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
-import { stageOrderStorageKey } from "@/components/shared/usage-insights/sankey-stage-order";
 import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
+import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
@@ -74,10 +74,11 @@ interface InsightsWorkbenchProps {
    * the pane and scroll internally. User Testing mounts the workbench inside an
    * `absolute inset-0` box and relies on this.
    *
-   * `"scroll"` lets findings use a fixed rail (`max-h-[26rem]`) while the
-   * Sankey fills the leftover parent and scrolls its own columns. The page
-   * must not grow with the SVG. The owner still uses `overflow-y-auto` so
-   * a tall findings rail can scroll past.
+   * `"scroll"` lets the body grow to its natural height and the OWNING
+   * container scroll — the Sankey renders at full content height (no internal
+   * scroll), so on a swarm with many themes the whole diagram is reachable by
+   * scrolling the page instead of dragging a cramped inner window. The owner
+   * must make its container scrollable (`overflow-y-auto`).
    */
   bodyLayout?: "fill" | "scroll";
   /**
@@ -341,16 +342,24 @@ export function InsightsWorkbench({
   // body wired to a cohort that does not exist.
   if (!scope) return null;
 
-  const orderKey = stageOrderStorageKey(scope);
-
   const journeyRunIds =
     scope.kind === "swarm" && scope.journeyRunIds?.length
       ? scope.journeyRunIds
       : undefined;
 
-  // Session flow | Clusters sit in the chart header, not in Findings.
+  // Freshness + Session flow | Clusters sit in the chart header (next to the
+  // Sankey / topic-map toolbar), not in Findings.
   const viewChrome = (
     <div className="flex flex-wrap items-center justify-end gap-2">
+      <ErrorBoundary key={cohortKey} fallback={null}>
+        <InsightsFreshnessChip
+          scope={scope}
+          analysis={breakdown?.analysis}
+          onRebuild={handleRebuild}
+          rebuildBusy={rebuildBusy}
+          testId={`${testIdPrefix}-freshness-chip`}
+        />
+      </ErrorBoundary>
       <InsightsViewToggle
         view={flow.view}
         onChange={handleViewChange}
@@ -386,8 +395,13 @@ export function InsightsWorkbench({
     ) : null;
 
   const sankeyBlock = (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={cn(
+        "flex flex-col",
+        fillBody && "h-full min-h-0 overflow-hidden",
+      )}
+    >
+      <div className={fillBody ? "min-h-0 flex-1 overflow-hidden" : undefined}>
         <ErrorBoundary
           key={cohortKey}
           fallback={
@@ -402,7 +416,6 @@ export function InsightsWorkbench({
               fillHeight={fillBody}
               scrollLayout={!fillBody}
               headerActions={viewChrome}
-              stageOrderKey={orderKey}
             />
           }
         >
@@ -418,7 +431,6 @@ export function InsightsWorkbench({
               fillHeight={fillBody}
               scrollLayout={!fillBody}
               headerActions={viewChrome}
-              stageOrderKey={orderKey}
             />
           ) : (
             <SessionQuestionFlow
@@ -479,21 +491,28 @@ export function InsightsWorkbench({
   const hasFindings = Boolean(recommendationsSlot);
 
   /**
-   * The body takes the pane it is given instead of growing past it. Clusters
-   * need that so the map's zoom controls stay on screen. Session flow needs
-   * it so a tall SVG cannot become a page-scroll through mid-ribbon — the
-   * chart fills this leftover column and scrolls under its own titles.
+   * Whether the body takes the pane it is given instead of growing past it.
+   *
+   * Always true in the fill layout. In the scroll layout it is true for the
+   * CLUSTERS VIEW ONLY: that view has nothing of its own to scroll — the map
+   * pans and the cluster rail scrolls itself — so a body taller than the
+   * window would only push the map's own zoom controls below the fold and
+   * leave the viewer scrolling a page to reach a canvas. The scroll layout
+   * exists for the Sankey, whose many themes really do need the page.
    */
-  const pinBodyToPane = true;
+  const pinBodyToPane = fillBody || flow.view === "clusters";
 
   return (
     <div
       className={cn(
         "flex flex-col gap-2",
         // `h-full` fills the fill layout's `absolute inset-0` box; `flex-1`
-        // fills the scroll layout's leftover column. `min-h-0` lets the
-        // Sankey shrink to that pane and scroll inside it.
-        fillBody ? "h-full min-h-0 overflow-hidden" : "min-h-0 flex-1 overflow-hidden",
+        // fills the scroll layout's column, whose `min-h-full` makes the
+        // pane the scroll viewport. Without `min-h-0` there — the Sankey's
+        // case — `flex-1` only ever adds height, so that diagram still grows
+        // past the pane and the owning container scrolls it.
+        fillBody ? "h-full" : "flex-1",
+        pinBodyToPane && "min-h-0 overflow-hidden",
         className,
       )}
       data-testid={`${testIdPrefix}-panel`}

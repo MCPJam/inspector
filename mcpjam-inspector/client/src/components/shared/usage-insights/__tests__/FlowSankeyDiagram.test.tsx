@@ -72,14 +72,11 @@ describe("FlowSankeyDiagram", () => {
       />,
     );
 
-    const headers = screen.getByTestId("sankey-column-headers");
-    expect(headers).toHaveTextContent(/Case/);
-    expect(headers).toHaveTextContent(/Route/);
-    expect(headers).toHaveTextContent(/Reason/);
-    const xs = Array.from(headers.querySelectorAll("[data-column-x]")).map(
-      (node) => Number(node.getAttribute("data-column-x")),
+    const headers = Array.from(document.querySelectorAll("text")).filter((t) =>
+      ["CASE", "ROUTE", "REASON"].includes((t.textContent ?? "").toUpperCase()),
     );
-    expect(xs).toHaveLength(3);
+    expect(headers).toHaveLength(3);
+    const xs = headers.map((h) => Number(h.getAttribute("x")));
     expect(xs).toEqual([...xs].sort((a, b) => a - b));
     expect(new Set(xs).size).toBe(3);
     expect(
@@ -87,69 +84,6 @@ describe("FlowSankeyDiagram", () => {
         name: /Failed trials from case through route to reason/,
       }),
     ).toBeInTheDocument();
-    expect(headers).not.toHaveAttribute("data-reorderable");
-  });
-
-  it("marks headers draggable when a reorder callback is provided", () => {
-    render(
-      <FlowSankeyDiagram
-        sankey={SANKEY}
-        stages={STAGES}
-        stageTitles={TITLES}
-        stageColors={COLORS}
-        unitNoun="trials"
-        ariaLabel="Failed trials from case through route to reason"
-        onReorderStages={() => {}}
-      />,
-    );
-    const headers = screen.getByTestId("sankey-column-headers");
-    expect(headers).toHaveAttribute("data-reorderable", "true");
-    expect(headers.querySelectorAll("[data-column-id]")).toHaveLength(3);
-  });
-
-  it("does not apply sortable transforms that would shuffle pinned headers", () => {
-    render(
-      <FlowSankeyDiagram
-        sankey={SANKEY}
-        stages={STAGES}
-        stageTitles={TITLES}
-        stageColors={COLORS}
-        unitNoun="trials"
-        ariaLabel="Failed trials from case through route to reason"
-        onReorderStages={() => {}}
-      />,
-    );
-    const items = Array.from(
-      screen.getByTestId("sankey-column-headers").querySelectorAll<HTMLElement>(
-        "[data-column-id]",
-      ),
-    );
-    expect(items).toHaveLength(3);
-    const lefts = items.map((item) => item.style.left);
-    expect(lefts.every((left) => left.length > 0)).toBe(true);
-    expect(new Set(lefts).size).toBe(3);
-    for (const item of items) {
-      expect(item.style.transform).toBe("");
-    }
-  });
-
-  it("keeps dnd-kit announcements out of the visible chart", () => {
-    render(
-      <FlowSankeyDiagram
-        sankey={SANKEY}
-        stages={STAGES}
-        stageTitles={TITLES}
-        stageColors={COLORS}
-        unitNoun="trials"
-        ariaLabel="Failed trials from case through route to reason"
-        onReorderStages={() => {}}
-      />,
-    );
-    const a11y = screen.getByTestId("sankey-dnd-a11y");
-    expect(a11y).toHaveClass("sr-only");
-    expect(
-      screen.queryByText(/Draggable item .+ was dropped over/i),
-    ).not.toBeInTheDocument();
   });
 
   it("does not paint a discordant warning gradient when highlight is off", () => {

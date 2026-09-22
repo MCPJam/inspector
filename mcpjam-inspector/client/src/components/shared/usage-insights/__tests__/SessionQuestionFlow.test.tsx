@@ -206,9 +206,6 @@ describe("question columns", () => {
     expect(screen.getByLabelText("Yes/no question")).toHaveValue(
       "Did login fail?",
     );
-    expect(screen.getByTestId("sankey-column-headers")).not.toHaveAttribute(
-      "data-reorderable",
-    );
     await user.clear(screen.getByLabelText("Column label"));
     await user.type(screen.getByLabelText("Column label"), "Login{Enter}");
     await waitFor(() =>
@@ -222,77 +219,6 @@ describe("question columns", () => {
     expect(
       screen.getByRole("button", { name: "Remove Auth wall column" }),
     ).toHaveAttribute("type", "button");
-  });
-  it("sits the add control next to the last column header", () => {
-    mocks.catalog = {
-      questions: [
-        {
-          id: "q1",
-          version: 2,
-          label: "Drawing",
-          question: "Did they draw?",
-          createdAt: 1,
-        },
-      ],
-      cap: 3,
-      canEdit: true,
-    };
-    render(
-      <SessionQuestionFlow
-        {...props}
-        scope={{ kind: "scenario", scenarioId: "s" }}
-        testId="questions"
-      />,
-    );
-    const add = screen.getByRole("button", { name: "Add question column" });
-    const lastHeader = screen.getByRole("button", { name: "Drawing" });
-    expect(add.closest("[data-column-x]")).toBe(
-      lastHeader.closest("[data-column-x]"),
-    );
-    expect(add.className).not.toMatch(/ml-auto/);
-  });
-  it("opens a yes/no modal instead of an inline create form", async () => {
-    const user = userEvent.setup();
-    mocks.catalog = {
-      questions: [
-        {
-          id: "q1",
-          version: 2,
-          label: "Drawing",
-          question: "Did they draw?",
-          createdAt: 1,
-        },
-      ],
-      cap: 3,
-      canEdit: true,
-    };
-    render(
-      <SessionQuestionFlow
-        {...props}
-        scope={{ kind: "scenario", scenarioId: "s" }}
-        testId="questions"
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: "Add question column" }));
-    const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveAccessibleName("Add a yes/no question");
-    expect(dialog).toHaveTextContent("Answers are only Yes or No");
-    expect(screen.getByTestId("sankey-column-headers")).not.toHaveTextContent(
-      "Did the user",
-    );
-    await user.type(screen.getByLabelText("Column label"), "Auth wall");
-    await user.type(
-      screen.getByLabelText("Yes/no question"),
-      "Did login fail?",
-    );
-    await user.click(screen.getByRole("button", { name: "Add" }));
-    await waitFor(() =>
-      expect(mocks.mutation).toHaveBeenCalledWith({
-        scenarioId: "s",
-        label: "Auth wall",
-        question: "Did login fail?",
-      }),
-    );
   });
   it("readers get no authoring controls", () => {
     mocks.catalog = {
@@ -317,9 +243,7 @@ describe("question columns", () => {
     expect(
       screen.queryByRole("button", { name: "Add question column" }),
     ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Remove Auth wall column" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Auth wall" })).toBeDisabled();
   });
 });

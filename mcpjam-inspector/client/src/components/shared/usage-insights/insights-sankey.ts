@@ -1,6 +1,5 @@
 import type {
   InsightsSankey,
-  InsightsSankeyLink,
   InsightsSankeyNode,
   SankeyStage,
 } from "@/hooks/useUsageInsights";
@@ -9,8 +8,6 @@ import type { InsightsSelection } from "@/hooks/scenario-usage-filters";
 /** Mirrors `SANKEY_UNLABELED` / `SANKEY_OTHER` in the backend's `breakdowns.ts`. */
 export const SANKEY_UNLABELED = "__unlabeled__";
 export const SANKEY_OTHER = "__other__";
-/** Question column: no yes/no yet. Distinct from `__unlabeled__` (no theme). */
-export const SANKEY_UNANSWERED = "__unanswered__";
 
 export const STAGE_ORDER: readonly SankeyStage[] = [
   "goal",
@@ -30,20 +27,13 @@ export const STAGE_TITLES: Record<SankeyStage, string> = {
  * What a node is called.
  *
  * For a real theme this is whatever the clustering named it — already written
- * for people, so it is passed through untouched. Sentinels get text from here
- * because neither is a theme nor a yes/no.
- *
- * Unanswered questions stay "Not answered" once analysis has settled. While
- * sessions are still being scored, callers pass `analysisInFlight` so the
- * same bucket reads as work in progress instead of a finished no.
+ * for people, so it is passed through untouched. Only the two sentinels get
+ * text from here, because neither is a theme.
  */
 export function stageValueLabel<S extends string = SankeyStage>(
   node: InsightsSankeyNode<S>,
-  analysisInFlight = false,
 ): string {
   if (node.key === SANKEY_UNLABELED) return "Not analyzed";
-  if (node.key === SANKEY_UNANSWERED)
-    return analysisInFlight ? "Analyzing…" : "Not answered";
   return node.label;
 }
 
@@ -174,175 +164,6 @@ const NODE_GAP = 15;
 const PAD = 10;
 
 /**
- * Recount ribbons for the columns as they are shown, not as they were stored.
- *
- * The analysis only emits a band between catalog neighbors (goal→behavior,
- * outcome→sentiment, …). After a drag those are often not the columns sitting
- * next to each other, so a naive filter leaves the moved column empty. The
- * stored bands are one flow, so they peel into session paths; each path still
- * names a theme in every column, and those names are what a new neighbor pair
- * needs.
- */
-export function linksBetweenDisplayedStages<S extends string>(
-  sankey: InsightsSankey<S>,
-  stages: readonly S[],
-): InsightsSankeyLink[] {
-  const byId = new Map(sankey.nodes.map((node) => [node.id, node]));
-  const paths = peelSankeyPaths(sankey, byId);
-  const totals = new Map<
-    string,
-    { source: string; target: string; count: number; discordantCount: number }
-  >();
-
-  for (let index = 0; index < stages.length - 1; index++) {
-    const left = stages[index];
-    const right = stages[index + 1];
-    for (const path of paths) {
-      const source = path.byStage.get(left);
-      const target = path.byStage.get(right);
-      if (!source || !target) continue;
-      const key = `${source}\0${target}`;
-      const current = totals.get(key) ?? {
-        source,
-        target,
-        count: 0,
-        discordantCount: 0,
-      };
-      current.count += path.count;
-      if (
-        (left === "outcome" && right === "sentiment") ||
-        (left === "sentiment" && right === "outcome")
-      ) {
-        current.discordantCount += path.discordantCount;
-      }
-      totals.set(key, current);
-    }
-  }
-
-  return [...totals.values()].map((link) =>
-    link.discordantCount
-      ? {
-          source: link.source,
-          target: link.target,
-          count: link.count,
-          discordantCount: link.discordantCount,
-        }
-      : { source: link.source, target: link.target, count: link.count },
-  );
-}
-
-function peelSankeyPaths<S extends string>(
-  sankey: InsightsSankey<S>,
-  byId: ReadonlyMap<string, InsightsSankey<S>["nodes"][number]>,
-): Array<{
-  count: number;
-  discordantCount: number;
-  byStage: Map<S, string>;
-}> {
-  const residual = new Map<string, number>();
-  const discordantResidual = new Map<string, number>();
-  const outgoing = new Map<string, string[]>();
-  const incoming = new Map<string, string[]>();
-
-  const edgeKey = (source: string, target: string) => `${source}\0${target}`;
-  for (const link of sankey.links) {
-    if (!byId.has(link.source) || !byId.has(link.target)) continue;
-    const key = edgeKey(link.source, link.target);
-    residual.set(key, (residual.get(key) ?? 0) + link.count);
-    if (link.discordantCount)
-      discordantResidual.set(
-        key,
-        (discordantResidual.get(key) ?? 0) + link.discordantCount,
-      );
-    const outs = outgoing.get(link.source) ?? [];
-    if (!outs.includes(link.target)) outs.push(link.target);
-    outgoing.set(link.source, outs);
-    const ins = incoming.get(link.target) ?? [];
-    if (!ins.includes(link.source)) ins.push(link.source);
-    incoming.set(link.target, ins);
-  }
-
-  const remainingOut = (id: string) =>
-    (outgoing.get(id) ?? []).some(
-      (target) => (residual.get(edgeKey(id, target)) ?? 0) > 0,
-    );
-  const remainingIn = (id: string) =>
-    (incoming.get(id) ?? []).some(
-      (source) => (residual.get(edgeKey(source, id)) ?? 0) > 0,
-    );
-  const pickOut = (id: string) =>
-    (outgoing.get(id) ?? []).find(
-      (target) => (residual.get(edgeKey(id, target)) ?? 0) > 0,
-    );
-  const pickIn = (id: string) =>
-    (incoming.get(id) ?? []).find(
-      (source) => (residual.get(edgeKey(source, id)) ?? 0) > 0,
-    );
-
-  const paths: Array<{
-    count: number;
-    discordantCount: number;
-    byStage: Map<S, string>;
-  }> = [];
-
-  while (true) {
-    const start =
-      sankey.nodes.find((node) => remainingOut(node.id) && !remainingIn(node.id))
-        ?.id ?? sankey.nodes.find((node) => remainingOut(node.id))?.id;
-    if (!start) break;
-
-    const chain = [start];
-    let cursor = start;
-    while (pickOut(cursor)) {
-      const next = pickOut(cursor)!;
-      chain.push(next);
-      cursor = next;
-    }
-    cursor = start;
-    while (pickIn(cursor)) {
-      const prev = pickIn(cursor)!;
-      chain.unshift(prev);
-      cursor = prev;
-    }
-
-    let count = Infinity;
-    let discordantCount = 0;
-    for (let index = 0; index < chain.length - 1; index++) {
-      const key = edgeKey(chain[index], chain[index + 1]);
-      count = Math.min(count, residual.get(key) ?? 0);
-    }
-    if (!Number.isFinite(count) || count <= 0) break;
-    for (let index = 0; index < chain.length - 1; index++) {
-      const key = edgeKey(chain[index], chain[index + 1]);
-      const left = byId.get(chain[index]);
-      const right = byId.get(chain[index + 1]);
-      const edgeDiscordant = discordantResidual.get(key) ?? 0;
-      if (
-        left &&
-        right &&
-        ((left.stage === "outcome" && right.stage === "sentiment") ||
-          (left.stage === "sentiment" && right.stage === "outcome"))
-      ) {
-        const take = Math.min(edgeDiscordant, count);
-        discordantCount += take;
-        if (edgeDiscordant)
-          discordantResidual.set(key, edgeDiscordant - take);
-      }
-      residual.set(key, (residual.get(key) ?? 0) - count);
-    }
-
-    const byStage = new Map<S, string>();
-    for (const id of chain) {
-      const node = byId.get(id);
-      if (node) byStage.set(node.stage, id);
-    }
-    paths.push({ count, discordantCount, byStage });
-  }
-
-  return paths;
-}
-
-/**
  * Lay the diagram out directly rather than through a chart library.
  *
  * Recharts' `Sankey` recomputes its own node order and offers no way to keep a
@@ -409,16 +230,12 @@ export function layoutSankey<S extends string>(
     }
   });
 
-  const stageIndexOf = (id: string) => {
-    const stage = sankey.nodes.find((node) => node.id === id)?.stage;
-    return stage == null ? -1 : stages.indexOf(stage);
-  };
-  // The server only stores neighbors in the catalog order. Dragging a column
-  // next to a new one would otherwise leave it blank. Peel the stored ribbons
-  // into session paths, then recount every pair that is side by side now.
-  const adjacent = linksBetweenDisplayedStages(sankey, stages);
+  // Ribbons stack in the same order their endpoints do, so bands never cross
+  // inside a single node's face.
+  const stageIndexOf = (id: string) =>
+    stages.indexOf(sankey.nodes.find((node) => node.id === id)!.stage);
   const orderOf = (id: string) => sankey.nodes.findIndex((n) => n.id === id);
-  const ordered = adjacent.sort(
+  const ordered = [...sankey.links].sort(
     (a, b) =>
       stageIndexOf(a.source) - stageIndexOf(b.source) ||
       orderOf(a.source) - orderOf(b.source) ||

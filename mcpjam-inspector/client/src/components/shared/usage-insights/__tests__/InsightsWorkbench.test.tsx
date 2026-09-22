@@ -32,6 +32,9 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
 
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
+// The workbench's freshness chip reads Convex directly. These suites render it
+// outside a provider, and the chip's own query is scenario-scoped (skipped on a
+// swarm scope), so a stub client is the whole requirement.
 vi.mock("convex/react", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -188,15 +191,12 @@ describe("InsightsWorkbench", () => {
       projectId: "proj-1",
     });
     expect(screen.getByTestId("goal-header")).toHaveTextContent("Goal");
-    expect(
-      screen.queryByTestId("swarm-insights-freshness-chip"),
-    ).not.toBeInTheDocument();
   });
 
   // bodyLayout is the contract this surface adds: "fill" (default) locks the
-  // body to the viewport (Sankey fills + clips), "scroll" lets findings sit
-  // in a rail while the Sankey fills the leftover parent. The wiring under
-  // test is that bodyLayout maps to the Sankey's fillHeight / fillRemaining.
+  // body to the viewport (Sankey fills + clips), "scroll" lets it grow to
+  // content height so the swarm tab owns the scroll. The wiring under test is
+  // that bodyLayout maps to the Sankey's fillHeight.
   it("fills the Sankey height in the default (fill) body layout", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.getByTestId("mock-sankey")).toHaveAttribute(

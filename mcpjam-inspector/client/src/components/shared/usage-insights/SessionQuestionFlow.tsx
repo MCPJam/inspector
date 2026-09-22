@@ -1,19 +1,10 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
-import { Label } from "@mcpjam/design-system/label";
 import {
   SESSION_QUESTIONS_API,
   type SessionQuestion,
@@ -24,7 +15,6 @@ import {
   SessionFlowSankey,
   type SessionFlowSankeyProps,
 } from "./SessionFlowSankey";
-import { stageOrderStorageKey } from "./sankey-stage-order";
 
 type ScopeArgs = { scenarioId?: string; projectId?: string };
 const listQuestions = makeFunctionReference<
@@ -48,21 +38,16 @@ export function SessionQuestionEditor({
   initial,
   onSave,
   onCancel,
-  layout = "inline",
-  submitLabel = "Save",
 }: {
   initial?: Pick<SessionQuestion, "label" | "question">;
   onSave: (draft: { label: string; question: string }) => Promise<void>;
   onCancel: () => void;
-  layout?: "inline" | "dialog";
-  submitLabel?: string;
 }) {
   const [label, setLabel] = useState(initial?.label ?? "");
   const [question, setQuestion] = useState(initial?.question ?? "");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
-  const dialog = layout === "dialog";
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (saving.current) return;
@@ -82,78 +67,6 @@ export function SessionQuestionEditor({
       setBusy(false);
     }
   }
-  const labelField = (
-    <Input
-      id={dialog ? "session-question-label" : undefined}
-      aria-label="Column label"
-      autoFocus
-      value={label}
-      maxLength={24}
-      disabled={busy}
-      onChange={(e) => setLabel(e.target.value)}
-      placeholder={dialog ? "Auth wall" : "Column label"}
-      className={dialog ? undefined : "h-7 text-xs"}
-    />
-  );
-  const questionField = (
-    <Input
-      id={dialog ? "session-question-text" : undefined}
-      aria-label="Yes/no question"
-      value={question}
-      maxLength={240}
-      disabled={busy}
-      onChange={(e) => setQuestion(e.target.value)}
-      placeholder="Did the user…?"
-      className={dialog ? undefined : "h-7 text-xs"}
-    />
-  );
-  const fields = dialog ? (
-    <>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="session-question-label">Column label</Label>
-        {labelField}
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="session-question-text">Yes/no question</Label>
-        {questionField}
-      </div>
-    </>
-  ) : (
-    <>
-      {labelField}
-      {questionField}
-    </>
-  );
-  const actions = dialog ? (
-    <DialogFooter>
-      <Button
-        type="button"
-        variant="ghost"
-        disabled={busy}
-        onClick={onCancel}
-      >
-        Cancel
-      </Button>
-      <Button type="submit" disabled={busy}>
-        {busy ? "Adding…" : submitLabel}
-      </Button>
-    </DialogFooter>
-  ) : (
-    <div className="flex gap-1">
-      <Button type="submit" size="sm" variant="ghost" disabled={busy}>
-        {busy ? "Saving…" : submitLabel}
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={busy}
-        onClick={onCancel}
-      >
-        Cancel
-      </Button>
-    </div>
-  );
   return (
     <form
       onSubmit={submit}
@@ -163,48 +76,47 @@ export function SessionQuestionEditor({
           onCancel();
         }
       }}
-      className={dialog ? "flex flex-col gap-4" : "flex flex-col gap-1 text-xs"}
+      className="flex flex-col gap-1 text-xs"
     >
-      {fields}
-      {actions}
+      <Input
+        aria-label="Column label"
+        autoFocus
+        value={label}
+        maxLength={24}
+        disabled={busy}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="Column label"
+        className="h-7 text-xs"
+      />
+      <Input
+        aria-label="Yes/no question"
+        value={question}
+        maxLength={240}
+        disabled={busy}
+        onChange={(e) => setQuestion(e.target.value)}
+        placeholder="Did the user…?"
+        className="h-7 text-xs"
+      />
+      <div className="flex gap-1">
+        <Button type="submit" size="sm" variant="ghost" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </Button>
+      </div>
       {error ? (
         <p role="alert" className="text-destructive">
           {error}
         </p>
       ) : null}
     </form>
-  );
-}
-
-function SessionQuestionDialog({
-  open,
-  onOpenChange,
-  onSave,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSave: (draft: { label: string; question: string }) => Promise<void>;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Add a yes/no question</DialogTitle>
-          <DialogDescription>
-            Answers are only Yes or No. Write the question so a session can be
-            scored that way.
-          </DialogDescription>
-        </DialogHeader>
-        {open ? (
-          <SessionQuestionEditor
-            layout="dialog"
-            submitLabel="Add"
-            onSave={onSave}
-            onCancel={() => onOpenChange(false)}
-          />
-        ) : null}
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -250,7 +162,7 @@ export function SessionQuestionFlow({
               disabled={!catalog.canEdit}
               title={q.question}
               onClick={() => setEditing(q.id)}
-              className="truncate text-xs font-semibold uppercase tracking-wider text-current disabled:cursor-default"
+              className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground disabled:cursor-default"
             >
               {q.label}
             </button>
@@ -281,28 +193,45 @@ export function SessionQuestionFlow({
           </div>
         );
     }
-  const canAddQuestion =
-    Boolean(catalog?.canEdit) &&
-    (catalog?.questions.length ?? 0) < (catalog?.cap ?? 0);
+  const create =
+    catalog?.canEdit && catalog.questions.length < catalog.cap ? (
+      editing === "new" ? (
+        <SessionQuestionEditor
+          onCancel={() => setEditing(null)}
+          onSave={async (draft) => {
+            await upsert({ ...args, ...draft });
+            setEditing(null);
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          aria-label="Add question column"
+          data-testid={`${testId}-add`}
+          onClick={() => setEditing("new")}
+          className="ml-auto flex text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="size-4" />
+        </button>
+      )
+    ) : undefined;
   return (
     <>
       <SessionFlowSankey
         {...props}
-        stageOrderKey={props.stageOrderKey ?? stageOrderStorageKey(scope)}
         questionHeaders={headers}
-        questionEditing={editing !== null && editing !== "new"}
-        onAddQuestion={canAddQuestion ? () => setEditing("new") : undefined}
+        questionCreate={create}
+        questionEditing={editing !== null}
       />
-      <SessionQuestionDialog
-        open={editing === "new"}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null);
-        }}
-        onSave={async (draft) => {
-          await upsert({ ...args, ...draft });
-          setEditing(null);
-        }}
-      />
+      {catalog?.questions.length ? (
+        <p
+          className="shrink-0 px-5 text-xs text-muted-foreground"
+          data-testid={`${testId}-coverage`}
+        >
+          Backfills answer up to the 500 most recent sessions. Older sessions
+          may be unanswered.
+        </p>
+      ) : null}
     </>
   );
 }
