@@ -8,6 +8,7 @@ import {
   stepsSchema,
   authoredEvalCaseSchema,
   authoredCaseBlockedReason,
+  authoringDraftCheckReason,
   type EvalAuthoringDraft,
   type TestStep,
 } from "@mcpjam/sdk/contract";
@@ -339,40 +340,11 @@ export function importedDraftBlockedBadge(
  * one is kept out of "Add all" and saved one at a time, deliberately.
  */
 export function draftCheckSummary(draft: GeneratedDraft): string | undefined {
-  const issues = draft.authoring?.issues ?? [];
-  if (!issues.length) return undefined;
-  const codes = new Set(issues.map((issue) => issue.code));
-  // A generated case has no document, so the imported wording ("Your document
-  // names tools this server does not have") described a file the reader never
-  // supplied, on the one surface where they could not go look at it.
-  const imported = Boolean(draft.authoring?.source);
-  const subject = imported ? "Your document" : "This case";
-  const clauses: string[] = [];
-  if (codes.has("unknown_tool"))
-    clauses.push("names tools this server does not have");
-  if (codes.has("invalid_arguments"))
-    clauses.push("calls a tool with arguments it does not take");
-  if (codes.has("unsupported_workflow"))
-    clauses.push("asks for something this server cannot do");
-  if (codes.has("missing_prerequisite"))
-    clauses.push("skips a step the case depends on");
-  if (codes.has("missing_evidence"))
-    clauses.push(
-      imported
-        ? "cites something the document does not show"
-        : "uses a value your server never returned",
-    );
-  const document = clauses.length
-    ? `${subject} ${clauses.join(", and ")}`
-    : undefined;
-  const outcome =
-    codes.has("missing_expectation") || codes.has("unclear_expectation")
-      ? "nothing here checks the outcome"
-      : undefined;
-  const both = [document, outcome].filter(Boolean).join(", and ");
-  return both
-    ? `${both}. Read the steps above before you save.`
-    : "MCPJam was unsure about this case. Read the steps above before you save.";
+  // The rule itself is in the SDK contract, because the API route applies the
+  // same one to decide what it may save unattended. Only the closing
+  // instruction is this surface's: an API caller has no steps "above".
+  const reason = draft.authoring && authoringDraftCheckReason(draft.authoring);
+  return reason ? `${reason}. Read the steps above before you save.` : undefined;
 }
 
 export function importedDraftBlockedReason(

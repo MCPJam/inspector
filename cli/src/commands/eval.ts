@@ -6246,7 +6246,7 @@ export function registerEvalCommands(program: Command): void {
   cases
     .command("import")
     .description(
-      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite (COSTS MONEY: consumes customer credits)"
+      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite"
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)

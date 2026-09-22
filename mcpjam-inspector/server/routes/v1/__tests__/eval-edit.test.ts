@@ -2033,7 +2033,11 @@ describe("v1 eval-edit routes", () => {
     }
   });
 
-  it("generate surfaces drafts it could not commit under `skipped`", async () => {
+  // A case the model was unsure about is not written unattended: the app keeps
+  // it out of "Add all" behind "Save anyway", and the API has nobody to ask.
+  // The skip has to NAME the doubt, or a CLI user learns only that something
+  // was wrong and has to open a browser to find out what.
+  it("generate skips a draft the model was unsure about, and says why", async () => {
     const backend = authoringBackend({
       status: {
         jobId: "job",
@@ -2048,7 +2052,14 @@ describe("v1 eval-edit routes", () => {
               steps: [{ id: "p", kind: "prompt", prompt: "x" }],
               expectedOutput: "y",
             },
-            additions: [{ id: "a", path: "steps.0", explanation: "Added" }],
+            issues: [
+              {
+                code: "unknown_tool",
+                message: "Tool nope is missing or ambiguous.",
+                blocking: false,
+                origin: "validation",
+              },
+            ],
           }),
         ],
       },
@@ -2058,9 +2069,67 @@ describe("v1 eval-edit routes", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.created).toHaveLength(0);
-      expect(body.skipped).toEqual([
-        { title: "Bad draft", error: expect.any(String) },
-      ]);
+      expect(body.skipped).toHaveLength(1);
+      expect(body.skipped[0].title).toBe("Bad draft");
+      expect(body.skipped[0].error).toContain(
+        "names tools this server does not have",
+      );
+    } finally {
+      backend.restore();
+    }
+  });
+
+  // An addition is the model filling a gap the document left, and it is
+  // already IN the steps. The app approves them all when the reader presses
+  // save, so the API refusing them meant handing back a link to a one-click
+  // save of the case we had just declined to write.
+  it("generate commits a draft whose only note is an addition", async () => {
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "generation",
+        status: "completed",
+        drafts: [
+          finishedDraft({
+            case: {
+              title: "Completed draft",
+              steps: [{ id: "p", kind: "prompt", prompt: "x" }],
+              expectedOutput: "y",
+            },
+            additions: [{ id: "a", path: "steps.0", explanation: "Added" }],
+          }),
+        ],
+      },
+    });
+    let accepted: any;
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "evalAuthoringState:acceptDraft") {
+        accepted = args;
+        return Promise.resolve(null);
+      }
+      if (name === "evalAuthoringState:prepareCommit")
+        return Promise.resolve({ title: "Completed draft" });
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: {
+            committed: [{ index: 0, testCaseId: "case_1" }],
+            failed: [],
+          },
+        });
+      return defaultMutationImpl(name, args);
+    });
+    try {
+      const res = await generateWith({ body: { mode: "normal" } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.skipped ?? []).toHaveLength(0);
+      expect(body.created).toHaveLength(1);
+      // The draft's own addition ids, not `[]`: the backend refuses to accept
+      // a draft with an unapproved addition, so sending none meant the commit
+      // could never succeed for a case the model had completed.
+      expect(accepted.acceptedAdditionIds).toEqual(["a"]);
     } finally {
       backend.restore();
     }
@@ -2175,7 +2244,7 @@ describe("v1 eval-edit routes", () => {
   it("keeps review skips and normalizes batch failure messages", async () => {
     const draft = { version: 1, draftId: "draft", revision: 0, case: { title: "Save failed", steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }], expectedOutput: "Document found" }, issues: [], additions: [], review: "required" };
     convexQueryMock.mockResolvedValue({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", drafts: [
-      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, additions: [{ id: "a", path: "steps.0", explanation: "Added details" }] }, draft,
+      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, issues: [{ code: "unknown_tool", message: "Tool nope is missing or ambiguous.", blocking: false, origin: "validation" }] }, draft,
     ] });
     convexMutationMock.mockImplementation((name: string) => {
       if (name === "evalAuthoringState:prepareCommit") return Promise.resolve({ title: "Save failed" });
@@ -2184,8 +2253,10 @@ describe("v1 eval-edit routes", () => {
     });
     const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
     expect(response.status).toBe(200);
+    // The skip NAMES the doubt. "Review this draft in the suite" told a CLI
+    // caller that something was wrong without saying what.
     expect((await response.json()).skipped).toEqual([
-      { title: "Needs review", error: "Review this draft's issues and proposed additions in the suite." },
+      { title: "Needs review", error: "This case names tools this server does not have. Open the review link to read it and save it anyway." },
       { title: "Save failed", error: "Already exists" },
     ]);
   });
@@ -2410,7 +2481,11 @@ describe("v1 eval-edit routes", () => {
   it("hands back a review link for the cases it could not finish", async () => {
     // A skipped draft is not lost — it stays on the job. The link is what
     // lets a caller stop: without it the only move is re-sending the whole
-    // document, which re-authors and re-bills every case in it.
+    // document, which re-authors every case in it.
+    //
+    // A doubt is what holds a case back, not an addition: an addition is the
+    // model completing the case, and the API commits those the way the app
+    // does when the reader presses save.
     const draft = {
       version: 1,
       draftId: "review",
@@ -2420,8 +2495,15 @@ describe("v1 eval-edit routes", () => {
         steps: [{ id: "p", kind: "prompt", prompt: "Browse groceries" }],
         expectedOutput: "The list renders",
       },
-      issues: [],
-      additions: [{ id: "a", path: "steps.0", explanation: "Added details" }],
+      issues: [
+        {
+          code: "missing_evidence",
+          message: "A widget locator is missing.",
+          blocking: false,
+          origin: "validation",
+        },
+      ],
+      additions: [],
       review: "required",
     };
     convexQueryMock.mockResolvedValue({

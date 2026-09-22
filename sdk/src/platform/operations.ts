@@ -6743,14 +6743,23 @@ export const importEvalCasesOperation: PlatformOperation<
   ImportEvalCasesResult
 > = {
   name: "import_eval_cases",
-  // Authoring a document runs MCPJam's model on the customer's behalf, unlike
-  // `generate_eval_cases`, which is included in the plan. Every re-import of
-  // the same text spends again, which is why the description is explicit that
-  // a fix means re-sending one case rather than the document.
-  risk: "spend",
+  // Authoring a document runs MCPJam's model on the customer's behalf, and
+  // MCPJam pays for it: the backend bills it as `markdown_case_import`, which
+  // sits in PLATFORM_PAID_INTERNAL_LLM beside `eval_generation`, so nothing is
+  // debited from the customer. It is not a `spend` risk.
+  //
+  // Re-importing the same text still re-runs the model, which is wasteful even
+  // when it is free, so the description keeps the advice to re-send one case
+  // rather than the whole document.
+  //
+  // `none`, the same classification `generate_eval_cases` carries: both author
+  // cases with a model MCPJam pays for. Leaving `risk` off entirely is not the
+  // fix — an unclassified write fails the agent-op registry pin, and rightly:
+  // the classification is what derives the operation's agent tier.
+  risk: "none",
   title: "Import MCPJam eval cases from a document",
   description:
-    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. COSTS MONEY: consumes customer credits per import. Cases the model could not finish are NOT created — they come back in `skipped`, and `reviewUrl` opens the app page holding exactly those drafts for a person to complete. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors and re-bills every case in it. IDEMPOTENT on idempotencyKey.",
+    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. Authoring is on MCPJam, like `generate_eval_cases`. Cases the model could not finish, and cases it was unsure about, are NOT created — they come back in `skipped` with the reason, and `reviewUrl` opens the app page holding exactly those drafts for a person to read and save. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors every case in it. IDEMPOTENT on idempotencyKey.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>

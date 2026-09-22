@@ -228,12 +228,11 @@ require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
 The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
 (the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
-hosts can gate them. Three of them SPEND: `run_eval_suite` and `run_eval_case`
-start LLM iterations against the organization's credits, and
-`import_eval_cases` runs MCPJam's authoring model over the caller's document.
-`generate_eval_cases` also calls a model, but that one is on MCPJam — no
-credits are consumed; it counts against the organization's daily generation
-quota. By default the
+hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
+start LLM iterations against the organization's credits.
+`generate_eval_cases` and `import_eval_cases` also call a model, but those are
+on MCPJam — no credits are consumed; generation counts against the
+organization's daily generation quota. By default the
 platform connects the suite's saved server selection — the exact set the run
 snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the

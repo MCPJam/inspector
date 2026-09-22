@@ -2,7 +2,11 @@ import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
 } from "../../services/evals/route-helpers.js";
-import { mintCaseId, evalAuthoringDraftSchema } from "@mcpjam/sdk/contract";
+import {
+  mintCaseId,
+  evalAuthoringDraftSchema,
+  authoringDraftCheckReason,
+} from "@mcpjam/sdk/contract";
 import {
   suiteJudgeSettingsSchema,
   caseJudgeSettingsSchema,
@@ -9629,21 +9633,32 @@ async function completeGeneratedAuthoringJob(
       continue;
     }
     const draft = parsed.data;
-    if (
-      draft.additions.length ||
-      draft.issues.some((issue) => issue.blocking && !issue.resolution)
-    ) {
+    // The same rule the app applies, from the same function, so the two cannot
+    // drift: a case the model was unsure about is not saved unattended.
+    //
+    // The old test was `issue.blocking`, which no validation issue sets any
+    // more, so the branch was dead: a case naming a tool that does not exist
+    // was saved silently here while the app held it back behind "Save anyway".
+    const checkReason = authoringDraftCheckReason(draft);
+    if (checkReason) {
+      // Name the reason. "Review this draft in the suite" told a CLI user that
+      // something was wrong without saying what, so the only way to learn it
+      // was to open a browser.
       skipped.push({
         title: draft.case.title,
-        error:
-          "Review this draft's issues and proposed additions in the suite.",
+        error: `${checkReason}. Open the review link to read it and save it anyway.`,
       });
       continue;
     }
     await convex.mutation("evalAuthoringState:acceptDraft" as any, {
       draftId: draft.draftId,
       revision: draft.revision,
-      acceptedAdditionIds: [],
+      // Additions are IN the steps this draft is made of, so accepting the
+      // draft accepts them, exactly as pressing save does in the app. Sending
+      // `[]` made the backend refuse every draft the model had completed, and
+      // the review link it handed back led to a one-click save of the case we
+      // had just declined to write.
+      acceptedAdditionIds: draft.additions.map((addition) => addition.id),
     });
     cases.push(
       await convex.mutation("evalAuthoringState:prepareCommit" as any, {

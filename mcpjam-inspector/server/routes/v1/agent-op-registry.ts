@@ -1814,9 +1814,15 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } into ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Import them",
       kind: "generate",
-      // Unlike generation, the authoring model here runs on the CUSTOMER's
-      // credits, so the approval card must say money is being spent.
-      confirmSeverity: "spend",
+      // `none`, not absent, and NOT "spend": the authoring model is
+      // platform-paid, exactly like generation, so a money warning on the
+      // Slack and Discord approval cards would be false. A host's DEFAULT
+      // approval copy is worded around cost, so saying nothing would inherit
+      // the same false warning.
+      //
+      // Kept GATED rather than direct because it PERSISTS cases into the
+      // suite — see TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
+      confirmSeverity: "none",
     },
   },
   {
