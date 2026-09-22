@@ -323,9 +323,9 @@ export const PLATFORM_PERMALINK_ROUTES = {
     label: "View swarm run",
     segments: ["swarms", ":id"],
   },
-  /** One User Testing scenario's detail. */
+  /** One User Testing study's detail. */
   user_testing_scenario: {
-    label: "Open scenario",
+    label: "Open study",
     segments: ["user-testing", ":id"],
   },
   /**

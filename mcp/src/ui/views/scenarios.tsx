@@ -50,7 +50,7 @@ export function ScenariosView({
     <>
       <ViewHeader
         title={payload.project.name}
-        badgeLabel={`${scenarios.length} ${scenarios.length === 1 ? "scenario" : "scenarios"}`}
+        badgeLabel={`${scenarios.length} ${scenarios.length === 1 ? "study" : "studies"}`}
         isDark={isDark}
       />
 
@@ -62,8 +62,8 @@ export function ScenariosView({
         </section>
       ) : (
         <MessageBox
-          label="No scenarios"
-          message="This project has no published scenarios."
+          label="No studies"
+          message="This project has no published studies."
         />
       )}
     </>
@@ -188,7 +188,7 @@ export function ScenarioView({
       <ViewHeader
         title={scenario.name}
         accessory={<ModeBadge mode={scenario.mode} />}
-        caption={scenario.description ?? `Scenario · ${payload.project.name}`}
+        caption={scenario.description ?? `Study · ${payload.project.name}`}
         isDark={isDark}
       />
 
