@@ -169,8 +169,9 @@ vi.mock("@/hooks/use-app-ready", () => ({
 }));
 
 const mockResetAutoConnectAttempts = vi.hoisted(() => vi.fn());
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => ({ enabled: true, lastResult: null }),
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
   resetAutoConnectAttempts: mockResetAutoConnectAttempts,
 }));
 
@@ -565,6 +566,14 @@ describe("ServersTab shared detail modal", () => {
     );
     expect(screen.getByTestId("modal-default-tab")).toHaveTextContent(
       "configuration"
+    );
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<ServersTab {...defaultProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
     );
   });
 
