@@ -1377,6 +1377,7 @@ function OrganizationPage({
       }
     },
     [
+      billingStatus?.canManageBilling,
       getBillingReturnUrl,
       onCheckoutIntentNavigationStarted,
       openBillingUrl,
