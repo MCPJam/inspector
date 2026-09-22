@@ -16014,7 +16014,24 @@ export const publishStudyOperation: PlatformOperation<
   },
 };
 
-export type UnpublishStudyInput = z.infer<typeof studyEnvironmentSelectorInput>;
+/**
+ * `study` names WHICH study to take down, and is only needed once an
+ * environment backs more than one — the route refuses to guess between them
+ * rather than deleting whichever an index yielded first. Optional because
+ * omitting it is the whole contract for the single-study case.
+ */
+const unpublishStudyInput = studyEnvironmentSelectorInput.extend({
+  study: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Study id, when the environment backs more than one. Omit for the single-study case; required once there are several, because the route refuses to pick."
+    ),
+});
+
+export type UnpublishStudyInput = z.infer<typeof unpublishStudyInput>;
 
 export type UnpublishStudyResult = {
   project: SelectedProjectInfo;
@@ -16032,14 +16049,18 @@ export const unpublishStudyOperation: PlatformOperation<
     "Unpublish an environment's study, invalidating its share link and any live guest sessions. Idempotent — an environment with no study reports `deleted: false` rather than failing. Requires project admin.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
-  inputSchema: studyEnvironmentSelectorInput,
+  inputSchema: unpublishStudyInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
     );
     const result = await client.unpublishStudy(
-      { projectId: project.id, environmentId: input.environment },
+      {
+        projectId: project.id,
+        environmentId: input.environment,
+        ...(input.study ? { studyId: input.study } : {}),
+      },
       { signal }
     );
     return { project: toSelectedProjectInfo(project), result };

@@ -259,18 +259,25 @@ const publishHandler = async (c: Context) => {
 // `deleted: false` rather than 404. A caller cleaning up should not have to
 // know whether the thing it is removing exists.
 //
-// `?scenarioId=` names WHICH study to take down. An environment may back
-// several, and the backend refuses to guess between them rather than deleting
-// whichever an index yielded first — so a caller with more than one on a setup
-// has to say. Omitted is still the whole contract for the single-study case.
+// `?studyId=` names WHICH study to take down — `?scenarioId=` on the
+// deprecated alias, the same rename every other addressing parameter took.
+// An environment may back several, and the backend refuses to guess between
+// them rather than deleting whichever an index yielded first, so a caller with
+// more than one on a setup has to say. Omitted is still the whole contract for
+// the single-study case.
 //
-// NOT behind the beta flag — taking a live scenario down must keep working for
+// BOTH are read on both paths rather than one each, because this parameter is
+// how a caller names a study they already hold the id of, and refusing the
+// spelling they have would make the rename cost them a lookup. The canonical
+// name wins when both are sent; the spec documents one per surface.
+//
+// NOT behind the beta flag — taking a live study down must keep working for
 // an org that has lost the flag. See lib/sandboxesGate.ts on why exposure-
 // reducing writes are ungated.
 const unpublishHandler = async (c: Context) => {
     const projectId = c.req.param("projectId");
     const environmentId = c.req.param("environmentId");
-    const scenarioId = c.req.query("scenarioId");
+    const scenarioId = c.req.query("studyId") ?? c.req.query("scenarioId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireEnvironmentInProject(client, projectId, environmentId);
 

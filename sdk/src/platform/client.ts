@@ -5362,8 +5362,17 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * `studyId` names WHICH study to take down. An environment may back several
+   * and the route refuses to guess between them, so it is required once one
+   * does — and omitting it is the whole contract while it backs a single
+   * study, which is the common case.
+   *
+   * The pre-rename `?scenarioId=` is still read by the route, but this method
+   * sends the canonical spelling.
+   */
   unpublishStudy(
-    params: { projectId: string; environmentId: string },
+    params: { projectId: string; environmentId: string; studyId?: string },
     options?: RequestOptions
   ): Promise<PlatformStudyDeleted> {
     return this.request(
@@ -5371,7 +5380,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/study`,
-      {},
+      params.studyId ? { query: { studyId: params.studyId } } : {},
       options
     );
   }

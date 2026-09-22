@@ -9647,14 +9647,14 @@
         "operationId": "unpublishStudy",
         "tags": ["Studies"],
         "summary": "Unpublish an environment",
-        "description": "Takes the study down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live study down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `scenarioId` names which one to take down — the stored id, which is what this query parameter has always been called and what the route still reads. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
+        "description": "Takes the study down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live study down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `studyId` names which one to take down; the pre-rename `scenarioId` is still read, so a caller holding that spelling does not need a lookup to migrate. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
         "parameters": [
           {
-            "name": "scenarioId",
+            "name": "studyId",
             "in": "query",
             "required": false,
             "schema": { "type": "string" },
-            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them."
+            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them. The pre-rename `scenarioId` is still read here, so a caller holding that spelling does not need a lookup to migrate."
           }
         ],
         "responses": {

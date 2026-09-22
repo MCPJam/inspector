@@ -15,7 +15,7 @@ import { MCPJAM_COMMANDS, resolveCommandRegistration } from "./commands.js";
 import { config, describeConfigGaps } from "./config.js";
 import { buildInteractionRef, buildMessageRef } from "./context.js";
 import { createDiscordDelivery } from "./delivery.js";
-import { isGoalRunResource } from "./goal-run.js";
+import { isGoalRunResourceType } from "./goal-run.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
 import { toDeliverableResult, toReplayContent } from "./turn-result.js";
@@ -474,7 +474,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		// plain acknowledgement — the run still starts, but nobody gets the live
 		// surface, which is the failure this dual read exists to prevent.
 		if (
-			isGoalRunResource(result.resource) &&
+			result.resource &&
+			isGoalRunResourceType(result.resource.type) &&
+			result.resource.id &&
 			interaction.channel?.isTextBased?.()
 		) {
 			const surfaceDelivery = createDiscordDelivery(interaction.channel);

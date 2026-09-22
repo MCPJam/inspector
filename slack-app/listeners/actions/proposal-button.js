@@ -17,17 +17,14 @@
  *      so a double-click races there and exactly one caller wins. The loser is
  *      told, not billed.
  */
-import {
-  executeProposedAction,
-  McpjamApiError,
-} from "../../agent/mcpjam-client.js";
-import { tryslackContextFrom } from "../../agent/slack-context.js";
-import { resolveTurnTarget } from "../../agent/turn-target.js";
-import { friendlyMessage as slackFriendlyMessage } from "../../render/slack.js";
-import { escapeSlackText } from "../views/agent-reply-builder.js";
-import { announceAndWatchJourneyRun } from "./journey-run-watcher.js";
-import { postRunEvidence } from "./run-evidence.js";
-import { announceAndWatchRun, isFailedOutcome } from "./run-watcher.js";
+import { executeProposedAction, McpjamApiError } from '../../agent/mcpjam-client.js';
+import { tryslackContextFrom } from '../../agent/slack-context.js';
+import { resolveTurnTarget } from '../../agent/turn-target.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
+import { escapeSlackText } from '../views/agent-reply-builder.js';
+import { announceAndWatchJourneyRun } from './journey-run-watcher.js';
+import { postRunEvidence } from './run-evidence.js';
+import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
 
 /**
  * The permalink resource types a Swarms goal run is announced under.
@@ -38,13 +35,21 @@ import { announceAndWatchRun, isFailedOutcome } from "./run-watcher.js";
  * anything this app can see, so it never stops accepting the old one on its
  * own initiative. They go together at general availability.
  */
-const GOAL_RUN_RESOURCE_TYPES = new Set(["goal_run", "journey_run"]);
+const GOAL_RUN_RESOURCE_TYPES = new Set(['goal_run', 'journey_run']);
 
-/** True when this resource is a goal run under either spelling. */
-function isGoalRunResource(resource) {
-  return Boolean(
-    resource && GOAL_RUN_RESOURCE_TYPES.has(resource.type) && resource.id
-  );
+/**
+ * True when this permalink resource TYPE names a goal run.
+ *
+ * The TYPE alone, deliberately. The null and id checks stay inline at the
+ * call site because that is where TypeScript narrows `outcome.resource`: a
+ * predicate over the whole object does not narrow an optional property path
+ * through it, and the accesses that follow would each be `possibly null`.
+ *
+ * @param {string | undefined} type
+ * @returns {boolean}
+ */
+function isGoalRunResourceType(type) {
+  return type !== undefined && GOAL_RUN_RESOURCE_TYPES.has(type);
 }
 
 /**
@@ -65,26 +70,23 @@ function isGoalRunResource(resource) {
  */
 export function announcementFor(outcome, userId) {
   const url =
-    (outcome.resource && typeof outcome.resource.url === "string"
-      ? outcome.resource.url
-      : null) ??
+    (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
     outcome.runUrl ??
     null;
-  if (url)
-    return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
 
   switch (outcome.kind) {
-    case "cancel":
+    case 'cancel':
       return `:white_check_mark: Cancelled by <@${userId}>.`;
-    case "generate":
+    case 'generate':
       return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
-    case "schedule":
+    case 'schedule':
       // Nothing started. Saying "it's away" here would have the user watching
       // for a run that will not appear until the next interval.
       return `:white_check_mark: Approved by <@${userId}> — the schedule is updated.`;
-    case "external":
+    case 'external':
       return `:white_check_mark: Approved by <@${userId}> — the tool ran.`;
-    case "start":
+    case 'start':
       return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
     default:
       break;
@@ -100,16 +102,13 @@ export function announcementFor(outcome, userId) {
 
   // No `kind` at all — an OLDER server. Fall back to the operation names this
   // build knows, then to copy that claims nothing.
-  if (outcome.operation === "cancel_eval_run") {
+  if (outcome.operation === 'cancel_eval_run') {
     return `:white_check_mark: Cancelled by <@${userId}>.`;
   }
-  if (outcome.operation === "generate_eval_cases") {
+  if (outcome.operation === 'generate_eval_cases') {
     return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
   }
-  if (
-    outcome.operation === "run_eval_suite" ||
-    outcome.operation === "run_eval_case"
-  ) {
+  if (outcome.operation === 'run_eval_suite' || outcome.operation === 'run_eval_case') {
     return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
   }
   return `:white_check_mark: Approved by <@${userId}>.`;
@@ -119,19 +118,12 @@ export function announcementFor(outcome, userId) {
  * @param {import('@slack/bolt').AllMiddlewareArgs & import('@slack/bolt').SlackActionMiddlewareArgs<import('@slack/bolt').BlockButtonAction>} args
  * @returns {Promise<void>}
  */
-export async function handleProposalButton({
-  ack,
-  body,
-  client,
-  context,
-  logger,
-  action,
-}) {
+export async function handleProposalButton({ ack, body, client, context, logger, action }) {
   await ack();
 
   const ctx = tryslackContextFrom({ body, context });
   if (!ctx) {
-    logger.warn("Dropping an approval click with no resolvable team/user id.");
+    logger.warn('Dropping an approval click with no resolvable team/user id.');
     return;
   }
 
@@ -139,9 +131,7 @@ export async function handleProposalButton({
   const channelId = /** @type {string} */ (body.channel?.id);
   // The button sits on the bot's reply, which is itself a thread reply.
   // `chat.postMessage` wants the PARENT ts.
-  const parentTs = /** @type {string} */ (
-    body.message?.thread_ts ?? body.message?.ts
-  );
+  const parentTs = /** @type {string} */ (body.message?.thread_ts ?? body.message?.ts);
   const actionId = action.value;
   if (!actionId || !channelId) return;
 
@@ -155,16 +145,9 @@ export async function handleProposalButton({
    */
   const tellClicker = async (text) => {
     try {
-      await client.chat.postEphemeral({
-        channel: channelId,
-        user: userId,
-        thread_ts: parentTs,
-        text,
-      });
+      await client.chat.postEphemeral({ channel: channelId, user: userId, thread_ts: parentTs, text });
     } catch (error) {
-      logger.error(
-        `Could not tell <@${userId}> about their approval click: ${error}`
-      );
+      logger.error(`Could not tell <@${userId}> about their approval click: ${error}`);
     }
   };
 
@@ -175,21 +158,15 @@ export async function handleProposalButton({
     target = await resolveTurnTarget(ctx, { channelId, threadTs: parentTs });
   } catch (error) {
     logger.error(`Could not resolve the approval target: ${error}`);
-    await tellClicker(
-      ":warning: I could not check your MCPJam access just now. Try again in a moment."
-    );
+    await tellClicker(':warning: I could not check your MCPJam access just now. Try again in a moment.');
     return;
   }
-  if (target.mode === "unlinked") {
-    await tellClicker(
-      ":link: Connect your MCPJam account (in my Home tab) before approving this."
-    );
+  if (target.mode === 'unlinked') {
+    await tellClicker(':link: Connect your MCPJam account (in my Home tab) before approving this.');
     return;
   }
-  if (target.mode === "needs_project") {
-    await tellClicker(
-      ":open_file_folder: Pick a default MCPJam project (in my Home tab) before approving this."
-    );
+  if (target.mode === 'needs_project') {
+    await tellClicker(':open_file_folder: Pick a default MCPJam project (in my Home tab) before approving this.');
     return;
   }
 
@@ -203,15 +180,10 @@ export async function handleProposalButton({
     if (error instanceof McpjamApiError && error.status === 409) {
       // Someone else's click won the race, or this one was redelivered. Not a
       // failure: say so plainly rather than implying something broke.
-      await tellClicker(
-        ":information_source: That action is already under way."
-      );
+      await tellClicker(':information_source: That action is already under way.');
       return;
     }
-    if (
-      error instanceof McpjamApiError &&
-      (error.code === "VALIDATION_ERROR" || error.code === "NOT_FOUND")
-    ) {
+    if (error instanceof McpjamApiError && (error.code === 'VALIDATION_ERROR' || error.code === 'NOT_FOUND')) {
       // The offer is gone — expired (proposals live an hour, deliberately, so
       // nobody approves something whose context everyone has forgotten) or
       // withdrawn by a deploy. The server's own wording is specific and already
@@ -219,15 +191,13 @@ export async function handleProposalButton({
       // hunting for a fault that does not exist. Escaped all the same: today
       // these messages are static server constants, but this seam is one
       // server change away from echoing request- or model-shaped content.
-      await tellClicker(
-        `:hourglass: ${escapeSlackText(error.message)} `.trim()
-      );
+      await tellClicker(`:hourglass: ${escapeSlackText(error.message)} `.trim());
       return;
     }
     await tellClicker(
       error instanceof McpjamApiError
         ? slackFriendlyMessage(error)
-        : ":warning: That did not go through. Try again in a moment."
+        : ':warning: That did not go through. Try again in a moment.',
     );
     return;
   }
@@ -248,11 +218,7 @@ export async function handleProposalButton({
     // surface the retired Run-it button gave, now reached through the approval
     // path. Recognised by the server-sent resource type rather than by an
     // operation name, so a future op that also produces a run gets it free.
-    if (
-      outcome.resource?.type === "eval_run" &&
-      outcome.resource.id &&
-      outcome.resource.url
-    ) {
+    if (outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
       const runId = outcome.resource.id;
       await announceAndWatchRun(client, {
         runId,
@@ -295,7 +261,12 @@ export async function handleProposalButton({
     // shipped yet. An unrecognised type falls through to the plain
     // acknowledgement below — the run still starts, but nobody gets the live
     // surface, which is the failure this dual read exists to prevent.
-    if (isGoalRunResource(outcome.resource) && outcome.resource.url) {
+    if (
+      outcome.resource &&
+      isGoalRunResourceType(outcome.resource.type) &&
+      outcome.resource.id &&
+      outcome.resource.url
+    ) {
       await announceAndWatchJourneyRun(client, {
         runId: outcome.resource.id,
         url: outcome.resource.url,
@@ -315,8 +286,6 @@ export async function handleProposalButton({
   } catch (error) {
     // The action HAPPENED. A failed announcement is cosmetic and must not be
     // retried into a second spend.
-    logger.error(
-      `Approved action ${actionId} ran but announcing it failed: ${error}`
-    );
+    logger.error(`Approved action ${actionId} ran but announcing it failed: ${error}`);
   }
 }

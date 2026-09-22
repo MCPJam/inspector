@@ -616,7 +616,7 @@ export function registerSwarmAuthoringCommands(
         .description(
           "Per-criterion pass/fail counts for one run. Deterministic — no model involved — so this is the first thing to read when explaining a failure. failedGradingCount is grading that BROKE; do not add it to failCount."
         )
-        .requiredOption("--run <id>", "Journey run ID")
+        .requiredOption("--run <id>", "Goal run ID")
     ),
     getGoalRunScorecardOperation,
     (options: ProjectOptions & { run: string }) => ({
@@ -630,7 +630,7 @@ export function registerSwarmAuthoringCommands(
       goals
         .command("findings")
         .description(
-          "Criteria that keep failing across waves, with how long each has been failing."
+          "Criteria that keep failing across swarm runs, with how long each has been failing."
         )
     ),
     listSwarmFindingsOperation,

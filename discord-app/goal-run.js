@@ -19,19 +19,16 @@
 export const GOAL_RUN_RESOURCE_TYPES = new Set(["goal_run", "journey_run"]);
 
 /**
- * True when this resource is a goal run under either spelling.
+ * True when this permalink resource TYPE names a goal run.
  *
- * An id is required: a type with nothing to watch cannot start a live
- * surface, and claiming one would leave a message that never updates.
+ * The TYPE alone, and the same shape the Slack app uses, for the same reason:
+ * a predicate over the whole resource does not narrow an optional property
+ * path through it, so the null and id checks stay inline at the call site
+ * where the typechecker can see them.
  *
- * @param {{ type?: string, id?: string } | null | undefined} resource
+ * @param {string | undefined} type
  * @returns {boolean}
  */
-export function isGoalRunResource(resource) {
-	return Boolean(
-		resource &&
-			typeof resource.type === "string" &&
-			GOAL_RUN_RESOURCE_TYPES.has(resource.type) &&
-			resource.id,
-	);
+export function isGoalRunResourceType(type) {
+	return type !== undefined && GOAL_RUN_RESOURCE_TYPES.has(type);
 }
