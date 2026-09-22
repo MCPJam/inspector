@@ -97,7 +97,7 @@ STDIO servers are not available in the hosted version of MCPJam. Use a Streamabl
 
 In hosted mode, the cloud backend handles token refresh on your behalf. If your MCP server's OAuth authorization server runs on a private address (localhost, a LAN IP, or a `.local`/`.internal` hostname), the cloud cannot reach it to refresh tokens after they expire.
 
-When you connect to such a server, the app shows a warning toast. You can continue using the server until the access token expires, but you'll need to re-run the OAuth flow manually each time. For fully-local setups, use the [local inspector](/installation) instead.
+When you connect to such a server, the app shows a warning: "This server's sign-in service is on a private network. MCPJam's hosted web app can't renew this connection automatically." You can continue using the server until the access token expires, but you'll need to sign in again when the connection expires. For fully-local setups, run `npx @mcpjam/inspector@latest` on your computer or use the MCPJam desktop app.
 
 ### No tunneling
 
