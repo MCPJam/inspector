@@ -48,13 +48,11 @@ export function SessionQuestionEditor({
   initial,
   onSave,
   onCancel,
-  layout = "inline",
   submitLabel = "Save",
 }: {
   initial?: Pick<SessionQuestion, "label" | "question">;
   onSave: (draft: { label: string; question: string }) => Promise<void>;
   onCancel: () => void;
-  layout?: "inline" | "dialog";
   submitLabel?: string;
 }) {
   const [label, setLabel] = useState(initial?.label ?? "");
@@ -62,7 +60,6 @@ export function SessionQuestionEditor({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
-  const dialog = layout === "dialog";
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (saving.current) return;
@@ -82,78 +79,6 @@ export function SessionQuestionEditor({
       setBusy(false);
     }
   }
-  const labelField = (
-    <Input
-      id={dialog ? "session-question-label" : undefined}
-      aria-label="Column label"
-      autoFocus
-      value={label}
-      maxLength={24}
-      disabled={busy}
-      onChange={(e) => setLabel(e.target.value)}
-      placeholder={dialog ? "Auth wall" : "Column label"}
-      className={dialog ? undefined : "h-7 text-xs"}
-    />
-  );
-  const questionField = (
-    <Input
-      id={dialog ? "session-question-text" : undefined}
-      aria-label="Yes/no question"
-      value={question}
-      maxLength={240}
-      disabled={busy}
-      onChange={(e) => setQuestion(e.target.value)}
-      placeholder="Did the user…?"
-      className={dialog ? undefined : "h-7 text-xs"}
-    />
-  );
-  const fields = dialog ? (
-    <>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="session-question-label">Column label</Label>
-        {labelField}
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="session-question-text">Yes/no question</Label>
-        {questionField}
-      </div>
-    </>
-  ) : (
-    <>
-      {labelField}
-      {questionField}
-    </>
-  );
-  const actions = dialog ? (
-    <DialogFooter>
-      <Button
-        type="button"
-        variant="ghost"
-        disabled={busy}
-        onClick={onCancel}
-      >
-        Cancel
-      </Button>
-      <Button type="submit" disabled={busy}>
-        {busy ? "Adding…" : submitLabel}
-      </Button>
-    </DialogFooter>
-  ) : (
-    <div className="flex gap-1">
-      <Button type="submit" size="sm" variant="ghost" disabled={busy}>
-        {busy ? "Saving…" : submitLabel}
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={busy}
-        onClick={onCancel}
-      >
-        Cancel
-      </Button>
-    </div>
-  );
   return (
     <form
       onSubmit={submit}
@@ -163,10 +88,46 @@ export function SessionQuestionEditor({
           onCancel();
         }
       }}
-      className={dialog ? "flex flex-col gap-4" : "flex flex-col gap-1 text-xs"}
+      className="flex flex-col gap-4"
     >
-      {fields}
-      {actions}
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="session-question-label">Column label</Label>
+        <Input
+          id="session-question-label"
+          aria-label="Column label"
+          autoFocus
+          value={label}
+          maxLength={24}
+          disabled={busy}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Auth wall"
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="session-question-text">Yes/no question</Label>
+        <Input
+          id="session-question-text"
+          aria-label="Yes/no question"
+          value={question}
+          maxLength={240}
+          disabled={busy}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="Did the user…?"
+        />
+      </div>
+      <DialogFooter>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {busy ? (submitLabel === "Add" ? "Adding…" : "Saving…") : submitLabel}
+        </Button>
+      </DialogFooter>
       {error ? (
         <p role="alert" className="text-destructive">
           {error}
@@ -180,16 +141,22 @@ function SessionQuestionDialog({
   open,
   onOpenChange,
   onSave,
+  initial,
+  title,
+  submitLabel,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (draft: { label: string; question: string }) => Promise<void>;
+  initial?: Pick<SessionQuestion, "label" | "question">;
+  title: string;
+  submitLabel: string;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a yes/no question</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             Answers are only Yes or No. Write the question so a session can be
             scored that way.
@@ -197,8 +164,9 @@ function SessionQuestionDialog({
         </DialogHeader>
         {open ? (
           <SessionQuestionEditor
-            layout="dialog"
-            submitLabel="Add"
+            key={title}
+            initial={initial}
+            submitLabel={submitLabel}
             onSave={onSave}
             onCancel={() => onOpenChange(false)}
           />
@@ -229,77 +197,80 @@ export function SessionQuestionFlow({
   const headers: Partial<Record<SankeyStage, React.ReactNode>> = {};
   if (catalog)
     for (const q of catalog.questions) {
-      headers[`question:${q.id}`] =
-        editing === q.id && catalog.canEdit ? (
-          <SessionQuestionEditor
-            key={q.id}
-            initial={q}
-            onCancel={() => setEditing(null)}
-            onSave={async (draft) => {
-              await upsert({ ...args, questionId: q.id, ...draft });
-              setEditing(null);
-            }}
-          />
-        ) : (
-          <div
-            className="group flex items-center gap-1"
-            data-testid={`${testId}-${q.id}`}
+      headers[`question:${q.id}`] = (
+        <div
+          className="group flex items-center gap-1"
+          data-testid={`${testId}-${q.id}`}
+        >
+          <button
+            type="button"
+            disabled={!catalog.canEdit}
+            title={q.question}
+            onClick={() => setEditing(q.id)}
+            className="truncate text-xs font-semibold uppercase tracking-wider text-current disabled:cursor-default"
           >
+            {q.label}
+          </button>
+          {catalog.canEdit ? (
             <button
               type="button"
-              disabled={!catalog.canEdit}
-              title={q.question}
-              onClick={() => setEditing(q.id)}
-              className="truncate text-xs font-semibold uppercase tracking-wider text-current disabled:cursor-default"
+              aria-label={`Remove ${q.label} column`}
+              disabled={removing === q.id}
+              className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+              onClick={async () => {
+                setRemoving(q.id);
+                try {
+                  await remove({ questionId: q.id });
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error
+                      ? err.message
+                      : "Could not remove question.",
+                  );
+                } finally {
+                  setRemoving(null);
+                }
+              }}
             >
-              {q.label}
+              <X className="size-3" />
             </button>
-            {catalog.canEdit ? (
-              <button
-                type="button"
-                aria-label={`Remove ${q.label} column`}
-                disabled={removing === q.id}
-                className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-                onClick={async () => {
-                  setRemoving(q.id);
-                  try {
-                    await remove({ questionId: q.id });
-                  } catch (err) {
-                    toast.error(
-                      err instanceof Error
-                        ? err.message
-                        : "Could not remove question.",
-                    );
-                  } finally {
-                    setRemoving(null);
-                  }
-                }}
-              >
-                <X className="size-3" />
-              </button>
-            ) : null}
-          </div>
-        );
+          ) : null}
+        </div>
+      );
     }
   const canAddQuestion =
     Boolean(catalog?.canEdit) &&
     (catalog?.questions.length ?? 0) < (catalog?.cap ?? 0);
+  const editingQuestion =
+    editing && editing !== "new"
+      ? catalog?.questions.find((q) => q.id === editing)
+      : undefined;
+  const dialogOpen = editing === "new" || Boolean(editingQuestion);
   return (
     <>
       <SessionFlowSankey
         {...props}
         stageOrderKey={props.stageOrderKey ?? stageOrderStorageKey(scope)}
         questionHeaders={headers}
-        questionEditing={editing !== null && editing !== "new"}
         onAddQuestion={canAddQuestion ? () => setEditing("new") : undefined}
       />
       <SessionQuestionDialog
-        open={editing === "new"}
+        key={editing ?? "closed"}
+        open={dialogOpen}
+        initial={editingQuestion}
+        title={
+          editing === "new" ? "Add a yes/no question" : "Edit a yes/no question"
+        }
+        submitLabel={editing === "new" ? "Add" : "Save"}
         onOpenChange={(open) => {
           if (!open) setEditing(null);
         }}
         onSave={async (draft) => {
-          await upsert({ ...args, ...draft });
+          await upsert({
+            ...args,
+            ...(editingQuestion ? { questionId: editingQuestion.id } : {}),
+            ...draft,
+          });
           setEditing(null);
         }}
       />

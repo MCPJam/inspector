@@ -203,11 +203,17 @@ describe("question columns", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Auth wall" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveAccessibleName("Edit a yes/no question");
+    expect(dialog).toHaveTextContent("Answers are only Yes or No");
     expect(screen.getByLabelText("Yes/no question")).toHaveValue(
       "Did login fail?",
     );
-    expect(screen.getByTestId("sankey-column-headers")).not.toHaveAttribute(
+    expect(screen.getByTestId("sankey-column-headers")).toHaveAttribute(
       "data-reorderable",
+    );
+    expect(screen.getByTestId("sankey-column-headers")).not.toHaveTextContent(
+      "Did login fail?",
     );
     await user.clear(screen.getByLabelText("Column label"));
     await user.type(screen.getByLabelText("Column label"), "Login{Enter}");
