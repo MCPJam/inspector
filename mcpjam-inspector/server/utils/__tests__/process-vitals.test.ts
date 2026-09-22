@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const setContext = vi.fn();
+const setExtra = vi.fn();
 const event = vi.fn();
 
-vi.mock("@sentry/node", () => ({ setContext }));
+vi.mock("@sentry/node", () => ({ setContext, setExtra }));
 vi.mock("../request-logger.js", () => ({
   getSystemLogger: () => ({ event }),
 }));
@@ -48,6 +49,7 @@ async function loadVitals(
 
 afterEach(() => {
   setContext.mockClear();
+  setExtra.mockClear();
   event.mockClear();
   vi.doUnmock("node:v8");
 });
@@ -126,6 +128,27 @@ describe("process vitals sampler", () => {
     expect(setContext.mock.calls[1]![0]).toBe("process_vitals");
   });
 
+  /**
+   * The native-OOM report is rebuilt from the persisted scope by
+   * `sentryMinidumpIntegration`, which ASSIGNS `event.contexts` from the SDK
+   * defaults after merging the scope — wiping every context the app set.
+   * `event.extra` is merged by the same call and never reassigned, so the
+   * extra is the only copy that reaches a minidump. INSPECTOR-ELECTRON-WA
+   * arrived with no vitals at all because only the context was set.
+   */
+  it("mirrors the sample into an extra, which is what survives a minidump", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB, 505 * MB]);
+
+    flushProcessVitals(0);
+    flushProcessVitals(60_000);
+
+    expect(setExtra).toHaveBeenCalledTimes(2);
+    expect(setExtra.mock.calls[1]![0]).toBe("process_vitals");
+    // Same payload, so a reader never has to work out which copy is stale.
+    expect(setExtra.mock.calls[1]![1]).toEqual(setContext.mock.calls[1]![1]);
+    expect(setExtra.mock.calls[1]![1].heapUsedBytes).toBe(505 * MB);
+  });
+
   it("carries a bounded heap trend so one crash report shows the shape", async () => {
     const { flushProcessVitals } = await loadVitals(
       Array.from({ length: 14 }, (_, i) => (500 + i) * MB),
@@ -164,6 +187,7 @@ describe("process vitals sampler", () => {
     expect(() => flushProcessVitals(0)).not.toThrow();
     expect(event).not.toHaveBeenCalled();
     expect(setContext).not.toHaveBeenCalled();
+    expect(setExtra).not.toHaveBeenCalled();
   });
 
   it("reports peak heap, not just the current sample", async () => {
