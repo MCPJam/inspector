@@ -282,18 +282,23 @@ export const OAuthFlowTab = ({
 
   // Every applyOAuthFlowState caller REPLACES the flow (server switch, Reset,
   // profile save) rather than merging into it, so each one starts a new
-  // generation. A step that was already in flight keeps the generation it
-  // started in, and its late writes are dropped below: `updateState` merges,
-  // so a step resolving after a reset would otherwise re-advance `currentStep`
-  // onto a state whose discovery metadata and client id the reset just
-  // cleared, and the next click failed with "Missing authorization endpoint or
-  // client ID". The Reset button and the agent's ui_reset_oauth_flow already
-  // refuse while `isInitiatingAuth`; the profile-save reset cannot.
+  // generation and, with it, a new state machine. Each machine's writer is
+  // bound to the generation it was built for, so a step still in flight when
+  // the flow was reset can no longer land: `updateState` merges, so a step
+  // resolving after a reset would otherwise re-advance `currentStep` onto a
+  // flow whose discovery metadata and client id the reset just cleared, and
+  // the next click failed with "Missing authorization endpoint or client ID".
+  // The Reset button and the agent's ui_reset_oauth_flow already refuse while
+  // `isInitiatingAuth`; the profile-save reset cannot.
+  //
+  // The ref is what the guard reads (writes arrive between renders); the state
+  // is what rebuilds the machine. They are bumped together.
   const flowGenerationRef = useRef(0);
-  const machineRunGenerationRef = useRef(0);
+  const [flowGeneration, setFlowGeneration] = useState(0);
 
   const applyOAuthFlowState = useCallback((next: OAuthFlowState) => {
     flowGenerationRef.current += 1;
+    setFlowGeneration(flowGenerationRef.current);
     oauthFlowStateRef.current = next;
     setOAuthFlowState(next);
   }, []);
@@ -346,12 +351,12 @@ export const OAuthFlowTab = ({
     [],
   );
 
-  // The state machine's only writer. Direct callers of updateOAuthFlowState
-  // (log clearing, the callback handler) are user actions on the CURRENT flow
-  // and stay unguarded; a machine step belongs to the generation it started in.
-  const updateOAuthFlowStateFromMachine = useCallback(
-    (updates: Partial<OAuthFlowState>) => {
-      if (machineRunGenerationRef.current !== flowGenerationRef.current) {
+  // The state machine's only writer, bound to the generation the machine was
+  // built for. Direct callers of updateOAuthFlowState (log clearing, the
+  // callback handler) act on the CURRENT flow and stay unguarded.
+  const machineUpdaterForGeneration = useCallback(
+    (generation: number) => (updates: Partial<OAuthFlowState>) => {
+      if (generation !== flowGenerationRef.current) {
         return;
       }
       updateOAuthFlowState(updates);
@@ -415,7 +420,7 @@ export const OAuthFlowTab = ({
       protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
-      updateState: updateOAuthFlowStateFromMachine,
+      updateState: machineUpdaterForGeneration(flowGeneration),
       serverUrl: profile.serverUrl,
       serverName: serverIdentifier,
       customScopes: profile.scopes.trim() || undefined,
@@ -443,12 +448,12 @@ export const OAuthFlowTab = ({
     customHeaders,
     registrationStrategy,
     activeServer?.hasClientSecret,
-    updateOAuthFlowStateFromMachine,
+    flowGeneration,
+    machineUpdaterForGeneration,
   ]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
-      machineRunGenerationRef.current = flowGenerationRef.current;
       await oauthStateMachine.proceedToNextStep();
     }
   }, [oauthStateMachine]);
@@ -799,7 +804,6 @@ export const OAuthFlowTab = ({
       exchangeTimeoutRef.current = setTimeout(() => {
         exchangeTimeoutRef.current = null;
         setIsAdvancing(true);
-        machineRunGenerationRef.current = flowGenerationRef.current;
         // This promise had no rejection handler: a token exchange that threw
         // left the UI frozen mid-flow with nothing logged anywhere.
         Promise.resolve(oauthStateMachine?.proceedToNextStep())

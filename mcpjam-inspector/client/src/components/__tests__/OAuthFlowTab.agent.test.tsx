@@ -332,6 +332,45 @@ describe("OAuthFlowTab — resetOauthFlow", () => {
     const snapshot = await readSurfaceSnapshot("oauth-flow");
     expect(JSON.stringify(snapshot)).toContain('"currentStep":"idle"');
   });
+
+  it("drops the old step's late write even after a new run has started", async () => {
+    renderTab();
+    let settleOldStep: ((u: Partial<OAuthFlowState>) => void) | null = null;
+    machineCtl.onAdvance = (update) => {
+      settleOldStep = update;
+    };
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+
+    await act(async () => {
+      await (
+        captureProfileModalProps.mock.calls.at(-1)?.[0]?.onSave as (
+          input: unknown,
+        ) => Promise<void>
+      )({
+        formData: { name: "linear", url: "https://mcp.example.com/mcp" },
+        profile: {},
+      });
+    });
+
+    // The reset cleared `isInitiatingAuth`, so the user can start a new run
+    // before the old step settles. Each machine writes through the generation
+    // it was built for, so the new run is not judged by the old one's clock.
+    machineCtl.onAdvance = (update) =>
+      update({ currentStep: "request_without_token" });
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+
+    act(() => {
+      settleOldStep?.({
+        currentStep: "received_client_credentials",
+        clientId: "client_from_stale_step",
+      });
+    });
+
+    const snapshot = await readSurfaceSnapshot("oauth-flow");
+    const serialized = JSON.stringify(snapshot);
+    expect(serialized).toContain('"currentStep":"request_without_token"');
+    expect(serialized).not.toContain("client_from_stale_step");
+  });
 });
 
 describe("OAuthFlowTab — openOauthServerConfig", () => {
