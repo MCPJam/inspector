@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import type { EvalIteration } from "@/components/evals/types";
@@ -54,6 +54,27 @@ const rowFor = (label: string) =>
     .getAllByTestId("trial-scorecard-row")
     .find((row) => row.textContent?.includes(label))!;
 
+/** The rail's stages, in the order it lists them. */
+const railStages = () =>
+  screen
+    .queryAllByTestId("stage-rail-item")
+    .map((item) => item.getAttribute("data-stage"));
+
+const railItem = (stage: string) =>
+  screen
+    .getAllByTestId("stage-rail-item")
+    .find((item) => item.getAttribute("data-stage") === stage)!;
+
+/** The section on screen for a stage, or `null` when another one is open. */
+const sectionFor = (stage: string) =>
+  document.querySelector(`[data-stage-group="${stage}"]`) as HTMLElement | null;
+
+const openStage = (stage: string) => fireEvent.click(railItem(stage));
+
+/** The state word on the open section, or `undefined` when it has none. */
+const stateWordIn = (section: HTMLElement) =>
+  within(section).queryByTestId("scorecard-group-state")?.textContent;
+
 describe("TrialScorecard", () => {
   it.each(["pending", "running"] as const)(
     "withholds stage results while %s and reveals them when complete",
@@ -90,7 +111,7 @@ describe("TrialScorecard", () => {
     renderCard({ iteration: null, isRunning: true });
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
   });
-  it("stacks one section per measured stage, each explaining itself", () => {
+  it("opens on the break, and keeps the other stages one click away", () => {
     const chain = {
       status: "verified",
       firstFailedStage: "selection",
@@ -109,37 +130,61 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     renderCard({ chain });
-    // No stage nav, no detail card: the sections are the page.
-    expect(screen.queryByRole("navigation")).toBeNull();
-    expect(screen.queryByTestId("trial-stage-detail-card")).toBeNull();
-    const sections = Array.from(
-      document.querySelectorAll("[data-stage-group]"),
-    ).map((node) => node.getAttribute("data-stage-group"));
-    // Chain order; a stage the chain measured but nothing grades still has
-    // a heading, and the authored stages keep theirs.
-    expect(sections).toEqual([
+    // Chain order; a stage the chain measured but nothing grades still gets a
+    // cell, and the authored stages keep theirs.
+    expect(railStages()).toEqual([
       "connection",
       "selection",
       "response",
       "userValue",
     ]);
-    const connection = document.querySelector(
-      '[data-stage-group="connection"]',
-    )!;
-    expect(within(connection as HTMLElement).queryAllByTestId("trial-scorecard-row")).toHaveLength(0);
+    // The contract's first failed stage is open, and it is the only one open:
+    // a failed stage whose rows recorded nothing says why from the chain.
     expect(
-      within(connection as HTMLElement).getByTestId("scorecard-group-state"),
-    ).toHaveTextContent("passed");
-    // A failed stage whose rows recorded nothing says why from the chain.
-    const selection = document.querySelector(
-      '[data-stage-group="selection"]',
-    ) as HTMLElement;
-    expect(within(selection).getByTestId("scorecard-group-state")).toHaveTextContent(
-      "failed",
-    );
+      Array.from(document.querySelectorAll("[data-stage-group]")).map((node) =>
+        node.getAttribute("data-stage-group"),
+      ),
+    ).toEqual(["selection"]);
+    const selection = sectionFor("selection")!;
+    expect(stateWordIn(selection)).toBe("failed");
     expect(within(selection).getByTestId("stage-reason")).toHaveTextContent(
       "Failed because an expected tool call was never made.",
     );
+    expect(railItem("selection")).toHaveAttribute("aria-pressed", "true");
+
+    openStage("connection");
+    const connection = sectionFor("connection")!;
+    expect(stateWordIn(connection)).toBe("passed");
+    expect(
+      within(connection).queryAllByTestId("trial-scorecard-row"),
+    ).toHaveLength(0);
+    expect(sectionFor("selection")).toBeNull();
+  });
+
+  it("returns to the break when the pane swaps to another iteration", () => {
+    const chain = {
+      status: "verified",
+      firstFailedStage: "selection",
+      stages: [
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "selection", state: "failed", reason: "missingToolCall" },
+      ],
+    } as never;
+    const { rerender } = renderCard({ chain });
+    openStage("connection");
+    expect(sectionFor("connection")).not.toBeNull();
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={{ ...iteration(), _id: "it2" } as EvalIteration}
+        steps={steps}
+        chain={chain}
+      />,
+    );
+    // A different iteration is a different chain: a carried selection would
+    // open a stage this one may never have broken at.
+    expect(sectionFor("connection")).toBeNull();
+    expect(sectionFor("selection")).not.toBeNull();
   });
 
   it("files every evaluator under its stage once, in chain order", () => {
@@ -404,11 +449,7 @@ describe("the chain lives inside the Scorecard", () => {
 
   it("gives every measured stage a heading with its state word", () => {
     renderCard({ chain });
-    const card = screen.getByTestId("trial-scorecard");
-    const sections = Array.from(
-      card.querySelectorAll("[data-stage-group]"),
-    ).map((node) => node.getAttribute("data-stage-group"));
-    expect(sections).toEqual([
+    expect(railStages()).toEqual([
       "connection",
       "discovery",
       "selection",
@@ -416,39 +457,59 @@ describe("the chain lives inside the Scorecard", () => {
       "response",
       "userValue",
     ]);
-    const states = screen
-      .getAllByTestId("scorecard-group-state")
-      .map((el) => el.textContent);
-    expect(states).toEqual([
-      "passed",
-      "passed",
-      "failed",
-      "never ran (an earlier stage failed)",
-      "never ran (an earlier stage failed)",
-      "never ran (an earlier stage failed)",
-    ]);
+    const states = [
+      ["connection", "passed"],
+      ["discovery", "passed"],
+      ["selection", "failed"],
+      ["call", "never ran (an earlier stage failed)"],
+      ["response", "never ran (an earlier stage failed)"],
+      ["userValue", "never ran (an earlier stage failed)"],
+    ] as const;
+    for (const [stage, word] of states) {
+      openStage(stage);
+      expect(stateWordIn(sectionFor(stage)!)).toBe(word);
+    }
+  });
+
+  it("puts the state on the rail for a screen reader, not as a second word", () => {
+    renderCard({ chain });
+    // The dot is a colour; the word reaches a reader through the cell's name.
+    expect(railItem("selection")).toHaveAttribute(
+      "aria-label",
+      "03 Selection: failed",
+    );
+    expect(railItem("connection")).toHaveAttribute(
+      "aria-label",
+      "01 Connection: Session connected",
+    );
+    // And the rail itself never prints it, so nothing says it twice.
+    expect(screen.getByRole("navigation").textContent).not.toMatch(/failed/i);
   });
 
   it("explains a failed stage once, not once per source", () => {
     renderCard({ chain });
-    const selection = document.querySelector(
-      '[data-stage-group="selection"]',
-    ) as HTMLElement;
+    const selection = sectionFor("selection")!;
     expect(within(selection).getByTestId("stage-reason")).toHaveTextContent(
       "Failed because an expected tool call was never made.",
     );
     expect(within(selection).queryByTestId("stage-floor")).toBeNull();
     // A stage that did not fail has no sentence of its own to add.
-    const connection = document.querySelector(
-      '[data-stage-group="connection"]',
-    ) as HTMLElement;
-    expect(within(connection).queryByTestId("stage-reason")).toBeNull();
+    openStage("connection");
+    expect(
+      within(sectionFor("connection")!).queryByTestId("stage-reason"),
+    ).toBeNull();
   });
 
   it("shows no group state when the trial has no chain", () => {
     renderCard({});
     expect(screen.queryAllByTestId("scorecard-group-state")).toHaveLength(0);
     expect(screen.queryByTestId("stage-reason")).toBeNull();
+    // No verified chain, no rail: the sections stack, and every one of them is
+    // readable without a click that has nothing to key off.
+    expect(railStages()).toEqual([]);
+    expect(
+      document.querySelectorAll("[data-stage-group]").length,
+    ).toBeGreaterThan(1);
   });
 });
 
@@ -536,11 +597,11 @@ describe("blind review keeps the chain and masks one card", () => {
 
   it("keeps every stage, masks User value, and still withholds the judge row", () => {
     renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
-    const card = screen.getByTestId("trial-scorecard");
-    expect(card.querySelectorAll("[data-stage-group]")).toHaveLength(6);
-    const userValue = card.querySelector(
-      '[data-stage-group="userValue"]',
-    ) as HTMLElement;
+    // Every stage is still reachable, and User value is the one open: the
+    // label control lives in its section, and the opening is a rule rather
+    // than a consequence of which stage the judge decided.
+    expect(railStages()).toHaveLength(6);
+    const userValue = sectionFor("userValue")!;
     // No state word, no stage sentence, no tally: each would say the verdict.
     expect(within(userValue).queryByTestId("scorecard-group-state")).toBeNull();
     expect(within(userValue).queryByTestId("stage-reason")).toBeNull();
@@ -549,28 +610,22 @@ describe("blind review keeps the chain and masks one card", () => {
     expect(screen.queryByText("Private judge rationale")).toBeNull();
     expect(screen.queryByText(/below the partial floor/)).toBeNull();
     expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
-    // The other five stages are the runner's, and stay readable.
-    const selection = card.querySelector(
-      '[data-stage-group="selection"]',
-    ) as HTMLElement;
-    expect(within(selection).getByTestId("scorecard-group-state")).toHaveTextContent(
-      "failed",
+    // Nor does its cell leak the verdict a red dot would publish.
+    expect(railItem("userValue")).toHaveAttribute(
+      "aria-label",
+      "06 User value: hidden until you label this iteration",
     );
+    // The other five stages are the runner's, and stay readable.
+    openStage("selection");
+    expect(stateWordIn(sectionFor("selection")!)).toBe("failed");
   });
 
   it("does not put the masked stage's state on its group heading", () => {
     renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
-    const userValue = document.querySelector('[data-stage-group="userValue"]');
-    expect(userValue).not.toBeNull();
-    expect(
-      userValue!.querySelector('[data-testid="scorecard-group-state"]'),
-    ).toBeNull();
+    expect(stateWordIn(sectionFor("userValue")!)).toBeUndefined();
     // Selection's own failure is the runner's, and stays on its heading.
-    const selection = document.querySelector('[data-stage-group="selection"]');
-    expect(
-      selection?.querySelector('[data-testid="scorecard-group-state"]')
-        ?.textContent,
-    ).toBe("failed");
+    openStage("selection");
+    expect(stateWordIn(sectionFor("selection")!)).toBe("failed");
   });
 
   it("masks nothing when an assertion decided User value", () => {
@@ -588,12 +643,11 @@ describe("blind review keeps the chain and masks one card", () => {
 
   it("drops the mask once the reviewer has revealed", () => {
     renderCard({ chain: judgeDecided, judgeHidden: false, judgeCase });
-    const userValue = document.querySelector(
-      '[data-stage-group="userValue"]',
-    ) as HTMLElement;
-    expect(within(userValue).getByTestId("scorecard-group-state")).toHaveTextContent(
-      "failed",
-    );
+    // With nothing to withhold the rail opens on the break again, and User
+    // value reads as the judge decided it.
+    expect(sectionFor("selection")).not.toBeNull();
+    openStage("userValue");
+    expect(stateWordIn(sectionFor("userValue")!)).toBe("failed");
     expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
   });
 });
