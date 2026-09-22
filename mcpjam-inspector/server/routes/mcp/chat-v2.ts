@@ -1400,6 +1400,40 @@ chatV2.post("/", async (c) => {
     // has no backend reserve gate (unlike the cloud path), so the request-level
     // guest check IS the boundary (see isGuestChatRequest).
     const requestIsGuest = isGuestChatRequest(requestAuthHeader);
+    /**
+     * A guest has no project membership, so a `projectId` it supplies is not
+     * its own and nothing downstream may treat it as authorization (MJ-013).
+     *
+     * The MCP routes already answer `403 Not a member of this project` for the
+     * same token and the same id. Chat took any string, never checked it, and
+     * still ran the hosted model call — so an anonymous session could bill
+     * credits against a stranger's project. Two authorization paths over one
+     * resource disagreed, and the weaker one is the one that gets used.
+     *
+     * Cleared for EVERY guest, with no exception for the local-browser path.
+     * An earlier cut here exempted that path because `guestBrowserProject`
+     * hashes the id into a guest-scoped namespace — but that only covers the
+     * page-tool lookup. The raw value still reached the stream handler and the
+     * session persistence callback, which is the same leak in a narrower
+     * doorway. The submitted value survives only in `guestSubmittedProjectId`,
+     * which feeds the hash and nothing else.
+     *
+     * Dropped rather than refused: guest chat carrying a `projectId` is an
+     * established shape here — the turn is meant to run and simply not reach
+     * project-scoped state (`chat-v2.guest-skills.test.ts`) — so a 403 would
+     * be a product change rather than a security fix.
+     */
+    const guestSubmittedProjectId =
+      requestIsGuest && typeof body.projectId === "string" && body.projectId
+        ? body.projectId
+        : undefined;
+    if (guestSubmittedProjectId) {
+      logger.warn(
+        "[mcp/chat-v2] guest supplied a projectId; ignoring it for this turn",
+        { hasChatSession: Boolean(body.chatSessionId) },
+      );
+      body.projectId = undefined;
+    }
     const localPrefEligible =
       enginePref === "local" && !requestIsGuest && !isScenarioSession;
     if (enginePref === "local" && !localPrefEligible) {
@@ -1437,41 +1471,6 @@ chatV2.post("/", async (c) => {
       browserRollout.actor?.guest
         ? browserRollout.actor.id
         : undefined;
-    /**
-     * A guest has no project membership, so a `projectId` it supplies is not
-     * its own, and nothing downstream may treat it as authorization (MJ-013).
-     *
-     * The MCP routes already answer `403 Not a member of this project` for the
-     * same token and the same id. Chat took any string, never checked it, and
-     * still ran the hosted model call — so an anonymous session could bill
-     * credits against a stranger's project and address project-scoped features
-     * with it. Two authorization paths over one resource disagreed, and the
-     * weaker one is the one that gets used.
-     *
-     * Dropped rather than refused. Guest chat carrying a `projectId` is an
-     * established shape here — the turn is meant to run and simply not reach
-     * project-scoped state (see `chat-v2.guest-skills.test.ts`) — so refusing
-     * it outright would be a product change, not a security fix. Clearing the
-     * field once, here, is what makes every consumer below safe: the
-     * alternative is a `!requestIsGuest` clause on each of them, and the one
-     * that gets forgotten is the next MJ-013.
-     *
-     * The local-browser guest keeps its id because it is not addressing the
-     * real project: `guestBrowserProject` hashes it into a guest-scoped
-     * namespace, and the rollout refuses the local engine outside localhost.
-     */
-    if (
-      requestIsGuest &&
-      !localBrowserGuestId &&
-      typeof body.projectId === "string" &&
-      body.projectId
-    ) {
-      logger.warn(
-        "[mcp/chat-v2] guest supplied a projectId; ignoring it for this turn",
-        { hasChatSession: Boolean(body.chatSessionId) },
-      );
-      body.projectId = undefined;
-    }
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
     const browserConsentValid =
       browserRollout.enabled &&
@@ -1573,11 +1572,12 @@ chatV2.post("/", async (c) => {
       isHarnessTurn: Boolean(resolvedExecution.harness),
       hasV1PageTools: validatedPageTools.length > 0,
       engine: browserEngine === "local" ? "local" : "hosted",
-      projectId:
-        typeof body.projectId === "string"
-          ? localBrowserGuestId
-            ? guestBrowserProject(body.projectId, localBrowserGuestId)
-            : body.projectId
+      projectId: localBrowserGuestId
+        ? guestSubmittedProjectId
+          ? guestBrowserProject(guestSubmittedProjectId, localBrowserGuestId)
+          : undefined
+        : typeof body.projectId === "string"
+          ? body.projectId
           : undefined,
       ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
     });

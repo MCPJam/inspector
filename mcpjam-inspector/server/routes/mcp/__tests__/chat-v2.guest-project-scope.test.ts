@@ -22,6 +22,7 @@ const {
   listCloudRuntimeSkillsMock,
   listLocalRuntimeSkillsMock,
   validateGuestTokenMock,
+  resolveBrowserRolloutMock,
   validateAppToolEntriesMock,
   validateUiToolEntriesMock,
   validatePageToolEntriesMock,
@@ -40,6 +41,7 @@ const {
   listCloudRuntimeSkillsMock: vi.fn(),
   listLocalRuntimeSkillsMock: vi.fn(),
   validateGuestTokenMock: vi.fn(),
+  resolveBrowserRolloutMock: vi.fn(),
   validateAppToolEntriesMock: vi.fn(() => []),
   validateUiToolEntriesMock: vi.fn(() => []),
   validatePageToolEntriesMock: vi.fn(() => []),
@@ -120,6 +122,16 @@ vi.mock("../../../utils/skill-tools.js", async () => {
   return { ...actual, listLocalRuntimeSkills: listLocalRuntimeSkillsMock };
 });
 
+// The local-browser guest path only exists when the rollout hands back a GUEST
+// actor. Without this the turn never sets `localBrowserGuestId`, and a test
+// aimed at that path would pass against the very code it is meant to catch.
+vi.mock("../../../utils/computers/browser-rollout.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/browser-rollout.js")
+  >("../../../utils/computers/browser-rollout.js");
+  return { ...actual, resolveBrowserRollout: resolveBrowserRolloutMock };
+});
+
 vi.mock("../../../services/guest-token-verifier.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../services/guest-token-verifier.js")
@@ -190,6 +202,7 @@ describe("POST /api/mcp/chat-v2 — a guest's projectId is not authorization", (
     checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     listLocalRuntimeSkillsMock.mockResolvedValue([]);
     listCloudRuntimeSkillsMock.mockResolvedValue([]);
+    resolveBrowserRolloutMock.mockResolvedValue({ enabled: false, actor: null });
     validateGuestTokenMock.mockImplementation((token: string) =>
       token === GUEST_BEARER
         ? { valid: true, guestId: "g-1" }
@@ -228,6 +241,46 @@ describe("POST /api/mcp/chat-v2 — a guest's projectId is not authorization", (
     expect(JSON.stringify(streamArgs ?? {})).not.toContain(FOREIGN_PROJECT);
     const prepareArgs = prepareChatV2Mock.mock.calls[0]?.[0];
     expect(JSON.stringify(prepareArgs ?? {})).not.toContain(FOREIGN_PROJECT);
+  });
+
+  it("clears it for a guest on the local-browser path too", async () => {
+    // The first cut exempted the local-browser guest because
+    // `guestBrowserProject` hashes the id into a guest-scoped namespace. That
+    // only covered the page-tool lookup: the raw value still reached the
+    // stream handler and the session persistence callback. The exemption is
+    // gone, so the clear has no path around it.
+    resolveBrowserRolloutMock.mockResolvedValue({
+      enabled: true,
+      actor: { id: "guest-actor-1", guest: true },
+    });
+
+    const response = await createApp().request("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GUEST_BEARER}`,
+      },
+      body: JSON.stringify({
+        projectId: FOREIGN_PROJECT,
+        hostId: "host-emulated",
+        builtInToolIds: ["browser"],
+        computerEngine: "local",
+        browserEngine: "local",
+        chatSessionId: "chat-session-1",
+        selectedServers: ["server-1"],
+        selectedServerIds: ["server-id-1"],
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "anthropic/claude-haiku-4.5",
+          provider: "anthropic",
+          name: "Claude Haiku 4.5",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const streamArgs = handleMCPJamFreeChatModelMock.mock.calls[0]?.[0];
+    expect(JSON.stringify(streamArgs ?? {})).not.toContain(FOREIGN_PROJECT);
   });
 
   it("still carries a signed-in caller's projectId", async () => {
