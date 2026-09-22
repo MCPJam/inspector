@@ -333,6 +333,11 @@ export function draftCheckSummary(draft: GeneratedDraft): string | undefined {
   const issues = draft.authoring?.issues ?? [];
   if (!issues.length) return undefined;
   const codes = new Set(issues.map((issue) => issue.code));
+  // A generated case has no document, so the imported wording ("Your document
+  // names tools this server does not have") described a file the reader never
+  // supplied, on the one surface where they could not go look at it.
+  const imported = Boolean(draft.authoring?.source);
+  const subject = imported ? "Your document" : "This case";
   const clauses: string[] = [];
   if (codes.has("unknown_tool"))
     clauses.push("names tools this server does not have");
@@ -343,9 +348,13 @@ export function draftCheckSummary(draft: GeneratedDraft): string | undefined {
   if (codes.has("missing_prerequisite"))
     clauses.push("skips a step the case depends on");
   if (codes.has("missing_evidence"))
-    clauses.push("cites something the document does not show");
+    clauses.push(
+      imported
+        ? "cites something the document does not show"
+        : "uses a value your server never returned",
+    );
   const document = clauses.length
-    ? `Your document ${clauses.join(", and ")}`
+    ? `${subject} ${clauses.join(", and ")}`
     : undefined;
   const outcome =
     codes.has("missing_expectation") || codes.has("unclear_expectation")
