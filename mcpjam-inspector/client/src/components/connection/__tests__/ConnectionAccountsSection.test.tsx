@@ -117,7 +117,10 @@ describe("ConnectionAccountsSection", () => {
       screen.getByRole("button", { name: "Manage same@example.com: Side" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
-    const input = screen.getByLabelText(label);
+    // `findBy`, not `getBy`: the field mounts after Radix closes the menu and
+    // restores focus, so a synchronous query races that and fails under CI
+    // load.
+    const input = await screen.findByLabelText(label);
     await user.clear(input);
     await user.type(input, "Personal");
     await user.tab();

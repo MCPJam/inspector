@@ -9,6 +9,7 @@ import {
   environmentServerRefsForManager,
   isEnvironmentLaunchConflict,
   resolveEnvironmentForLaunch,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "../resolve";
 import { WebRouteError } from "../../../routes/web/errors";
@@ -369,5 +370,60 @@ describe("environmentLaunchRejectionError", () => {
     expect(environmentLaunchRejectionError({ data: { code: 42 } })).toBeNull();
     expect(environmentLaunchRejectionError({ data: [] })).toBeNull();
     expect(environmentLaunchRejectionError({ data: null })).toBeNull();
+  });
+});
+
+describe("translateEnvironmentResolveError", () => {
+  // The 500 this whole change exists to remove. An untranslated ConvexError
+  // reaches `mapRuntimeError` unrecognized and leaves as 500 INTERNAL_ERROR,
+  // which reads as an MCPJam fault for what is a fixable misconfiguration.
+  it("turns an unrunnable environment into a 409 carrying the reason", () => {
+    const translated = translateEnvironmentResolveError(
+      new ConvexError({
+        code: "ENV_NO_SERVERS",
+        message: "Environment \"Staging\" resolves to no servers.",
+      })
+    );
+    expect(translated).toBeInstanceOf(WebRouteError);
+    expect(translated).toMatchObject({
+      status: 409,
+      message: "Environment \"Staging\" resolves to no servers.",
+      details: { code: "ENV_NO_SERVERS" },
+    });
+  });
+
+  // The suite-empty case the launch dialog has to explain. It rides the same
+  // ENV_ prefix precisely so it lands on this branch rather than a 500.
+  it("passes ENV_SUITE_NO_SERVERS through with its suite-settings message", () => {
+    const translated = translateEnvironmentResolveError(
+      new ConvexError({
+        code: "ENV_SUITE_NO_SERVERS",
+        message:
+          "This suite has no servers configured. Add at least one server in the suite settings before launching.",
+      })
+    );
+    expect(translated).toMatchObject({
+      status: 409,
+      details: { code: "ENV_SUITE_NO_SERVERS" },
+    });
+    expect((translated as WebRouteError).message).toContain("suite settings");
+  });
+
+  it("reports a missing or cross-project environment as 404, not 409", () => {
+    for (const code of ["ENV_NOT_FOUND", "ENV_CROSS_PROJECT"]) {
+      expect(translateEnvironmentResolveError(new ConvexError({ code }))).toMatchObject(
+        { status: 404 }
+      );
+    }
+  });
+
+  // Anything that is not a structured environment rejection has to keep its
+  // own status: swallowing a genuine backend fault into a 409 would hide a
+  // real outage from the 5xx monitors.
+  it("leaves a non-environment failure alone", () => {
+    const boom = new Error("convex unreachable");
+    expect(translateEnvironmentResolveError(boom)).toBe(boom);
+    const routeError = new WebRouteError(503, "UPSTREAM" as never, "down");
+    expect(translateEnvironmentResolveError(routeError)).toBe(routeError);
   });
 });

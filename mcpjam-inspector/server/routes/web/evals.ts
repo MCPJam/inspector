@@ -9,6 +9,7 @@ import {
   environmentServerIds,
   environmentServerNames,
   resolveEnvironmentForLaunch,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -179,20 +180,28 @@ evals.post("/run", async (c) =>
         // Convex query surface requires (same conversion the hosted connection
         // uses); the raw key would 401 the resolver for API-key callers.
         const bearer = await getConvexBearerForRequest(c);
-        preflightEnvironment = await resolveEnvironmentForLaunch(
-          createConvexClient(bearer),
-          {
-            projectId: rawBody.projectId,
-            environmentId: rawBody.environmentId,
-            // Suite-scoped: lets the preflight fall back to the suite's own
-            // servers when this environment has none, matching what the launch
-            // mutation will do. Omitting it here would leave the 500 in place,
-            // because the Inspector preflights before it launches.
-            ...(typeof rawBody.suiteId === "string" && rawBody.suiteId
-              ? { suiteId: rawBody.suiteId }
-              : {}),
-          },
-        );
+        try {
+          preflightEnvironment = await resolveEnvironmentForLaunch(
+            createConvexClient(bearer),
+            {
+              projectId: rawBody.projectId,
+              environmentId: rawBody.environmentId,
+              // Suite-scoped: lets the preflight fall back to the suite's own
+              // servers when this environment has none, matching what the
+              // launch mutation will do. Omitting it here would leave the 500
+              // in place, because the Inspector preflights before it launches.
+              ...(typeof rawBody.suiteId === "string" && rawBody.suiteId
+                ? { suiteId: rawBody.suiteId }
+                : {}),
+            },
+          );
+        } catch (error) {
+          // Without this the resolver's structured ENV_* rejection leaves as
+          // a bare ConvexError, which mapRuntimeError cannot classify and
+          // reports as 500 INTERNAL_ERROR — an MCPJam fault on the 5xx
+          // monitors for what is a configuration problem the user can fix.
+          throw translateEnvironmentResolveError(error);
+        }
         // Prime the ephemeral manager with the live-healed server IDs (not the
         // raw closed set) so the batch we authorize/connect matches the IDs
         // `resolveServerIdsOrThrow` later looks up — a server deleted and

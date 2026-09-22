@@ -383,3 +383,44 @@ export function environmentLaunchConflictError(error?: unknown): WebRouteError {
     message
   );
 }
+
+/**
+ * Map a launch-resolution failure onto the public envelope. The environment
+ * exists and is readable, but cannot currently produce a runnable
+ * configuration (a pinned plugin was disabled, the host was deleted, the
+ * closed server set came out empty) — that is a 409 conflict, not bad input,
+ * and the machine-readable `ENV_*` code rides along in `details` so callers can
+ * branch on the reason. Mirrors `/v1/projects/:p/environments/:e/resolve`.
+ *
+ * Lives here rather than on one route because EVERY eval launch surface needs
+ * it. An untranslated ConvexError reaches `mapRuntimeError` as an unrecognized
+ * failure and leaves as a 500, which the 5xx monitors count as an MCPJam fault
+ * — that is the 500 an empty environment produced on the hosted run route,
+ * which had no translation at all.
+ */
+export function translateEnvironmentResolveError(error: unknown): unknown {
+  if (error instanceof WebRouteError) return error;
+  const data = (error as { data?: unknown } | null)?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const code = (data as { code?: unknown }).code;
+    const message = (data as { message?: unknown }).message;
+    if (typeof code === "string" && code.startsWith("ENV_")) {
+      if (code === "ENV_NOT_FOUND" || code === "ENV_CROSS_PROJECT") {
+        return new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Environment not found"
+        );
+      }
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        typeof message === "string"
+          ? message
+          : "Environment cannot be launched right now.",
+        { code }
+      );
+    }
+  }
+  return error;
+}

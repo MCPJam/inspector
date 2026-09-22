@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
 import evalsRoutes from "../evals.js";
@@ -79,6 +80,18 @@ vi.mock("../../../services/evals/route-helpers.js", async () => {
     typeof import("../../../services/evals/route-helpers.js")
   >("../../../services/evals/route-helpers.js");
   return { ...actual, createConvexClient: vi.fn(() => ({}) as never) };
+});
+
+const resolveEnvironmentForLaunchMock = vi.fn();
+vi.mock("../../../services/environments/resolve.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/environments/resolve.js")
+  >("../../../services/environments/resolve.js");
+  return {
+    ...actual,
+    resolveEnvironmentForLaunch: (...args: unknown[]) =>
+      resolveEnvironmentForLaunchMock(...args),
+  };
 });
 
 vi.mock("../../shared/evals.js", async () => {
@@ -881,5 +894,63 @@ describe("web routes — evals", () => {
       }),
     );
     await flushPromises();
+  });
+});
+
+describe("hosted suite run — environment preflight failures", () => {
+  // The morning's 500. The preflight query rejects with the backend's
+  // structured ConvexError, and this route used to let it escape untranslated
+  // into `mapRuntimeError`, which cannot classify it and answers 500
+  // INTERNAL_ERROR — an MCPJam fault on the 5xx monitors for a suite the user
+  // could have fixed from the launch dialog.
+  it.each([
+    {
+      what: "an environment with no servers",
+      code: "ENV_NO_SERVERS",
+      message: 'Environment "Staging" resolves to no servers.',
+    },
+    {
+      what: "a suite with no servers either",
+      code: "ENV_SUITE_NO_SERVERS",
+      message:
+        "This suite has no servers configured. Add at least one server in the suite settings before launching.",
+    },
+  ])("answers 409 with the reason for $what", async ({ code, message }) => {
+    resolveEnvironmentForLaunchMock.mockRejectedValueOnce(
+      new ConvexError({ code, message })
+    );
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      { ...runSuiteBody, environmentId: "env-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      message?: string;
+      details?: { code?: string };
+    }>(response);
+
+    expect(status).toBe(409);
+    expect(data.details?.code).toBe(code);
+    // The message is what the launch dialog shows, so it has to survive the
+    // translation rather than be replaced by a generic conflict string.
+    expect(data.message).toBe(message);
+  });
+
+  // A genuine backend outage must keep its 5xx: translating everything would
+  // hide a real fault from the monitors this change exists to quiet.
+  it("still answers 5xx when the resolver itself failed", async () => {
+    resolveEnvironmentForLaunchMock.mockRejectedValueOnce(
+      new Error("convex unreachable")
+    );
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      { ...runSuiteBody, environmentId: "env-1" },
+      token
+    );
+    expect(response.status).toBeGreaterThanOrEqual(500);
   });
 });
