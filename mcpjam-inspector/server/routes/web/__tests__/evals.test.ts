@@ -14,6 +14,7 @@ import {
 import { upstreamRefusalFromResponse } from "../../../services/upstream-refusal.js";
 
 const {
+  environmentQueryMock,
   runEvalsWithManagerMock,
   prepareEvalRunMock,
   runEvalTestCaseWithManagerMock,
@@ -23,6 +24,7 @@ const {
   managerConfigsMock,
   disconnectAllServersMock,
 } = vi.hoisted(() => ({
+  environmentQueryMock: vi.fn(),
   runEvalsWithManagerMock: vi.fn(),
   prepareEvalRunMock: vi.fn(),
   runEvalTestCaseWithManagerMock: vi.fn(),
@@ -78,7 +80,11 @@ vi.mock("../../../services/evals/route-helpers.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../services/evals/route-helpers.js")
   >("../../../services/evals/route-helpers.js");
-  return { ...actual, createConvexClient: vi.fn(() => ({}) as never) };
+  return {
+    ...actual,
+    // The environment preflight queries Convex through this client.
+    createConvexClient: vi.fn(() => ({ query: environmentQueryMock }) as never),
+  };
 });
 
 vi.mock("../../shared/evals.js", async () => {
@@ -517,6 +523,73 @@ describe("web routes — evals", () => {
       ],
     ).toBeDefined();
   });
+
+  it("launches an environment with zero servers using the same preflight", async () => {
+    const resolved = {
+      environmentRef: { environmentId: "env-1", revision: 1 },
+      hostId: "host-1",
+      selectedServerIds: [],
+      effectiveServerIds: [],
+      servers: [],
+    };
+    environmentQueryMock.mockResolvedValueOnce(resolved);
+    prepareEvalRunMock.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize: vi.fn() },
+      execute: vi.fn().mockResolvedValue(undefined),
+    });
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      { ...runSuiteBody, environmentId: "env-1", serverIds: [] },
+      token,
+    );
+    expect(response.status).toBe(202);
+    expect(environmentQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      {
+        projectId: runSuiteBody.projectId,
+        environmentId: "env-1",
+        serverSource: "environment_only",
+      },
+    );
+    expect(prepareEvalRunMock.mock.calls[0]?.[1]).toMatchObject({
+      serverIds: [],
+      resolvedEnvironment: resolved,
+    });
+    await flushPromises();
+  });
+  it.each([
+    {
+      error: {
+        data: { code: "ENV_ATTACHMENT_MISSING", message: "Pick a valid group" },
+      },
+      status: 409,
+    },
+    { error: new Error("Unexpected backend failure"), status: 500 },
+  ])(
+    "maps environment preflight failures without hiding other failures ($status)",
+    async ({ error, status }) => {
+      environmentQueryMock.mockRejectedValueOnce(error);
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/run",
+        { ...runSuiteBody, environmentId: "env-1", serverIds: [] },
+        token,
+      );
+      expect(response.status).toBe(status);
+      if (status === 409)
+        expect(await response.json()).toMatchObject({
+          message: "Pick a valid group",
+          details: { code: "ENV_ATTACHMENT_MISSING" },
+        });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("starts hosted suite runs asynchronously and keeps MCP connections until execution settles", async () => {
     // The host this suite runs under. Every connection fact below comes from

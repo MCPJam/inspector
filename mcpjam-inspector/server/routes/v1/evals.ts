@@ -162,6 +162,8 @@ import {
 } from "../shared/evals.js";
 import {
   resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
   environmentServerIds,
   environmentServerNames,
   type ResolvedEnvironmentForLaunch,
@@ -1206,41 +1208,6 @@ function isConvexFunctionMissing(error: unknown): boolean {
 function convexFunctionUnavailableError(message: string): WebRouteError {
   // Status is remapped by the v1 envelope: FEATURE_NOT_SUPPORTED is 422.
   return new WebRouteError(422, ErrorCode.FEATURE_NOT_SUPPORTED, message);
-}
-
-/**
- * Map a launch-resolution failure onto the public envelope. The environment
- * exists and is readable, but cannot currently produce a runnable
- * configuration (a pinned plugin was disabled, the host was deleted, the
- * closed server set came out empty) — that is a 409 conflict, not bad input,
- * and the machine-readable `ENV_*` code rides along in `details` so callers can
- * branch on the reason. Mirrors `/v1/projects/:p/environments/:e/resolve`.
- */
-function translateEnvironmentResolveError(error: unknown): unknown {
-  if (error instanceof WebRouteError) return error;
-  const data = (error as { data?: unknown } | null)?.data;
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    const code = (data as { code?: unknown }).code;
-    const message = (data as { message?: unknown }).message;
-    if (typeof code === "string" && code.startsWith("ENV_")) {
-      if (code === "ENV_NOT_FOUND" || code === "ENV_CROSS_PROJECT") {
-        return new WebRouteError(
-          404,
-          ErrorCode.NOT_FOUND,
-          "Environment not found",
-        );
-      }
-      return new WebRouteError(
-        409,
-        ErrorCode.CONFLICT,
-        typeof message === "string"
-          ? message
-          : "Environment cannot be launched right now.",
-        { code },
-      );
-    }
-  }
-  return error;
 }
 
 function requireProjectMatch(
@@ -4413,6 +4380,7 @@ async function resolveLaunchServers(params: {
     const convex = createConvexReadClient(convexAuthToken);
     try {
       environmentLaunch = await resolveEnvironmentForLaunch(convex, {
+        serverSource: EVAL_LAUNCH_SERVER_SOURCE,
         projectId,
         environmentId,
       });
@@ -9152,6 +9120,7 @@ evals.post(
       let launch: ResolvedEnvironmentForLaunch;
       try {
         launch = await resolveEnvironmentForLaunch(readClient, {
+          serverSource: EVAL_LAUNCH_SERVER_SOURCE,
           projectId,
           environmentId,
         });

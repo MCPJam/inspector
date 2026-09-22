@@ -367,10 +367,29 @@ function EnvironmentModeBar({
     ]
   );
 
+  /**
+   * Every environment this suite runs takes its servers from a group it does
+   * not have, and contributes none through a plugin pin either — so the run
+   * will connect nothing. Read from the PERSISTED attachments rather than the
+   * environment preview, which resolves the client's own servers and would
+   * therefore describe a set these runs never use.
+   */
+  const noServers =
+    !environmentsLoading &&
+    unresolvedCount === 0 &&
+    attachedEnvironments.length > 0 &&
+    attachedEnvironments.every(
+      (env) => !env.serverAttachmentId && !env.pluginVersionIds?.length
+    );
+
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <EnvironmentComposer
+          // "Servers · client default" is the resolver's rule for journeys and
+          // scenarios, not for evals: an eval run takes its servers from the
+          // group alone, so an empty slot here means no tools.
+          emptyServerLabel="Servers · none"
           projectId={projectId}
           environments={liveEnvironments}
           value={state}
@@ -396,6 +415,14 @@ function EnvironmentModeBar({
           testIdPrefix="suite-env"
         />
       </div>
+      {noServers ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="suite-env-no-servers-hint"
+        >
+          No server group picked. Runs will have no tools.
+        </p>
+      ) : null}
       {unresolvedCount > 0 ? (
         <p
           className="text-[11px] text-muted-foreground"

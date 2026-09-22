@@ -2297,10 +2297,10 @@ describe("OrganizationsTab billing", () => {
     });
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(
-      screen.getByText(
-        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
+      screen.getAllByText(
+        "Purchases are unavailable here. You can still view the plans.",
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(2);
   });
 
   it("consumes paid deep links without auto-starting a plan change", async () => {
@@ -2508,10 +2508,10 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     expect(
-      screen.getByText(
-        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
+      screen.getAllByText(
+        "Purchases are unavailable here. You can still view the plans.",
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(2);
     for (const button of screen.getAllByRole("button", {
       name: "Upgrade",
     })) {

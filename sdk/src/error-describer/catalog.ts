@@ -759,7 +759,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Disable progressive tool discovery for this server, or move headers into the server config.",
     ],
-    "paginated-tool-header-discovery-unsupported",
+    "paginated-tool-and-header-discovery-unsupported",
     "warning",
   ),
 
@@ -812,7 +812,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       // have no BYOK path, so adding a key does nothing for them.
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/mcpjam_limit_monthly": entry(
@@ -827,7 +827,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Wait for the billing period to renew.",
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/mcpjam_platform_budget": entry(
@@ -854,7 +854,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Wait for the allowance to reset.",
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/quota": entry(

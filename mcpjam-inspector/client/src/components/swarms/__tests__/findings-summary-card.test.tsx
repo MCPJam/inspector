@@ -19,7 +19,6 @@ describe("FindingsSummaryCard", () => {
       <FindingsSummaryCard
         sessionCount={3}
         summary={["First sentence.", "Second sentence.", "Third sentence."]}
-        footnotes={[]}
       />,
     );
     // One element holding all three. Rendering them as siblings would satisfy
@@ -38,7 +37,6 @@ describe("FindingsSummaryCard", () => {
       <FindingsSummaryCard
         sessionCount={3}
         summary={["First sentence.", "Second sentence.", "Third sentence."]}
-        footnotes={[]}
       />,
     );
     // A named <section> is a region landmark: this string is announced on
@@ -60,7 +58,6 @@ describe("FindingsSummaryCard", () => {
       <FindingsSummaryCard
         sessionCount={1}
         summary={["The discovery stage broke.", "   ", "", "Maya left lost."]}
-        footnotes={[]}
       />,
     );
     expect(screen.getByTestId("findings-headline").textContent).toBe(
@@ -74,7 +71,6 @@ describe("FindingsSummaryCard", () => {
         sessionCount={3}
         summary={["First sentence.", "Second sentence."]}
         recommendation="Fix the lookup before calling downstream tools."
-        footnotes={[]}
       />,
     );
     // The fix used to replace the paragraph, so a run could name a cause or
@@ -82,10 +78,15 @@ describe("FindingsSummaryCard", () => {
     expect(screen.getByTestId("findings-headline").textContent).toBe(
       "First sentence. Second sentence.",
     );
-    expect(screen.getByTestId("findings-summary").textContent).toContain(
+    // Sibling of the summary, not nested inside it — the card names a cause
+    // and a fix as two slots, and the summary block is only the cause.
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
+    );
+    expect(screen.getByTestId("findings-suggested-fix").textContent).toContain(
       "Fix the lookup before calling downstream tools.",
     );
-    expect(screen.getByTestId("findings-summary").textContent).toContain(
+    expect(screen.getByTestId("findings-suggested-fix").textContent).toContain(
       "Suggested fix",
     );
   });
@@ -96,7 +97,6 @@ describe("FindingsSummaryCard", () => {
         sessionCount={3}
         summary={["First sentence."]}
         narration="Lane A said this."
-        footnotes={[]}
       />,
     );
     // A narration is not a fix; it keeps the legacy promotion and never gets
@@ -109,20 +109,17 @@ describe("FindingsSummaryCard", () => {
     );
   });
 
-  it("still names the session count and the footnotes", () => {
+  it("still names the session count in the singular", () => {
     render(
       <FindingsSummaryCard
         sessionCount={1}
         summary={["Nothing graded yet."]}
-        footnotes={["Rubric findings only"]}
       />,
     );
     // Singular, because one session is one session.
     expect(screen.getByTestId("findings-summary-card").textContent).toContain(
       "Finding summary · 1 session",
     );
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "Rubric findings only",
-    );
+    expect(screen.queryByTestId("findings-footnotes")).not.toBeInTheDocument();
   });
 });

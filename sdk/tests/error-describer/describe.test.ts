@@ -675,6 +675,46 @@ describe("describeError — specific message wording wins over generic HTTP 401"
   });
 });
 
+describe("describeError — a 401 reaching the UI as prose or a wrapped cause", () => {
+  it.each([
+    ["401 Unauthorized"],
+    ["SSE error: Non-200 status code (401)"],
+    ["Error POSTing to endpoint (HTTP 401): Unauthorized"],
+  ])("classifies %j as auth/http_401", (message) => {
+    expect(describeError(new Error(message)).slug).toBe("auth/http_401");
+  });
+
+  it("keeps a port or decimal that merely contains 401 unclassified", () => {
+    expect(
+      describeError(new Error("connect ECONNREFUSED 127.0.0.1:401")).slug
+    ).toBe("transport/econnrefused");
+  });
+
+  it("reads the 401 off an era-negotiation wrapper's inner transport error", () => {
+    // Auto activation probes an UNCONFIGURED connection with `server/discover`;
+    // against an OAuth-gated server the upstream client raises
+    // SdkError(EraNegotiationFailed) carrying the real UnauthorizedError at
+    // `data.cause`, and the toast's docs link pointed at the unknown-error
+    // section because only the wrapper was inspected.
+    const unauthorized = Object.assign(new Error("Unauthorized"), {
+      name: "UnauthorizedError",
+    });
+    const wrapper = Object.assign(new Error("Era negotiation failed"), {
+      name: "SdkError",
+      code: "ERA_NEGOTIATION_FAILED",
+      data: { cause: unauthorized },
+    });
+    expect(describeError(wrapper).slug).toBe("auth/http_401");
+  });
+
+  it("reads the 401 off a plain cause chain", () => {
+    const connect = Object.assign(new Error("Failed to connect"), {
+      cause: Object.assign(new Error("Unauthorized"), { status: 401 }),
+    });
+    expect(describeError(connect).slug).toBe("auth/http_401");
+  });
+});
+
 describe("describeError — unclassified errors surface their raw message", () => {
   it("promotes rawMessage into oneLine when slug is internal/unknown", () => {
     // OAuth step errors and other unclassified text used to be hidden

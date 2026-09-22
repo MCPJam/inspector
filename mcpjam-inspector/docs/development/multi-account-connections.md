@@ -16,11 +16,14 @@ identity stages a new credential until capture can merge it into the oldest row
 with the same exact profile ID. A different identity never receives the old ID.
 Shared reauthorization replaces the single row with a new ID.
 
-Chat exposes a required `account` selector when schemas match, or account-specific
-variants when they differ or already declare `account`. Both execution and linked
-resource conversion use the selected connection. Local chat uses stable qualified
-aliases for every account, plus a default alias for non-chat consumers, so changing
-the default cannot redirect an in-flight turn. Hosted managers are per-turn.
+Chat exposes a required `link_id` selector when schemas match, or account-specific
+variants when they differ or already declare `link_id`. The selector is named to
+match what ChatGPT injects, so servers have one reserved argument name to avoid
+rather than one per host; `account` is a name a server plausibly owns itself.
+Both execution and linked resource conversion use the selected connection. Local
+chat uses stable qualified aliases for every account, plus a default alias for
+non-chat consumers, so changing the default cannot redirect an in-flight turn.
+Hosted managers are per-turn.
 Evals and non-chat consumers continue using the default account.
 
 Deploy the companion backend branch before the inspector branch. The backend adds
@@ -39,12 +42,6 @@ deployment is performed by this implementation.
 - An isolated local Convex deployment passed live connection insertion, default
   switching, stale-delete rejection, reconnect, merge and default promotion checks.
   All six connection HTTP routes rejected unauthenticated requests.
-- `node sdk/scripts/verify-multi-account-lab.mjs` exercises real DCR/PKCE grants,
-  same-email distinct profiles, account-specific linked-resource conversion,
-  upstream selector collisions, invalid selector rejection, token refresh and
-  live profile conformance checks. It expects the multi-account lab on port 18811
-  (override `MULTI_ACCOUNT_LAB_URL`) with `linked_resource` and `upstream_account`
-  tools. The isolated lab copy is `/private/tmp/mcpjam-multi-account-lab`.
 
 Rerunning an edited tool call from the trace view is disabled for a call that
 ran on a specific account: rerun resolves a server, not a connection, so it
@@ -52,5 +49,11 @@ would replay through the default credential. Threading the connection through
 `tools/execute` is a follow-up.
 
 A full signed-in browser walkthrough and production vault integration have not
-been exercised. Unit/integration tests cover their account-management paths; the
-live lab and local backend checks run separately.
+been exercised. Unit/integration tests cover their account-management paths.
+
+There is no end-to-end test in this repository. Multi-account routing was
+verified against a lab MCP server that is its own authorization server —
+`MCPJam/mcpjam-multiaccount`, deployed at `https://multiaccount.mcpjam.com` —
+run out of tree. That repository is private, so a script in this one could not
+be run from this one, and it is gone. An in-repo end-to-end test that starts its
+own fixture server, and so needs no network, is the follow-up.

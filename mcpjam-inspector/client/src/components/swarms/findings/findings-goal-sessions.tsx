@@ -2,8 +2,8 @@
  * Clickable sessions for one expanded findings goal — the same list
  * interaction as Insights' GoalOutcomeDrilldown, scoped to that goal.
  *
- * Renders the list only (no card). The parent mounts this under
- * "What happened" so the sessions sit with the evidence they explain.
+ * Renders the list only (no card). The parent mounts this under the
+ * open stage so the sessions sit with the evidence they explain.
  *
  * The parent keys this on the goal, the narrowing and the scope, so the
  * CURSOR and the pages already fetched cannot outlive the selection that

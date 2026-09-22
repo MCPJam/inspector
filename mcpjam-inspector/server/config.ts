@@ -270,6 +270,26 @@ export const CORS_ORIGINS =
     ? WEB_ALLOWED_ORIGINS
     : Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
 
+/**
+ * The shared `cors()` options BOTH production entry points use — `server/app.ts`
+ * (Electron / embedded) and `server/index.ts` (the standalone and hosted server,
+ * which is what `npm run dev:server` and the packaged binary run). They used to
+ * inline the same literal separately, which is how `exposeHeaders` landed on one
+ * of them and not the other.
+ *
+ * Neither exposed header is CORS-safelisted, so without this the browser hides
+ * both from JS on any cross-origin call — which `npm run dev` is, with the
+ * client on 5173 and the server on 6274. The error card reads `x-request-id` to
+ * give a stackless 5xx something reportable, and `use-chat-session` already
+ * reads `x-mcpjam-error-origin`; both were silently undefined off the hosted
+ * same-origin path.
+ */
+export const CORS_OPTIONS = {
+  origin: CORS_ORIGINS,
+  credentials: true,
+  exposeHeaders: ["x-request-id", "x-mcpjam-error-origin"],
+};
+
 // Hosted web route timeouts (ms). Defined in `shared/` so the client can read
 // the same numbers to DESCRIBE what a hosted run does (the eval settings
 // Connection card names the call timeout); every server importer keeps
