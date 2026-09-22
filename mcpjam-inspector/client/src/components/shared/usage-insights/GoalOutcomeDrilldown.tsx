@@ -133,17 +133,24 @@ interface GoalOutcomeDrilldownProps {
  * theme", which is the phrasing on the diagram that was just clicked.
  */
 export function selectionHeading(selection: InsightsSelection): string {
-  if (selection.themes.length === 0) return "Selected sessions";
+  if (selection.themes.length === 0 && !selection.questions?.length) {
+    return "Selected sessions";
+  }
   const order: Record<string, number> = {
     goal: 0,
     behavior: 1,
     outcome: 2,
     sentiment: 3,
   };
-  return [...selection.themes]
+  const themes = [...selection.themes]
     .sort((a, b) => (order[a.dimension] ?? 9) - (order[b.dimension] ?? 9))
-    .map((theme) => theme.label ?? theme.dimension)
-    .join(" · ");
+    .map((theme) => theme.label ?? theme.dimension);
+  // Question columns sit to the right of the four themed ones, so their names
+  // follow in the heading for the same reason: it reads as the path clicked.
+  const questions = (selection.questions ?? []).map(
+    (question) => question.label ?? (question.value ? "Yes" : "No"),
+  );
+  return [...themes, ...questions].join(" · ");
 }
 
 /**
@@ -162,7 +169,12 @@ function requestKeyOf(
   selection: InsightsSelection | null,
   filter: UsageFilterState,
 ): string | null {
-  if (!selection || selection.themes.length === 0) return null;
+  if (
+    !selection ||
+    (selection.themes.length === 0 && !selection.questions?.length)
+  ) {
+    return null;
+  }
   const scopeKey =
     scope.kind === "swarm"
       ? `swarm:${scope.projectId}:${(scope.journeyRunIds ?? []).join(",")}`

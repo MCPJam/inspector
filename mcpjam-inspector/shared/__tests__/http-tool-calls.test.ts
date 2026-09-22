@@ -1899,7 +1899,7 @@ describe("account-aware chat execution", () => {
               type: "tool-call",
               toolCallId: "call-b",
               toolName: "read",
-              input: { account: "B" },
+              input: { link_id: "B" },
             },
           ],
         },

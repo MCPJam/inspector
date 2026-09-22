@@ -39,6 +39,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
+- **Session flow columns can now be reordered and hidden** — drag any column header in the Session flow Sankey to move it next to a different neighbor. Click the **×** on a column header to hide it, and use the **+** menu at the end of the header row to restore hidden columns or add a new yes/no question. Column order and visibility are saved per surface in the browser so the layout persists across page loads.
+
+- **Adding a yes/no question opens a modal** — clicking **Add question** in the Session flow now opens a dialog instead of an inline form in the column header. The dialog has labeled fields for the column label and the yes/no question text.
+
+- **Session flow chart scrolls under sticky column headers** — the column headers are now a sticky HTML row above the chart rather than text inside the SVG. The chart scrolls horizontally under them, so headers stay readable while you pan through a wide diagram with many columns.
+
+- **Each question column gets its own color** — yes/no question columns each use a distinct hue instead of sharing the foreground color. The hue is pinned to the question's identity, not its position, so dragging a column does not change its color.
+
+- **Freshness chip removed from the Session flow header** — the analysis-freshness indicator is no longer shown in the Session flow panel header.
+
 - **User Testing says "study" everywhere** — the rename was half-applied: the create flow, share dialog, overview empty state and task editor already said *study*, while the list header, detail page, share section, preview pane and every not-found, sign-in and loading state still said *scenario*. All of it now reads **study**, including the tester-facing screens a visitor sees before they ever reach the chat. Nothing else moved: URLs, share links, API fields and error codes are untouched, so no link anyone holds and no integration anyone wrote is affected.
 
 - **Swarms copy finishes its own rename** — the few remaining places that said *journey* or *wave* in prose now say **goal** and **swarm run**, matching what the rest of the surface has called them for months.

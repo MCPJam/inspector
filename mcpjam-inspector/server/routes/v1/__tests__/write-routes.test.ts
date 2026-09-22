@@ -810,7 +810,7 @@ describe("v1 write routes", () => {
         ).toEqual({ id: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 7 });
         expect(convexQueryMock).toHaveBeenCalledWith(
           "projectEnvironments:resolveEnvironmentForLaunch",
-          { projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+          { serverSource: "environment_only", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
         // The suite's saved selection is never consulted for an env run.
         expect(convexQueryMock).not.toHaveBeenCalledWith(
