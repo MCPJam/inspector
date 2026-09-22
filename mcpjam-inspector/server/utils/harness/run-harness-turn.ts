@@ -418,7 +418,7 @@ function coerceToolInput(raw: unknown): unknown {
 export function toToolResultOutput(
   rawOutput: unknown,
   isError: boolean,
-): { type: string; value: unknown } {
+): { type: string; value?: unknown } {
   if (isError) {
     // `JSON.stringify(undefined)` is `undefined`, not `"undefined"`, so a
     // failed tool with no payload would produce a value that serializes away

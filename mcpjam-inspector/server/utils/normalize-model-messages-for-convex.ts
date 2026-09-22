@@ -12,6 +12,10 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
  * exactly like a missing `output`, so preserving one because its tag looked
  * familiar just moves the failure.
  *
+ * `execution-denied` is the one type with no `value`: it records a user
+ * denying a tool approval, carrying an optional `reason` and the provider's
+ * approval metadata. Wrapping it as `json` would tell the model the tool ran.
+ *
  * A payload that is not a valid envelope keeps its data and is re-declared as
  * `json`, the only type that accepts an arbitrary value.
  *
@@ -21,8 +25,21 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
  */
 export function toModelMessageToolOutput(
   payload: unknown,
-): { type: string; value: unknown } | undefined {
+): { type: string; value?: unknown } | undefined {
   if (payload === undefined) return undefined;
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    (payload as { type?: unknown }).type === "execution-denied"
+  ) {
+    const { reason } = payload as { reason?: unknown };
+    if (reason === undefined || typeof reason === "string") {
+      return payload as { type: string };
+    }
+    // A non-string reason fails the schema; the denial itself must survive.
+    const { reason: _dropped, ...denial } = payload as Record<string, unknown>;
+    return denial as { type: string };
+  }
   if (payload !== null && typeof payload === "object" && "value" in payload) {
     const envelope = payload as { type?: unknown; value: unknown };
     const { type, value } = envelope;

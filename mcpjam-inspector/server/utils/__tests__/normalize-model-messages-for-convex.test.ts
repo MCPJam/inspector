@@ -241,6 +241,36 @@ describe("normalizeModelMessagesForConvex — tool-result output", () => {
   });
 
   /**
+   * A denied tool approval has no `value`. Re-wrapping it as `json` would
+   * replay the denial to the model as a tool that ran and returned an object.
+   */
+  it.each([
+    ["with a reason", { type: "execution-denied", reason: "user said no" }],
+    ["without a reason", { type: "execution-denied" }],
+    [
+      "with provider approval metadata",
+      {
+        type: "execution-denied",
+        reason: "user said no",
+        providerOptions: { openai: { approvalId: "appr_1" } },
+      },
+    ],
+  ])("leaves an execution-denied output %s untouched", (_label, output) => {
+    const messages = toolMessage({ ...base, output });
+    expect(parseFirst(messages).success).toBe(true);
+    expect(outputOf(messages)).toEqual(output);
+  });
+
+  it("keeps a denial whose reason the schema would reject, minus the reason", () => {
+    const messages = toolMessage({
+      ...base,
+      output: { type: "execution-denied", reason: { code: 1 } },
+    });
+    expect(parseFirst(messages).success).toBe(true);
+    expect(outputOf(messages)).toEqual({ type: "execution-denied" });
+  });
+
+  /**
    * Deliberately NOT repaired. A tool-result with neither key means the output
    * was lost upstream, and inventing one would grade the case against a value
    * the tool never returned. The backend's 400 names the index instead, which
