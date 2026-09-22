@@ -670,12 +670,14 @@ function EvalsTabContent({
   // `intent` IS REQUIRED, deliberately with no default, so a command cannot be
   // added without deciding. An agent command is a second door into the same
   // mutations the buttons call, and it passes none of the rendered controls
-  // the CI-owned lock lives in. `case.create` (generate) and `suite.delete`
-  // are both in the platform's locked set; `"read"` means "writes no
-  // configuration", which is why running and cancelling stay available.
+  // the CI-owned lock lives in. `"edit_config"` writes the configuration the
+  // suite file (or SDK report) owns — `case.create` (generate) is in the
+  // platform's locked set. `"lifecycle"` covers running, cancelling and
+  // deleting: none edits what the suite is, so all three stay available on a
+  // CI-owned suite (issue #5381).
   const resolveSuiteEntry = (
     raw: unknown,
-    intent: "read" | "write",
+    intent: "edit_config" | "lifecycle",
   ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
@@ -695,7 +697,7 @@ function EvalsTabContent({
     });
     if (matches.length === 1) {
       const entry = matches[0];
-      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+      if (intent === "edit_config" && isCiOwnedSuite(entry.suite)) {
         throw createInspectorCommandClientError(
           "invalid_request",
           `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
@@ -784,7 +786,7 @@ function EvalsTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "read");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -837,7 +839,7 @@ function EvalsTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "edit_config");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -873,7 +875,7 @@ function EvalsTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",

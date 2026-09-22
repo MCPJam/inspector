@@ -13,6 +13,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import type { EvalSuite } from "./types";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 const SKIP_DELETE_TEST_CASE_CONFIRMATION_KEY = "skipDeleteTestCaseConfirmation";
 
@@ -51,6 +52,15 @@ export function ConfirmationDialogs({
   onConfirmDeleteTestCase,
 }: ConfirmationDialogsProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
+
+  /**
+   * A CI-owned suite is deletable — removing a row is not editing what CI
+   * runs — but the two things a person cannot see before clicking belong
+   * here rather than in a refusal: the runs go with it, and the suite comes
+   * BACK on the next report, under a new id, because the SDK reporter
+   * identifies a suite by name (issue #5381).
+   */
+  const deletingCiOwnedSuite = isCiOwnedSuite(suiteToDelete);
 
   // Auto-confirm test case deletion if user chose to skip confirmation
   useEffect(() => {
@@ -91,6 +101,9 @@ export function ConfirmationDialogs({
               Are you sure you want to delete the test suite?
               <br />
               <br />
+              {deletingCiOwnedSuite
+                ? "This suite is managed by CI. Deleting it removes the run history stored here; the next CI run or SDK report creates the suite again."
+                : null}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
