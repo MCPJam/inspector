@@ -26,6 +26,7 @@ export type {
   LiveClientState,
   UnauthorizedRefreshHandler,
   UnauthorizedRefreshResult,
+  RefreshTokensRotatedHandler,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
