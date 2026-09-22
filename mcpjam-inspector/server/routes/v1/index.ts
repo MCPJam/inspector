@@ -41,7 +41,7 @@ import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
-import userTesting from "./user-testing.js";
+import studies from "./studies.js";
 import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalBacktest from "./eval-backtest.js";
@@ -206,11 +206,17 @@ v1.route("/", swarmInsights);
 // and the existing scenario guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
-// User testing — everything you do with a scenario ONCE IT EXISTS: read what
-// it produced, and control who can reach it. `scenarios.ts` above owns
-// publishing (keyed by environment, because the scenario does not exist yet);
-// this is keyed by the scenario. Guest-DENIED by default, same as publishing.
-v1.route("/", userTesting);
+// Studies — the list, one study's merged read, and everything you do with a
+// study ONCE IT EXISTS: read what it produced, and control who can reach it.
+// `scenarios.ts` above owns publishing (keyed by environment, because the study
+// does not exist yet); this is keyed by the study.
+//
+// The deprecated `/user-testing/scenarios` paths are registered here too, from
+// the same handlers, and carry `Deprecation: true`. Guest reach is unchanged by
+// the rename: the two `/studies` GETs are allowlisted because their
+// `/scenarios` predecessors were, GET-ONLY because a write now shares the
+// detail path; everything else stays guest-DENIED.
+v1.route("/", studies);
 // Unified share control plane. Guest-DENIED (no GUEST_ALLOWED_V1_RULES
 // entry). Existing user-testing share endpoints stay as wrappers.
 v1.route("/", shares);

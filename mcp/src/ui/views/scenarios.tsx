@@ -1,17 +1,21 @@
 /**
- * Scenario widget views: the published-scenario gallery and a single scenario's
- * read-only settings. Share links render with copy (and host-permitting,
- * open) affordances since the URL embeds the access token the hosted UI
- * already exposes to the same audience.
+ * Study widget views: the published-study gallery and one study's read.
+ *
+ * Share links render with copy (and host-permitting, open) affordances since
+ * the URL embeds the access token the hosted UI already exposes to the same
+ * audience.
+ *
+ * The file and its view keys keep the `scenarios` spelling: they address a
+ * bundled HTML resource inside the worker, which is not a public name.
  */
 import type { App } from "@modelcontextprotocol/ext-apps";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card } from "@mcpjam/design-system/card";
 import type {
-  GetScenarioResult,
-  ListScenariosResult,
-  PlatformScenarioSummary,
-  PlatformScenarioLink,
+  GetStudyResult,
+  ListStudiesResult,
+  PlatformStudySummary,
+  PlatformStudyLink,
 } from "@mcpjam/sdk/platform";
 import { Globe, Lock, Users } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
@@ -42,7 +46,7 @@ export function ScenariosView({
 }: {
   app: App | undefined;
   isDark: boolean;
-  payload: ListScenariosResult;
+  payload: ListStudiesResult;
 }) {
   const scenarios = payload.items;
 
@@ -75,7 +79,7 @@ function ScenarioCard({
   scenario,
 }: {
   app: App | undefined;
-  scenario: PlatformScenarioSummary;
+  scenario: PlatformStudySummary;
 }) {
   const updatedAt = formatTimestamp(scenario.updatedAt);
   const host = scenario.hostName ?? scenario.hostStyle;
@@ -135,7 +139,7 @@ function ShareLinkRow({
   name,
 }: {
   app: App | undefined;
-  link: PlatformScenarioLink;
+  link: PlatformStudyLink;
   name: string;
 }) {
   return (
@@ -179,9 +183,9 @@ export function ScenarioView({
 }: {
   app: App | undefined;
   isDark: boolean;
-  payload: GetScenarioResult;
+  payload: GetStudyResult;
 }) {
-  const scenario = payload.scenario;
+  const scenario = payload.study;
 
   return (
     <>

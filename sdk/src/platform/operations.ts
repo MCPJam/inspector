@@ -79,6 +79,14 @@ import {
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
+  PlatformStudy,
+  PlatformStudyDeleted,
+  PlatformStudyDetail,
+  PlatformStudyInsightsRequested,
+  PlatformStudySession,
+  PlatformStudySessionDetail,
+  PlatformStudySummary,
+  PlatformStudyUpdated,
   PlatformChatSession,
   PlatformWidgetRender,
   PlatformChatTurn,
@@ -8568,6 +8576,9 @@ export type ListScenariosResult = {
   otherProjects: ProjectInfo[];
 };
 
+/**
+ * @deprecated Use {@link listStudiesOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listScenariosOperation: PlatformOperation<
   ProjectScopedInput,
   ListScenariosResult
@@ -8620,6 +8631,9 @@ export type GetScenarioResult = {
   scenario: PlatformScenarioDetail;
 };
 
+/**
+ * @deprecated Use {@link getStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getScenarioOperation: PlatformOperation<
   GetScenarioInput,
   GetScenarioResult
@@ -12575,12 +12589,12 @@ export const cancelJourneyRunOperation: PlatformOperation<
   },
 };
 
-// ── Scenarios (user testing) ────────────────────────────────────────────────
+// ── Scenarios (deprecated compatibility operations) ─────────────────────────
 //
-// A scenario is a project environment published for people outside the project
-// to talk to. Internally these are `scenarios` rows and will stay that way;
-// "scenario" is the public noun. The older `list_scenarios` / `get_scenario`
-// operations still work and still point at the old routes until GA.
+// Superseded by `publish_study` / `unpublish_study`. Kept executable with their
+// old names, inputs and `PlatformScenario*` DTOs, calling the deprecated
+// `/environments/{id}/scenario` route, for an embedder holding a reference to
+// one. They are deliberately ABSENT from `ALL_OPERATIONS` — see the note there.
 //
 // Both operations need project ADMIN. Publishing is additionally behind the
 // `sandboxes-enabled` beta flag; unpublishing deliberately is not.
@@ -12641,6 +12655,9 @@ export type PublishScenarioResult = {
   overridesIgnored?: boolean;
 };
 
+/**
+ * @deprecated Use {@link publishStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const publishScenarioOperation: PlatformOperation<
   PublishScenarioInput,
   PublishScenarioResult
@@ -12694,6 +12711,9 @@ export type UnpublishScenarioResult = {
   result: PlatformScenarioDeleted;
 };
 
+/**
+ * @deprecated Use {@link unpublishStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const unpublishScenarioOperation: PlatformOperation<
   UnpublishScenarioInput,
   UnpublishScenarioResult
@@ -14722,7 +14742,1128 @@ export const getCapabilitiesOperation: PlatformOperation<
   },
 };
 
-// ── User testing ────────────────────────────────────────────────────────────
+// ── Studies ─────────────────────────────────────────────────────────────────
+//
+// A **study** is one project environment published for people outside the
+// project to talk to. Internally these are `scenarios` rows and will stay that
+// way; `study` is the public noun.
+//
+// This family replaces two generations of names at once: the `*_scenario`
+// operations and the `*_user_testing_*` ones. Both still work under their old
+// names, from the deprecated sections further down, and both point at their own
+// old routes. They are deleted at GA.
+//
+// AUTHORIZATION: publishing and unpublishing need project ADMIN, and publishing
+// is additionally behind the `sandboxes-enabled` beta flag (unpublishing
+// deliberately is not — losing a feature is exactly when taking something down
+// matters most). Everything keyed by a study gates on the WORKSPACE role, where
+// membership is enough for mode changes, renames, member edits and link
+// rotation; only guest execution and rebinding need project admin.
+
+const DEPRECATED_STUDY_SELECTOR_SUFFIX =
+  " DEPRECATED: use `study`, which means exactly this.";
+
+/**
+ * Fold a `study` selector onto its deprecated `scenario` spelling.
+ *
+ * Exactly one, never both. A precedence rule is invisible: a script that half
+ * finished its migration and passes both keeps running, silently addressing
+ * whichever of two possibly-different studies this function happened to prefer
+ * — and `rotate_study_link` and `remove_study_member` are in this family, so
+ * "whichever it happened to prefer" revokes real people's access.
+ *
+ * In `execute` rather than `.refine()` for the reason
+ * {@link operationInputError} gives: the CLI calls `execute` directly and never
+ * parses the input schema, so a refine-only guard would simply not fire there.
+ */
+function foldStudySelector(input: {
+  study?: string;
+  scenario?: string;
+}): string {
+  if (input.study !== undefined && input.scenario !== undefined) {
+    throw operationInputError(
+      "Pass either study or its deprecated scenario alias, not both."
+    );
+  }
+  const selected = input.study ?? input.scenario;
+  if (selected === undefined) {
+    throw operationInputError(
+      "study is required — the id from list_studies or publish_study."
+    );
+  }
+  return selected;
+}
+
+/**
+ * Both spellings are OPTIONAL in the schema even though exactly one is
+ * required, because "exactly one of two" is not a shape Zod states in a way the
+ * MCP tool catalog renders usefully. {@link foldStudySelector} enforces it, and
+ * it is the guard the CLI hits too.
+ */
+const studySelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  study: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Study id (the `id` from list_studies / publish_study)."),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Study id (the `id` from list_studies / publish_study)." +
+        DEPRECATED_STUDY_SELECTOR_SUFFIX
+    ),
+});
+
+export type ListStudiesResult = {
+  project: SelectedProjectInfo;
+  items: PlatformStudySummary[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listStudiesOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListStudiesResult
+> = {
+  name: "list_studies",
+  title: "List MCPJam studies",
+  description:
+    "List the studies published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((study) => ({
+      type: "user_testing_scenario" as const,
+      id: study.id,
+      projectId: result.project?.id,
+      label: `Open ${study.name}`,
+    }))
+  ),
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listStudies({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const studyEnvironmentSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Project environment id to publish (or unpublish). One study per environment."
+    ),
+});
+
+// Create-time overrides, forwarded to the publish IN THE SAME CALL — without
+// them, "publish this restricted to invited people only" is two operations with
+// a window between them where the study is live in the default mode.
+const publishStudyInput = studyEnvironmentSelectorInput.extend({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Study name. CREATE-TIME ONLY — ignored on a republish of an already-published environment (rename with update_study)."
+    ),
+  description: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe("Study description. CREATE-TIME ONLY — ignored on a republish."),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link: project_members (signed-in project members only), invited_only (named members, invited individually), anyone_with_link (anyone holding the URL). CREATE-TIME ONLY — ignored on a republish; change an existing study's mode with update_study."
+    ),
+});
+
+export type PublishStudyInput = z.infer<typeof publishStudyInput>;
+
+export type PublishStudyResult = {
+  project: SelectedProjectInfo;
+  study: PlatformStudy;
+  /**
+   * True when overrides were sent but the environment was ALREADY published,
+   * so they were ignored upstream. The study in the result carries the real
+   * name and mode — a caller who asked for `invited_only` must not conclude
+   * the link is restricted when it is not.
+   */
+  overridesIgnored?: boolean;
+};
+
+export const publishStudyOperation: PlatformOperation<
+  PublishStudyInput,
+  PublishStudyResult
+> = {
+  name: "publish_study",
+  risk: "exposure",
+  title: "Publish a project environment as a study",
+  description:
+    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at CREATE TIME, so the study is never briefly live in a wider mode than asked for. IDEMPOTENT — publishing an already-published environment returns the existing study rather than creating a second one; `created` tells you which happened, and `overridesIgnored: true` means the overrides were discarded because the study already existed. Requires project admin.",
+  readOnly: false,
+  permalink: derivePermalinks((result) => [
+    // The study's own page. `result.study.link` is the token-bearing GUEST
+    // share link — a backend-minted product capability, not a permalink, and
+    // untouched by this policy.
+    {
+      type: "user_testing_scenario",
+      id: result.study.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: publishStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const { overridesIgnored, ...study } = await client.publishStudy(
+      {
+        projectId: project.id,
+        environmentId: input.environment,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      study,
+      ...(overridesIgnored ? { overridesIgnored: true } : {}),
+    };
+  },
+};
+
+export type UnpublishStudyInput = z.infer<typeof studyEnvironmentSelectorInput>;
+
+export type UnpublishStudyResult = {
+  project: SelectedProjectInfo;
+  result: PlatformStudyDeleted;
+};
+
+export const unpublishStudyOperation: PlatformOperation<
+  UnpublishStudyInput,
+  UnpublishStudyResult
+> = {
+  name: "unpublish_study",
+  risk: "destructive",
+  title: "Take a study down",
+  description:
+    "Unpublish an environment's study, invalidating its share link and any live guest sessions. Idempotent — an environment with no study reports `deleted: false` rather than failing. Requires project admin.",
+  readOnly: false,
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyEnvironmentSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.unpublishStudy(
+      { projectId: project.id, environmentId: input.environment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+export type GetStudyInput = z.infer<typeof studySelectorInput>;
+
+export type GetStudyResult = {
+  project: SelectedProjectInfo;
+  study: PlatformStudyDetail;
+};
+
+/**
+ * The merged read. `get_scenario` served the execution settings and
+ * `get_user_testing_scenario` served the environment id and the insights
+ * envelope; they were two generations of one question, and this is the one
+ * that survives.
+ *
+ * ID FIRST, name second. The id path is one request, which is what an agent
+ * holding a `list_studies` result always has, and what the deprecated
+ * `get_user_testing_scenario` did. The name path costs a list and exists
+ * because the deprecated `get_scenario` accepted one; a study's name is the
+ * label a visitor sees, so it is edited often and duplicated freely, and
+ * `resolveByIdOrName` refuses an ambiguous one rather than picking.
+ */
+export const getStudyOperation: PlatformOperation<
+  GetStudyInput,
+  GetStudyResult
+> = {
+  name: "get_study",
+  title: "Get one MCPJam study",
+  description:
+    "One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope — findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_study_insights does, and it takes a slice of the daily insight quota. Matched by id, or by name within the project.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "user_testing_scenario",
+      id: result.study.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const selector = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    try {
+      const study = await client.getStudy(
+        { projectId: project.id, studyId: selector },
+        { signal }
+      );
+      return { project: toSelectedProjectInfo(project), study };
+    } catch (error) {
+      // Only a NOT_FOUND falls through to the name path. Anything else — a
+      // permission refusal, a rate limit, a dead upstream — is the caller's
+      // real answer, and listing every study in the project to re-ask a
+      // question already answered would hide it behind a second failure.
+      if (!(error instanceof PlatformApiError) || error.code !== "NOT_FOUND") {
+        throw error;
+      }
+    }
+    const page = await client.listStudies({ projectId: project.id }, { signal });
+    const match = resolveByIdOrName(
+      page.items,
+      selector,
+      "Study",
+      `project "${project.name}"`
+    );
+    const study = await client.getStudy(
+      { projectId: project.id, studyId: match.id },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), study };
+  },
+};
+
+const updateStudyInput = studySelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(2000).optional(),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link. Send this ON ITS OWN — identity and exposure are separate operations, and a mixed request is rejected."
+    ),
+});
+
+export type UpdateStudyInput = z.infer<
+  typeof updateStudyInput
+>;
+export type UpdateStudyResult = {
+  project: SelectedProjectInfo;
+  study: PlatformStudyUpdated;
+};
+
+export const updateStudyOperation: PlatformOperation<
+  UpdateStudyInput,
+  UpdateStudyResult
+> = {
+  name: "update_study",
+  title: "Update an MCPJam study",
+  description:
+    "Rename a study, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the study live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Workspace membership is enough — no admin needed.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "user_testing_scenario",
+      id: result.study.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: updateStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const selector = foldStudySelector(input);
+    // Identity and exposure are separate mutations upstream, so the route
+    // refuses to chain them: a failure between the two would leave the
+    // study half-updated on the half that decides who can reach it.
+    if (
+      input.mode !== undefined &&
+      (input.name !== undefined || input.description !== undefined)
+    ) {
+      throw operationInputError(
+        "Send `mode` on its own: identity and exposure are separate operations upstream."
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const study = await client.updateStudy(
+      {
+        projectId: project.id,
+        studyId: selector,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), study };
+  },
+};
+
+const listStudySessionsInput = studySelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type ListStudySessionsInput = z.infer<
+  typeof listStudySessionsInput
+>;
+export type ListStudySessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformStudySession[];
+  nextCursor?: string;
+};
+
+export const listStudySessionsOperation: PlatformOperation<
+  ListStudySessionsInput,
+  ListStudySessionsResult
+> = {
+  name: "list_study_sessions",
+  title: "List the sessions a study produced",
+  description:
+    "Sessions real visitors had with a published study: message counts, feedback, device and visitor segment, and a first-message preview. SUMMARIES only — transcripts are a separate call, because these are real people's conversations and a listing should not page them into every caller that wanted counts.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.chatSessionId,
+      projectId: result.project?.id,
+    }))
+  ),
+  inputSchema: listStudySessionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listStudySessions(
+      {
+        projectId: project.id,
+        studyId: study,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const getStudySessionInput = studySelectorInput.extend({
+  session: z.string().trim().min(1).describe("Session id."),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type GetStudySessionInput = z.infer<
+  typeof getStudySessionInput
+>;
+export type GetStudySessionResult = {
+  project: SelectedProjectInfo;
+  session: PlatformStudySessionDetail;
+};
+
+export const getStudySessionOperation: PlatformOperation<
+  GetStudySessionInput,
+  GetStudySessionResult
+> = {
+  name: "get_study_session",
+  title: "Read one user-testing session's transcript",
+  description:
+    "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.session.chatSessionId
+      ? [
+          {
+            type: "chat_session" as const,
+            id: result.session.chatSessionId,
+            projectId: result.project?.id,
+          },
+        ]
+      : []
+  ),
+  inputSchema: getStudySessionInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const session = await client.getStudySession(
+      {
+        projectId: project.id,
+        studyId: study,
+        sessionId: input.session,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), session };
+  },
+};
+
+const studyMetricsInput = studySelectorInput.extend({
+  population: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Restrict the metrics to a session population."),
+});
+
+export type GetStudyMetricsInput = z.infer<
+  typeof studyMetricsInput
+>;
+export type GetStudyMetricsResult = {
+  project: SelectedProjectInfo;
+  metrics: Record<string, unknown>;
+};
+
+export const getStudyMetricsOperation: PlatformOperation<
+  GetStudyMetricsInput,
+  GetStudyMetricsResult
+> = {
+  name: "get_study_metrics",
+  title: "Get a study's session metrics",
+  description:
+    "Aggregate metrics across a study's sessions. Start here rather than reading transcripts — it answers 'how is this going' without pulling anyone's conversation into the turn.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An aggregate over a study's sessions; the numbers are not a resource."
+  ),
+  inputSchema: studyMetricsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const metrics = await client.getStudyMetrics(
+      {
+        projectId: project.id,
+        studyId: study,
+        ...(input.population ? { population: input.population } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), metrics };
+  },
+};
+
+export type GetStudyUsageInput = z.infer<
+  typeof studySelectorInput
+>;
+export type GetStudyUsageResult = {
+  project: SelectedProjectInfo;
+  usage: Record<string, unknown>;
+};
+
+export const getStudyUsageOperation: PlatformOperation<
+  GetStudyUsageInput,
+  GetStudyUsageResult
+> = {
+  name: "get_study_usage",
+  title: "Get a study's usage breakdown",
+  description:
+    "Usage rates for a study, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An aggregate over a study's usage; the numbers are not a resource."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const usage = await client.getStudyUsage(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), usage };
+  },
+};
+
+export type ListStudyFindingsInput = z.infer<
+  typeof studySelectorInput
+>;
+export type ListStudyFindingsResult = {
+  project: SelectedProjectInfo;
+  items: Array<Record<string, unknown>>;
+};
+
+export const listStudyFindingsOperation: PlatformOperation<
+  ListStudyFindingsInput,
+  ListStudyFindingsResult
+> = {
+  name: "list_study_findings",
+  title: "List a study's findings",
+  description:
+    "Problems detected across a study's sessions, tracked over time so a recurring one is distinguishable from a new one.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "Findings are rows inside a study's insights panel with no addressable route of their own."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listStudyFindings(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetStudySignalsInput = z.infer<
+  typeof studySelectorInput
+>;
+export type GetStudySignalsResult = {
+  project: SelectedProjectInfo;
+  signals: Record<string, unknown>;
+};
+
+export const getStudySignalsOperation: PlatformOperation<
+  GetStudySignalsInput,
+  GetStudySignalsResult
+> = {
+  name: "get_study_signals",
+  title: "Get a study's current window signals",
+  description:
+    "The study's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A derived signal summary, not a resource."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const signals = await client.getStudySignals(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), signals };
+  },
+};
+
+const studyWindowInput = studySelectorInput.extend({
+  window: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Window id, from get_user_testing_signals."),
+});
+
+export type GetStudyInsightsInput = z.infer<
+  typeof studyWindowInput
+>;
+export type GetStudyInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: Record<string, unknown>;
+};
+
+export const getStudyInsightsOperation: PlatformOperation<
+  GetStudyInsightsInput,
+  GetStudyInsightsResult
+> = {
+  name: "get_study_insights",
+  title: "Get a user-testing window's insights",
+  description:
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
+  readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A derived insights payload, not a resource."
+  ),
+  inputSchema: studyWindowInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const insights = await client.getStudyInsights(
+      {
+        projectId: project.id,
+        studyId: study,
+        windowId: input.window,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestStudyInsightsInput = studySelectorInput.extend(
+  {
+    force: z
+      .boolean()
+      .optional()
+      .describe(
+        "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
+      ),
+  }
+);
+
+export type RequestStudyInsightsInput = z.infer<
+  typeof requestStudyInsightsInput
+>;
+export type RequestStudyInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformStudyInsightsRequested;
+};
+
+export const requestStudyInsightsOperation: PlatformOperation<
+  RequestStudyInsightsInput,
+  RequestStudyInsightsResult
+> = {
+  name: "request_study_insights",
+  title: "Request insights for a study",
+  description:
+    "Ask a model to analyze the study's current window. Returns immediately with the windowId and status pending; poll get_study_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm-run insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: requestStudyInsightsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const request = await client.requestStudyInsights(
+      {
+        projectId: project.id,
+        studyId: study,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelStudyInsightsInput = z.infer<
+  typeof studyWindowInput
+>;
+export type CancelStudyInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: Record<string, unknown>;
+};
+
+export const cancelStudyInsightsOperation: PlatformOperation<
+  CancelStudyInsightsInput,
+  CancelStudyInsightsResult
+> = {
+  name: "cancel_study_insights",
+  title: "Cancel a user-testing insights request",
+  description:
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyWindowInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const canceled = await client.cancelStudyInsights(
+      {
+        projectId: project.id,
+        studyId: study,
+        windowId: input.window,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+const studyFindingInput = studySelectorInput.extend({
+  finding: z.string().trim().min(1).describe("Finding id."),
+});
+
+export type DismissStudyFindingInput = z.infer<
+  typeof studyFindingInput
+>;
+export type DismissStudyFindingResult = {
+  project: SelectedProjectInfo;
+  finding: Record<string, unknown>;
+};
+
+export const dismissStudyFindingOperation: PlatformOperation<
+  DismissStudyFindingInput,
+  DismissStudyFindingResult
+> = {
+  name: "dismiss_study_finding",
+  title: "Dismiss a user-testing finding",
+  description:
+    "Mark a finding as not worth acting on. Its lifecycle keeps updating underneath, so undismissing later shows honest current state.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyFindingInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const finding = await client.dismissStudyFinding(
+      {
+        projectId: project.id,
+        studyId: study,
+        findingId: input.finding,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+export type UndismissStudyFindingInput = DismissStudyFindingInput;
+export type UndismissStudyFindingResult = DismissStudyFindingResult;
+
+export const undismissStudyFindingOperation: PlatformOperation<
+  UndismissStudyFindingInput,
+  UndismissStudyFindingResult
+> = {
+  name: "undismiss_study_finding",
+  title: "Undismiss a user-testing finding",
+  description: "Bring a dismissed finding back into the active list.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: studyFindingInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const finding = await client.undismissStudyFinding(
+      {
+        projectId: project.id,
+        studyId: study,
+        findingId: input.finding,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+const setStudyGuestExecutionInput = studySelectorInput.extend({
+  enabled: z.boolean(),
+  computerEnabled: z.boolean(),
+  sharedSkillsEnabled: z.boolean(),
+  dailyCreditCap: z
+    .number()
+    .min(0)
+    .describe("Hard ceiling on what visitors can spend per day, in credits."),
+  dailyComputerStartCap: z.number().int().min(0),
+  maxConcurrentComputers: z.number().int().min(0),
+  harnessEnabled: z.boolean().optional(),
+  dailyHarnessSpendCapMicros: z.number().int().min(0).optional(),
+  dailyHarnessCallCap: z.number().int().min(0).optional(),
+  maxConcurrentHarnessRuns: z.number().int().min(0).optional(),
+});
+
+export type SetStudyGuestExecutionInput = z.infer<
+  typeof setStudyGuestExecutionInput
+>;
+export type SetStudyGuestExecutionResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const setStudyGuestExecutionOperation: PlatformOperation<
+  SetStudyGuestExecutionInput,
+  SetStudyGuestExecutionResult
+> = {
+  name: "set_study_guest_execution",
+  title: "Set a study's guest execution caps",
+  description:
+    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: setStudyGuestExecutionInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const study = foldStudySelector(input);
+    // Both selector spellings are dropped from the rest: whichever the caller
+    // sent, it is a selector, not a cap, and forwarding it would put an unknown
+    // key in a strict body.
+    const {
+      project: _project,
+      study: _study,
+      scenario: _scenario,
+      ...guestExecution
+    } = input;
+    const result = await client.setStudyGuestExecution(
+      {
+        projectId: project.id,
+        studyId: study,
+        guestExecution,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+export type RotateStudyLinkInput = z.infer<
+  typeof studySelectorInput
+>;
+export type RotateStudyLinkResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const rotateStudyLinkOperation: PlatformOperation<
+  RotateStudyLinkInput,
+  RotateStudyLinkResult
+> = {
+  name: "rotate_study_link",
+  title: "Rotate a study's share link",
+  description:
+    "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Workspace membership is enough — no admin needed.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink(
+    "mutation-only",
+    "Mints a NEW guest share link and invalidates the old one. That link is a backend-owned product capability with its own delivery, not a permalink."
+  ),
+  inputSchema: studySelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.rotateStudyLink(
+      { projectId: project.id, studyId: study },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const upsertStudyMemberInput = studySelectorInput.extend({
+  email: z.string().trim().min(3).max(320),
+  sendInviteEmail: z
+    .boolean()
+    .optional()
+    .describe(
+      "Off by default — adding someone is not the same as telling them."
+    ),
+});
+
+export type UpsertStudyMemberInput = z.infer<
+  typeof upsertStudyMemberInput
+>;
+export type UpsertStudyMemberResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const upsertStudyMemberOperation: PlatformOperation<
+  UpsertStudyMemberInput,
+  UpsertStudyMemberResult
+> = {
+  name: "upsert_study_member",
+  title: "Invite someone to a study",
+  description:
+    "Grant one person access to a study by email. Upsert, so re-inviting an existing member is not an error. Widens who can reach the study.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: upsertStudyMemberInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.upsertStudyMember(
+      {
+        projectId: project.id,
+        studyId: study,
+        email: input.email,
+        ...(input.sendInviteEmail !== undefined
+          ? { sendInviteEmail: input.sendInviteEmail }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const removeStudyMemberInput = studySelectorInput.extend({
+  member: z.string().trim().min(1).describe("Member id or email."),
+});
+
+export type RemoveStudyMemberInput = z.infer<
+  typeof removeStudyMemberInput
+>;
+export type RemoveStudyMemberResult = UpsertStudyMemberResult;
+
+export const removeStudyMemberOperation: PlatformOperation<
+  RemoveStudyMemberInput,
+  RemoveStudyMemberResult
+> = {
+  name: "remove_study_member",
+  title: "Remove someone from a study",
+  description:
+    "Revoke one person's access. Narrowing exposure is the safe direction, so this is never blocked by the beta gate — losing access to a feature is exactly when revoking matters most. It is still a REMOVAL: the person loses a study they could reach, and getting it back means inviting them again.",
+  readOnly: false,
+  // `destructive` is about HARM, not about gating. Revoking access removes
+  // something a named person had, which is what a client should be able to
+  // confirm before it fires; that it is also ungated by the beta flag is a
+  // separate property, decided by direction of exposure rather than by risk.
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: removeStudyMemberInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.removeStudyMember(
+      {
+        projectId: project.id,
+        studyId: study,
+        member: input.member,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const rebindStudyInput = studySelectorInput.extend({
+  environmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The environment to point at."),
+});
+
+export type RebindStudyInput = z.infer<
+  typeof rebindStudyInput
+>;
+export type RebindStudyResult = UpsertStudyMemberResult;
+
+export const rebindStudyOperation: PlatformOperation<
+  RebindStudyInput,
+  RebindStudyResult
+> = {
+  name: "rebind_study",
+  title: "Point a study at a different environment",
+  description:
+    "Swap the environment behind a study, KEEPING its share link, its members and its session history. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone. Changes what visitors are talking to; project admin.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink(
+    "mutation-only",
+    "Repoints a study at another environment and returns an opaque receipt that names no id to address."
+  ),
+  inputSchema: rebindStudyInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const study = foldStudySelector(input);
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const result = await client.rebindStudy(
+      {
+        projectId: project.id,
+        studyId: study,
+        environmentId: input.environmentId,
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+// ── User testing (deprecated compatibility operations) ──────────────────────
+//
+// Superseded by the `*_study*` operations above. Kept executable with their old
+// names, their `scenario` selector and their `PlatformUserTesting*` DTOs,
+// calling the deprecated `/user-testing/scenarios` routes, for an embedder
+// holding a reference to one. Deliberately ABSENT from `ALL_OPERATIONS`.
 //
 // What a published scenario produced, and who may reach it. `publish_scenario`
 // creates one; everything here addresses the scenario itself.
@@ -14755,6 +15896,9 @@ export type GetUserTestingScenarioResult = {
   scenario: PlatformUserTestingScenarioDetail;
 };
 
+/**
+ * @deprecated Use {@link getStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingScenarioOperation: PlatformOperation<
   GetUserTestingScenarioInput,
   GetUserTestingScenarioResult
@@ -14804,6 +15948,9 @@ export type UpdateUserTestingScenarioResult = {
   scenario: PlatformUserTestingScenario;
 };
 
+/**
+ * @deprecated Use {@link updateStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const updateUserTestingScenarioOperation: PlatformOperation<
   UpdateUserTestingScenarioInput,
   UpdateUserTestingScenarioResult
@@ -14873,6 +16020,9 @@ export type ListUserTestingSessionsResult = {
   nextCursor?: string;
 };
 
+/**
+ * @deprecated Use {@link listStudySessionsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listUserTestingSessionsOperation: PlatformOperation<
   ListUserTestingSessionsInput,
   ListUserTestingSessionsResult
@@ -14926,6 +16076,9 @@ export type GetUserTestingSessionResult = {
   session: PlatformUserTestingSessionDetail;
 };
 
+/**
+ * @deprecated Use {@link getStudySessionOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingSessionOperation: PlatformOperation<
   GetUserTestingSessionInput,
   GetUserTestingSessionResult
@@ -14983,6 +16136,9 @@ export type GetUserTestingMetricsResult = {
   metrics: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudyMetricsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingMetricsOperation: PlatformOperation<
   GetUserTestingMetricsInput,
   GetUserTestingMetricsResult
@@ -15022,6 +16178,9 @@ export type GetUserTestingUsageResult = {
   usage: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudyUsageOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingUsageOperation: PlatformOperation<
   GetUserTestingUsageInput,
   GetUserTestingUsageResult
@@ -15057,6 +16216,9 @@ export type ListUserTestingFindingsResult = {
   items: Array<Record<string, unknown>>;
 };
 
+/**
+ * @deprecated Use {@link listStudyFindingsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const listUserTestingFindingsOperation: PlatformOperation<
   ListUserTestingFindingsInput,
   ListUserTestingFindingsResult
@@ -15092,6 +16254,9 @@ export type GetUserTestingSignalsResult = {
   signals: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudySignalsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingSignalsOperation: PlatformOperation<
   GetUserTestingSignalsInput,
   GetUserTestingSignalsResult
@@ -15135,6 +16300,9 @@ export type GetUserTestingInsightsResult = {
   insights: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link getStudyInsightsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const getUserTestingInsightsOperation: PlatformOperation<
   GetUserTestingInsightsInput,
   GetUserTestingInsightsResult
@@ -15185,6 +16353,9 @@ export type RequestUserTestingInsightsResult = {
   request: PlatformUserTestingInsightsRequested;
 };
 
+/**
+ * @deprecated Use {@link requestStudyInsightsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const requestUserTestingInsightsOperation: PlatformOperation<
   RequestUserTestingInsightsInput,
   RequestUserTestingInsightsResult
@@ -15222,6 +16393,9 @@ export type CancelUserTestingInsightsResult = {
   canceled: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link cancelStudyInsightsOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const cancelUserTestingInsightsOperation: PlatformOperation<
   CancelUserTestingInsightsInput,
   CancelUserTestingInsightsResult
@@ -15263,6 +16437,9 @@ export type DismissUserTestingFindingResult = {
   finding: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link dismissStudyFindingOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const dismissUserTestingFindingOperation: PlatformOperation<
   DismissUserTestingFindingInput,
   DismissUserTestingFindingResult
@@ -15295,6 +16472,9 @@ export const dismissUserTestingFindingOperation: PlatformOperation<
 export type UndismissUserTestingFindingInput = DismissUserTestingFindingInput;
 export type UndismissUserTestingFindingResult = DismissUserTestingFindingResult;
 
+/**
+ * @deprecated Use {@link undismissStudyFindingOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const undismissUserTestingFindingOperation: PlatformOperation<
   UndismissUserTestingFindingInput,
   UndismissUserTestingFindingResult
@@ -15347,6 +16527,9 @@ export type SetUserTestingGuestExecutionResult = {
   result: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link setStudyGuestExecutionOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const setUserTestingGuestExecutionOperation: PlatformOperation<
   SetUserTestingGuestExecutionInput,
   SetUserTestingGuestExecutionResult
@@ -15385,6 +16568,9 @@ export type RotateUserTestingLinkResult = {
   result: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link rotateStudyLinkOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const rotateUserTestingLinkOperation: PlatformOperation<
   RotateUserTestingLinkInput,
   RotateUserTestingLinkResult
@@ -15431,6 +16617,9 @@ export type UpsertUserTestingMemberResult = {
   result: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use {@link upsertStudyMemberOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const upsertUserTestingMemberOperation: PlatformOperation<
   UpsertUserTestingMemberInput,
   UpsertUserTestingMemberResult
@@ -15472,6 +16661,9 @@ export type RemoveUserTestingMemberInput = z.infer<
 >;
 export type RemoveUserTestingMemberResult = UpsertUserTestingMemberResult;
 
+/**
+ * @deprecated Use {@link removeStudyMemberOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const removeUserTestingMemberOperation: PlatformOperation<
   RemoveUserTestingMemberInput,
   RemoveUserTestingMemberResult
@@ -15518,6 +16710,9 @@ export type RebindUserTestingScenarioInput = z.infer<
 >;
 export type RebindUserTestingScenarioResult = UpsertUserTestingMemberResult;
 
+/**
+ * @deprecated Use {@link rebindStudyOperation}. Absent from `ALL_OPERATIONS`.
+ */
 export const rebindUserTestingScenarioOperation: PlatformOperation<
   RebindUserTestingScenarioInput,
   RebindUserTestingScenarioResult
@@ -16420,8 +17615,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
+  getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
@@ -16435,8 +17630,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listJourneyRunSessionsOperation,
   launchJourneyRunOperation,
   cancelJourneyRunOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
+  // Studies. The deprecated `*_scenario` and `*_user_testing_*` operations are
+  // deliberately NOT here, for the same reason the `*_host` ones are not: every
+  // registered surface partitions this list, so leaving them out is what
+  // guarantees no old name can be advertised or persisted under.
+  publishStudyOperation,
+  unpublishStudyOperation,
   // Clients. The deprecated `*_host` operations are deliberately NOT here —
   // see the note above them: every registered surface partitions this list, so
   // leaving them out is what guarantees no old name can be advertised or
@@ -16525,24 +17724,23 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
   // User testing — what a published scenario produced, and who may reach it.
-  getUserTestingScenarioOperation,
-  updateUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  updateStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   getShareSettingsOperation,
   setShareModeOperation,
   rotateShareLinkOperation,

@@ -5,7 +5,7 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
-  listScenariosOperation,
+  listStudiesOperation,
   runEvalSuiteOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
@@ -118,8 +118,8 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
     list_eval_suite_runs: "eval_suite_runs",
     get_eval_run: "eval_run",
     list_eval_run_iterations: "eval_run_iterations",
-    list_scenarios: "scenarios",
-    get_scenario: "scenario",
+    list_studies: "scenarios",
+    get_study: "scenario",
   };
 
 const PLAIN_TOOLS = [
@@ -274,26 +274,26 @@ const PLAIN_TOOLS = [
   "get_wave_insights",
   "request_wave_insights",
   "cancel_wave_insights",
-  "publish_scenario",
-  "unpublish_scenario",
-  "get_user_testing_scenario",
-  "list_user_testing_sessions",
-  "get_user_testing_session",
-  "get_user_testing_metrics",
-  "get_user_testing_usage",
-  "list_user_testing_findings",
-  "get_user_testing_signals",
-  "get_user_testing_insights",
-  "update_user_testing_scenario",
-  "request_user_testing_insights",
-  "cancel_user_testing_insights",
-  "dismiss_user_testing_finding",
-  "undismiss_user_testing_finding",
-  "set_user_testing_guest_execution",
-  "rotate_user_testing_link",
-  "upsert_user_testing_member",
-  "remove_user_testing_member",
-  "rebind_user_testing_scenario",
+  "publish_study",
+  "unpublish_study",
+  "get_study",
+  "list_study_sessions",
+  "get_study_session",
+  "get_study_metrics",
+  "get_study_usage",
+  "list_study_findings",
+  "get_study_signals",
+  "get_study_insights",
+  "update_study",
+  "request_study_insights",
+  "cancel_study_insights",
+  "dismiss_study_finding",
+  "undismiss_study_finding",
+  "set_study_guest_execution",
+  "rotate_study_link",
+  "upsert_study_member",
+  "remove_study_member",
+  "rebind_study",
   "list_clients",
   "get_client",
   "create_client",
@@ -506,8 +506,8 @@ describe("platform tool registration", () => {
       "get_plugin_version",
       "list_project_skills",
       "get_project_skill",
-      "list_scenarios",
-      "get_scenario",
+      "list_studies",
+      "get_study",
       "list_chat_sessions",
       "search_sessions",
       "send_chat_message",
@@ -549,26 +549,25 @@ describe("platform tool registration", () => {
       "get_wave_insights",
       "request_wave_insights",
       "cancel_wave_insights",
-      "publish_scenario",
-      "unpublish_scenario",
-      "get_user_testing_scenario",
-      "list_user_testing_sessions",
-      "get_user_testing_session",
-      "get_user_testing_metrics",
-      "get_user_testing_usage",
-      "list_user_testing_findings",
-      "get_user_testing_signals",
-      "get_user_testing_insights",
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "rotate_user_testing_link",
-      "upsert_user_testing_member",
-      "remove_user_testing_member",
-      "rebind_user_testing_scenario",
+      "publish_study",
+      "unpublish_study",
+      "list_study_sessions",
+      "get_study_session",
+      "get_study_metrics",
+      "get_study_usage",
+      "list_study_findings",
+      "get_study_signals",
+      "get_study_insights",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "rotate_study_link",
+      "upsert_study_member",
+      "remove_study_member",
+      "rebind_study",
       "list_clients",
       "get_client",
       "create_client",
@@ -707,19 +706,19 @@ describe("platform tool registration", () => {
       // Launching spends across a fan-out, but it does not destroy anything.
       "launch_journey_run",
       // Publishing exposes an environment. Additive: it creates a scenario.
-      "publish_scenario",
+      "publish_study",
       // User testing writes that change state without removing anything.
-      // `rotate_user_testing_link` and `remove_user_testing_member` are below,
+      // `rotate_study_link` and `remove_study_member` are below,
       // with the destructive set: both take access away from people who have
       // it, immediately.
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "upsert_user_testing_member",
-      "rebind_user_testing_scenario",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "upsert_study_member",
+      "rebind_study",
       // Client authoring, the ADDITIVE half. Both mint a new client and change
       // nothing that exists — which is exactly what separates them from
       // `update_client` / `set_client_servers` below.
@@ -738,8 +737,8 @@ describe("platform tool registration", () => {
       "delete_secret",
       "archive_journey",
       "archive_swarm",
-      "remove_user_testing_member",
-      "rotate_user_testing_link",
+      "remove_study_member",
+      "rotate_study_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       // `risk: "destructive"` is the CONSERVATIVE reading of an unknowable
@@ -763,10 +762,10 @@ describe("platform tool registration", () => {
       "archive_swarm",
       "cancel_journey_run",
       // Unpublishing kills every live guest session on the scenario.
-      "unpublish_scenario",
+      "unpublish_study",
       // Rotating invalidates every copy of the share link that anyone holds.
-      "rotate_user_testing_link",
-      "remove_user_testing_member",
+      "rotate_study_link",
+      "remove_study_member",
       "uninstall_registry_server",
       // Client edits: DETERMINISTIC OVERWRITES. `destructiveHint: true` here is
       // not "this is a deletion" — the taxonomy is "removes or invalidates
@@ -835,10 +834,10 @@ describe("widget payload tagging", () => {
   it("tags the widget callback's payload in both channels and leaves the plain callback untagged", async () => {
     stubPlatformFetch({
       "/projects": PROJECTS_PAGE,
-      "/scenarios": {
+      "/studies": {
         items: [
           {
-            id: "scenario-1",
+            id: "study-1",
             name: "Support bot",
             serverCount: 0,
             serverNames: [],
@@ -850,7 +849,7 @@ describe("widget payload tagging", () => {
     // tagging contract is the same whether or not PLATFORM_WIDGETS_ENABLED is
     // currently attaching it to the tool.
     const context = fakeToolContext({ bearerToken: "jwt" });
-    const ui = platformWidgetUi(context, listScenariosOperation, "scenarios");
+    const ui = platformWidgetUi(context, listStudiesOperation, "scenarios");
 
     const tagged = (await ui.callback({})) as ToolResult;
     expect(tagged.isError).toBeUndefined();
@@ -859,7 +858,7 @@ describe("widget payload tagging", () => {
 
     const plain = (await runPlatformOperation(
       context,
-      listScenariosOperation,
+      listStudiesOperation,
       {}
     )) as ToolResult;
     expect(plain.isError).toBeUndefined();

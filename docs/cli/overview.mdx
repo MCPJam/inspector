@@ -82,7 +82,7 @@ Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (bef
 | [`cloud skills`](/cli/reference#cloud-skills-commands) | List and read Cloud Skills in your hosted MCPJam projects — discover the skill IDs that `--compose-skill` and `--skill` require (read-only; authoring is in the app) | `list`, `get` |
 | [`cloud projects servers`](/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
 
-Also under `mcpjam cloud`: `journeys`, `scenarios`, `personas`, `swarms`, `user-testing`. Full flag tables are in the [command reference](/cli/reference).
+Also under `mcpjam cloud`: `journeys`, `personas`, `swarms`, and `studies` (which publishes an environment for outside testers and reads what they did; `scenarios` and `user-testing` are deprecated aliases for it). Full flag tables are in the [command reference](/cli/reference).
 
 ## Cloud credentials and API URL
 
@@ -136,7 +136,7 @@ mcpjam cloud link --remove
 |-------|-----------------|
 | `server`, `tools`, `resources`, `prompts` | An **AI client** (`claude`, `chatgpt`, `cursor`, …). The CLI sends that host's `clientInfo`, capabilities, and protocol version in `initialize`. |
 | `compat --host` | Which AI clients to report. Repeatable; default is all. |
-| `cloud eval --host`, `cloud journeys`, `cloud scenarios` | A **saved project Host** (`<id-or-name>`), the client config an eval or journey is stamped with. |
+| `cloud eval --host`, `cloud journeys`, `cloud studies` | A **saved project Host** (`<id-or-name>`), the client config an eval or journey is stamped with. |
 | `cloud environments --host-id` | The project Host id the environment runs as. Distinct from eval's `--host`. |
 
 `--host` on a local command is mutually exclusive with `--client-capabilities`. A Cloud `--host` is mutually exclusive with `--server` / `--environment` when those already supply a closed server set.

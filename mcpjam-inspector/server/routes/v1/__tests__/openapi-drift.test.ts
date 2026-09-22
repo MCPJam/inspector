@@ -52,14 +52,14 @@ const BODYLESS_WRITES = new Set([
   // to say about it beyond which finding.
   "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
   "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
-  // Rotating a share link takes no options: the path scenarioId names what to
+  // Rotating a share link takes no options: the path studyId names what to
   // rotate, and the new secret is minted server-side by definition. A body
   // here could only be a place to pass the next secret in, which is exactly
   // what a rotation must not accept.
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
-  // Scenario-side dismissal, same shape as the swarm-side pair above.
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
-  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  "post /projects/{projectId}/studies/{studyId}/rotate-link",
+  // Study-side dismissal, same shape as the swarm-side pair above.
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/undismiss",
   // Test, pause and resume are addressed entirely by the path destinationId.
   // A body here could only carry options none of the three has: a test span is
   // synthetic and fixed, and a pause has nothing to configure.
@@ -140,6 +140,36 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
   "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
+  // The DEPRECATED `/scenarios` and `/user-testing/scenarios` aliases of the
+  // `/studies` surface. Same handlers as their documented twins, with the
+  // pre-rename response spelling (`scenarioId`, and the metadata-only detail
+  // read), and every response carries `Deprecation: true`. Not documented on
+  // purpose, for the reason the `/hosts` aliases above are not: the spec is what
+  // a NEW integration reads, and publishing both spellings would present a
+  // choice where there is none. The tag's description says so in prose, which is
+  // where a compatibility note belongs.
+  "get /projects/{projectId}/scenarios",
+  "get /projects/{projectId}/scenarios/{scenarioId}",
+  "put /projects/{projectId}/environments/{environmentId}/scenario",
+  "delete /projects/{projectId}/environments/{environmentId}/scenario",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind",
   // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
   // the same handler as its documented `/clients` twin with the pre-rename DTO
   // and the pre-rename (tokenless) write contract, and every response carries

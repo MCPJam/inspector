@@ -189,9 +189,9 @@ describe("agent op registry", () => {
         "dismiss_swarm_finding",
         "undismiss_swarm_finding",
         "cancel_wave_insights",
-        "dismiss_user_testing_finding",
-        "undismiss_user_testing_finding",
-        "cancel_user_testing_insights",
+        "dismiss_study_finding",
+        "undismiss_study_finding",
+        "cancel_study_insights",
       ].sort(),
     );
   });
@@ -1769,7 +1769,7 @@ describe("tier derives from operation.risk", () => {
         "approvable, even though cancellation kills in-flight sessions " +
         "irreversibly.",
     },
-    publish_scenario: {
+    publish_study: {
       tier: "excluded",
       reason:
         "Exposure would derive gated, but publishing decides who outside " +
@@ -1982,7 +1982,7 @@ describe("tier derives from operation.risk", () => {
         "ledger, which is SHARED with user-testing and eval-run insights — " +
         "a request here takes one from there, across the whole organization.",
     },
-    request_user_testing_insights: {
+    request_study_insights: {
       tier: "gated",
       reason:
         "The same shared insightsPerDay ledger as request_wave_insights, " +
@@ -2245,9 +2245,9 @@ const EXPECTED_PROMPT_NOTES = [
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
   "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
   "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
-  "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
-  "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
-  "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+  "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+  "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",
+  "- `set_study_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
   "- `create_client` mints a NEW client and changes nothing that exists. To change an existing one, use `update_client` — never create a near-duplicate to work around a failed edit.",
   "- Editing a client is a three-step loop: call `get_client` first; echo its `configId` back as `expectedConfigId` (and its `name` as `expectedName` when you are renaming); on a conflict, re-read and retry with the fresh values. Never guess a token.",
   "- Prefer `set` over `config`. `set` changes named fields over the client's CURRENT config inside the write transaction; `config` replaces everything and will revert any edit made since you read it. In `set`, absent means keep and `null` means reset-or-clear.",

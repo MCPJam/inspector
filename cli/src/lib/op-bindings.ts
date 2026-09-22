@@ -132,37 +132,37 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
   // are bound under "Chat surfaces" below — they used to be a separate group
   // under the product's older name, and now share this one command.
-  publish_scenario: { command: "cloud scenarios publish" },
-  unpublish_scenario: { command: "cloud scenarios unpublish" },
+  publish_study: { command: "cloud studies publish" },
+  unpublish_study: { command: "cloud studies unpublish" },
   // ── User testing: everything you do with a scenario once it exists ──────
-  get_user_testing_scenario: { command: "cloud user-testing get" },
-  update_user_testing_scenario: { command: "cloud user-testing update" },
-  list_user_testing_sessions: { command: "cloud user-testing sessions" },
-  get_user_testing_session: { command: "cloud user-testing session" },
-  get_user_testing_metrics: { command: "cloud user-testing metrics" },
-  get_user_testing_usage: { command: "cloud user-testing usage" },
-  list_user_testing_findings: { command: "cloud user-testing findings" },
-  get_user_testing_signals: { command: "cloud user-testing signals" },
-  get_user_testing_insights: { command: "cloud user-testing insights" },
-  request_user_testing_insights: {
-    command: "cloud user-testing request-insights",
+  get_study: { command: "cloud studies get" },
+  update_study: { command: "cloud studies update" },
+  list_study_sessions: { command: "cloud studies sessions" },
+  get_study_session: { command: "cloud studies session" },
+  get_study_metrics: { command: "cloud studies metrics" },
+  get_study_usage: { command: "cloud studies usage" },
+  list_study_findings: { command: "cloud studies findings" },
+  get_study_signals: { command: "cloud studies signals" },
+  get_study_insights: { command: "cloud studies insights" },
+  request_study_insights: {
+    command: "cloud studies request-insights",
   },
-  cancel_user_testing_insights: {
-    command: "cloud user-testing cancel-insights",
+  cancel_study_insights: {
+    command: "cloud studies cancel-insights",
   },
-  dismiss_user_testing_finding: {
-    command: "cloud user-testing dismiss-finding",
+  dismiss_study_finding: {
+    command: "cloud studies dismiss-finding",
   },
-  undismiss_user_testing_finding: {
-    command: "cloud user-testing undismiss-finding",
+  undismiss_study_finding: {
+    command: "cloud studies undismiss-finding",
   },
-  set_user_testing_guest_execution: {
-    command: "cloud user-testing guest-execution",
+  set_study_guest_execution: {
+    command: "cloud studies guest-execution",
   },
-  rotate_user_testing_link: { command: "cloud user-testing rotate-link" },
-  upsert_user_testing_member: { command: "cloud user-testing invite" },
-  remove_user_testing_member: { command: "cloud user-testing remove-member" },
-  rebind_user_testing_scenario: { command: "cloud user-testing rebind" },
+  rotate_study_link: { command: "cloud studies rotate-link" },
+  upsert_study_member: { command: "cloud studies invite" },
+  remove_study_member: { command: "cloud studies remove-member" },
+  rebind_study: { command: "cloud studies rebind" },
   // Unified share. I5 shipped SDK/MCP/agent; there is no `cloud share`
   // command yet. Exclude until one exists — a binding with no Commander path
   // fails the tree test.
@@ -302,8 +302,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   reset_computer: { command: "cloud images reset" },
 
   // ── Chat surfaces ───────────────────────────────────────────────────────
-  list_scenarios: { command: "cloud scenarios list" },
-  get_scenario: { command: "cloud scenarios get" },
+  list_studies: { command: "cloud studies list" },
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
   send_chat_message: { command: "cloud sessions send" },

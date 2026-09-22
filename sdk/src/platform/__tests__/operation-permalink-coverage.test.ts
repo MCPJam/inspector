@@ -164,7 +164,7 @@ describe("every catalog operation declares a permalink policy", () => {
       "start_openai_readiness_run",
       "list_chat_sessions",
       "get_chat_session",
-      "publish_scenario",
+      "publish_study",
     ];
     const byName = new Map(ALL_OPERATIONS.map((op) => [op.name, op]));
     for (const name of mustDerive) {

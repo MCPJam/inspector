@@ -3449,6 +3449,7 @@ export type PlatformEvalStepsPage = PlatformPage<PlatformEvalStepResult> & {
  * Share link for a scenario. The URL embeds the access token; it is visible
  * to any caller who can read the scenario (same audience as the hosted UI).
  */
+/** @deprecated Use {@link PlatformStudyLink}. Returned by the deprecated scenario reads. */
 export interface PlatformScenarioLink {
   /** App-relative share path. */
   path: string;
@@ -3456,7 +3457,11 @@ export interface PlatformScenarioLink {
   url: string;
 }
 
-/** A server attached to a scenario (HTTP servers only). */
+/**
+ * A server attached to a scenario (HTTP servers only).
+ *
+ * @deprecated Use {@link PlatformStudyServer}.
+ */
 export interface PlatformScenarioServer {
   id: string;
   name: string;
@@ -3464,7 +3469,207 @@ export interface PlatformScenarioServer {
   useOAuth: boolean;
 }
 
-/** Summary of a published scenario, as returned by the list endpoint. */
+// ── Studies ─────────────────────────────────────────────────────────────────
+//
+// The public shape of a published environment. Storage still calls the row a
+// `scenario` and always will; these types are the projection the API serves.
+//
+// Declared as their own interfaces rather than aliases of the `PlatformScenario*`
+// family they replace. Three of them genuinely differ — `PlatformStudyDetail`
+// merges what were two reads, and the session/insight receipts spell `studyId`
+// where the old ones spell `scenarioId` — and an alias for the rest would make
+// this family half type-alias and half declaration for no reader's benefit.
+
+/** A study's share link. */
+export interface PlatformStudyLink {
+  /** App-relative share path. */
+  path: string;
+  /** Absolute share URL. */
+  url: string;
+}
+
+/** A server attached to a study (HTTP servers only). */
+export interface PlatformStudyServer {
+  id: string;
+  name: string;
+  url: string | null;
+  useOAuth: boolean;
+}
+
+/** Summary of a published study, as returned by the list endpoint. */
+export interface PlatformStudySummary {
+  id: string;
+  projectId: string | null;
+  name: string;
+  description: string | null;
+  /** Who can use it: "project_members" | "invited_only" | "anyone_with_link". */
+  mode: string | null;
+  /** Chat surface style the study renders (e.g. "claude", "chatgpt"). */
+  hostStyle: string | null;
+  hostId: string | null;
+  hostName: string | null;
+  serverCount: number;
+  serverNames: string[];
+  link: PlatformStudyLink | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+/**
+ * One study's full read.
+ *
+ * The UNION of what used to be two operations: `get_scenario` served the
+ * execution settings, `get_user_testing_scenario` served the environment id and
+ * the insights envelope. Two generations of one read, and `get_study` is the
+ * one that survives.
+ *
+ * The two widened fields are optional because they depend on the caller, not on
+ * the study. A share-link guest may read a study's settings and may not read
+ * either of them, so they are ABSENT rather than null for such a caller —
+ * `null` would claim the study has no environment, which is never true.
+ */
+export interface PlatformStudyDetail extends PlatformStudySummary {
+  /** Model the study chats with. */
+  modelId: string | null;
+  systemPrompt: string | null;
+  temperature: number | null;
+  requireToolApproval: boolean;
+  servers: PlatformStudyServer[];
+  /** The environment this study publishes. Absent when the caller may not see it. */
+  environmentId?: string | null;
+  /**
+   * Findings aggregated over the latest analyzed window of real visitor
+   * sessions. Absent when the caller may not have it, and on a server that
+   * predates the envelope — the two degrade identically on purpose.
+   */
+  insights?: PlatformInsightsEnvelope;
+}
+
+/** Receipt for publishing an environment as a study. */
+export interface PlatformStudy {
+  id: string;
+  environmentId: string;
+  name: string;
+  /**
+   * Who may open the share link. `anyone_with_link` is the widest — anyone
+   * holding the URL, signed in or not.
+   */
+  mode: "project_members" | "invited_only" | "anyone_with_link";
+  /**
+   * Bumped whenever access NARROWS (mode change, member removal, link
+   * rotation). Sessions minted under an older version stop working, which is
+   * what makes those changes take effect at once rather than at expiry.
+   */
+  accessVersion: number;
+  /** The share link. Null when the study has no link token. */
+  link: string | null;
+  /** False when the environment was already published and this returned it. */
+  created?: boolean;
+  /**
+   * True when `publish_study`'s create-time overrides (`name`, `description`,
+   * `mode`) were NOT applied because the environment was already published.
+   * Paired with `created: false`.
+   */
+  overridesIgnored?: boolean;
+}
+
+/** Receipt for unpublishing a study. */
+export interface PlatformStudyDeleted {
+  environmentId: string;
+  /** False when the environment had no study — not an error. */
+  deleted: boolean;
+  id?: string;
+}
+
+/**
+ * Study metadata after an update.
+ *
+ * NO `accessVersion`, deliberately: a mode change bumps it upstream, but the
+ * envelope the route re-reads does not carry the new value, so the field was
+ * null on every response while documenting itself as the revocation signal.
+ * The publish response ({@link PlatformStudy}) carries the real one.
+ */
+export interface PlatformStudyUpdated {
+  id: string;
+  projectId: string;
+  name: string | null;
+  description: string | null;
+  mode: string | null;
+}
+
+/** One visitor session on a study, as the list endpoint returns it. */
+export interface PlatformStudySession {
+  /** The address for the transcript route. */
+  id: string;
+  chatSessionId: string;
+  messageCount: number;
+  /** First message only. The transcript is a separate, explicit read. */
+  preview: string;
+  modelId?: string;
+  toolCallCount?: number;
+  /** The visitor abandoned mid-flow because a server demanded auth. */
+  authInterrupted?: boolean;
+  visitor: {
+    displayName?: string;
+    segment?: string;
+    authType?: "signedIn" | "guest";
+    recency?: "new" | "returning";
+    deviceKind?: string;
+    language?: string;
+  };
+  feedback: {
+    rating: number | null;
+    comment: string | null;
+    count: number;
+  };
+  theme?: { id: string; label: string | null; keywords: string[] };
+  startedAt: number;
+  lastActivityAt: number;
+}
+
+/**
+ * A study session's transcript, paged.
+ *
+ * The stored blob URL is never returned: it is a direct handle with no further
+ * authorization, so handing it out would turn one authorized read into an
+ * unbounded, unrevocable one.
+ */
+export interface PlatformStudySessionDetail {
+  id: string;
+  studyId: string;
+  chatSessionId: string | null;
+  modelId: string | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+  /**
+   * `null` — never 0 — when the transcript could not be read, which is why
+   * this is nullable and the list DTO's is not. Zero would be a claim the
+   * visitor said nothing, the opposite of what an unreadable blob means, and a
+   * caller that only checked `messageCount` would act on it.
+   */
+  messageCount: number | null;
+  /**
+   * True when the stored conversation could not be read. Distinct from an
+   * empty `messages`, which means the visitor genuinely said nothing.
+   */
+  transcriptUnavailable?: boolean;
+  messages: PlatformTranscriptMessage[];
+  nextCursor?: string;
+}
+
+/** Receipt for a study insights request. 202: scheduled, not done. */
+export interface PlatformStudyInsightsRequested {
+  studyId: string;
+  projectId: string;
+  windowId: string;
+  status: "pending";
+}
+
+/**
+ * Summary of a published scenario, as returned by the deprecated list endpoint.
+ *
+ * @deprecated Use {@link PlatformStudySummary}.
+ */
 export interface PlatformScenarioSummary {
   id: string;
   projectId: string | null;
@@ -3483,7 +3688,15 @@ export interface PlatformScenarioSummary {
   updatedAt: number | null;
 }
 
-/** A scenario's full read-only settings: summary plus host execution config. */
+/**
+ * A scenario's full read-only settings: summary plus host execution config.
+ *
+ * @deprecated Use {@link PlatformStudyDetail}, which also carries the
+ * environment id and the insights envelope this shape never had. NOT an alias
+ * of it: the deprecated `/scenarios/{scenarioId}` route this describes still
+ * returns exactly these fields and none of the widened ones, so aliasing would
+ * be a compile-time claim about a runtime shape that is not made.
+ */
 export interface PlatformScenarioDetail extends PlatformScenarioSummary {
   /** Model the scenario chats with. */
   modelId: string | null;
@@ -3702,6 +3915,7 @@ export interface PlatformJourneyRunSession {
 // named for the old table, and kept the `Summary` suffix rather than colliding
 // with this one.
 
+/** @deprecated Use {@link PlatformStudy}. */
 export interface PlatformScenario {
   id: string;
   environmentId: string;
@@ -3736,6 +3950,7 @@ export interface PlatformScenario {
   overridesIgnored?: boolean;
 }
 
+/** @deprecated Use {@link PlatformStudyDeleted}. */
 export interface PlatformScenarioDeleted {
   environmentId: string;
   /** False when the environment had no scenario — not an error. */
@@ -4726,7 +4941,7 @@ export interface PlatformCapabilities {
   };
   /**
    * The booleans to branch on. Note that the exposure-REDUCING ones
-   * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
+   * (`cancelJourneyRun`, `unpublishStudy`) stay true for an org
    * that has lost the beta — losing the feature is exactly when stopping it
    * matters most.
    */
@@ -4736,7 +4951,13 @@ export interface PlatformCapabilities {
     writeSwarms: boolean;
     launchJourneyRun: boolean;
     cancelJourneyRun: boolean;
+    /** Publishing an environment as a study. Admin-only, and beta-gated. */
+    publishStudy: boolean;
+    /** Taking a live study down. Ungated by design — see above. */
+    unpublishStudy: boolean;
+    /** @deprecated Use {@link publishStudy}. Emitted alongside it until GA. */
     publishUserTestingScenario: boolean;
+    /** @deprecated Use {@link unpublishStudy}. Emitted alongside it until GA. */
     unpublishUserTestingScenario: boolean;
     /**
      * Mode changes, member invites/removals, link rotation, renames — the
@@ -4786,6 +5007,7 @@ export interface PlatformGenerationDrafts {
 // ── User testing ────────────────────────────────────────────────────────────
 
 /** One session a visitor had with a published scenario. SUMMARY, not transcript. */
+/** @deprecated Use {@link PlatformStudySession}. */
 export interface PlatformUserTestingSession {
   /** The address for the transcript route. */
   id: string;
@@ -4830,6 +5052,11 @@ export interface PlatformTranscriptMessage {
  * authorization, so handing it out would turn one authorized read into an
  * unbounded, unrevocable one.
  */
+/**
+ * @deprecated Use {@link PlatformStudySessionDetail}, which spells the owning
+ * id `studyId`. NOT an alias: this shape's `scenarioId` is what the deprecated
+ * route still sends.
+ */
 export interface PlatformUserTestingSessionDetail {
   id: string;
   scenarioId: string;
@@ -4861,6 +5088,7 @@ export interface PlatformUserTestingSessionDetail {
  * null on every response while documenting itself as the revocation signal.
  * The publish response (`PlatformScenario`) carries the real one.
  */
+/** @deprecated Use {@link PlatformStudyUpdated}. */
 export interface PlatformUserTestingScenario {
   id: string;
   projectId: string;
@@ -4873,6 +5101,7 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
+/** @deprecated Use {@link PlatformStudyDetail}. */
 export interface PlatformUserTestingScenarioDetail
   extends PlatformUserTestingScenario {
   environmentId: string | null;
@@ -4899,6 +5128,10 @@ export interface PlatformGuestExecution {
   maxConcurrentHarnessRuns?: number;
 }
 
+/**
+ * @deprecated Use {@link PlatformStudyInsightsRequested}, which spells the
+ * owning id `studyId`. NOT an alias, for the same reason.
+ */
 export interface PlatformUserTestingInsightsRequested {
   scenarioId: string;
   projectId: string;

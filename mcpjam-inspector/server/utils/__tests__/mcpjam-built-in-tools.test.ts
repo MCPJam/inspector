@@ -191,8 +191,7 @@ describe("workspace tool catalog", () => {
       // are in EXCLUDED_FROM_WORKSPACE: they reach a shared repository.
       "list_eval_github_repos",
       "list_eval_check_repos",
-      "list_scenarios",
-      "get_scenario",
+      "list_studies",
       "list_chat_sessions",
       "search_sessions",
       // Swarms: reads and the REVERSIBLE half of authoring. Launching,
@@ -228,13 +227,13 @@ describe("workspace tool catalog", () => {
       // User testing: aggregate reads and the judgement calls over them.
       // Session listings, transcripts and every exposure control stay out —
       // see EXCLUDED_FROM_WORKSPACE for which reason applies to which.
-      "get_user_testing_metrics",
-      "get_user_testing_usage",
-      "list_user_testing_findings",
-      "get_user_testing_signals",
-      "get_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
+      "get_study_metrics",
+      "get_study_usage",
+      "list_study_findings",
+      "get_study_signals",
+      "get_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
       "search_registry_directory",
       "get_registry_directory_server",
       "list_registry_directory_sources",

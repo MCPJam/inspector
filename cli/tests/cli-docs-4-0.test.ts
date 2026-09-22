@@ -41,8 +41,13 @@ const MOVED_CLOUD_GROUPS = [
   "capabilities",
   "personas",
   "journeys",
-  "scenarios",
   "swarms",
+  // The merged group, and both spellings it still answers to. `scenarios` and
+  // `user-testing` sit here beside `studies` for the same reason `hosts` sits
+  // beside `clients`: the alias is live, so documentation naming it is not
+  // stale documentation.
+  "studies",
+  "scenarios",
   "user-testing",
   "images",
   "tunnel",

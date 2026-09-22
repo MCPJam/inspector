@@ -45,7 +45,7 @@ import {
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   listEvalCheckReposOperation,
-  getScenarioOperation,
+  getStudyOperation,
   getEvalIterationTraceOperation,
   getEvalRunDisclosureOperation,
   compareEvalRunOperation,
@@ -63,7 +63,7 @@ import {
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
-  listScenariosOperation,
+  listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   listEvalRunIterationsOperation,
@@ -119,13 +119,13 @@ import {
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
   getWaveInsightsOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -211,8 +211,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   listEvalCheckReposOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
   listChatSessionsOperation,
   // Advertised with its reach NARROWED rather than excluded: see
   // `WORKSPACE_INPUT_CLAMPS` — scenario (visitor) sessions stay unsearchable
@@ -281,13 +280,13 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // assistant turn into a transcript reader. Same line `list_chat_sessions`
   // already draws. The exposure controls are excluded for the reason the tab
   // exists — the share link and access mode are shown inline there.
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -400,27 +399,27 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_chat_session_trace:
     "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
   // Scenarios (user testing).
-  publish_scenario:
+  publish_study:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
-  unpublish_scenario:
+  unpublish_study:
     "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
   // User testing: sessions and transcripts. PRIVACY, not risk — real visitors'
   // conversations, and a chat surface that can page them is a transcript
   // reader wearing an assistant's clothes. Mirrors `list_chat_sessions`.
-  list_user_testing_sessions:
+  list_study_sessions:
     "Visitor conversations; the User Testing tab is where you read them, with the consent context around them.",
-  get_user_testing_session:
+  get_study_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP where the caller asked for it explicitly.",
-  get_user_testing_scenario:
-    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it falls under the same privacy rule as the session reads above, not the aggregate rule that admits metrics and findings. The User Testing tab renders the same findings with the consent context around them.",
+  get_study:
+    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it falls under the same privacy rule as the session reads above, not the aggregate rule that admits metrics and findings. The User Testing tab renders the same findings with the consent context around them. This is a BEHAVIOR CHANGE from the deprecated get_scenario, which was advertised here because it carried settings and no visitor content; one read now carries both, and the stricter half decides. `list_studies` still is.",
   // Exposure controls. Each of these decides who can reach a live scenario or
   // what it may spend; the tab shows the link, the mode and the current caps
   // next to the control, which a chat tool cannot.
-  update_user_testing_scenario:
+  update_study:
     "Changing a scenario's access mode belongs next to the share link the tab already shows.",
-  set_user_testing_guest_execution:
+  set_study_guest_execution:
     "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
-  rotate_user_testing_link:
+  rotate_study_link:
     "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
   rotate_share_link:
     "Immediate and irreversible — everyone holding the old unified share URL loses the ability to redeem it. The UI confirms it.",
@@ -428,15 +427,15 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Share settings belong next to the Share dialog, which already shows the link, mode, and members.",
   set_share_mode:
     "Changing who can open a shared resource belongs next to the share link the UI already shows.",
-  upsert_user_testing_member:
+  upsert_study_member:
     "Granting someone access to a live scenario is a decision about who may talk to your servers.",
-  remove_user_testing_member:
+  remove_study_member:
     "Paired with the invite above; the member list is the tab's own surface.",
-  rebind_user_testing_scenario:
+  rebind_study:
     "Changes what visitors are talking to, under a link they already hold.",
-  request_user_testing_insights:
+  request_study_insights:
     "Spends against the organization's shared daily insights budget. The tab has the button, next to the window it applies to.",
-  cancel_user_testing_insights:
+  cancel_study_insights:
     "Paired with the request above. The wave pair is excluded on the same rule — offering a cancel for a request this surface cannot make is a half-surface, and the tab owns both halves.",
 
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
@@ -668,8 +667,8 @@ export const WORKSPACE_INPUT_CLAMPS: Readonly<
    * Keep user-testing (`scenario`) transcripts out of in-app chat search.
    *
    * Those are real visitors' conversations with the product, and this surface
-   * already draws that line for the listings (`list_user_testing_sessions` and
-   * `get_user_testing_session` are both in `EXCLUDED_FROM_WORKSPACE` for
+   * already draws that line for the listings (`list_study_sessions` and
+   * `get_study_session` are both in `EXCLUDED_FROM_WORKSPACE` for
    * visitor privacy). Search would walk straight around it: one query would
    * return visitor titles and transcript previews in a chat turn — MORE of
    * those conversations than the excluded listings expose, not less.

@@ -34,6 +34,8 @@
  * scenario surface needs its own security review first.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
+import { markDeprecated } from "./deprecation.js";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
@@ -187,9 +189,7 @@ async function readOptionalJsonBody(c: {
 //
 // The optional body carries create-time overrides, forwarded in ONE call so a
 // scenario is never briefly live in a wider mode than the caller asked for.
-scenarios.put(
-  "/projects/:projectId/environments/:environmentId/scenario",
-  async (c) => {
+const publishHandler = async (c: Context) => {
     const projectId = c.req.param("projectId");
     const environmentId = c.req.param("environmentId");
     const rawBody = await readOptionalJsonBody(c);
@@ -251,8 +251,7 @@ scenarios.put(
       },
       result.created ? 201 : 200
     );
-  }
-);
+};
 
 // DELETE /v1/projects/:projectId/environments/:environmentId/scenario
 //
@@ -268,9 +267,7 @@ scenarios.put(
 // NOT behind the beta flag — taking a live scenario down must keep working for
 // an org that has lost the flag. See lib/sandboxesGate.ts on why exposure-
 // reducing writes are ungated.
-scenarios.delete(
-  "/projects/:projectId/environments/:environmentId/scenario",
-  async (c) => {
+const unpublishHandler = async (c: Context) => {
     const projectId = c.req.param("projectId");
     const environmentId = c.req.param("environmentId");
     const scenarioId = c.req.query("scenarioId");
@@ -295,6 +292,33 @@ scenarios.delete(
       deleted: result.deleted,
       ...(result.scenarioId !== undefined ? { id: result.scenarioId } : {}),
     });
+};
+
+// ── Routes ───────────────────────────────────────────────────────────────────
+//
+// The canonical `/study` paths, and the pre-rename `/scenario` aliases beside
+// them. Same handler, same authorization, same body — only the path and the
+// `Deprecation` header differ, because this pair never spelled the noun in its
+// response (it answers with `id`, not `scenarioId`).
+
+const STUDY_SUCCESSOR =
+  "/api/v1/projects/{projectId}/environments/{environmentId}/study";
+
+scenarios.put("/projects/:projectId/environments/:environmentId/study", publishHandler);
+scenarios.delete("/projects/:projectId/environments/:environmentId/study", unpublishHandler);
+
+scenarios.put(
+  "/projects/:projectId/environments/:environmentId/scenario",
+  (c) => {
+    markDeprecated(c, STUDY_SUCCESSOR);
+    return publishHandler(c);
+  }
+);
+scenarios.delete(
+  "/projects/:projectId/environments/:environmentId/scenario",
+  (c) => {
+    markDeprecated(c, STUDY_SUCCESSOR);
+    return unpublishHandler(c);
   }
 );
 

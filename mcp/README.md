@@ -111,8 +111,8 @@ so results respect the caller's project access.
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
 | `list_project_skills` | List the Cloud Skills visible to you in a project, with the IDs that environments and eval runs pin. Each row reports whether it is eligible to be pinned, and why not if it isn't. | — |
 | `get_project_skill` | Show one Cloud Skill including its SKILL.md body. | — |
-| `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
-| `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
+| `list_studies` | List the studies published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
+| `get_study` | One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope. Matched by id or by name. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
 | `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
 | `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Send `browser: {policy: …}` initially and `browser: {}` on later browser turns. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
@@ -154,26 +154,25 @@ so results respect the caller's project access.
 | `get_wave_insights` | The model's analysis of a whole wave, if one has been requested. Poll after requesting. | — |
 | `request_wave_insights` | Ask a model to analyze a whole wave. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
 | `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
-| `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
-| `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
-| `get_user_testing_scenario` | Scenario detail plus its actionable-insights envelope — aggregated findings with exemplar evidence over the latest analyzed window. | — |
-| `list_user_testing_sessions` | Sessions real visitors had with a published scenario: counts, feedback, device, segment and a first-message preview. Summaries only. | — |
-| `get_user_testing_session` | One session's conversation, paged and projected. Prefer the metrics or findings when you need the pattern rather than the words. | — |
-| `get_user_testing_metrics` | Aggregate metrics across a scenario's sessions. | — |
-| `get_user_testing_usage` | Usage rates by visitor and device. Read `scan.truncated` before quoting any rate. | — |
-| `list_user_testing_findings` | Problems detected across a scenario's sessions, tracked over time. | — |
-| `get_user_testing_signals` | The scenario's live analysis window, and the windowId its insights are keyed by. | — |
-| `get_user_testing_insights` | The model's analysis of one analysis window, if one has been requested. | — |
-| `update_user_testing_scenario` | Rename a scenario, or change who may open its share link. Send `mode` on its own — identity and exposure are separate operations. | — |
-| `request_user_testing_insights` | Ask a model to analyze the current window. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
-| `cancel_user_testing_insights` | Stop an in-flight insights generation — the recovery path for a window stuck pending. | — |
-| `dismiss_user_testing_finding` | Mark a finding as not worth acting on. | — |
-| `undismiss_user_testing_finding` | Bring a dismissed finding back into the active list. | — |
-| `set_user_testing_guest_execution` | What anonymous visitors may run on the organization's account, and how much. A full replacement, not a patch. | — |
-| `rotate_user_testing_link` | Mint a new share link and invalidate the old one. Immediate and irreversible. | — |
-| `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
-| `remove_user_testing_member` | Revoke one person's access. | — |
-| `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `publish_study` | Publish a project environment for user testing, returning its share link and access mode. | — |
+| `unpublish_study` | Take a live study down. Every guest session on it dies with it. | — |
+| `list_study_sessions` | Sessions real visitors had with a published study: counts, feedback, device, segment and a first-message preview. Summaries only. | — |
+| `get_study_session` | One session's conversation, paged and projected. Prefer the metrics or findings when you need the pattern rather than the words. | — |
+| `get_study_metrics` | Aggregate metrics across a study's sessions. | — |
+| `get_study_usage` | Usage rates by visitor and device. Read `scan.truncated` before quoting any rate. | — |
+| `list_study_findings` | Problems detected across a study's sessions, tracked over time. | — |
+| `get_study_signals` | The study's live analysis window, and the windowId its insights are keyed by. | — |
+| `get_study_insights` | The model's analysis of one analysis window, if one has been requested. | — |
+| `update_study` | Rename a study, or change who may open its share link. Send `mode` on its own — identity and exposure are separate operations. | — |
+| `request_study_insights` | Ask a model to analyze the current window. No credits are consumed; it counts against the organization's shared daily insight quota. | — |
+| `cancel_study_insights` | Stop an in-flight insights generation — the recovery path for a window stuck pending. | — |
+| `dismiss_study_finding` | Mark a finding as not worth acting on. | — |
+| `undismiss_study_finding` | Bring a dismissed finding back into the active list. | — |
+| `set_study_guest_execution` | What anonymous visitors may run on the organization's account, and how much. A full replacement, not a patch. | — |
+| `rotate_study_link` | Mint a new share link and invalidate the old one. Immediate and irreversible. | — |
+| `upsert_study_member` | Grant one person access to a study by email. | — |
+| `remove_study_member` | Revoke one person's access. | — |
+| `rebind_study` | Swap the environment behind a study, keeping its link, members and history. | — |
 | `list_clients` | List a project's clients — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns each client's `configId`, the token every write takes. | — |
 | `get_client` | One client's full settings: resolved config, `configId` (echo it back as `expectedConfigId`), and `impact` — what a config edit would follow. The first step of every edit. | — |
 | `create_client` | Create a client from a built-in template or a full config. Additive: nothing that exists changes. | — |

@@ -22,6 +22,14 @@ import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
+  PlatformStudy,
+  PlatformStudyDeleted,
+  PlatformStudyDetail,
+  PlatformStudyInsightsRequested,
+  PlatformStudySession,
+  PlatformStudySessionDetail,
+  PlatformStudySummary,
+  PlatformStudyUpdated,
   PlatformChatSession,
   PlatformChatSessionDetail,
   PlatformChatSessionTrace,
@@ -1346,6 +1354,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link listStudies}. Calls the deprecated `/scenarios` alias. */
   listScenarios(
     params: { projectId: string },
     options?: RequestOptions
@@ -1358,6 +1367,11 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getStudy}, which also returns the environment id and
+   * the insights envelope. Calls the deprecated `/scenarios/{id}` alias, which
+   * carries neither.
+   */
   getScenario(
     params: { projectId: string; scenarioId: string },
     options?: RequestOptions
@@ -4779,6 +4793,7 @@ export class PlatformApiClient {
    * `overridesIgnored: true`) — changing an existing scenario is
    * `updateUserTestingScenario`.
    */
+  /** @deprecated Use {@link publishStudy}. Calls the deprecated `/scenario` alias. */
   publishScenario(
     params: {
       projectId: string;
@@ -4812,6 +4827,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link unpublishStudy}. Calls the deprecated `/scenario` alias. */
   unpublishScenario(
     params: { projectId: string; environmentId: string },
     options?: RequestOptions
@@ -4826,7 +4842,420 @@ export class PlatformApiClient {
     );
   }
 
-  // ── User testing ────────────────────────────────────────────────────────
+  // ── Studies ─────────────────────────────────────────────────────────────
+  //
+  // A **study** is the product noun: one project environment published for
+  // outside testers. `publishStudy` creates one (keyed by environment, because
+  // the study does not exist yet); everything else here is keyed by the study.
+  //
+  // The `listScenarios`/`getScenario` reads above and the `*UserTestingScenario`
+  // methods below are DEPRECATED compatibility delegates. They keep calling the
+  // old routes and keep returning the old shapes, so existing callers are
+  // unaffected. They are not wrappers over these — the two surfaces spell their
+  // ids differently and the old detail read carries strictly less.
+  //
+  // AUTHORIZATION DIFFERS from the rest of this client: these gate on the
+  // WORKSPACE role rather than the project role, and workspace MEMBERSHIP is
+  // enough for most of them — mode changes, renames, member edits and link
+  // rotation included. Only guest execution and rebinding need project ADMIN.
+  // A legacy workspace with no organization hard-denies delegated (`sk_`)
+  // callers entirely — a documented limitation, not a bug you can grant your
+  // way out of.
+
+  listStudies(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformStudySummary>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/studies`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * One study's full read: execution settings, the environment it publishes,
+   * and the insights envelope.
+   *
+   * `environmentId` and `insights` are OPTIONAL because they depend on the
+   * CALLER, not on the study. Both are gated on workspace membership while the
+   * study itself is visible more widely, so a share-link guest — and any server
+   * predating the envelope — gets the settings without them rather than an
+   * error. Treat an absent `insights` as `not_available`, never as "no
+   * findings".
+   */
+  getStudy(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<PlatformStudyDetail> {
+    return this.request(
+      "GET",
+      this.studyPath(params.projectId, params.studyId),
+      {},
+      options
+    );
+  }
+
+  /**
+   * Publish an environment as a study.
+   *
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the study is never briefly live in a wider mode than you
+   * asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`), because re-applying `mode` would let a routine
+   * idempotent publish widen a study someone had narrowed by hand.
+   */
+  publishStudy(
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformStudy> {
+    const { projectId, environmentId } = params;
+    // Explicit picks, not a rest spread: TypeScript's structural typing lets a
+    // wider object through, and the route's schema is strict — an unknown key
+    // forwarded here turns a valid publish into a 400.
+    const body = Object.fromEntries(
+      Object.entries({
+        name: params.name,
+        description: params.description,
+        mode: params.mode,
+      }).filter(([, value]) => value !== undefined)
+    );
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        projectId
+      )}/environments/${encodeURIComponent(environmentId)}/study`,
+      // Bodyless when there is nothing to send — the common case.
+      Object.keys(body).length > 0 ? { body } : {},
+      options
+    );
+  }
+
+  unpublishStudy(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformStudyDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/study`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Edit a study. SINGLE-CONCERN: send `mode` on its own, or `name` and
+   * `description` together — never both. Identity and exposure are separate
+   * mutations upstream, so a mixed request would have to apply them in
+   * sequence, and a failure between the two leaves the study half-updated on
+   * the half that decides who can reach it.
+   */
+  updateStudy(
+    params: {
+      projectId: string;
+      studyId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformStudyUpdated> {
+    const { projectId, studyId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.studyPath(projectId, studyId),
+      { body },
+      options
+    );
+  }
+
+  /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  listStudySessions(
+    params: {
+      projectId: string;
+      studyId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformStudySession>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * One session's transcript, PAGED and projected to role + text + timing.
+   *
+   * These are real people's conversations with your product. The API never
+   * hands back the stored blob URL, so a caller cannot pass "read this
+   * transcript" onward as an unrevocable capability.
+   */
+  getStudySession(
+    params: {
+      projectId: string;
+      studyId: string;
+      sessionId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformStudySessionDetail> {
+    return this.request(
+      "GET",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/sessions/${encodeURIComponent(params.sessionId)}`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getStudyMetrics(
+    params: { projectId: string; studyId: string; population?: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/metrics`,
+      {
+        query: params.population ? { population: params.population } : {},
+      },
+      options
+    );
+  }
+
+  /**
+   * Usage breakdown. Read `scan.truncated` before quoting any rate from this:
+   * true means the rates were computed over the most recent N sessions rather
+   * than all of them, and dropping the flag turns a conditional statistic into
+   * an unconditional claim.
+   */
+  getStudyUsage(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/usage`,
+      {},
+      options
+    );
+  }
+
+  listStudyFindings(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<Record<string, unknown>>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/findings`,
+      {},
+      options
+    );
+  }
+
+  /** Also how you learn the CURRENT window id, which the insights read takes. */
+  getStudySignals(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/signals`,
+      {},
+      options
+    );
+  }
+
+  getStudyInsights(
+    params: { projectId: string; studyId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/windows/${encodeURIComponent(params.windowId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Ask a model to analyze the study's current window. **202** — scheduled,
+   * not done. SPENDS against the organization's daily insights budget, which
+   * is SHARED with swarm-run insights.
+   */
+  requestStudyInsights(
+    params: { projectId: string; studyId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformStudyInsightsRequested> {
+    return this.request(
+      "POST",
+      `${this.studyPath(params.projectId, params.studyId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  cancelStudyInsights(
+    params: { projectId: string; studyId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.studyPath(params.projectId, params.studyId)}/insights`,
+      { body: { windowId: params.windowId } },
+      options
+    );
+  }
+
+  dismissStudyFinding(
+    params: { projectId: string; studyId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.studyFindingAction(params, "dismiss", options);
+  }
+
+  undismissStudyFinding(
+    params: { projectId: string; studyId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.studyFindingAction(params, "undismiss", options);
+  }
+
+  /**
+   * Replace the guest-execution caps.
+   *
+   * A full replacement, not a patch: these only mean something as a SET, and
+   * raising one while leaving a stale sibling behind produces a combination
+   * nobody chose. Project ADMIN.
+   */
+  setStudyGuestExecution(
+    params: {
+      projectId: string;
+      studyId: string;
+      guestExecution: PlatformGuestExecution;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "PUT",
+      `${this.studyPath(params.projectId, params.studyId)}/guest-execution`,
+      { body: params.guestExecution },
+      options
+    );
+  }
+
+  /**
+   * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
+   * working and every session on it dies. There is no rotating back.
+   */
+  rotateStudyLink(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.studyPath(params.projectId, params.studyId)}/rotate-link`,
+      {},
+      options
+    );
+  }
+
+  /** Upsert by email, so re-inviting someone is not an error. */
+  upsertStudyMember(
+    params: {
+      projectId: string;
+      studyId: string;
+      email: string;
+      sendInviteEmail?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    const { projectId, studyId, ...body } = params;
+    return this.request(
+      "PUT",
+      `${this.studyPath(projectId, studyId)}/members`,
+      { body },
+      options
+    );
+  }
+
+  removeStudyMember(
+    params: { projectId: string; studyId: string; member: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/members/${encodeURIComponent(params.member)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Point a study at a DIFFERENT environment, keeping its link, members and
+   * session history. The alternative — unpublish and republish — mints a new
+   * link, which means re-sharing it with everyone who had the old one.
+   */
+  rebindStudy(
+    params: { projectId: string; studyId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.studyPath(params.projectId, params.studyId)}/rebind`,
+      { body: { environmentId: params.environmentId } },
+      options
+    );
+  }
+
+  private studyPath(projectId: string, studyId: string): string {
+    return `/projects/${encodeURIComponent(
+      projectId
+    )}/studies/${encodeURIComponent(studyId)}`;
+  }
+
+  private studyFindingAction(
+    params: { projectId: string; studyId: string; findingId: string },
+    action: "dismiss" | "undismiss",
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/findings/${encodeURIComponent(params.findingId)}/${action}`,
+      {},
+      options
+    );
+  }
+
+  // ── User testing (deprecated compatibility methods) ─────────────────────
+  //
+  // Superseded by the `*Study*` methods above. Kept calling the old
+  // `/user-testing/scenarios` routes with their old `scenarioId` spelling, so
+  // an embedder holding a reference to one is unaffected. Deleted at GA.
   //
   // What a published scenario produced, and who may reach it. `publishScenario`
   // above creates one (keyed by environment, because the scenario does not
@@ -4850,6 +5279,7 @@ export class PlatformApiClient {
    * `overridesIgnored: true`), because re-applying `mode` would let a routine
    * idempotent publish widen a scenario someone had narrowed by hand.
    */
+  /** @deprecated Use {@link publishStudy}. A duplicate of `publishScenario`. */
   publishUserTestingScenario(
     params: {
       projectId: string;
@@ -4878,6 +5308,8 @@ export class PlatformApiClient {
    * lower-privilege viewer — and any server predating the envelope — gets the
    * scenario without it rather than an error. Treat absence as
    * `not_available`, never as "no findings".
+   *
+   * @deprecated Use {@link getStudy}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   getUserTestingScenario(
     params: { projectId: string; scenarioId: string },
@@ -4897,6 +5329,8 @@ export class PlatformApiClient {
    * mutations upstream, so a mixed request would have to apply them in
    * sequence, and a failure between the two leaves the scenario half-updated
    * on the half that decides who can reach it.
+   *
+   * @deprecated Use {@link updateStudy}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   updateUserTestingScenario(
     params: {
@@ -4918,6 +5352,9 @@ export class PlatformApiClient {
   }
 
   /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  /**
+   * @deprecated Use {@link listStudySessions}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   listUserTestingSessions(
     params: {
       projectId: string;
@@ -4941,6 +5378,8 @@ export class PlatformApiClient {
    * These are real people's conversations with your product. The API never
    * hands back the stored blob URL, so a caller cannot pass "read this
    * transcript" onward as an unrevocable capability.
+   *
+   * @deprecated Use {@link getStudySession}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   getUserTestingSession(
     params: {
@@ -4963,6 +5402,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getStudyMetrics}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   getUserTestingMetrics(
     params: { projectId: string; scenarioId: string; population?: string },
     options?: RequestOptions
@@ -4982,6 +5424,8 @@ export class PlatformApiClient {
    * true means the rates were computed over the most recent N sessions rather
    * than all of them, and dropping the flag turns a conditional statistic into
    * an unconditional claim.
+   *
+   * @deprecated Use {@link getStudyUsage}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   getUserTestingUsage(
     params: { projectId: string; scenarioId: string },
@@ -4995,6 +5439,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link listStudyFindings}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   listUserTestingFindings(
     params: { projectId: string; scenarioId: string },
     options?: RequestOptions
@@ -5008,6 +5455,9 @@ export class PlatformApiClient {
   }
 
   /** Also how you learn the CURRENT window id, which the insights read takes. */
+  /**
+   * @deprecated Use {@link getStudySignals}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   getUserTestingSignals(
     params: { projectId: string; scenarioId: string },
     options?: RequestOptions
@@ -5020,6 +5470,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getStudyInsights}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   getUserTestingInsights(
     params: { projectId: string; scenarioId: string; windowId: string },
     options?: RequestOptions
@@ -5039,6 +5492,8 @@ export class PlatformApiClient {
    * Ask a model to analyze the scenario's current window. **202** — scheduled,
    * not done. SPENDS against the organization's daily insights budget, which
    * is SHARED with swarm wave insights.
+   *
+   * @deprecated Use {@link requestStudyInsights}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   requestUserTestingInsights(
     params: { projectId: string; scenarioId: string; force?: boolean },
@@ -5052,6 +5507,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link cancelStudyInsights}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   cancelUserTestingInsights(
     params: { projectId: string; scenarioId: string; windowId: string },
     options?: RequestOptions
@@ -5064,6 +5522,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link dismissStudyFinding}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   dismissUserTestingFinding(
     params: { projectId: string; scenarioId: string; findingId: string },
     options?: RequestOptions
@@ -5071,6 +5532,9 @@ export class PlatformApiClient {
     return this.userTestingFindingAction(params, "dismiss", options);
   }
 
+  /**
+   * @deprecated Use {@link undismissStudyFinding}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   undismissUserTestingFinding(
     params: { projectId: string; scenarioId: string; findingId: string },
     options?: RequestOptions
@@ -5084,6 +5548,8 @@ export class PlatformApiClient {
    * A full replacement, not a patch: these only mean something as a SET, and
    * raising one while leaving a stale sibling behind produces a combination
    * nobody chose. Project ADMIN.
+   *
+   * @deprecated Use {@link setStudyGuestExecution}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   setUserTestingGuestExecution(
     params: {
@@ -5107,6 +5573,8 @@ export class PlatformApiClient {
   /**
    * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
    * working and every session on it dies. There is no rotating back.
+   *
+   * @deprecated Use {@link rotateStudyLink}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   rotateUserTestingLink(
     params: { projectId: string; scenarioId: string },
@@ -5124,6 +5592,9 @@ export class PlatformApiClient {
   }
 
   /** Upsert by email, so re-inviting someone is not an error. */
+  /**
+   * @deprecated Use {@link upsertStudyMember}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   upsertUserTestingMember(
     params: {
       projectId: string;
@@ -5142,6 +5613,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link removeStudyMember}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   removeUserTestingMember(
     params: { projectId: string; scenarioId: string; member: string },
     options?: RequestOptions
@@ -5161,6 +5635,8 @@ export class PlatformApiClient {
    * Point a scenario at a DIFFERENT environment, keeping its link, members and
    * session history. The alternative — unpublish and republish — mints a new
    * link, which means re-sharing it with everyone who had the old one.
+   *
+   * @deprecated Use {@link rebindStudy}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   rebindUserTestingScenario(
     params: { projectId: string; scenarioId: string; environmentId: string },

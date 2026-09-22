@@ -78,8 +78,8 @@
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     },
     {
-      "name": "Scenarios",
-      "description": "Read-only access to the scenarios published from a project: listing, settings, attached servers, and share links."
+      "name": "Studies",
+      "description": "Publish a project environment as a **study** for people outside the project to talk to, read what they did, and control who can reach it. Several of these NARROW access and take effect immediately.\n\nThe pre-rename paths — `/projects/{projectId}/scenarios`, `/projects/{projectId}/scenarios/{scenarioId}`, `/projects/{projectId}/environments/{environmentId}/scenario` and `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` — keep working and are deliberately not documented here. They return their original bodies, which spell the owning id `scenarioId` and whose detail read carries no execution settings, and every response answers with `Deprecation: true` and a `Link` header naming its successor. They are removed at general availability; a new integration should use the paths on this page."
     },
     {
       "name": "Catalog",
@@ -104,10 +104,6 @@
     {
       "name": "Swarm insights",
       "description": "What a swarm run revealed. The scorecard and findings are deterministic and free; requesting wave insights runs models and draws on your shared daily ledger."
-    },
-    {
-      "name": "User testing",
-      "description": "Publishing an environment for real visitors, and controlling who can reach it. Several of these NARROW access and take effect immediately."
     },
     {
       "name": "Directory readiness",
@@ -5532,10 +5528,10 @@
         }
       }
     },
-    "/projects/{projectId}/scenarios": {
+    "/projects/{projectId}/studies": {
       "get": {
-        "operationId": "listScenarios",
-        "tags": ["Scenarios"],
+        "operationId": "listStudies",
+        "tags": ["Studies"],
         "summary": "List a project's scenarios",
         "description": "The scenarios published from this project — name, access mode, attached servers, and share link. Read-only.",
         "parameters": [
@@ -5549,56 +5545,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ValidationError"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "502": {
-            "$ref": "#/components/responses/ServerUnreachable"
-          }
-        }
-      }
-    },
-    "/projects/{projectId}/scenarios/{scenarioId}": {
-      "get": {
-        "operationId": "getScenario",
-        "tags": ["Scenarios"],
-        "summary": "Get a scenario",
-        "description": "One scenario's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A scenario that exists but belongs to a different project reads as `404 NOT_FOUND`.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/projectId"
-          },
-          {
-            "$ref": "#/components/parameters/projectScenarioId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The scenario settings.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScenarioDetail"
+                  "$ref": "#/components/schemas/StudyPage"
                 }
               }
             }
@@ -9631,7 +9578,7 @@
         }
       }
     },
-    "/projects/{projectId}/environments/{environmentId}/scenario": {
+    "/projects/{projectId}/environments/{environmentId}/study": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9641,8 +9588,8 @@
         }
       ],
       "put": {
-        "operationId": "publishScenario",
-        "tags": ["User testing"],
+        "operationId": "publishStudy",
+        "tags": ["Studies"],
         "summary": "Publish an environment for user testing",
         "description": "PUT, not POST, because publishing is IDEMPOTENT: one scenario per environment, and publishing an already-published environment returns the existing one rather than minting a second. `created` says which happened.\n\nRequires project ADMIN.",
         "requestBody": {
@@ -9651,7 +9598,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioPublishRequest"
+                "$ref": "#/components/schemas/StudyPublishRequest"
               }
             }
           }
@@ -9662,7 +9609,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Scenario"
+                  "$ref": "#/components/schemas/Study"
                 }
               }
             }
@@ -9688,10 +9635,10 @@
         }
       },
       "delete": {
-        "operationId": "unpublishScenario",
-        "tags": ["User testing"],
+        "operationId": "unpublishStudy",
+        "tags": ["Studies"],
         "summary": "Unpublish an environment",
-        "description": "Takes the scenario down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live scenario down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `scenarioId` names which one to take down. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
+        "description": "Takes the study down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live study down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `scenarioId` names which one to take down — the stored id, which is what this query parameter has always been called and what the route still reads. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
         "parameters": [
           {
             "name": "scenarioId",
@@ -9707,7 +9654,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioDeleted"
+                  "$ref": "#/components/schemas/StudyDeleted"
                 }
               }
             }
@@ -9730,18 +9677,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}": {
+    "/projects/{projectId}/studies/{studyId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "patch": {
-        "operationId": "updateUserTestingScenario",
-        "tags": ["User testing"],
+        "operationId": "updateStudy",
+        "tags": ["Studies"],
         "summary": "Update a scenario",
         "description": "Change a scenario's identity or its exposure — but not both in one call. **Send `mode` on its own.** Identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.\n\nNarrowing `mode` bumps `accessVersion` upstream and invalidates sessions minted under the old one.",
         "requestBody": {
@@ -9749,7 +9696,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioUpdateRequest"
+                "$ref": "#/components/schemas/StudyUpdateRequest"
               }
             }
           }
@@ -9760,7 +9707,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingScenario"
+                  "$ref": "#/components/schemas/StudyUpdated"
                 }
               }
             }
@@ -9786,17 +9733,17 @@
         }
       },
       "get": {
-        "operationId": "getUserTestingScenario",
-        "tags": ["User testing"],
-        "summary": "Get a scenario",
-        "description": "The scenario, plus the insights envelope over its latest analyzed window when the caller may have it.\n\nProject members only. This route is deliberately outside the guest allowlist, and the envelope additionally needs workspace membership — share-link visitors can never read other visitors' evidence.",
+        "operationId": "getStudy",
+        "tags": ["Studies"],
+        "summary": "Get a study",
+        "description": "One study's full read: execution settings (model, system prompt, tool-approval policy, attached servers, share link), the environment it publishes, and the insights envelope over its latest analyzed window.\n\n`environmentId` and `insights` depend on the CALLER, not on the study: both need workspace membership, so a share-link visitor receives the settings without them rather than an error. They are ABSENT in that case, never null — null would claim the study publishes no environment, which is never true.\n\nA study that exists but belongs to a different project reads as `404 NOT_FOUND`.\n\nReplaces the deprecated `getScenario` (settings only) and `getUserTestingScenario` (envelope only).",
         "responses": {
           "200": {
-            "description": "The scenario.",
+            "description": "The study.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingScenarioDetail"
+                  "$ref": "#/components/schemas/StudyDetail"
                 }
               }
             }
@@ -9819,18 +9766,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions": {
+    "/projects/{projectId}/studies/{studyId}/sessions": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "listUserTestingSessions",
-        "tags": ["User testing"],
+        "operationId": "listStudySessions",
+        "tags": ["Studies"],
         "summary": "List a scenario's sessions",
         "description": "What visitors did, as summaries. Project members only — this route is deliberately absent from the guest allowlist, so a share-link visitor can never read other visitors' sessions.",
         "requestBody": {
@@ -9842,7 +9789,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingSessionPage"
+                  "$ref": "#/components/schemas/StudySessionPage"
                 }
               }
             }
@@ -9865,21 +9812,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}": {
+    "/projects/{projectId}/studies/{studyId}/sessions/{sessionId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/sessionId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingSession",
-        "tags": ["User testing"],
+        "operationId": "getStudySession",
+        "tags": ["Studies"],
         "summary": "Get a session transcript",
         "description": "The projected transcript, paged. Tool payloads and blobs are dropped, and the stored blob URL is never returned.\n\nCheck `transcriptUnavailable` before trusting `messageCount`: an unreadable transcript reports `null`, never `0`.",
         "requestBody": {
@@ -9891,7 +9838,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingSessionDetail"
+                  "$ref": "#/components/schemas/StudySessionDetail"
                 }
               }
             }
@@ -9914,18 +9861,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution": {
+    "/projects/{projectId}/studies/{studyId}/guest-execution": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "put": {
-        "operationId": "setGuestExecution",
-        "tags": ["User testing"],
+        "operationId": "setStudyGuestExecution",
+        "tags": ["Studies"],
         "summary": "Set the guest-execution caps",
         "description": "The spend dial for anonymous visitors. A FULL REPLACEMENT — send every field. These caps only mean something as a set, and a partial update that raised one while leaving another stale would produce a combination nobody chose.\n\nRequires project ADMIN: it is the one exposure control that genuinely does, because it authorizes strangers to spend.",
         "requestBody": {
@@ -9970,18 +9917,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link": {
+    "/projects/{projectId}/studies/{studyId}/rotate-link": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "post": {
-        "operationId": "rotateScenarioLink",
-        "tags": ["User testing"],
+        "operationId": "rotateStudyLink",
+        "tags": ["Studies"],
         "summary": "Rotate the share link",
         "description": "Mints a new share link and stops the old URL from granting access. Everyone you shared it with needs the new one.\n\n**Rotation does NOT evict anyone who already redeemed the old link.** Their grant is a stored row, not a property of the URL, and it survives rotation — `accessVersion` is deliberately not bumped here. So rotation alone does not undo a leak: rotate to close the door, then `DELETE .../members/{memberIdOrEmail}` for anyone who already walked through it.\n\nBodyless: the scenario is the whole request, and the new secret is minted server-side by definition.",
         "responses": {
@@ -9990,7 +9937,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioLinkRotated"
+                  "$ref": "#/components/schemas/StudyLinkRotated"
                 }
               }
             }
@@ -10013,18 +9960,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/members": {
+    "/projects/{projectId}/studies/{studyId}/members": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "put": {
-        "operationId": "upsertScenarioMember",
-        "tags": ["User testing"],
+        "operationId": "upsertStudyMember",
+        "tags": ["Studies"],
         "summary": "Invite a member",
         "description": "Upsert by email, so re-inviting somebody is not an error. Only meaningful while `mode` is `invited_only`.",
         "requestBody": {
@@ -10032,7 +9979,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioMemberRequest"
+                "$ref": "#/components/schemas/StudyMemberRequest"
               }
             }
           }
@@ -10043,7 +9990,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingScenario"
+                  "$ref": "#/components/schemas/StudyMemberUpserted"
                 }
               }
             }
@@ -10069,21 +10016,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}": {
+    "/projects/{projectId}/studies/{studyId}/members/{memberIdOrEmail}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/memberIdOrEmail"
         }
       ],
       "delete": {
-        "operationId": "removeScenarioMember",
-        "tags": ["User testing"],
+        "operationId": "removeStudyMember",
+        "tags": ["Studies"],
         "summary": "Remove a member",
         "description": "Removal NARROWS access, so it bumps `accessVersion` and cuts off any session that member already had — it takes effect at once rather than at expiry.",
         "responses": {
@@ -10092,7 +10039,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioMemberRemoved"
+                  "$ref": "#/components/schemas/StudyMemberRemoved"
                 }
               }
             }
@@ -10115,18 +10062,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind": {
+    "/projects/{projectId}/studies/{studyId}/rebind": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "post": {
-        "operationId": "rebindScenario",
-        "tags": ["User testing"],
+        "operationId": "rebindStudy",
+        "tags": ["Studies"],
         "summary": "Point a scenario at a different environment",
         "description": "Keeps the scenario's LINK, its members and its session history while changing what visitors actually reach. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone.\n\nThe new environment must belong to THIS project; one that does not answers 404 rather than confirming it exists elsewhere.",
         "requestBody": {
@@ -10134,7 +10081,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioRebindRequest"
+                "$ref": "#/components/schemas/StudyRebindRequest"
               }
             }
           }
@@ -10145,7 +10092,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Scenario"
+                  "$ref": "#/components/schemas/Study"
                 }
               }
             }
@@ -10171,18 +10118,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics": {
+    "/projects/{projectId}/studies/{studyId}/metrics": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingMetrics",
-        "tags": ["User testing"],
+        "operationId": "getStudyMetrics",
+        "tags": ["Studies"],
         "summary": "Session metrics",
         "description": "Volumes, completion and feedback rates over the scenario's sessions.\n\n`404` when the scenario has produced no sessions yet — an empty scenario has no metrics, which is different from metrics that are all zero.",
         "parameters": [
@@ -10203,7 +10150,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioMetrics"
+                  "$ref": "#/components/schemas/StudyMetrics"
                 }
               }
             }
@@ -10229,18 +10176,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/usage": {
+    "/projects/{projectId}/studies/{studyId}/usage": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingUsage",
-        "tags": ["User testing"],
+        "operationId": "getStudyUsage",
+        "tags": ["Studies"],
         "summary": "Usage breakdown",
         "description": "Which models, tools and servers the scenario's sessions used.\n\n**Check `scan.truncated` before quoting a rate.** `404` when there is no usage data yet.",
         "responses": {
@@ -10249,7 +10196,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioUsage"
+                  "$ref": "#/components/schemas/StudyUsage"
                 }
               }
             }
@@ -10272,18 +10219,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/signals": {
+    "/projects/{projectId}/studies/{studyId}/signals": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingSignals",
-        "tags": ["User testing"],
+        "operationId": "getStudySignals",
+        "tags": ["Studies"],
         "summary": "Current window signals",
         "description": "What the miner extracted from the current window — and where you get the window id the insights read takes.\n\n`404` when no window has been analyzed yet.",
         "responses": {
@@ -10292,7 +10239,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioSignals"
+                  "$ref": "#/components/schemas/StudySignals"
                 }
               }
             }
@@ -10315,18 +10262,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings": {
+    "/projects/{projectId}/studies/{studyId}/findings": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "listUserTestingFindings",
-        "tags": ["User testing"],
+        "operationId": "listStudyFindings",
+        "tags": ["Studies"],
         "summary": "List scenario findings",
         "description": "Every finding raised over this scenario's windows, dismissed ones included — dismissal is a state on the finding, not a deletion.",
         "responses": {
@@ -10335,7 +10282,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioFindingPage"
+                  "$ref": "#/components/schemas/StudyFindingPage"
                 }
               }
             }
@@ -10358,21 +10305,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights": {
+    "/projects/{projectId}/studies/{studyId}/windows/{windowId}/insights": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/windowId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingWindowInsights",
-        "tags": ["User testing"],
+        "operationId": "getStudyWindowInsights",
+        "tags": ["Studies"],
         "summary": "Read a window's insights",
         "description": "Poll this after requesting a generation.\n\n`404` means NOBODY ASKED — deliberately distinct from a `pending` status, so a caller looping on this cannot mistake \"never requested\" for \"requested and still working\".",
         "responses": {
@@ -10381,7 +10328,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioWindowInsights"
+                  "$ref": "#/components/schemas/StudyWindowInsights"
                 }
               }
             }
@@ -10404,18 +10351,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/insights": {
+    "/projects/{projectId}/studies/{studyId}/insights": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "post": {
-        "operationId": "requestUserTestingInsights",
-        "tags": ["User testing"],
+        "operationId": "requestStudyInsights",
+        "tags": ["Studies"],
         "summary": "Request insights for the current window",
         "description": "**No credits are consumed** — the model cost is on MCPJam. Runs a model over the scenario's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm wave insights, so a request here takes one from there.\n\n`202`: scheduled, not done. Poll `GET .../windows/{windowId}/insights` with the returned `windowId` rather than re-requesting.\n\n`409` when the current window has not been mined yet: the request was well formed and retrying it verbatim will not help until sessions have been processed.",
         "requestBody": {
@@ -10423,7 +10370,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioInsightsRequest"
+                "$ref": "#/components/schemas/StudyInsightsRequest"
               }
             }
           }
@@ -10434,7 +10381,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioInsightsRequested"
+                  "$ref": "#/components/schemas/StudyInsightsRequested"
                 }
               }
             }
@@ -10463,8 +10410,8 @@
         }
       },
       "delete": {
-        "operationId": "cancelUserTestingInsights",
-        "tags": ["User testing"],
+        "operationId": "cancelStudyInsights",
+        "tags": ["Studies"],
         "summary": "Cancel a window's generation",
         "description": "Releases a generation that is stuck `pending`. Idempotent against an already-finished one.",
         "requestBody": {
@@ -10472,7 +10419,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioInsightsCancelRequest"
+                "$ref": "#/components/schemas/StudyInsightsCancelRequest"
               }
             }
           }
@@ -10483,7 +10430,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioInsightsCanceled"
+                  "$ref": "#/components/schemas/StudyInsightsCanceled"
                 }
               }
             }
@@ -10509,21 +10456,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss": {
+    "/projects/{projectId}/studies/{studyId}/findings/{findingId}/dismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/findingId"
         }
       ],
       "post": {
-        "operationId": "dismissUserTestingFinding",
-        "tags": ["User testing"],
+        "operationId": "dismissStudyFinding",
+        "tags": ["Studies"],
         "summary": "Dismiss a finding",
         "description": "Keyed on the finding's stable remediation id, so the same problem stays dismissed when insights regenerate. Bodyless: the path names the finding.",
         "responses": {
@@ -10532,7 +10479,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioFindingDismissed"
+                  "$ref": "#/components/schemas/StudyFindingDismissed"
                 }
               }
             }
@@ -10555,21 +10502,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss": {
+    "/projects/{projectId}/studies/{studyId}/findings/{findingId}/undismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/findingId"
         }
       ],
       "post": {
-        "operationId": "undismissUserTestingFinding",
-        "tags": ["User testing"],
+        "operationId": "undismissStudyFinding",
+        "tags": ["Studies"],
         "summary": "Restore a dismissed finding",
         "description": "Undoes a dismissal. Bodyless: the path names the finding.",
         "responses": {
@@ -10578,7 +10525,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioFindingDismissed"
+                  "$ref": "#/components/schemas/StudyFindingDismissed"
                 }
               }
             }
@@ -13624,15 +13571,6 @@
           "type": "string"
         }
       },
-      "projectScenarioId": {
-        "name": "scenarioId",
-        "in": "path",
-        "required": true,
-        "description": "Scenario ID, as returned by the project's scenario list.",
-        "schema": {
-          "type": "string"
-        }
-      },
       "client": {
         "name": "client",
         "in": "path",
@@ -13714,11 +13652,11 @@
           "type": "string"
         }
       },
-      "scenarioId": {
-        "name": "scenarioId",
+      "studyId": {
+        "name": "studyId",
         "in": "path",
         "required": true,
-        "description": "Scenario ID, as returned by publishing an environment or by the project's scenario reads.",
+        "description": "Study ID, as returned by publishing an environment or by the project's study reads.",
         "schema": {
           "type": "string"
         }
@@ -13727,7 +13665,7 @@
         "name": "sessionId",
         "in": "path",
         "required": true,
-        "description": "Chat session ID, as returned by the scenario's session list.",
+        "description": "Chat session ID, as returned by the study's session list.",
         "schema": {
           "type": "string"
         }
@@ -23094,7 +23032,7 @@
           }
         }
       },
-      "ScenarioLink": {
+      "StudyLink": {
         "type": "object",
         "description": "Share link for the scenario. The URL embeds the access token; visible to any caller who can read the scenario (the same audience that sees it in the hosted UI).",
         "required": ["path", "url"],
@@ -23109,7 +23047,7 @@
           }
         }
       },
-      "ScenarioServer": {
+      "StudyServer": {
         "type": "object",
         "description": "A server attached to the scenario. Scenarios attach HTTP servers only, so `url` is the server's endpoint.",
         "required": ["id", "name", "useOAuth"],
@@ -23129,7 +23067,7 @@
           }
         }
       },
-      "ProjectScenario": {
+      "StudySummary": {
         "type": "object",
         "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": ["id", "name", "serverCount", "serverNames"],
@@ -23179,7 +23117,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ScenarioLink"
+                "$ref": "#/components/schemas/StudyLink"
               },
               {
                 "type": "null"
@@ -23196,7 +23134,7 @@
           }
         }
       },
-      "ScenarioDetail": {
+      "StudyDetail": {
         "type": "object",
         "description": "A scenario's full read-only settings: the summary fields plus the host execution config and resolved servers.",
         "required": [
@@ -23208,6 +23146,16 @@
           "servers"
         ],
         "properties": {
+          "environmentId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The environment this study publishes. ABSENT — not null — when the caller may not see it, which is the case for a share-link visitor: null would claim the study publishes no environment, which is never true."
+          },
+          "insights": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Findings aggregated over the latest analyzed window of real visitor sessions. Absent when the caller may not have it, and on a deployment that predates the envelope — the two degrade identically, and absence means `not_available`, never \"no findings\"."
+          },
           "id": {
             "type": "string"
           },
@@ -23253,7 +23201,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ScenarioLink"
+                "$ref": "#/components/schemas/StudyLink"
               },
               {
                 "type": "null"
@@ -23284,19 +23232,19 @@
           "servers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ScenarioServer"
+              "$ref": "#/components/schemas/StudyServer"
             }
           }
         }
       },
-      "ScenarioPage": {
+      "StudyPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ProjectScenario"
+              "$ref": "#/components/schemas/StudySummary"
             }
           }
         }
@@ -27472,7 +27420,7 @@
           }
         }
       },
-      "Scenario": {
+      "Study": {
         "type": "object",
         "description": "A published environment: what a visitor lands on when you share a link.",
         "required": [
@@ -27512,11 +27460,11 @@
           },
           "overridesIgnored": {
             "type": "boolean",
-            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` — change an existing scenario with `PATCH .../user-testing/scenarios/{scenarioId}`."
+            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` — change an existing study with `PATCH .../studies/{studyId}`."
           }
         }
       },
-      "ScenarioPublishRequest": {
+      "StudyPublishRequest": {
         "type": "object",
         "description": "Optional CREATE-TIME overrides, applied in the same call so the scenario is never briefly live in a wider mode than you asked for. Ignored on a republish — see `overridesIgnored`.",
         "additionalProperties": false,
@@ -27536,7 +27484,7 @@
           }
         }
       },
-      "ScenarioDeleted": {
+      "StudyDeleted": {
         "type": "object",
         "required": ["environmentId", "deleted"],
         "properties": {
@@ -27552,7 +27500,7 @@
           }
         }
       },
-      "UserTestingScenario": {
+      "StudyUpdated": {
         "type": "object",
         "description": "Scenario metadata after an update. Deliberately WITHOUT `accessVersion`: a mode change bumps it upstream, but the envelope this route re-reads does not carry the new value — reporting a stale one would document a revocation signal the response cannot deliver. The publish response carries the real one.",
         "required": ["id", "projectId", "name", "description", "mode"],
@@ -27580,7 +27528,7 @@
           }
         }
       },
-      "ScenarioUpdateRequest": {
+      "StudyUpdateRequest": {
         "type": "object",
         "description": "At least one field. **Send `mode` on its own**: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
         "additionalProperties": false,
@@ -27601,7 +27549,7 @@
           }
         }
       },
-      "UserTestingSession": {
+      "StudySession": {
         "type": "object",
         "description": "One visitor's session with a published scenario. A SUMMARY, not a transcript.",
         "required": [
@@ -27707,14 +27655,14 @@
           }
         }
       },
-      "UserTestingSessionPage": {
+      "StudySessionPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/UserTestingSession"
+              "$ref": "#/components/schemas/StudySession"
             }
           },
           "nextCursor": {
@@ -27743,12 +27691,12 @@
           }
         }
       },
-      "UserTestingSessionDetail": {
+      "StudySessionDetail": {
         "type": "object",
         "description": "A session's transcript, paged. The stored blob URL is NEVER returned: it is a direct handle with no further authorization, so handing it out would turn one authorized read into an unbounded, unrevocable one.",
         "required": [
           "id",
-          "scenarioId",
+          "studyId",
           "chatSessionId",
           "modelId",
           "startedAt",
@@ -27760,7 +27708,7 @@
           "id": {
             "type": "string"
           },
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "chatSessionId": {
@@ -27849,7 +27797,7 @@
           }
         }
       },
-      "ScenarioLinkRotated": {
+      "StudyLinkRotated": {
         "type": "object",
         "required": ["id", "projectId", "rotated", "link"],
         "properties": {
@@ -27869,11 +27817,34 @@
           }
         }
       },
-      "ScenarioMemberRemoved": {
+      "StudyMemberUpserted": {
         "type": "object",
-        "required": ["scenarioId", "projectId", "removed"],
+        "description": "Receipt for an invite. Documented as the study metadata object before the rename, which it never was.",
+        "required": ["studyId", "projectId", "email"],
         "properties": {
-          "scenarioId": {
+          "studyId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "memberId": {
+            "type": "string"
+          },
+          "invited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StudyMemberRemoved": {
+        "type": "object",
+        "required": ["studyId", "projectId", "removed"],
+        "properties": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -27885,7 +27856,7 @@
           }
         }
       },
-      "ScenarioMemberRequest": {
+      "StudyMemberRequest": {
         "type": "object",
         "description": "UPSERT by email, so re-inviting somebody is not an error.",
         "required": ["email"],
@@ -27901,7 +27872,7 @@
           }
         }
       },
-      "ScenarioRebindRequest": {
+      "StudyRebindRequest": {
         "type": "object",
         "required": ["environmentId"],
         "additionalProperties": false,
@@ -28536,65 +28507,25 @@
           }
         }
       },
-      "UserTestingScenarioDetail": {
-        "type": "object",
-        "required": [
-          "id",
-          "projectId",
-          "name",
-          "description",
-          "mode",
-          "environmentId"
-        ],
-        "description": "A published scenario, enriched with findings over its latest analyzed window. NO `accessVersion`: the settings envelope this is read from does not carry it — the publish and rebind responses do.",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "projectId": {
-            "type": "string"
-          },
-          "name": {
-            "type": ["string", "null"]
-          },
-          "description": {
-            "type": ["string", "null"]
-          },
-          "mode": {
-            "type": ["string", "null"]
-          },
-          "environmentId": {
-            "type": ["string", "null"]
-          },
-          "insights": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/InsightsEnvelope"
-              }
-            ],
-            "description": "Present when the caller may have it. The envelope needs workspace MEMBERSHIP while the scenario itself is visible more widely, so a lower-privilege viewer gets the scenario without this field rather than a 403."
-          }
-        }
-      },
-      "ScenarioMetrics": {
+      "StudyMetrics": {
         "type": "object",
         "additionalProperties": true,
         "description": "Session metrics for the scenario: volumes, completion and feedback rates, cohort splits.\n\nDeliberately UNPINNED. The upstream projection grows with the product and the SDK types it as an open record for the same reason — pinning a field list here would turn every added metric into a spec violation. Read what you recognize and ignore the rest.",
         "properties": {}
       },
-      "ScenarioUsage": {
+      "StudyUsage": {
         "type": "object",
         "additionalProperties": true,
         "description": "Usage breakdown: models, tools and servers the scenario's sessions actually used.\n\n**Read `scan.truncated` before quoting any rate from this.** True means the rates were computed over the most recent N sessions rather than all of them, and dropping the flag turns a conditional statistic into an unconditional claim.\n\nUnpinned for the same reason as `ScenarioMetrics`.",
         "properties": {}
       },
-      "ScenarioSignals": {
+      "StudySignals": {
         "type": "object",
         "additionalProperties": true,
         "description": "What the miner extracted from the scenario's current window — and how you learn the current window id, which the window-insights read takes. There is no separate \"list windows\" route because the only window anyone asks about is the live one.\n\nUnpinned; see `ScenarioMetrics`.",
         "properties": {}
       },
-      "ScenarioWindowInsights": {
+      "StudyWindowInsights": {
         "type": "object",
         "required": ["windowId"],
         "additionalProperties": true,
@@ -28605,20 +28536,20 @@
           }
         }
       },
-      "ScenarioFinding": {
+      "StudyFinding": {
         "type": "object",
         "additionalProperties": true,
         "description": "One finding over a scenario window. Unpinned; see `ScenarioMetrics`. The stable fields are the document id (used by dismiss/undismiss) and the dismissal state.",
         "properties": {}
       },
-      "ScenarioFindingPage": {
+      "StudyFindingPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ScenarioFinding"
+              "$ref": "#/components/schemas/StudyFinding"
             }
           },
           "nextCursor": {
@@ -28626,7 +28557,7 @@
           }
         }
       },
-      "ScenarioInsightsRequest": {
+      "StudyInsightsRequest": {
         "type": "object",
         "additionalProperties": false,
         "description": "Optional. A bodyless POST is the ordinary case.",
@@ -28637,11 +28568,11 @@
           }
         }
       },
-      "ScenarioInsightsRequested": {
+      "StudyInsightsRequested": {
         "type": "object",
-        "required": ["scenarioId", "projectId", "windowId", "status"],
+        "required": ["studyId", "projectId", "windowId", "status"],
         "properties": {
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -28657,7 +28588,7 @@
           }
         }
       },
-      "ScenarioInsightsCancelRequest": {
+      "StudyInsightsCancelRequest": {
         "type": "object",
         "required": ["windowId"],
         "additionalProperties": false,
@@ -28669,11 +28600,11 @@
           }
         }
       },
-      "ScenarioInsightsCanceled": {
+      "StudyInsightsCanceled": {
         "type": "object",
-        "required": ["scenarioId", "projectId", "windowId", "canceled"],
+        "required": ["studyId", "projectId", "windowId", "canceled"],
         "properties": {
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -28688,14 +28619,14 @@
           }
         }
       },
-      "ScenarioFindingDismissed": {
+      "StudyFindingDismissed": {
         "type": "object",
-        "required": ["id", "scenarioId", "projectId", "dismissed"],
+        "required": ["id", "studyId", "projectId", "dismissed"],
         "properties": {
           "id": {
             "type": "string"
           },
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {

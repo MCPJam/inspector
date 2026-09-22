@@ -164,8 +164,15 @@ function deriveCapabilities(row: CapabilitiesRow) {
     /** Stopping a run. Ungated by design — see above. */
     cancelJourneyRun: isMember,
     /** Publishing an environment for outsiders to talk to. Admin-only. */
+    publishStudy: isAdmin && !gated,
+    /** Taking a live study down. Ungated by design. */
+    unpublishStudy: isAdmin,
+    /**
+     * The pre-rename spellings, emitted ALONGSIDE the two above rather than
+     * instead of them, so a client branching on either keeps working. Deleted
+     * at GA with the rest of the deprecated surface.
+     */
     publishUserTestingScenario: isAdmin && !gated,
-    /** Taking a live scenario down. Ungated by design. */
     unpublishUserTestingScenario: isAdmin,
     /**
      * Mode changes, member invites/removals, link rotation, renames. These

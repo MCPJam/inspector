@@ -29,7 +29,7 @@ const CLOUD_COMMAND_FILES = [
   "organizations.ts",
   "projects.ts",
   "registry.ts",
-  "scenarios.ts",
+  "studies.ts",
   "secrets.ts",
   "sessions.ts",
   "sessions-browser.ts",
@@ -37,7 +37,6 @@ const CLOUD_COMMAND_FILES = [
   "swarms.ts",
   "trace-destinations.ts",
   "tunnel.ts",
-  "user-testing.ts",
 ] as const;
 
 test("Cloud command sources follow flag and placeholder conventions", () => {

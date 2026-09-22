@@ -50,7 +50,7 @@ import {
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
-  getScenarioOperation,
+  getStudyOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -74,7 +74,7 @@ import {
   describePlatformRefusal,
   isPlatformApiError,
   platformRefusalHint,
-  listScenariosOperation,
+  listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
@@ -147,26 +147,25 @@ import {
   getWaveInsightsOperation,
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   listClientsOperation,
   getClientOperation,
   createClientOperation,
@@ -343,8 +342,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // agent that cannot list them cannot use the tools that demand them.
   listProjectSkillsOperation,
   getProjectSkillOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
+  getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   // Agent Playground: drive a conversation against a project's MCP servers
@@ -418,26 +417,25 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getWaveInsightsOperation,
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   // Clients — the product's own primary noun, and until now the one thing an
   // MCP agent could read nowhere and write nowhere. The two reads plus the
   // four bounded writes; `delete_client` stays out (see the exclusion map).
@@ -532,7 +530,7 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
   // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
-  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // rotate is already `rotate_study_link`. The I5 operations span three
   // resource types and belong with the Share dialog / agent-op registry until
   // this catalog grows a dedicated share group — same decision as CLI
   // `op-bindings.ts`.
@@ -549,11 +547,11 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   revoke_eval_gate_waiver:
     "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
   get_share_settings:
-    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+    "Scenario share already appears on get_study. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
   set_share_mode:
-    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+    "Scenario exposure is already update_study. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
   rotate_share_link:
-    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
+    "Scenario rotation is already rotate_study_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
   // PROJECT SECRET WRITES. Excluded for a reason that has nothing to do with
   // how destructive they are, and everything to do with their INPUT: the
   // plaintext credential is an argument, so it would transit model context and
@@ -694,8 +692,8 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   deleteSecretOperation.name,
   archiveJourneyOperation.name,
   archiveSwarmOperation.name,
-  removeUserTestingMemberOperation.name,
-  rotateUserTestingLinkOperation.name,
+  removeStudyMemberOperation.name,
+  rotateStudyLinkOperation.name,
 ]);
 
 /**
@@ -737,8 +735,8 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listScenariosOperation.name]: "scenarios",
-  [getScenarioOperation.name]: "scenario",
+  [listStudiesOperation.name]: "scenarios",
+  [getStudyOperation.name]: "scenario",
 };
 
 export function registerPlatformCatalogTools(

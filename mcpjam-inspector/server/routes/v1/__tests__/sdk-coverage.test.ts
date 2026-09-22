@@ -289,7 +289,45 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps":
     "getEvalRunSteps",
 
-  // Scenarios (deprecated publicly; superseded by scenarios at GA)
+
+  // ── Studies ───────────────────────────────────────────────────────────────
+  //
+  // The canonical surface. The `/scenarios` and `/user-testing/scenarios`
+  // rows below are their deprecated aliases, each still mapped to the
+  // deprecated client method that calls it.
+  "get /projects/{projectId}/studies": "listStudies",
+  "get /projects/{projectId}/studies/{studyId}": "getStudy",
+  "patch /projects/{projectId}/studies/{studyId}": "updateStudy",
+  "get /projects/{projectId}/studies/{studyId}/sessions": "listStudySessions",
+  "get /projects/{projectId}/studies/{studyId}/sessions/{sessionId}":
+    "getStudySession",
+  "get /projects/{projectId}/studies/{studyId}/metrics": "getStudyMetrics",
+  "get /projects/{projectId}/studies/{studyId}/usage": "getStudyUsage",
+  "get /projects/{projectId}/studies/{studyId}/findings": "listStudyFindings",
+  "get /projects/{projectId}/studies/{studyId}/signals": "getStudySignals",
+  "get /projects/{projectId}/studies/{studyId}/windows/{windowId}/insights":
+    "getStudyInsights",
+  "post /projects/{projectId}/studies/{studyId}/insights":
+    "requestStudyInsights",
+  "delete /projects/{projectId}/studies/{studyId}/insights":
+    "cancelStudyInsights",
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/dismiss":
+    "dismissStudyFinding",
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/undismiss":
+    "undismissStudyFinding",
+  "put /projects/{projectId}/studies/{studyId}/guest-execution":
+    "setStudyGuestExecution",
+  "post /projects/{projectId}/studies/{studyId}/rotate-link": "rotateStudyLink",
+  "put /projects/{projectId}/studies/{studyId}/members": "upsertStudyMember",
+  "delete /projects/{projectId}/studies/{studyId}/members/{memberIdOrEmail}":
+    "removeStudyMember",
+  "post /projects/{projectId}/studies/{studyId}/rebind": "rebindStudy",
+  "put /projects/{projectId}/environments/{environmentId}/study":
+    "publishStudy",
+  "delete /projects/{projectId}/environments/{environmentId}/study":
+    "unpublishStudy",
+  // Scenarios and user testing: the DEPRECATED aliases of the studies rows
+  // above. Each keeps its own client method, which calls its own old route.
   "get /projects/{projectId}/scenarios": "listScenarios",
   "get /projects/{projectId}/scenarios/{scenarioId}": "getScenario",
 

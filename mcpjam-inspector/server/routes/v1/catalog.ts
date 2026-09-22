@@ -24,6 +24,7 @@ import {
   forwardQueryParams,
   proxyConvexV1Read,
 } from "./convex-v1-proxy.js";
+import { markDeprecated } from "./deprecation.js";
 
 const catalog = new Hono();
 
@@ -163,21 +164,33 @@ catalog.get("/trace-exports/otlp", (c) =>
   )
 );
 
+// ── Scenarios (deprecated compatibility reads) ───────────────────────────────
+//
+// Superseded by `/projects/{projectId}/studies` and `.../studies/{studyId}` in
+// `studies.ts`. Kept here, at their old paths and with their old bodies, for a
+// caller holding a reference to one; every response carries `Deprecation: true`.
+//
+// The detail twin is deliberately NOT a delegate of the canonical read: that
+// one merges in the environment id and the insights envelope for a member, and
+// a caller of this path asked for the settings alone.
+
+const SCENARIOS_SUCCESSOR = "/api/v1/projects/{projectId}/studies";
+
 // GET /v1/projects/:projectId/scenarios
-// The scenarios published from the project — name, access mode, attached
-// servers, share link.
-catalog.get("/projects/:projectId/scenarios", (c) =>
-  proxyConvexV1Read(c, "/v1/scenarios", (target) =>
+catalog.get("/projects/:projectId/scenarios", (c) => {
+  markDeprecated(c, SCENARIOS_SUCCESSOR);
+  return proxyConvexV1Read(c, "/v1/scenarios", (target) =>
     target.searchParams.set("projectId", c.req.param("projectId"))
-  )
-);
+  );
+});
 
 // GET /v1/projects/:projectId/scenarios/:scenarioId
-// One scenario's read-only settings. Project-nested with a cross-check,
-// matching the eval-read contract: the upstream takes a bare scenarioId, so a
-// real scenario living in a different project must read as NOT_FOUND under
-// this path rather than leak across projects.
+// Project-nested with a cross-check, matching the eval-read contract: the
+// upstream takes a bare scenarioId, so a real scenario living in a different
+// project must read as NOT_FOUND under this path rather than leak across
+// projects.
 catalog.get("/projects/:projectId/scenarios/:scenarioId", async (c) => {
+  markDeprecated(c, `${SCENARIOS_SUCCESSOR}/{studyId}`);
   const projectId = c.req.param("projectId");
   const { status, body } = await fetchConvexV1Read(c, "/v1/scenario", (target) =>
     target.searchParams.set("scenarioId", c.req.param("scenarioId"))

@@ -11,6 +11,9 @@ import {
   createTunnelOperation,
   diagnoseServerOperation,
   getScenarioOperation,
+  getStudyOperation,
+  listStudiesOperation,
+  setStudyGuestExecutionOperation,
   runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
@@ -603,6 +606,53 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/scenarios\/[^/]+$/.test(path)) {
       return Response.json(SCENARIO_DETAIL);
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/study$/.test(path)) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "study-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/studies$/.test(path)) {
+      return Response.json({ items: SCENARIOS });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+\/guest-execution$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      return Response.json({ ok: true });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+$/.test(path)) {
+      // Id-addressed, like the real route: a name reaching here is a miss, and
+      // that 404 is what sends `get_study` down its name-resolution path.
+      const studyId = decodeURIComponent(path.split("/").pop() ?? "");
+      if (!SCENARIOS.some((row) => row.id === studyId)) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "Study not found" },
+          { status: 404 }
+        );
+      }
+      return Response.json({ ...SCENARIO_DETAIL, environmentId: "env-1" });
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
@@ -1684,7 +1734,126 @@ describe("eval run polling operations", () => {
   });
 });
 
-describe("scenario operations", () => {
+describe("study operations", () => {
+  it("lists the project's studies", async () => {
+    const { client } = makeClient();
+
+    const result = await listStudiesOperation.execute({}, { client });
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.items).toEqual(SCENARIOS);
+  });
+
+  it("reads a study by id in ONE request", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { study: "box-1" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+    // The merged read carries what only the user-testing read used to.
+    expect(result.study.environmentId).toBe("env-1");
+    expect(callsTo(fetchMock, "/studies")).toHaveLength(1);
+  });
+
+  it("falls back to name resolution when the id path 404s", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { study: "Support" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+    // Miss, then list, then the id read: three calls, and the last one is
+    // addressed by the id the list resolved.
+    const paths = callsTo(fetchMock, "/studies").map((url) => url.pathname);
+    expect(paths).toEqual([
+      "/api/v1/projects/project-new/studies/Support",
+      "/api/v1/projects/project-new/studies",
+      "/api/v1/projects/project-new/studies/box-1",
+    ]);
+  });
+
+  it("names the candidates when neither the id nor the name matches", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "missing" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
+  it("accepts the deprecated `scenario` selector", async () => {
+    const { client } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { scenario: "box-1" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+  });
+
+  it("refuses both selector spellings at once", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "box-1", scenario: "box-1" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toBe(
+      "Pass either study or its deprecated scenario alias, not both."
+    );
+  });
+
+  it("refuses a request that names no study", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("study is required");
+  });
+
+  it("drops both selector spellings from the guest-execution body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await setStudyGuestExecutionOperation.execute(
+      {
+        scenario: "box-1",
+        enabled: true,
+        computerEnabled: false,
+        sharedSkillsEnabled: false,
+        dailyCreditCap: 5,
+        dailyComputerStartCap: 0,
+        maxConcurrentComputers: 0,
+      },
+      { client }
+    );
+
+    const call = fetchMock.mock.calls.find(([target]) =>
+      String(target).includes("/guest-execution")
+    );
+    const body = JSON.parse(String((call?.[1] as RequestInit)?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).not.toHaveProperty("scenario");
+    expect(body).not.toHaveProperty("study");
+    expect(body.dailyCreditCap).toBe(5);
+  });
+});
+
+describe("scenario operations (deprecated)", () => {
   it("lists the project's scenarios", async () => {
     const { client } = makeClient();
 
@@ -2244,8 +2413,8 @@ describe("operation catalog consistency", () => {
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
-    list_scenarios: {},
-    get_scenario: { scenario: "c" },
+    list_studies: {},
+    get_study: { study: "c" },
     list_chat_sessions: {},
     list_journeys: {},
     list_journey_runs: { journey: "j" },
@@ -2253,8 +2422,8 @@ describe("operation catalog consistency", () => {
     list_journey_run_sessions: { run: "r" },
     launch_journey_run: { journey: "j" },
     cancel_journey_run: { run: "r" },
-    publish_scenario: { environment: "e" },
-    unpublish_scenario: { environment: "e" },
+    publish_study: { environment: "e" },
+    unpublish_study: { environment: "e" },
     get_capabilities: {},
     list_personas: {},
     get_persona: { persona: "pe" },
@@ -2325,21 +2494,20 @@ describe("operation catalog consistency", () => {
     get_wave_insights: { wave: "w" },
     request_wave_insights: { wave: "w" },
     cancel_wave_insights: { wave: "w" },
-    get_user_testing_scenario: { scenario: "cb" },
-    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
-    list_user_testing_sessions: { scenario: "cb" },
-    get_user_testing_session: { scenario: "cb", session: "s" },
-    get_user_testing_metrics: { scenario: "cb" },
-    get_user_testing_usage: { scenario: "cb" },
-    list_user_testing_findings: { scenario: "cb" },
-    get_user_testing_signals: { scenario: "cb" },
-    get_user_testing_insights: { scenario: "cb", window: "w" },
-    request_user_testing_insights: { scenario: "cb" },
-    cancel_user_testing_insights: { scenario: "cb", window: "w" },
-    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
-    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
-    set_user_testing_guest_execution: {
-      scenario: "cb",
+    update_study: { study: "cb", name: "Checkout" },
+    list_study_sessions: { study: "cb" },
+    get_study_session: { study: "cb", session: "s" },
+    get_study_metrics: { study: "cb" },
+    get_study_usage: { study: "cb" },
+    list_study_findings: { study: "cb" },
+    get_study_signals: { study: "cb" },
+    get_study_insights: { study: "cb", window: "w" },
+    request_study_insights: { study: "cb" },
+    cancel_study_insights: { study: "cb", window: "w" },
+    dismiss_study_finding: { study: "cb", finding: "f" },
+    undismiss_study_finding: { study: "cb", finding: "f" },
+    set_study_guest_execution: {
+      study: "cb",
       enabled: true,
       computerEnabled: false,
       sharedSkillsEnabled: false,
@@ -2347,7 +2515,7 @@ describe("operation catalog consistency", () => {
       dailyComputerStartCap: 0,
       maxConcurrentComputers: 0,
     },
-    rotate_user_testing_link: { scenario: "cb" },
+    rotate_study_link: { study: "cb" },
     get_share_settings: { resourceType: "scenario", resourceId: "cb" },
     set_share_mode: {
       resourceType: "scenario",
@@ -2355,9 +2523,9 @@ describe("operation catalog consistency", () => {
       mode: "project_members",
     },
     rotate_share_link: { resourceType: "scenario", resourceId: "cb" },
-    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
-    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
-    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
+    upsert_study_member: { study: "cb", email: "a@example.com" },
+    remove_study_member: { study: "cb", member: "a@example.com" },
+    rebind_study: { study: "cb", environmentId: "env_1" },
     get_share_settings: { resourceType: "scenario", resourceId: "s1" },
     set_share_mode: {
       resourceType: "scenario",
@@ -2543,8 +2711,8 @@ describe("operation catalog consistency", () => {
       "cancel_journey_run",
       // Scenarios: publishing exposes an environment to people outside the
       // project, unpublishing tears that down. Both are writes.
-      "publish_scenario",
-      "unpublish_scenario",
+      "publish_study",
+      "unpublish_study",
       "update_project_environment",
       "restore_project_environment",
       "create_sandbox_image",
@@ -2599,18 +2767,18 @@ describe("operation catalog consistency", () => {
       // exists as a separate axis from `readOnly`: rotating a link and
       // dismissing a finding are both writes, and only one of them can lock
       // people out of a live scenario.
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "rotate_user_testing_link",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "rotate_study_link",
       "set_share_mode",
       "rotate_share_link",
-      "upsert_user_testing_member",
-      "remove_user_testing_member",
-      "rebind_user_testing_scenario",
+      "upsert_study_member",
+      "remove_study_member",
+      "rebind_study",
       "set_share_mode",
       "rotate_share_link",
       "install_registry_directory_server",

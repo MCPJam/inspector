@@ -148,19 +148,19 @@ import {
   cancelWaveInsightsOperation,
   generatePersonasOperation,
   generateJourneysOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  cancelUserTestingInsightsOperation,
-  requestUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  upsertUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
-  setUserTestingGuestExecutionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  cancelStudyInsightsOperation,
+  requestStudyInsightsOperation,
+  updateStudyOperation,
+  upsertStudyMemberOperation,
+  rebindStudyOperation,
+  setStudyGuestExecutionOperation,
   getShareSettingsOperation,
   setShareModeOperation,
   setEvalSuiteScheduleOperation,
@@ -2081,7 +2081,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // runs the derivation over every risk-classified operation. The only
   // lawful deviations are the ones NAMED in that suite's `TIER_EXCEPTIONS`
   // map, each with a written reason (`cancel_journey_run` stays gated so
-  // stopping spend is approvable; `publish_scenario` stays excluded because
+  // stopping spend is approvable; `publish_study` stays excluded because
   // who may talk to your servers is a human call). Re-tiering an entry
   // against its risk fails CI until the exception is written down there.
   //
@@ -2256,27 +2256,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // conversations, and the metrics answer "how is this going" without pulling
   // anyone's words into a turn.
   {
-    operation: getUserTestingMetricsOperation,
+    operation: getStudyMetricsOperation,
     tier: "direct",
     promptNotes: [
-      "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+      "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
     ],
   },
   {
-    operation: getUserTestingUsageOperation,
+    operation: getStudyUsageOperation,
     tier: "direct",
     promptNotes: [
-      "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+      "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",
     ],
   },
-  { operation: listUserTestingFindingsOperation, tier: "direct" },
-  { operation: getUserTestingSignalsOperation, tier: "direct" },
-  { operation: getUserTestingInsightsOperation, tier: "direct" },
-  { operation: dismissUserTestingFindingOperation, tier: "direct" },
-  { operation: undismissUserTestingFindingOperation, tier: "direct" },
-  { operation: cancelUserTestingInsightsOperation, tier: "direct" },
+  { operation: listStudyFindingsOperation, tier: "direct" },
+  { operation: getStudySignalsOperation, tier: "direct" },
+  { operation: getStudyInsightsOperation, tier: "direct" },
+  { operation: dismissStudyFindingOperation, tier: "direct" },
+  { operation: undismissStudyFindingOperation, tier: "direct" },
+  { operation: cancelStudyInsightsOperation, tier: "direct" },
   {
-    operation: requestUserTestingInsightsOperation,
+    operation: requestStudyInsightsOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2291,7 +2291,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: updateUserTestingScenarioOperation,
+    operation: updateStudyOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2320,7 +2320,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: upsertUserTestingMemberOperation,
+    operation: upsertStudyMemberOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2336,7 +2336,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: rebindUserTestingScenarioOperation,
+    operation: rebindStudyOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2352,7 +2352,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: setUserTestingGuestExecutionOperation,
+    operation: setStudyGuestExecutionOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2372,7 +2372,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
     },
     promptNotes: [
-      "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+      "- `set_study_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
   // ── Client authoring ──────────────────────────────────────────────────
@@ -2586,26 +2586,26 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // visitors' conversations, and a chat surface that can page them is a
   // transcript reader. Mirrors the `list_chat_sessions` precedent below.
   // Available on REST/CLI/MCP, where the caller asked for them explicitly.
-  list_user_testing_sessions:
+  list_study_sessions:
     "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
-  get_user_testing_session:
+  get_study_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP.",
-  get_user_testing_scenario:
-    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. Available on REST/CLI/MCP.",
+  get_study:
+    "One read now, and the stricter half decides: its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. The settings half that the deprecated get_scenario served is excluded with it rather than split out. Available on REST/CLI/MCP.",
   // Access REMOVAL. The agent proposes authoring, never destruction — and
   // these two take access away from people who currently have it, with no way
   // to hand it back except by re-inviting them individually.
-  rotate_user_testing_link:
+  rotate_study_link:
     "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
   rotate_share_link:
-    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_user_testing_link.",
-  remove_user_testing_member:
+    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_study_link.",
+  remove_study_member:
     "Revokes a named person's access; the agent proposes authoring, never destruction.",
 
   // Scenarios (user testing).
-  publish_scenario:
+  publish_study:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
-  unpublish_scenario:
+  unpublish_study:
     "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
 
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
@@ -2711,8 +2711,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "A widget-bearing variant for MCP Apps hosts; the agent uses list_project_servers.",
 
   // Chat surfaces the agent must not read: another person's conversations.
-  list_scenarios: "Published scenarios are a human sharing surface.",
-  get_scenario: "Published scenarios are a human sharing surface.",
+  list_studies: "Published studies are a human sharing surface.",
   list_chat_sessions:
     "Other people's conversations are not the agent's to read.",
   // Same doctrine, and search does not soften it: a query that returns titles
