@@ -1055,6 +1055,51 @@ describe("update-listeners", () => {
     }
   });
 
+  it("spends the latch even when the call throws, so a re-armed button cannot retry", async () => {
+    // Pins the ORDERING, which nothing else reaches.
+    //
+    // `quitAndInstallCalled = true` sits ABOVE the call because Electron
+    // registers the observer before the work that throws. Move it back below
+    // and every other test in this file still passes: the two latch tests
+    // start from a call that RETURNED, so the latch is spent either way, and
+    // the throw test above is refused by its `manual` status before the latch
+    // is ever consulted. The fix would rest on a comment.
+    //
+    // What makes the latch the only defence is a build landing afterwards:
+    // `update-downloaded` puts the status back to `downloaded` ("downloaded
+    // always wins"), so the status no longer refuses the click. Not a
+    // contrived fixture either — a process that already spent its call can
+    // absolutely see the next poll land another build.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    quitAndInstallMock.mockImplementationOnce(() => {
+      throw new Error("squirrel: staging dir missing");
+    });
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    // A later poll lands another build and re-arms the button.
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.2");
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "downloaded" });
+
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    // The observer may already be registered from the throwing call, so this
+    // second call is the NOTREACHED. Only the latch stands in the way.
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual", version: "3.8.2" });
+  });
+
   it("does not retry quitAndInstall after a throw, and hands over instead", async () => {
     const window = createWindow();
     windows.push(window);
