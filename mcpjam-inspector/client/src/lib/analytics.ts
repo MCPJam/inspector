@@ -6,6 +6,7 @@ const ORGANIZATION_GROUP_ONLY_EVENT_PREFIXES = [
   "billing_",
   "credit_topup_",
   "plan_limit_",
+  "plans_upgrade_confirm_",
   "pricing_",
 ] as const;
 

@@ -50,7 +50,7 @@ describe("track()", () => {
     expect(props.location).toBe("skills_tab");
   });
 
-  it("keeps the registered organization id only as the billing group", () => {
+  it("keeps the event organization id only as the billing group", () => {
     getPropertyMock.mockReturnValue("org_valid");
     track("billing_flow_started", {
       location: "billing_page",
@@ -62,7 +62,7 @@ describe("track()", () => {
       expect.objectContaining({
         organization_id: null,
         $groups: {
-          organization: "org_valid",
+          organization: "org_raw",
         },
       }),
     );
@@ -117,7 +117,7 @@ describe("track()", () => {
       organization_id: null,
       flow: "plan_change",
       failure_kind: "request_failed",
-      $groups: { organization: "org_valid" },
+      $groups: { organization: "org_raw" },
     });
     expect(properties).not.toHaveProperty("price_cents");
     expect(properties).not.toHaveProperty("package_id");

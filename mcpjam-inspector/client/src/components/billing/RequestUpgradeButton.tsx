@@ -48,8 +48,8 @@ export function buildUpgradeRequestMail(params: {
   const blocked = isCreditPurchase
     ? "Our organization has run out of MCPJam credits."
     : origin === "credits"
-    ? "Our organization has run out of MCPJam credits, so we can't continue testing until credits reset or we upgrade."
-    : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
+      ? "Our organization has run out of MCPJam credits, so we can't continue testing until credits reset or we upgrade."
+      : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
 
   const subject = isCreditPurchase
     ? `Credit purchase request for ${organizationName}`
@@ -154,6 +154,7 @@ export function RequestUpgradeButton({
               location: "plan_limit_dialog",
               limit_kind: limitKind,
               origin,
+              organization_id: organizationId,
               recipient_count: recipients.length,
               has_named_recipient: recipients.some((recipient) =>
                 Boolean(recipient.name?.trim()),

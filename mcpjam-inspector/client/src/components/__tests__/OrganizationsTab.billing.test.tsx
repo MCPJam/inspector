@@ -2244,6 +2244,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
     fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]!);
+    fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
 
     await waitFor(() => expect(startPlanChange).toHaveBeenCalled());
     expect(trackMock).toHaveBeenCalledWith(
