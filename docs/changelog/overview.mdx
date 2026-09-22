@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-22
+
+#### Changed
+
+- **Insights session flow selections open in a side sheet** — clicking a node in the Session flow diagram now opens a 960px sheet listing the matching sessions instead of a cramped side panel beside the chart. Each row shows the session preview, outcome, message count, and model. Clicking a row previews the full transcript in the same sheet; a breadcrumb crumb returns to the session list without leaving the Insights tab. An **Open in Sessions tab →** button in the sheet header deep-links that session in the Sessions tab when you need the full view.
+
+- **Failed or stuck analysis chips show Retry directly** — when a session flow analysis has failed or is stuck, the chip now exposes a **Retry** button inline instead of hiding it behind a popover. Clicking it starts a rebuild immediately.
+
+- **Session flow diagram fills leftover viewport on scroll layouts** — on pages where the Insights panel scrolls with the page, the flow diagram now stretches to fill the remaining viewport height below its top edge rather than stopping at its content height. Tall cohorts still grow the page as before.
+
 ### 2026-09-18
 
 #### Changed
