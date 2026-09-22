@@ -1237,8 +1237,7 @@ export function OrganizationBillingSection({
             <>
               {!billingConfigured ? (
                 <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                  Billing is not configured in this environment. Plans are
-                  visible, but purchase actions are unavailable.
+                  Purchases are unavailable here. You can still view the plans.
                 </div>
               ) : null}
               {!canManageBilling ? (

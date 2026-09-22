@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfileTab } from "../ProfileTab";
 import { AccountApiKeySection } from "../setting/AccountApiKeySection";
-const { updateName, updateInfo } = vi.hoisted(() => ({
+const { updateName, updateInfo, generateUploadUrl } = vi.hoisted(() => ({
+  generateUploadUrl: vi.fn(),
   updateInfo: vi.fn().mockResolvedValue(undefined),
   updateName: vi.fn().mockResolvedValue(undefined),
 }));
@@ -14,7 +15,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 vi.mock("convex/react", () => ({
   useQuery: () => ({ name: "Ada Lovelace" }),
-  useAction: () => vi.fn(),
+  useAction: () => generateUploadUrl,
   useMutation: (name: string) =>
     name === "users:updateName"
       ? updateName
@@ -27,6 +28,31 @@ vi.mock("@/hooks/useProfilePicture", () => ({
 }));
 describe("Profile settings", () => {
   beforeEach(() => vi.clearAllMocks());
+  it.each([
+    [new File(["text"], "notes.txt", { type: "text/plain" }), "Choose an image file for your profile picture."],
+    [new File([new Uint8Array(5 * 1024 * 1024 + 1)], "large.png", { type: "image/png" }), "Choose an image that is 5 MB or smaller."],
+  ])("explains how to correct an unsupported profile image", (file, message) => {
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    try {
+      const { container } = render(<ProfileTab />);
+      fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+      expect(alert).toHaveBeenCalledWith(message);
+      expect(generateUploadUrl).not.toHaveBeenCalled();
+    } finally { alert.mockRestore(); }
+  });
+  it("offers another upload after a failure", async () => {
+    generateUploadUrl.mockRejectedValueOnce(new Error("upload unavailable"));
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { container } = render(<ProfileTab />);
+      fireEvent.change(container.querySelector('input[type="file"]')!, {
+        target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+      });
+      await waitFor(() => expect(alert).toHaveBeenCalledWith("Your profile picture could not be updated. Try uploading it again."));
+      expect(screen.getByRole("button", { name: "Change profile photo" })).toBeEnabled();
+    } finally { alert.mockRestore(); log.mockRestore(); }
+  });
   it("shows the name, email, picture, and accessible photo change control", () => {
     render(<ProfileTab />);
     expect(
