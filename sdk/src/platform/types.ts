@@ -731,16 +731,31 @@ export interface PlatformWidgetRender {
 /**
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
+ *
+ * `"scenario"` and `"study"` are the SAME surface under two vocabularies: a
+ * client built with `apiVocabulary: 2` reads `"study"`, one without the option
+ * reads `"scenario"`. The union carries both because one client's calls may
+ * cross the boundary — a value read from a cache or a stored filter predates
+ * the option it was read under.
  */
 export type PlatformSessionSourceType =
   | "direct"
   | "scenario"
+  | "study"
   | "eval"
   | "swarm";
 
-/** The session's parent run, discriminated on `kind`. Also open-ended. */
+/**
+ * The session's parent run, discriminated on `kind`. Also open-ended.
+ *
+ * Under `apiVocabulary: 2` the discriminant reads `"study"` or `"goalRun"`
+ * and the noun-bearing ids are re-keyed to match (`studyId`, `goalRunId`,
+ * `goalRefId`). Both spellings are declared because both are reachable; which
+ * one a given response carries is decided by the client's option, so a caller
+ * that set it reads only the canonical half.
+ */
 export interface PlatformSessionParentRef {
-  kind: "evalRun" | "journeyRun" | "scenario";
+  kind: "evalRun" | "journeyRun" | "goalRun" | "scenario" | "study";
   /** Human-readable parent name; null when the parent row is gone. */
   label: string | null;
   iterationId?: string;
@@ -748,6 +763,12 @@ export interface PlatformSessionParentRef {
   suiteRunId?: string | null;
   suiteId?: string | null;
   journeyRunId?: string;
+  /** swarm only, vocabulary 2. */
+  goalRunId?: string;
+  /** swarm only, vocabulary 2. */
+  goalRefId?: string | null;
+  /** study only, vocabulary 2. */
+  studyId?: string;
   journeyRefId?: string | null;
   scenarioId?: string;
 }
@@ -4357,7 +4378,7 @@ export interface PlatformTraceDestination {
    * only sessions SHARED to the workspace are ever sent — a private Playground
    * session is excluded server-side and cannot be opted in.
    */
-  sourceTypes: Array<"eval" | "scenario" | "swarm" | "direct">;
+  sourceTypes: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
   /**
    * False (the default) redacts prompts, outputs, tool arguments and
    * screenshots. The message envelopes still ship, so a vendor's GenAI views
@@ -5205,6 +5226,31 @@ export interface PlatformCapabilities {
      * to refuse.
      */
     fields: Record<string, string[]>;
+  };
+  /**
+   * The resource-noun VALUE vocabulary this deployment understands: what a
+   * request sending `x-mcpjam-api-vocabulary: 2` reads back. Absent on a
+   * deployment that predates the negotiation, which then speaks only
+   * vocabulary 1.
+   *
+   * SEPARATE from `vocabulary` above, which is eval-scoped by name and moves
+   * on its own schedule. A deployment may advertise one without the other.
+   */
+  apiVocabulary?: {
+    version: number;
+    /**
+     * Value family → (stored spelling → canonical spelling). A family with no
+     * renamed member is absent rather than empty, so a client can read
+     * "nothing moves here" from the shape.
+     */
+    values: Record<string, Record<string, string>>;
+    /**
+     * Permalink resource type → the pre-rename keys that resolve to the same
+     * route. Listed apart from `values` because these are table KEYS, not a
+     * per-request projection: both spellings resolve at all times, and which
+     * one a response carries follows the OPERATION rather than the header.
+     */
+    resourceTypes: Record<string, string[]>;
   };
   /**
    * The booleans to branch on. Note that the exposure-REDUCING ones

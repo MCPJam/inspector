@@ -252,6 +252,31 @@ export interface PlatformApiClientOptions {
    */
   evalVocabulary?: 1 | 2;
   /**
+   * Which spelling this client reads the public API's resource-noun VALUES in
+   * (`docs/public-api-vocabulary-consolidation.md`).
+   *
+   * `1` (the default, and what an omitted option means) is byte-for-byte the
+   * documented contract: a session's `sourceType` is `"scenario"`, a share's
+   * `resourceType` is `"scenario"`, and a session's `parentRef.kind` is
+   * `"scenario"` or `"journeyRun"`. `2` sends
+   * `x-mcpjam-api-vocabulary: 2` on EVERY request, under which those read
+   * `"study"`, `"study"`, and `"study"`/`"goalRun"` — the spellings the rest
+   * of the API already uses.
+   *
+   * A VALUE is why this exists at all. Operation names, routes, types and
+   * field names each moved behind a deprecated alias, because a caller reaches
+   * them by a name it chose. `sourceType` is one field with one string in it,
+   * and a client switching on `"scenario"` has no second name to fall back to.
+   *
+   * OPT IN, never inferred, for the same reason as the eval header: a
+   * deployment that predates the negotiation ignores it and answers in
+   * vocabulary 1, which a caller expecting 2 would then misread. Read
+   * `getProjectCapabilities().apiVocabulary` first.
+   *
+   * Applied after `extraHeaders`, like every header this client owns.
+   */
+  apiVocabulary?: 1 | 2;
+  /**
    * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
    *
    * The platform stamps a run's `source` itself, and everything arriving over
@@ -340,6 +365,17 @@ export const RUN_LAUNCH_HEADERS = {
  * predates the negotiation ignores it — see {@link PlatformApiClientOptions.evalVocabulary}.
  */
 export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
+
+/**
+ * The resource-noun VALUE negotiation, `routes/v1/api-vocabulary.ts`.
+ *
+ * A SEPARATE header from the eval one, which is eval-scoped by name and moves
+ * on its own schedule. Sent only when the client was constructed with
+ * `apiVocabulary: 2`; absent means vocabulary 1, and a server that predates
+ * the negotiation ignores it — see
+ * {@link PlatformApiClientOptions.apiVocabulary}.
+ */
+export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
 
 /**
  * The API boundary's own caps, mirrored here.
@@ -628,6 +664,8 @@ export class PlatformApiClient {
   private readonly launchHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
+  /** The noun-value vocabulary every request declares; `1` sends no header. */
+  private readonly apiVocabulary: 1 | 2;
   /**
    * The options this client was built from, kept so {@link withEvalVocabulary}
    * can derive a sibling that differs in exactly one thing. Never mutated.
@@ -637,6 +675,7 @@ export class PlatformApiClient {
   constructor(options: PlatformApiClientOptions) {
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
+    this.apiVocabulary = options.apiVocabulary ?? 1;
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
@@ -680,6 +719,22 @@ export class PlatformApiClient {
     return new PlatformApiClient({
       ...this.constructorOptions,
       evalVocabulary: vocabulary,
+    });
+  }
+
+  /**
+   * The same step for the resource-noun values.
+   *
+   * Separate from {@link withEvalVocabulary} because the two negotiations are
+   * separate: a caller may speak vocabulary 2 for eval authoring and 1 for the
+   * nouns, or the reverse, and a deployment may advertise one without the
+   * other. Chaining both is `.withEvalVocabulary(2).withApiVocabulary(2)`.
+   */
+  withApiVocabulary(vocabulary: 1 | 2): PlatformApiClient {
+    if (vocabulary === this.apiVocabulary) return this;
+    return new PlatformApiClient({
+      ...this.constructorOptions,
+      apiVocabulary: vocabulary,
     });
   }
 
@@ -4510,7 +4565,7 @@ export class PlatformApiClient {
       endpointUrl: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
       includeContent?: boolean;
       projectIds?: string[];
       compression?: "gzip" | "none";
@@ -4549,7 +4604,7 @@ export class PlatformApiClient {
       endpointUrl?: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
       includeContent?: boolean;
       projectIds?: string[];
       allProjects?: boolean;
@@ -6056,7 +6111,7 @@ export class PlatformApiClient {
   getShareSettings(
     params: {
       projectId: string;
-      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceType: "scenario" | "study" | "conformanceRun" | "evalRun";
       resourceId: string;
     },
     options?: RequestOptions
@@ -6072,7 +6127,7 @@ export class PlatformApiClient {
   setShareMode(
     params: {
       projectId: string;
-      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceType: "scenario" | "study" | "conformanceRun" | "evalRun";
       resourceId: string;
       mode: "project_members" | "invited_only" | "anyone_with_link";
       allowGuestAccess?: boolean;
@@ -6101,7 +6156,7 @@ export class PlatformApiClient {
   rotateShareLink(
     params: {
       projectId: string;
-      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceType: "scenario" | "study" | "conformanceRun" | "evalRun";
       resourceId: string;
     },
     options?: RequestOptions
@@ -6179,6 +6234,12 @@ export class PlatformApiClient {
       // Owned in both directions: an edge credential that injected the
       // header would make a vocabulary-1 body mean something else.
       delete headers[EVAL_VOCABULARY_HEADER];
+    }
+    // The noun-value negotiation, on the same terms and for the same reason.
+    if (this.apiVocabulary === 2) {
+      headers[API_VOCABULARY_HEADER] = "2";
+    } else {
+      delete headers[API_VOCABULARY_HEADER];
     }
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.

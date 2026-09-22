@@ -720,24 +720,75 @@ stabilize first.
 
 ### Renamed surfaces
 
-`scenario` is now **study** on this API. The paths, the operation names, the SDK
-types and the `scenarioId` response field all moved:
+Three nouns this API used are now what the product calls them: `scenario` is
+**study**, `journey` is **goal**, and `wave` is **swarm run**. The paths, the
+operation names, the SDK types and the noun-bearing response fields all moved:
 
 | Was | Is |
 | --- | --- |
 | `/projects/{projectId}/scenarios[/{scenarioId}]` | `/projects/{projectId}/studies[/{studyId}]` |
 | `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` | `/projects/{projectId}/studies/{studyId}/…` |
 | `/projects/{projectId}/environments/{environmentId}/scenario` | `.../environments/{environmentId}/study` |
+| `/projects/{projectId}/journeys[/{journeyId}]` | `/projects/{projectId}/goals[/{goalId}]` |
+| `/projects/{projectId}/journey-runs/{runId}` | `/projects/{projectId}/goal-runs/{runId}` |
+| `/projects/{projectId}/journeys-overview`, `.../journey-findings` | `.../goals-overview`, `.../goal-findings` |
+| `/projects/{projectId}/waves/{waveId}/insights` | `/projects/{projectId}/swarm-runs/{swarmRunId}/insights` |
+
+Response fields followed their nouns: `scenarioId` → `studyId`, `journeyId` →
+`goalId`, `waveId` → `swarmRunId`, and `sessionsPerTarget` → `iterations`.
 
 Two reads became one: `get_scenario` served the execution settings and
 `get_user_testing_scenario` served the environment id and the insights
 envelope. `get_study` returns both, and the two caller-dependent fields are
 absent rather than null when you may not have them.
 
-**Every old path still works** and is unchanged, including its `scenarioId`
-response spelling. Each one answers with `Deprecation: true` and a `Link` header
-naming its successor. They are undocumented on purpose — the spec is what a new
+**Every old path still works** and is unchanged, including its old response
+spellings. Each one answers with `Deprecation: true` and a `Link` header naming
+its successor. They are undocumented on purpose — the spec is what a new
 integration reads — and they are removed at general availability.
+
+A handful of operations kept their names through the rename and so have no
+deprecated twin to hold the old field spellings. `get_swarms_overview`,
+`create_swarm` and `update_swarm` emit both and accept either — never both in
+one request — until general availability.
+
+### Vocabulary
+
+A name can move behind an alias; a VALUE cannot. `sourceType` is one field with
+one string in it, and a client switching on `"scenario"` has no second name to
+fall back to. So the values negotiate.
+
+Send `x-mcpjam-api-vocabulary: 2` and the renamed values read canonically:
+
+| Field | Vocabulary 1 | Vocabulary 2 |
+| --- | --- | --- |
+| session `sourceType` | `scenario` | `study` |
+| session `parentRef.kind` | `scenario`, `journeyRun` | `study`, `goalRun` |
+| session `parentRef` ids | `scenarioId`, `journeyRunId`, `journeyRefId` | `studyId`, `goalRunId`, `goalRefId` |
+| share `resourceType` (field AND path segment) | `scenario` | `study` |
+| trace-destination `sourceTypes` | `scenario` | `study` |
+
+Absent means `1`, which is byte-for-byte today's contract. Any other value is a
+`400`. On the way IN, a vocabulary-2 request may name a filter or a path segment
+by either spelling; a vocabulary-1 request may use only the legacy one, because
+a boundary that accepts a spelling it does not announce is one two
+implementations can disagree about. A response that varies by vocabulary sends
+`Vary: x-mcpjam-api-vocabulary`.
+
+This is a **separate header** from `x-mcpjam-eval-vocabulary`, which is
+eval-scoped by name and moves on its own schedule. A deployment may speak one
+and not the other, so read
+`GET /projects/{projectId}/capabilities` — `apiVocabulary` and `vocabulary` are
+two blocks — before sending either. With the SDK:
+`new PlatformApiClient({ …, apiVocabulary: 2 })`, or
+`client.withApiVocabulary(2)` on one you already hold.
+
+Permalink resource types are the exception that proves the rule: `study` and
+`goal_run` are the canonical keys, `user_testing_scenario` and `journey_run`
+still resolve to the same routes, and which one a response carries follows the
+OPERATION rather than the header — a renamed operation derives the canonical
+key, its deprecated twin the old one. `capabilities.apiVocabulary.resourceTypes`
+lists both.
 
 ### Browser tools on chat sessions
 

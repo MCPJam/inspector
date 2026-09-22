@@ -30,6 +30,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { resolveAgentSurface } from "../../utils/agent-attribution.js";
+import { API_VOCABULARY_CAPABILITY } from "./api-vocabulary.js";
 import { EVAL_VOCABULARY_CAPABILITY } from "./eval-vocabulary.js";
 
 const capabilities = new Hono();
@@ -251,7 +252,7 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
   try {
     row = (await client.query(
       "projects:getProjectCapabilities" as never,
-      { projectId } as never
+      { projectId } as never,
     )) as CapabilitiesRow | null;
   } catch (error) {
     throw translateConvexReadError(error, { scope: "v1.capabilities" });
@@ -296,6 +297,14 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
      * they are. A client reads this; it never infers support from a field.
      */
     vocabulary: EVAL_VOCABULARY_CAPABILITY,
+    /**
+     * The resource-noun VALUE vocabulary, on the same terms and for the same
+     * reason: a client reads what this deployment speaks rather than
+     * inferring it from the presence of a field on an unrelated object. A
+     * separate block because the two negotiations are separate — one may move
+     * without the other.
+     */
+    apiVocabulary: API_VOCABULARY_CAPABILITY,
     can: deriveCapabilities(row),
   });
 });

@@ -36,24 +36,24 @@ catalog.get("/me", (c) => proxyConvexV1Read(c, "/v1/me"));
 // Projects the caller can access (org-scoped for API keys).
 catalog.get("/projects", (c) =>
   proxyConvexV1Read(c, "/v1/projects", (target) =>
-    forwardQueryParams(c, target, ["organizationId"])
-  )
+    forwardQueryParams(c, target, ["organizationId"]),
+  ),
 );
 
 // GET /v1/projects/:projectId/servers
 // Servers saved in the project — the ids every other v1 route takes.
 catalog.get("/projects/:projectId/servers", (c) =>
   proxyConvexV1Read(c, "/v1/project-servers", (target) =>
-    target.searchParams.set("projectId", c.req.param("projectId"))
-  )
+    target.searchParams.set("projectId", c.req.param("projectId")),
+  ),
 );
 
 // GET /v1/projects/:projectId/eval-suites
 // Eval suites in the project, with latest-run summaries.
 catalog.get("/projects/:projectId/eval-suites", (c) =>
   proxyConvexV1Read(c, "/v1/eval-suites", (target) =>
-    target.searchParams.set("projectId", c.req.param("projectId"))
-  )
+    target.searchParams.set("projectId", c.req.param("projectId")),
+  ),
 );
 
 // GET /v1/projects/:projectId/sessions?q=&scope=&sourceType=&status=&limit=&cursor=
@@ -68,17 +68,27 @@ catalog.get("/projects/:projectId/eval-suites", (c) =>
 // validation, and re-deriving it here would be a second place to get the
 // scope/q interaction wrong.
 catalog.get("/projects/:projectId/sessions", async (c) => {
-  const response = await proxyConvexV1Read(c, "/v1/sessions", (target) => {
-    target.searchParams.set("projectId", c.req.param("projectId"));
-    forwardQueryParams(c, target, [
-      "sourceType",
-      "status",
-      "q",
-      "scope",
-      "limit",
-      "cursor",
-    ]);
-  });
+  const response = await proxyConvexV1Read(
+    c,
+    "/v1/sessions",
+    (target) => {
+      target.searchParams.set("projectId", c.req.param("projectId"));
+      forwardQueryParams(c, target, [
+        "sourceType",
+        "status",
+        "q",
+        "scope",
+        "limit",
+        "cursor",
+      ]);
+    },
+    // `sourceType` and `parentRef` spell a noun this program renamed, and the
+    // body is Convex's DTO passed through verbatim — so the projection
+    // happens upstream and the header rides along. `sourceType` goes over
+    // unrewritten for the same reason: the upstream owns validation, and
+    // accepting `study` under vocabulary 2 is its rule to apply.
+    { negotiatesVocabulary: true },
+  );
 
   // Instrumentation rides on the RESPONSE, so a rejected or unauthorized
   // search is not counted as a search that happened. Best-effort and
@@ -146,22 +156,30 @@ catalog.get("/chat-sessions", (c) =>
     if (typeof cursor === "string" && cursor.length > 0) {
       target.searchParams.set("before", cursor);
     }
-  })
+  }),
 );
 
 // GET /v1/trace-exports/otlp — bearer-authenticated OTLP/JSON export. The
 // upstream keeps pagination in headers so the body remains a valid OTLP
 // ExportTraceServiceRequest; forward those headers verbatim.
 catalog.get("/trace-exports/otlp", (c) =>
-  proxyConvexV1Read(c, "/v1/trace-exports/otlp", (target) =>
-    forwardQueryParams(c, target, [
-      "projectId",
-      "cursor",
-      "limit",
-      "sourceTypes",
-      "includeContent",
-    ])
-  )
+  proxyConvexV1Read(
+    c,
+    "/v1/trace-exports/otlp",
+    (target) =>
+      forwardQueryParams(c, target, [
+        "projectId",
+        "cursor",
+        "limit",
+        "sourceTypes",
+        "includeContent",
+      ]),
+    // The OTLP body carries no session DTO, so the header changes nothing
+    // this route EMITS — it widens what `sourceTypes` upstream accepts, so a
+    // vocabulary-2 caller can filter by the spelling its other reads answer
+    // with instead of having to remember an exception here.
+    { negotiatesVocabulary: true },
+  ),
 );
 
 // ── Scenarios (deprecated compatibility reads) ───────────────────────────────
@@ -180,7 +198,7 @@ const SCENARIOS_SUCCESSOR = "/api/v1/projects/{projectId}/studies";
 catalog.get("/projects/:projectId/scenarios", (c) => {
   markDeprecated(c, SCENARIOS_SUCCESSOR);
   return proxyConvexV1Read(c, "/v1/scenarios", (target) =>
-    target.searchParams.set("projectId", c.req.param("projectId"))
+    target.searchParams.set("projectId", c.req.param("projectId")),
   );
 });
 
@@ -192,8 +210,11 @@ catalog.get("/projects/:projectId/scenarios", (c) => {
 catalog.get("/projects/:projectId/scenarios/:scenarioId", async (c) => {
   markDeprecated(c, `${SCENARIOS_SUCCESSOR}/{studyId}`);
   const projectId = c.req.param("projectId");
-  const { status, body } = await fetchConvexV1Read(c, "/v1/scenario", (target) =>
-    target.searchParams.set("scenarioId", c.req.param("scenarioId"))
+  const { status, body } = await fetchConvexV1Read(
+    c,
+    "/v1/scenario",
+    (target) =>
+      target.searchParams.set("scenarioId", c.req.param("scenarioId")),
   );
   if (
     status === 200 &&

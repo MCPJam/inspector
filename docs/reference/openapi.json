@@ -5348,8 +5348,14 @@
         "operationId": "listSessions",
         "tags": ["Catalog"],
         "summary": "Search or list unified sessions",
-        "description": "The unified, cross-surface sessions feed for one project: Playground, user-testing, eval, and swarm transcripts in one list, newest first. Project-NESTED (unlike `/chat-sessions`) because `projectId` owns the scope here rather than filtering it.\n\nSupplying `q` at all switches to relevance-ordered search; `scope` then chooses what is searched. Row-level visibility applies in every mode: a caller never receives another member's private Playground session.\n\nThe response echoes the honored `scope`. A deployment predating that parameter omits the echo — clients requesting a non-default scope MUST treat its absence as \"unsupported\" rather than accepting the results.",
+        "x-mcpjam-api-vocabulary": {
+          "2": {"values": ["sourceType", "parentRef.kind"]}
+        },
+        "description": "The unified, cross-surface sessions feed for one project: Playground, user-testing, eval, and swarm transcripts in one list, newest first. Project-NESTED (unlike `/chat-sessions`) because `projectId` owns the scope here rather than filtering it.\n\nUnder `x-mcpjam-api-vocabulary: 2` each item\u2019s `sourceType` reads `study` where it reads `scenario` today, and `parentRef` reads `kind: \"study\"` / `kind: \"goalRun\"` with its id fields re-keyed to `studyId` / `goalRunId` / `goalRefId`. The `sourceType` filter accepts either spelling under that header.\n\nSupplying `q` at all switches to relevance-ordered search; `scope` then chooses what is searched. Row-level visibility applies in every mode: a caller never receives another member's private Playground session.\n\nThe response echoes the honored `scope`. A deployment predating that parameter omits the echo — clients requesting a non-default scope MUST treat its absence as \"unsupported\" rather than accepting the results.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/apiVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -7689,8 +7695,11 @@
         "operationId": "exportTracesOtlp",
         "tags": ["Catalog"],
         "summary": "Export project traces as OTLP/JSON",
-        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.",
+        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.\n\nThe OTLP body carries no session DTO, so `x-mcpjam-api-vocabulary: 2` changes nothing this route emits \u2014 it widens what `sourceTypes` accepts, so a caller can filter by the spelling its other reads answer with.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/apiVocabularyHeader"
+          },
           {
             "name": "projectId",
             "in": "query",
@@ -13511,6 +13520,17 @@
         "in": "header",
         "required": false,
         "description": "Which vocabulary this request and its response speak. Absent means `1`, which is byte-for-byte today's contract: the same request fields, the same refusals, the same response projection. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nToday it decides one thing: the spelling of an evaluator's policy `role`. Vocabulary 1 accepts and returns `gating`; vocabulary 2 accepts both spellings and returns the canonical `required`. Sending `required` without the header is a `400`, deliberately \u2014 vocabulary 1 is not widened to meet vocabulary 2 half way, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-eval-vocabulary`.",
+        "schema": {
+          "type": "string",
+          "enum": ["1", "2"]
+        },
+        "example": "2"
+      },
+      "apiVocabularyHeader": {
+        "name": "x-mcpjam-api-vocabulary",
+        "in": "header",
+        "required": false,
+        "description": "Which spelling of the API's resource-noun VALUES this request and its response speak. Absent means `1`, byte-for-byte today's contract. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nThree nouns were renamed at this boundary \u2014 scenario \u2192 study, journey \u2192 goal, wave \u2192 swarm run. Operation names, routes, type names and field names each moved behind a deprecated alias, because a caller reaches them by a name it chose. A VALUE cannot: `sourceType` is one field with one string in it, and a client switching on `\"scenario\"` has no second name to fall back to. Under vocabulary 2 a session\u2019s `sourceType` reads `study`, a share\u2019s `resourceType` reads `study`, and a session\u2019s `parentRef.kind` reads `study` or `goalRun` with its id fields re-keyed to match.\n\nOn the way IN, a vocabulary-2 request may name a filter or a path segment by EITHER spelling; a vocabulary-1 request may use only the legacy one, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-api-vocabulary`. A SEPARATE header from `x-mcpjam-eval-vocabulary`, which is eval-scoped by name and moves on its own schedule.",
         "schema": {
           "type": "string",
           "enum": ["1", "2"]
@@ -22804,11 +22824,11 @@
       "SessionParentRef": {
         "type": "object",
         "required": ["kind", "label"],
-        "description": "The session's parent run, discriminated on `kind`. Additive: switch on `kind` and tolerate an unknown value.",
+        "description": "The session's parent run, discriminated on `kind`. Additive: switch on `kind` and tolerate an unknown value.\n\nThe enum lists BOTH vocabularies. A response carries exactly one spelling, decided by `x-mcpjam-api-vocabulary`: without it (or with `1`) `scenario` and `journeyRun` with `scenarioId` / `journeyRunId` / `journeyRefId`; with `2`, `study` and `goalRun` with `studyId` / `goalRunId` / `goalRefId`. `evalRun` is unaffected — no noun there was renamed.",
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["evalRun", "journeyRun", "scenario"]
+            "enum": ["evalRun", "journeyRun", "goalRun", "scenario", "study"]
           },
           "label": {
             "type": "string",
@@ -22828,14 +22848,30 @@
             "nullable": true
           },
           "journeyRunId": {
-            "type": "string"
+            "type": "string",
+            "description": "swarm only, vocabulary 1."
+          },
+          "goalRunId": {
+            "type": "string",
+            "description": "swarm only, vocabulary 2."
           },
           "journeyRefId": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "swarm only, vocabulary 1."
+          },
+          "goalRefId": {
+            "type": "string",
+            "nullable": true,
+            "description": "swarm only, vocabulary 2."
           },
           "scenarioId": {
-            "type": "string"
+            "type": "string",
+            "description": "study only, vocabulary 1."
+          },
+          "studyId": {
+            "type": "string",
+            "description": "study only, vocabulary 2."
           }
         }
       },
@@ -22875,7 +22911,8 @@
           },
           "sourceType": {
             "type": "string",
-            "enum": ["direct", "scenario", "eval", "swarm"]
+            "description": "`scenario` and `study` are the SAME surface under the two vocabularies; a response carries whichever one `x-mcpjam-api-vocabulary` selected.",
+            "enum": ["direct", "scenario", "study", "eval", "swarm"]
           },
           "origin": {
             "type": "string",
@@ -28847,6 +28884,37 @@
                     "items": {
                       "type": "string"
                     }
+                  }
+                }
+              }
+            }
+          },
+          "apiVocabulary": {
+            "type": "object",
+            "description": "The resource-noun VALUE vocabulary this deployment understands (see the `x-mcpjam-api-vocabulary` header). Absent on a deployment that predates the negotiation, which then speaks only vocabulary 1. SEPARATE from `vocabulary` above, which is eval-scoped by name and moves on its own schedule.",
+            "required": ["version", "values", "resourceTypes"],
+            "properties": {
+              "version": {
+                "type": "integer",
+                "enum": [2]
+              },
+              "values": {
+                "type": "object",
+                "description": "Value family -> (stored spelling -> canonical spelling). A family with no renamed member is absent rather than empty, so a client can read \"nothing moves here\" from the shape.",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "resourceTypes": {
+                "type": "object",
+                "description": "Permalink resource type -> the pre-rename keys that resolve to the same route. Listed apart from `values` because these are table KEYS, not a per-request projection: both spellings resolve at all times, and which one a response carries follows the OPERATION rather than the header.",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
                   }
                 }
               }

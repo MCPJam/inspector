@@ -9381,7 +9381,20 @@ export const getChatSessionTraceOperation: PlatformOperation<
   },
 };
 
-const SESSION_SOURCE_TYPES = ["direct", "scenario", "eval", "swarm"] as const;
+/**
+ * `scenario` and `study` are the SAME surface under two vocabularies, and both
+ * are accepted as a filter at all times: the operation forwards the value
+ * verbatim and the boundary folds it, so a caller that learned `study` from a
+ * vocabulary-2 response can filter by what it read without having to know
+ * which header its client happens to send.
+ */
+const SESSION_SOURCE_TYPES = [
+  "direct",
+  "scenario",
+  "study",
+  "eval",
+  "swarm",
+] as const;
 
 const searchSessionsInput = z.object({
   query: z
@@ -12397,7 +12410,7 @@ export const listGoalRunsOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((run) => ({
-      type: "journey_run" as const,
+      type: "goal_run" as const,
       id: run.id,
       projectId: run.projectId,
     }))
@@ -12453,7 +12466,7 @@ export const getGoalRunOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
-      type: "journey_run",
+      type: "goal_run",
       id: result.run.id,
       projectId: result.run.projectId,
     },
@@ -12591,7 +12604,7 @@ export const launchGoalRunOperation: PlatformOperation<
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
-      type: "journey_run",
+      type: "goal_run",
       id: result.run.id,
       projectId: result.run.projectId,
     },
@@ -12909,7 +12922,7 @@ export const getGoalRunScorecardOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
-      type: "journey_run",
+      type: "goal_run",
       id: result.scorecard.runId,
       projectId: result.project?.id,
     },
@@ -14106,9 +14119,11 @@ const ORGANIZATION_SELECTOR_DESCRIPTION =
 const TRACE_DESTINATION_ROUTE_NOTE =
   "No `organizations/:organizationId/observability/:destinationId` route: the Observability section lists every destination and selects one as component state, so there is no page a single destination can be opened at.";
 
+/** Both spellings of the renamed surface — see `SESSION_SOURCE_TYPES`. */
 const traceDestinationSourceTypes = z.enum([
   "eval",
   "scenario",
+  "study",
   "swarm",
   "direct",
 ]);
@@ -15522,7 +15537,7 @@ export const getSwarmRunInsightsOperation: PlatformOperation<
     // The permalink TYPE key is still `journey_run`; it moves in the
     // wire-value step, once the Slack and Discord apps accept both.
     {
-      type: "journey_run",
+      type: "goal_run",
       id: result.insights.swarmRunId,
       projectId: result.project?.id,
     },
@@ -15873,7 +15888,7 @@ export const listStudiesOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((study) => ({
-      type: "user_testing_scenario" as const,
+      type: "study" as const,
       id: study.id,
       projectId: result.project?.id,
       label: `Open ${study.name}`,
@@ -15968,7 +15983,7 @@ export const publishStudyOperation: PlatformOperation<
     // share link — a backend-minted product capability, not a permalink, and
     // untouched by this policy.
     {
-      type: "user_testing_scenario",
+      type: "study",
       id: result.study.id,
       projectId: result.project?.id,
     },
@@ -16062,7 +16077,7 @@ export const getStudyOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
-      type: "user_testing_scenario",
+      type: "study",
       id: result.study.id,
       projectId: result.project?.id,
     },
@@ -16136,7 +16151,7 @@ export const updateStudyOperation: PlatformOperation<
   risk: "exposure",
   permalink: derivePermalinks((result) => [
     {
-      type: "user_testing_scenario",
+      type: "study",
       id: result.study.id,
       projectId: result.project?.id,
     },
@@ -17982,13 +17997,15 @@ const shareResourceSelectorInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   resourceType: z
-    .enum(["scenario", "conformanceRun", "evalRun"])
-    .describe("Shared resource kind."),
+    .enum(["scenario", "study", "conformanceRun", "evalRun"])
+    .describe(
+      "Shared resource kind. `study` and `scenario` name the same one; the route folds either onto the stored spelling."
+    ),
   resourceId: z
     .string()
     .trim()
     .min(1)
-    .describe("Id of the scenario, conformance run, or eval run."),
+    .describe("Id of the study, conformance run, or eval run."),
 });
 
 export type GetShareSettingsInput = z.infer<typeof shareResourceSelectorInput>;
