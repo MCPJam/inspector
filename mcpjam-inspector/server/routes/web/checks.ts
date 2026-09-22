@@ -21,7 +21,6 @@ import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
   runPredicatesOnChatSession,
   type ChatSessionId,
-  type UserId,
 } from "../../services/checks/run-predicates-on-chat-session.js";
 import { handleRoute, parseWithSchema, readJsonBody } from "./auth.js";
 import { assertBearerToken } from "./errors.js";
@@ -34,11 +33,14 @@ const runPredicatesSchema = z.object({
   setKind: z.enum(["suite_defaults", "case_resolved", "ad_hoc"]),
   setRef: z.string().min(1).optional(),
   setVersion: z.number().int().nonnegative().optional(),
-  // `triggeredBy` is optional at this surface; the backend already knows
-  // the caller from the Convex auth token. Accepted for parity with the
-  // orchestrator signature, in case a future flow (e.g. background job)
-  // wants to attribute to a different user than the request bearer.
-  triggeredBy: z.string().min(1).optional(),
+  // No `triggeredBy` (MJ-022). It used to be accepted here "for parity with
+  // the orchestrator signature, in case a future flow wants to attribute to a
+  // different user than the request bearer" — a flow that never arrived, while
+  // the field let any caller write a colleague's id into the check-run record.
+  // Attribution comes from the Convex bearer, which the backend already has.
+  // The schema is non-strict, so a stale client still sending the field gets
+  // it dropped rather than a 400. If delegation is ever needed, it belongs on
+  // the service-token path with an audited `x-mcpjam-acting-as`, not here.
 });
 
 checks.post("/run-predicates", async (c) =>
@@ -54,9 +56,6 @@ checks.post("/run-predicates", async (c) =>
       setKind: body.setKind,
       ...(body.setRef !== undefined ? { setRef: body.setRef } : {}),
       ...(body.setVersion !== undefined ? { setVersion: body.setVersion } : {}),
-      ...(body.triggeredBy !== undefined
-        ? { triggeredBy: body.triggeredBy as UserId }
-        : {}),
     });
     return {
       checkRunId: result.checkRunId,

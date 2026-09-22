@@ -197,6 +197,38 @@ describe("POST /run-predicates", () => {
     expect(call).not.toHaveProperty("triggeredBy");
   });
 
+  it("never lets the body name the acting user", async () => {
+    // MJ-022. `triggeredBy` used to be part of this schema, so any caller could
+    // write a colleague's id into the check-run record. Permission checks always
+    // used the bearer, so this was integrity of the record rather than access
+    // control — which is exactly what makes it worth pinning: nothing else
+    // fails if it regresses.
+    runPredicatesMock.mockResolvedValue({ checkRunId: "chk_3", results: [] });
+
+    const res = await app.request("/run-predicates", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        authorization: "Bearer xyz",
+      },
+      body: JSON.stringify({
+        chatSessionId: "cs_3",
+        predicates: [{ type: "noToolErrors" }],
+        setKind: "ad_hoc",
+        triggeredBy: "jx7ca7xw1mhe1nw8sqcvfz7y8d8d3bg3",
+      }),
+    });
+
+    // Dropped, not refused: a stale client keeps working, it just cannot
+    // choose the actor.
+    expect(res.status).toBe(200);
+    const call = runPredicatesMock.mock.calls[0]?.[0];
+    expect(call).not.toHaveProperty("triggeredBy");
+    expect(JSON.stringify(call)).not.toContain(
+      "jx7ca7xw1mhe1nw8sqcvfz7y8d8d3bg3",
+    );
+  });
+
   it("propagates errors from the orchestrator as 500", async () => {
     runPredicatesMock.mockRejectedValue(
       new Error("ChatSession not found or unauthorized"),

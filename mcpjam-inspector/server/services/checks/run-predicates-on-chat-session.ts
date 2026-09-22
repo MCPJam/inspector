@@ -69,7 +69,6 @@ export interface RunPredicatesOnChatSessionArgs {
   setKind: CheckSetKind;
   setRef?: string;
   setVersion?: number;
-  triggeredBy?: UserId;
 }
 
 export interface RunPredicatesOnChatSessionResult {
@@ -135,7 +134,6 @@ export async function runPredicatesOnChatSession(
     setKind,
     setRef,
     setVersion,
-    triggeredBy,
   } = args;
 
   // 1. Persist the run with a definition snapshot (audit anchor).
@@ -153,7 +151,6 @@ export async function runPredicatesOnChatSession(
       // Checks panel keys on this to decide which rows it owns.
       runKind: "checks",
       definitionSnapshot,
-      ...(triggeredBy !== undefined ? { triggeredBy } : {}),
     },
   )) as { checkRunId: CheckRunId };
   const checkRunId = startResult.checkRunId;
