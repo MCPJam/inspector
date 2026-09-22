@@ -469,6 +469,17 @@ describe("POST .../goals/:goalId/runs", () => {
     });
   });
 
+  it("400s the pre-rename `waveId` rather than launching an ungrouped run", async () => {
+    // A plain object would strip the unknown key and launch the goal with no
+    // batch id — the caller's sibling runs silently ungrouped.
+    const res = await launch({
+      body: JSON.stringify({ waveId: "wave_9" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
   it("400s an EMPTY environmentIds rather than falling back to the authored targets", async () => {
     // `[]` is a caller naming no environments, which is not the same request
     // as omitting the field. Dropping it and launching as authored would run

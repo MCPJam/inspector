@@ -541,7 +541,7 @@ const UPDATE_SCHEMAS = {
 };
 
 function launchSchemaFor(surface: Surface) {
-  return z.object({
+  const schema = z.object({
     /** Opaque id linking the sibling runs of one co-launched batch. */
     [surface.legacy ? "waveId" : "swarmRunId"]: z
       .string()
@@ -565,6 +565,11 @@ function launchSchemaFor(surface: Surface) {
       .min(1, "environmentIds must name at least one environment")
       .optional(),
   });
+  // STRICT on the canonical surface: a caller that moved to `/goals/:id/runs`
+  // but still sends `waveId` would otherwise have it stripped and get an
+  // ungrouped run without a word. The legacy surface keeps its lenient,
+  // byte-for-byte contract.
+  return surface.legacy ? schema : schema.strict();
 }
 
 const LAUNCH_SCHEMAS = {

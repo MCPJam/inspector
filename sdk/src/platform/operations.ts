@@ -16117,11 +16117,17 @@ export const getStudyOperation: PlatformOperation<
       );
       return { project: toSelectedProjectInfo(project), study };
     } catch (error) {
-      // Only a NOT_FOUND falls through to the name path. Anything else — a
-      // permission refusal, a rate limit, a dead upstream — is the caller's
-      // real answer, and listing every study in the project to re-ask a
-      // question already answered would hide it behind a second failure.
-      if (!(error instanceof PlatformApiError) || error.code !== "NOT_FOUND") {
+      // Only NOT_FOUND and VALIDATION_ERROR fall through to the name path.
+      // The second is how a NAME arrives: "Checkout" is not a Convex id, and
+      // `/v1/scenario` answers a malformed id with a 400 rather than a 404.
+      // Anything else — a permission refusal, a rate limit, a dead upstream —
+      // is the caller's real answer, and listing every study in the project to
+      // re-ask a question already answered would hide it behind a second
+      // failure.
+      if (
+        !(error instanceof PlatformApiError) ||
+        (error.code !== "NOT_FOUND" && error.code !== "VALIDATION_ERROR")
+      ) {
         throw error;
       }
     }

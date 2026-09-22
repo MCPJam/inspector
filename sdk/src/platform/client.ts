@@ -378,6 +378,20 @@ export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
 export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
 
 /**
+ * `study` → `scenario`, the stored spelling, before a noun VALUE goes on the
+ * wire.
+ *
+ * The share and session methods take either spelling, but the server accepts
+ * `study` only under vocabulary 2 — vocabulary 1 deliberately refuses it (a
+ * 404 on a share path, a 400 on a session filter). `scenario` is accepted
+ * under both, so sending it works whichever vocabulary this client speaks.
+ * Responses are unaffected: they follow the negotiated header.
+ */
+function storedNounValue(value: string): string {
+  return value === "study" ? "scenario" : value;
+}
+
+/**
  * The API boundary's own caps, mirrored here.
  *
  * Not redundant with them. A header this client builds is assembled from
@@ -1407,7 +1421,7 @@ export class PlatformApiClient {
           q: params.q,
           scope: params.scope,
           sourceType: params.sourceTypes?.length
-            ? params.sourceTypes.join(",")
+            ? params.sourceTypes.map(storedNounValue).join(",")
             : undefined,
           status: params.status,
           limit: params.limit,
@@ -6112,7 +6126,9 @@ export class PlatformApiClient {
   ): string {
     return `/projects/${encodeURIComponent(
       projectId
-    )}/shares/${encodeURIComponent(resourceType)}/${encodeURIComponent(
+    )}/shares/${encodeURIComponent(
+      storedNounValue(resourceType)
+    )}/${encodeURIComponent(
       resourceId
     )}`;
   }

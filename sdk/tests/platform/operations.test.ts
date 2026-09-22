@@ -12,6 +12,7 @@ import {
   diagnoseServerOperation,
   getScenarioOperation,
   getStudyOperation,
+  getShareSettingsOperation,
   listStudiesOperation,
   setStudyGuestExecutionOperation,
   runEvalCaseOperation,
@@ -643,9 +644,17 @@ function makeClient(overrides: FixtureOverrides = {}): {
       return Response.json({ ok: true });
     }
     if (/^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+$/.test(path)) {
-      // Id-addressed, like the real route: a name reaching here is a miss, and
-      // that 404 is what sends `get_study` down its name-resolution path.
+      // Id-addressed, like the real route. A NAME is not a Convex id, and the
+      // upstream answers a malformed id with a 400, not a 404 — so "Support"
+      // gets the 400 and a well-formed id that matches nothing gets the 404.
+      // Either one sends `get_study` down its name-resolution path.
       const studyId = decodeURIComponent(path.split("/").pop() ?? "");
+      if (!studyId.startsWith("box-")) {
+        return Response.json(
+          { code: "VALIDATION_ERROR", message: "Invalid scenarioId" },
+          { status: 400 }
+        );
+      }
       if (!SCENARIOS.some((row) => row.id === studyId)) {
         return Response.json(
           { code: "NOT_FOUND", message: "Study not found" },
@@ -1758,7 +1767,7 @@ describe("study operations", () => {
     expect(callsTo(fetchMock, "/studies")).toHaveLength(1);
   });
 
-  it("falls back to name resolution when the id path 404s", async () => {
+  it("falls back to name resolution when the id path 400s on a name", async () => {
     const { client, fetchMock } = makeClient();
 
     const result = await getStudyOperation.execute(
@@ -1777,6 +1786,19 @@ describe("study operations", () => {
     ]);
   });
 
+  it("falls back to name resolution when a well-formed id 404s", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "box-9" }, { client })
+      .catch((caught: unknown) => caught);
+
+    // Reached the name path: the refusal lists candidates, which only the
+    // list read can produce.
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
   it("names the candidates when neither the id nor the name matches", async () => {
     const { client } = makeClient();
 
@@ -1786,6 +1808,21 @@ describe("study operations", () => {
 
     expect(error).toBeInstanceOf(PlatformApiError);
     expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
+  it("addresses a `study` share by the stored `scenario` path segment", async () => {
+    const { client, fetchMock } = makeClient();
+
+    // The fixture has no share route, so this 404s; the path is the point.
+    await getShareSettingsOperation
+      .execute({ resourceType: "study", resourceId: "box-1" }, { client })
+      .catch(() => undefined);
+
+    // Vocabulary 1 (no header) 404s `/shares/study/...`; `scenario` resolves
+    // under both.
+    expect(callsTo(fetchMock, "/shares/")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/shares/scenario/box-1"
+    );
   });
 
   it("accepts the deprecated `scenario` selector", async () => {
@@ -2150,6 +2187,21 @@ describe("searchSessionsOperation", () => {
     expect(result.scope).toBe("transcripts");
     expect(result.items).toEqual(SESSION_SUMMARIES);
     expect(result.nextCursor).toBe("cursor-2");
+  });
+
+  it("sends `study` as the stored `scenario`, which every vocabulary accepts", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await searchSessionsOperation.execute(
+      { query: "refund", sourceTypes: ["study", "eval"] },
+      { client }
+    );
+
+    // Vocabulary 1 (no header) refuses `study`; `scenario` is accepted under
+    // both, so the promise that either spelling works holds without a header.
+    expect(
+      callsTo(fetchMock, "/sessions")[0]?.searchParams.get("sourceType")
+    ).toBe("scenario,eval");
   });
 
   it("defaults to the titles scope and sends no sourceType filter", async () => {
