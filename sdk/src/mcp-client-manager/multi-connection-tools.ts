@@ -117,10 +117,16 @@ export function mergeConnectionToolsets(
       const schemas = tools.map(
         (t) => asSchema(t.inputSchema).jsonSchema as any
       );
+      // The selector is named for what ChatGPT injects rather than for what it
+      // means, because the name's only job is to not be one a server would
+      // choose. "account" is an argument a mail or billing server plausibly
+      // owns — the lab's create_filter does — and every collision costs this
+      // tool its merge. The guard stays whatever the name: a server that does
+      // own link_id still gets variants instead of a silently clobbered field.
       const canMerge = schemas.every(
         (s) =>
           s?.type === "object" &&
-          !Object.hasOwn(s.properties ?? {}, "account") &&
+          !Object.hasOwn(s.properties ?? {}, "link_id") &&
           canonical(s) === canonical(schemas[0])
       );
       if (!canMerge) {
@@ -167,27 +173,27 @@ export function mergeConnectionToolsets(
         description: `${
           baseTool.description ?? ""
         }\nConnected accounts: ${choices
-          .map((c) => `${c.label} (account=${c.connectionId})`)
+          .map((c) => `${c.label} (link_id=${c.connectionId})`)
           .join("; ")}`,
         inputSchema: jsonSchema({
           ...schemas[0],
           properties: {
             ...schemas[0].properties,
-            account: {
+            link_id: {
               type: "string",
               enum: choices.map((c) => c.connectionId),
             },
           },
-          required: [...(schemas[0].required ?? []), "account"],
+          required: [...(schemas[0].required ?? []), "link_id"],
         }),
         execute: async (input: any, opts) => {
           const connection = choices.find(
             (c) =>
-              c.connectionId === input?.account &&
+              c.connectionId === input?.link_id &&
               options.snapshot.get(c.connectionId) === c.key
           );
           if (!connection) return invalidAccount();
-          const { account: _account, ...args } = input;
+          const { link_id: _linkId, ...args } = input;
           const tool = perKey[connection.key][name];
           selected.set(opts.toolCallId, { tool, connection, input: args });
           options.onRoute?.(opts.toolCallId, connection);
@@ -206,7 +212,7 @@ export function mergeConnectionToolsets(
             : { type: "json", value: opts.output as any };
         },
         _connectionForInput: (input: any) =>
-          choices.find((c) => c.connectionId === input?.account),
+          choices.find((c) => c.connectionId === input?.link_id),
         _connectionForCall: (id: string) => selected.get(id)?.connection,
         _serverId: serverId,
         _mcpToolName: name,

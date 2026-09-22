@@ -2768,7 +2768,8 @@ export class MCPClientManager {
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
         trimmedRefresh,
-        trimmedClientSecret
+        trimmedClientSecret,
+        config.onTokensRotated
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider

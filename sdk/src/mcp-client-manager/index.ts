@@ -16,6 +16,7 @@ export type {
   HttpServerConfig,
   BaseServerConfig,
   UnauthorizedRefreshHandler,
+  RefreshTokensRotatedHandler,
   UnauthorizedRefreshResult,
 } from "./types.js";
 

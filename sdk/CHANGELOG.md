@@ -1,5 +1,17 @@
 # `@mcpjam/sdk` changelog
 
+## 8.13.0
+
+### Minor Changes
+
+- [#5407](https://github.com/MCPJam/inspector/pull/5407) [`b0a1452`](https://github.com/MCPJam/inspector/commit/b0a1452e312b2f437012bddb728740e71db2a24c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Report a rotated OAuth refresh token to the caller, via a new `onTokensRotated` option on an HTTP server config.
+
+  Most authorization servers issue single-use refresh tokens, so the value passed as `refreshToken` is spent once it has been exchanged. The SDK kept the replacement in memory, which is invisible for the life of a connection and fatal beyond it: a CI job or any other long-lived caller configured from a secret authorized once and then failed, with nothing to say a credential had been silently replaced.
+
+  `onTokensRotated` receives the replacement so it can be persisted back to wherever the original came from. It fires only when the token actually changed, and it is awaited before the connection completes, so a job that exits as soon as it is done still gets the write. A handler that throws or rejects never fails a connection that has already authorized.
+
+  The documented behaviour in `docs/sdk/concepts/connecting-servers.mdx` was also corrected: it claimed the SDK "stores rotated refresh tokens" without saying that the store dies with the process.
+
 ## 8.12.0
 
 ### Minor Changes
