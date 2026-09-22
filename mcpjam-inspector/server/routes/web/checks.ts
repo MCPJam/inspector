@@ -37,7 +37,11 @@ const runPredicatesSchema = z.object({
   // the orchestrator signature, in case a future flow wants to attribute to a
   // different user than the request bearer" — a flow that never arrived, while
   // the field let any caller write a colleague's id into the check-run record.
-  // Attribution comes from the Convex bearer, which the backend already has.
+  // Attribution is not dropped, it moves: the orchestrator reads the acting
+  // user back from Convex under this request's own bearer and passes that to
+  // `startCheckRun`, which stores whatever it is given. Removing the field
+  // without that would have left the record with no actor at all, which is no
+  // more usable as evidence than a forged one.
   // The schema is non-strict, so a stale client still sending the field gets
   // it dropped rather than a 400. If delegation is ever needed, it belongs on
   // the service-token path with an audited `x-mcpjam-acting-as`, not here.

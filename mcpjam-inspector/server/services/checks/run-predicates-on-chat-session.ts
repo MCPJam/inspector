@@ -136,7 +136,19 @@ export async function runPredicatesOnChatSession(
     setVersion,
   } = args;
 
-  // 1. Persist the run with a definition snapshot (audit anchor).
+  // 1. Resolve the acting user from the caller's own auth. MJ-022 removed
+  //    `triggeredBy` from the request body; leaving it unset instead would
+  //    trade wrong attribution for none, because `startCheckRun` is an
+  //    internal mutation that stores the argument verbatim and has no end-user
+  //    identity to fall back on. This query runs under the same bearer as
+  //    every other call here and returns the actor's own id, so the row names
+  //    a verified caller and nothing in the request can name a different one.
+  const triggeredBy = (await convexClient.query(
+    "apiKeys:getCurrentUserIdQuery" as any,
+    {},
+  )) as UserId;
+
+  // 2. Persist the run with a definition snapshot (audit anchor).
   const definitionSnapshot = {
     setKind,
     ...(setRef !== undefined ? { setRef } : {}),
@@ -151,22 +163,23 @@ export async function runPredicatesOnChatSession(
       // Checks panel keys on this to decide which rows it owns.
       runKind: "checks",
       definitionSnapshot,
+      triggeredBy,
     },
   )) as { checkRunId: CheckRunId };
   const checkRunId = startResult.checkRunId;
 
   try {
-    // 2. Load the persisted transcript envelope under the caller's auth.
+    // 3. Load the persisted transcript envelope under the caller's auth.
     const envelope = (await convexClient.action(
       "chatSessionChecks:loadChatSessionEnvelopeAuthorized" as any,
       { chatSessionId },
     )) as ChatSessionEnvelope;
 
-    // 3. Extract tool calls from messages — `toolCalls` is not a top-level
+    // 4. Extract tool calls from messages — `toolCalls` is not a top-level
     //    envelope field today; eval derives it the same way per turn.
     const toolCalls = extractToolCallsFromEnvelopeMessages(envelope.messages);
 
-    // 4. Build the SDK iteration transcript. Token usage IS materialized on
+    // 5. Build the SDK iteration transcript. Token usage IS materialized on
     //    the session row (`chatSessions.cumulativeInputTokens/OutputTokens`)
     //    but this loader doesn't return it yet, so leave undefined; token
     //    predicates against this transcript fail closed via the SDK's
@@ -181,10 +194,10 @@ export async function runPredicatesOnChatSession(
       usage: undefined,
     });
 
-    // 5. Pure SDK call — same function evals-runner.ts invokes.
+    // 6. Pure SDK call — same function evals-runner.ts invokes.
     const results = evaluatePredicates(transcript, predicates);
 
-    // 6. Persist the verdict.
+    // 7. Persist the verdict.
     await convexClient.mutation(
       "chatSessionChecks:completeCheckRun" as any,
       {

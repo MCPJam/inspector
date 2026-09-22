@@ -21,12 +21,17 @@ import {
 } from "../run-predicates-on-chat-session";
 
 type ConvexClientMock = {
+  query: ReturnType<typeof vi.fn>;
   mutation: ReturnType<typeof vi.fn>;
   action: ReturnType<typeof vi.fn>;
 };
 
+/** The id `apiKeys:getCurrentUserIdQuery` resolves to for the mock bearer. */
+const ACTOR_USER_ID = "jx7ca7xw1mhe1nw8sqcvfz7y8d8d3bg3";
+
 function makeClient(): ConvexClientMock {
   return {
+    query: vi.fn(async () => ACTOR_USER_ID),
     mutation: vi.fn(),
     action: vi.fn(),
   };
@@ -290,5 +295,57 @@ describe("runPredicatesOnChatSession", () => {
       toolCalls: unknown[];
     };
     expect(transcriptInput.toolCalls).toHaveLength(1);
+  });
+
+  it("attributes the run to the actor Convex resolves from the caller's bearer", async () => {
+    // MJ-022 took `triggeredBy` out of the request body. `startCheckRun` is an
+    // internal mutation that writes the argument verbatim with no fallback, so
+    // simply not sending it would leave every row with no actor — no better as
+    // evidence than an actor the caller chose. The id has to come from the same
+    // authenticated client the rest of the lifecycle uses.
+    const client = makeClient();
+    client.mutation.mockImplementation(async (name: string) => {
+      if (name.endsWith(":startCheckRun")) return { checkRunId: "chk_7" };
+      return undefined;
+    });
+    client.action.mockResolvedValue({ messages: [], spans: [] });
+    evaluatePredicatesMock.mockReturnValue([]);
+
+    await runPredicatesOnChatSession({
+      convexClient: client as never,
+      authHeader: "Bearer token",
+      chatSessionId: "cs_7" as ChatSessionId,
+      predicates: basePredicates(),
+      setKind: "ad_hoc",
+    });
+
+    expect(client.query).toHaveBeenCalledTimes(1);
+    expect(client.query.mock.calls[0]?.[0]).toContain("getCurrentUserIdQuery");
+
+    const startArgs = client.mutation.mock.calls[0]?.[1] as {
+      triggeredBy?: string;
+    };
+    expect(startArgs.triggeredBy).toBe(ACTOR_USER_ID);
+  });
+
+  it("writes no check-run row when the acting user cannot be resolved", async () => {
+    // Resolving the actor is the first call, deliberately. A row that exists
+    // but cannot say who asked for it is the state this finding is about, so
+    // failing before the insert is better than inserting without attribution.
+    const client = makeClient();
+    client.query.mockRejectedValue(new Error("Authentication required"));
+
+    await expect(
+      runPredicatesOnChatSession({
+        convexClient: client as never,
+        authHeader: "Bearer token",
+        chatSessionId: "cs_8" as ChatSessionId,
+        predicates: basePredicates(),
+        setKind: "ad_hoc",
+      }),
+    ).rejects.toThrow("Authentication required");
+
+    expect(client.mutation).not.toHaveBeenCalled();
+    expect(client.action).not.toHaveBeenCalled();
   });
 });
