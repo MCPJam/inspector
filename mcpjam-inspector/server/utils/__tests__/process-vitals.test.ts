@@ -144,7 +144,12 @@ describe("process vitals sampler", () => {
 
     expect(setExtra).toHaveBeenCalledTimes(2);
     expect(setExtra.mock.calls[1]![0]).toBe("process_vitals");
-    // Same payload, so a reader never has to work out which copy is stale.
+    // Catches the realistic regression — someone handing `setExtra` a
+    // DIFFERENT object than the context got. It does not detect payload drift
+    // between the two: the source passes one `scopePayload` binding to both
+    // calls, so today this compares an object with itself. Read it as "one
+    // payload, two channels", and if the two ever need to diverge, this is the
+    // line that has to earn a real comparison first.
     expect(setExtra.mock.calls[1]![1]).toEqual(setContext.mock.calls[1]![1]);
     expect(setExtra.mock.calls[1]![1].heapUsedBytes).toBe(505 * MB);
   });

@@ -179,6 +179,19 @@ export function flushProcessVitals(nowMs: number = Date.now()): void {
     // Both are set rather than moving to `extra` alone: contexts render better
     // in the Sentry UI and DO arrive on handled JS errors, which is most
     // events. The extra is the copy that survives a minidump.
+    //
+    // BEFORE DELETING THIS LINE ON AN SDK UPGRADE: `extra` is the legacy
+    // concept Sentry steers away from in favour of `context`, so on a major
+    // bump this is the obvious line to drop — and dropping it restores exactly
+    // the blind spot described above. It is the copy that survives, not the
+    // redundant one. (Checked at the time of writing: `setExtra` carries no
+    // `@deprecated` marker in the pinned 8.55, and neither the v8->v9 nor the
+    // v9->v10 migration guide mentions it. So the risk is the direction of
+    // travel, not a scheduled removal.) Whoever moves off v8 should re-read
+    // `sentryMinidumpIntegration` in the version they are moving TO: if the
+    // `event.contexts = previousRun.event?.contexts` overwrite is gone, the
+    // context alone is enough and this line can go with it. If it is still
+    // there, this line has to stay whatever shape the API has taken.
     Sentry.setExtra("process_vitals", scopePayload);
 
     const reason = emitReason(vitals, nowMs);
