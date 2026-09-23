@@ -17,6 +17,7 @@ import {
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { reportCaught } from "@/lib/error-reporting";
+import { convexErrMessage } from "@/lib/convex-error";
 import {
   OAuthProfileModal,
   type OAuthProfileAgentSeed,
@@ -490,9 +491,7 @@ export const OAuthFlowTab = ({
         source: "oauth_debugger_advance",
         extra: { step: oauthFlowState.currentStep, protocolVersion },
       });
-      toast.error(
-        err instanceof Error ? err.message : "Failed to advance the OAuth flow",
-      );
+      toast.error(convexErrMessage(err, "Failed to advance the OAuth flow"));
     } finally {
       setIsAdvancing(false);
     }
@@ -813,10 +812,13 @@ export const OAuthFlowTab = ({
               extra: { protocolVersion },
             });
             updateOAuthFlowState({
-              error:
-                err instanceof Error
-                  ? err.message
-                  : "Failed to exchange the authorization code",
+              // Shaped here, not at the toast: flow state is what the effect
+              // above toasts and what the step panel renders, so a raw stack
+              // parked here reaches the user through both.
+              error: convexErrMessage(
+                err,
+                "Failed to exchange the authorization code",
+              ),
             });
           })
           .finally(() => setIsAdvancing(false));
@@ -876,10 +878,7 @@ export const OAuthFlowTab = ({
         console.error("Failed to process Electron OAuth callback:", error);
         reportCaught(error, { source: "oauth_debugger_electron_callback" });
         updateOAuthFlowState({
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to process the OAuth callback",
+          error: convexErrMessage(error, "Failed to process the OAuth callback"),
         });
       }
     };

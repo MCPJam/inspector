@@ -47,6 +47,8 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { convexErrMessage } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import {
   Alert,
@@ -367,7 +369,8 @@ function useLeaveOrganization(organization: Organization) {
       setLeaveConfirmOpen(false);
       appNavigate("/servers");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to leave organization");
+      reportCaught(error, { source: "organizations_leave" });
+      toast.error(convexErrMessage(error, "Failed to leave organization"));
     } finally {
       setIsLeaving(false);
     }
@@ -1254,7 +1257,8 @@ function OrganizationPage({
       });
       toast.success(`Updated role for ${member.email}`);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to update member role");
+      reportCaught(error, { source: "organizations_change_member_role" });
+      toast.error(convexErrMessage(error, "Failed to update member role"));
     } finally {
       setRoleUpdatingEmail(null);
     }
@@ -1278,8 +1282,9 @@ function OrganizationPage({
 
       setTransferTargetMember(null);
     } catch (error) {
+      reportCaught(error, { source: "organizations_transfer_ownership" });
       toast.error(
-        (error as Error).message || "Failed to transfer organization ownership",
+        convexErrMessage(error, "Failed to transfer organization ownership"),
       );
     } finally {
       setIsTransferringOwnership(false);
@@ -1297,7 +1302,8 @@ function OrganizationPage({
         appNavigate("/servers");
       }
     } catch (error) {
-      toast.error((error as Error).message || "Failed to delete organization");
+      reportCaught(error, { source: "organizations_delete" });
+      toast.error(convexErrMessage(error, "Failed to delete organization"));
     } finally {
       setIsDeleting(false);
     }

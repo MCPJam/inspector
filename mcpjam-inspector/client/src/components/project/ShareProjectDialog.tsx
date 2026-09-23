@@ -67,6 +67,8 @@ import { serializeServersForSharing } from "@/lib/project-serialization";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { convexErrMessage, describeConvexFailure } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
@@ -419,6 +421,18 @@ export function ShareProjectDialog({
         project_visibility: currentVisibility,
       });
     } catch (error) {
+      // A billing cap or a permission refusal is the product working as
+      // designed, so only a masked throw is worth a Sentry issue — and there
+      // the Convex request id rides along as a tag, so the reference the toast
+      // shows resolves to the real stack.
+      //
+      // Asking the shared parser rather than `instanceof ConvexError`: it is
+      // the one place that decides what counts as a refusal, and a second rule
+      // here would disagree with the toast about the very same error.
+      const { refusal } = describeConvexFailure(error, "");
+      if (!refusal) {
+        reportCaught(error, { source: "share_project_dialog_invite" });
+      }
       toast.error(getBillingErrorMessage(error, "Failed to invite member"));
     } finally {
       setIsInviting(false);
@@ -448,7 +462,8 @@ export function ShareProjectDialog({
         `${member.user?.name || member.email} is now ${newRole === "admin" ? "an Admin" : "an Editor"}`,
       );
     } catch (error) {
-      toast.error((error as Error).message || "Failed to update role");
+      reportCaught(error, { source: "share_project_dialog_change_role" });
+      toast.error(convexErrMessage(error, "Failed to update role"));
     }
   };
 
@@ -483,7 +498,8 @@ export function ShareProjectDialog({
       });
       setMemberToRemove(null);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to remove member");
+      reportCaught(error, { source: "share_project_dialog_remove_member" });
+      toast.error(convexErrMessage(error, "Failed to remove member"));
     } finally {
       removingMemberRef.current = false;
       setIsRemovingMember(false);

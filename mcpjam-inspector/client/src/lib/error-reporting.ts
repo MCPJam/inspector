@@ -11,6 +11,7 @@ import {
   isCredentialBearingPath,
   isErrorCaptureSurface,
 } from "./PosthogUtils";
+import { getConvexRequestId } from "./convex-error";
 
 export type ReportLevel = "fatal" | "error" | "warning" | "info";
 
@@ -22,6 +23,12 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+  /**
+   * Extra Sentry tags for this report. Tags are indexed and searchable, which
+   * `extra` is not, so anything support has to look an issue up BY belongs
+   * here. `source` always wins: a caller cannot rename its own call site.
+   */
+  tags?: Record<string, string>;
 }
 
 /**
@@ -138,11 +145,24 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
   if (isAuthorizationRefusal(error)) return;
 
   const normalized = toError(error);
+  // The Convex request id is the join key support already has from the user:
+  // it is stamped on every function exception, it is what the toast shows as
+  // `Reference <id>`, and the Convex -> Sentry integration tags the BACKEND
+  // event with the same value. Tagging the client event closes the loop, so a
+  // screenshot resolves to the real stack in the Convex dashboard logs.
+  // Derived here rather than at each call site: every existing `reportCaught`
+  // gains it with no churn.
+  const requestId = getConvexRequestId(error);
+  const tags: Record<string, string> = {
+    ...(options.tags ?? {}),
+    source: options.source,
+    ...(requestId ? { convex_request_id: requestId } : {}),
+  };
 
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source },
+      tags,
       ...(options.extra ? { extra: options.extra } : {}),
     });
   } catch {
@@ -165,6 +185,7 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       posthog.captureException(normalized, {
         source: options.source,
         level: options.level ?? "error",
+        ...(requestId ? { convex_request_id: requestId } : {}),
         ...(options.extra ?? {}),
       });
     }
