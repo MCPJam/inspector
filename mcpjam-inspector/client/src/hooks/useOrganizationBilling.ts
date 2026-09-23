@@ -1,7 +1,8 @@
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
-import { useAction, useMutation, useQuery } from "convex/react";
-import { useCallback, useRef, useState } from "react";
+import { useAction, useMutation, useQueries, useQuery } from "convex/react";
+import { makeFunctionReference } from "convex/server";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -280,6 +281,36 @@ export function useOrganizationBillingStatus(
     "billing:getOrganizationBillingStatus" as any,
     enabled && organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
+}
+
+const billingStatusQuery = makeFunctionReference<
+  "query",
+  { organizationId: string },
+  OrganizationBillingStatus
+>("billing:getOrganizationBillingStatus");
+
+/**
+ * Whether the viewer can manage billing, for surfaces that must keep
+ * rendering when the status query fails. useQueries returns the server error
+ * instead of throwing during render; an error or a pending result reads as
+ * false, so refusal copy falls back to the non-manager wording.
+ */
+export function useCanManageOrganizationBilling(
+  organizationId: string | null | undefined,
+  enabled: boolean,
+): boolean {
+  const isUserReady = useDbUserReady();
+  // Convex keys its subscription callbacks by this object's identity.
+  const queries = useMemo<Parameters<typeof useQueries>[0]>(
+    (): Parameters<typeof useQueries>[0] =>
+      enabled && isUserReady && organizationId
+        ? { status: { query: billingStatusQuery, args: { organizationId } } }
+        : {},
+    [enabled, isUserReady, organizationId],
+  );
+  const result = useQueries(queries).status as
+    OrganizationBillingStatus | Error | undefined;
+  return !(result instanceof Error) && result?.canManageBilling === true;
 }
 
 export function useOrganizationBilling(

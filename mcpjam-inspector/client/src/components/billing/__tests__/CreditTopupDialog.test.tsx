@@ -64,7 +64,7 @@ vi.mock("@/lib/toast", () => ({
 
 const billingStatusState = vi.hoisted(() => ({ canManageBilling: true }));
 vi.mock("@/hooks/useOrganizationBilling", () => ({
-  useOrganizationBillingStatus: () => billingStatusState,
+  useCanManageOrganizationBilling: () => billingStatusState.canManageBilling,
 }));
 
 const DEFAULT_PRESETS = [

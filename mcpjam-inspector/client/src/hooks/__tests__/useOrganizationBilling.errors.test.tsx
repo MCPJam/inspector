@@ -11,8 +11,11 @@ const convexFns = vi.hoisted(() => ({
   createPortal: vi.fn(),
 }));
 const billingStatus = vi.hoisted(() => ({ canManageBilling: true }));
+const statusQueryError = vi.hoisted(() => ({ current: null as Error | null }));
 
 vi.mock("convex/react", () => ({
+  useQueries: (queries: Record<string, unknown>) =>
+    queries.status ? { status: statusQueryError.current ?? billingStatus } : {},
   useQuery: (name: string) =>
     name === "billing:getOrganizationBillingStatus" ? billingStatus : undefined,
   useMutation: () => vi.fn(),
@@ -26,8 +29,14 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/lib/pricing-catalog", () => ({ canCheckoutPlan: () => true }));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
 
-import { useOrganizationBilling } from "../useOrganizationBilling";
+import {
+  useCanManageOrganizationBilling,
+  useOrganizationBilling,
+} from "../useOrganizationBilling";
 
 describe("useOrganizationBilling error state", () => {
   beforeEach(() => {
@@ -76,5 +85,29 @@ describe("useOrganizationBilling error state", () => {
     expect(result.current.error).toBe(
       "Generate Evals is not included in the Free plan. Ask an organization owner to upgrade to Pro.",
     );
+  });
+});
+
+describe("useCanManageOrganizationBilling", () => {
+  beforeEach(() => {
+    billingStatus.canManageBilling = true;
+    statusQueryError.current = null;
+  });
+
+  it("reads canManageBilling from the billing status", () => {
+    const { result } = renderHook(() =>
+      useCanManageOrganizationBilling("org-1", true),
+    );
+    expect(result.current).toBe(true);
+  });
+
+  // CreditTopupDialog calls this while open; a throwing query would take the
+  // purchase dialog down with it.
+  it("returns false instead of throwing when the status query fails", () => {
+    statusQueryError.current = new Error("Not a member of this organization");
+    const { result } = renderHook(() =>
+      useCanManageOrganizationBilling("org-1", true),
+    );
+    expect(result.current).toBe(false);
   });
 });
