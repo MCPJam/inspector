@@ -52,11 +52,11 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 const mockUpdateState: {
   status: { kind: string; [key: string]: unknown };
   restartAndInstall: ReturnType<typeof vi.fn>;
-  downloadManually: ReturnType<typeof vi.fn>;
+  showUpdateError: ReturnType<typeof vi.fn>;
 } = {
   status: { kind: "idle" },
   restartAndInstall: vi.fn(),
-  downloadManually: vi.fn(),
+  showUpdateError: vi.fn(),
 };
 
 vi.mock("@/hooks/useUpdateNotification", () => ({
@@ -64,7 +64,7 @@ vi.mock("@/hooks/useUpdateNotification", () => ({
     status: mockUpdateState.status,
     restartRequested: false,
     restartAndInstall: mockUpdateState.restartAndInstall,
-    downloadManually: mockUpdateState.downloadManually,
+    showUpdateError: mockUpdateState.showUpdateError,
     simulateUpdate: vi.fn(),
   }),
 }));
@@ -546,22 +546,32 @@ describe("sidebar update pill", () => {
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
 
     expect(mockUpdateState.restartAndInstall).toHaveBeenCalledTimes(1);
-    expect(mockUpdateState.downloadManually).not.toHaveBeenCalled();
+    expect(mockUpdateState.showUpdateError).not.toHaveBeenCalled();
   });
 
-  it("sends the user to the releases page once auto-update has failed", () => {
-    // The fix for the reported bug: after the main process gives up on the
-    // download the pill stops pretending an install is one click away. It
-    // used to keep saying "Update" and do nothing — 17 clicks in 124
-    // seconds, no error, no progress.
-    mockUpdateState.status = { kind: "manual", version: "3.5.2" };
+  it("reopens the failure message instead of sending the user to GitHub", () => {
+    mockUpdateState.status = { kind: "failed", version: "3.5.2" };
 
     renderSidebar();
 
-    fireEvent.click(screen.getByRole("button", { name: /Download update/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Update failed/ }));
 
-    expect(mockUpdateState.downloadManually).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.showUpdateError).toHaveBeenCalledTimes(1);
     expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  });
+});
+
+describe("sidebar update recovery", () => {
+  it("shows recovery without allowing another update click", () => {
+    mockUpdateState.status = { kind: "recovering", attemptId: "attempt-1" };
+    mockUpdateState.restartAndInstall.mockClear();
+    renderSidebar();
+    const button = screen.getByRole("button", {
+      name: "Restarting to retry update…",
+    });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(button);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
   });
 });

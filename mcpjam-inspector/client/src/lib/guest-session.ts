@@ -12,6 +12,11 @@
  * transient failures do not strand old guests on a new identity.
  */
 
+import {
+  sanitizeGuestSessionFailureDetails,
+  type GuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
+
 
 declare global {
   interface Window {
@@ -232,10 +237,21 @@ class GuestSessionRequestError extends Error {
    * that the request never got a real answer from the server.
    */
   readonly status?: number;
-  constructor(message: string, status?: number) {
+  /**
+   * Why the server could not get a session from ITS upstream, from the 503
+   * body. On a self-hosted install that 503 is made on the user's machine, so
+   * this is the only place the cause shows up.
+   */
+  readonly upstreamFailure?: GuestSessionFailureDetails;
+  constructor(
+    message: string,
+    status?: number,
+    upstreamFailure?: GuestSessionFailureDetails,
+  ) {
     super(message);
     this.name = "GuestSessionRequestError";
     this.status = status;
+    this.upstreamFailure = upstreamFailure;
   }
 }
 
@@ -247,6 +263,48 @@ export class GuestSessionRefusedError extends GuestSessionRequestError {
     this.name = "GuestSessionRefusedError";
     this.retryAfterMs = retryAfterMs;
   }
+}
+
+// This fetch has no timeout, so reading a stalled error body without a bound
+// would hang the retry ladder behind a report that only wants a reason.
+const UPSTREAM_FAILURE_READ_TIMEOUT_MS = 1000;
+
+async function readUpstreamFailure(
+  response: Response,
+): Promise<GuestSessionFailureDetails | undefined> {
+  if (typeof response.json !== "function") return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body: unknown = await Promise.race([
+      response.json(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(
+          () => resolve(undefined),
+          UPSTREAM_FAILURE_READ_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return sanitizeGuestSessionFailureDetails(
+      (body as { details?: unknown } | null | undefined)?.details,
+    );
+  } catch {
+    return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// e.g. " (timeout)", " (network ENOTFOUND)", " (upstream_status 522)".
+function describeUpstreamFailure(
+  failure: GuestSessionFailureDetails | undefined,
+): string {
+  if (!failure) return "";
+  const extra =
+    failure.networkCode ??
+    (failure.upstreamStatus !== undefined
+      ? String(failure.upstreamStatus)
+      : undefined);
+  return ` (${failure.reason}${extra ? ` ${extra}` : ""})`;
 }
 
 function parseRetryAfterMs(raw: string | null | undefined): number {
@@ -299,9 +357,11 @@ async function requestGuestSession(
   }
 
   if (!response.ok) {
+    const upstreamFailure = await readUpstreamFailure(response);
     throw new GuestSessionRequestError(
-      `guest-session request failed: ${response.status} ${response.statusText}`,
+      `guest-session request failed: ${response.status} ${response.statusText}${describeUpstreamFailure(upstreamFailure)}`,
       response.status,
+      upstreamFailure,
     );
   }
 

@@ -67,7 +67,11 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
-import { isRubricValid } from "./judge-rubric-editor";
+import {
+  isRubricValid,
+  RUBRIC_CHECK_ROW_IDENTITY_HINT,
+} from "./judge-rubric-editor";
+import { areRubricChecksValid } from "./rubric-checks-model";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
@@ -107,7 +111,10 @@ import {
   useSuiteDataFromMetrics,
   useRunDetailData,
 } from "./use-suite-data";
-import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  hasRubricChecksCapability,
+  useSuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   CAPABILITY_REASON_COPY,
@@ -827,7 +834,8 @@ export function SuiteIterationsView({
     // a rubric the platform rejects takes the settings beside it down with it.
     () =>
       canCommit(draft, areAllChecksValid) &&
-      isRubricValid(draft.current.judgeRubric),
+      isRubricValid(draft.current.judgeRubric) &&
+      areRubricChecksValid(draft.current.judgeConfig?.rubricChecks),
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
@@ -857,7 +865,9 @@ export function SuiteIterationsView({
     ? { message: "A criterion is missing a label" }
     : !areAllChecksValid(draftDefaultPredicates)
       ? { message: "An assertion is incomplete" }
-      : undefined;
+      : !areRubricChecksValid(draft.current.judgeConfig?.rubricChecks)
+        ? { message: "A rubric-check question is incomplete" }
+        : undefined;
   // Which criterion SCOPE the sheet is editing, and therefore which field and
   // which units each grading row shows. Read from the DRAFT rather than the
   // suite so the rows follow a scope change the moment it is drafted; this
@@ -2877,8 +2887,14 @@ export function SuiteIterationsView({
                           value: next,
                         })
                       }
+                      rowIdentityHint={
+                        hasRubricChecksCapability(capabilities)
+                          ? RUBRIC_CHECK_ROW_IDENTITY_HINT
+                          : undefined
+                      }
                     />
                   }
+                  judgeRubric={draft.current.judgeRubric}
                   groundednessEvidence={{
                     result: groundedness.result ?? null,
                     pending: groundedness.pending,
