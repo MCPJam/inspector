@@ -8,6 +8,7 @@ import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
+import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
 
 const mockState = vi.hoisted(() => ({
   appState: null as any,
@@ -600,6 +601,81 @@ describe("useChatSession hosted mode", () => {
     } finally {
       unregister();
     }
+  });
+
+  // #5472. OpenRouter ids share MCPJam's hosted namespace, so the same id is
+  // both a hosted row and a "Your providers → OpenRouter" row, hosted first.
+  // The lead selection is persisted as the id alone and re-resolved from it,
+  // so this walks the real sequence: pick → persisted id → re-render.
+  describe("when a hosted row and an OpenRouter row share an id", () => {
+    const hostedSonnet = {
+      id: "anthropic/claude-sonnet-5",
+      name: "Claude Sonnet 5",
+      provider: "anthropic" as const,
+      hosted: true,
+    };
+    const openRouterSonnet = {
+      id: "anthropic/claude-sonnet-5",
+      name: "anthropic/claude-sonnet-5",
+      provider: "openrouter" as const,
+      hosted: false,
+    };
+
+    async function pickAndReresolve(picked: typeof hostedSonnet | typeof openRouterSonnet) {
+      const original = vi.mocked(buildAvailableModels).getMockImplementation();
+      vi.mocked(buildAvailableModels).mockImplementation(
+        () => [hostedSonnet, openRouterSonnet] as never,
+      );
+      localStorage.clear();
+      try {
+        const { result, rerender, unmount } = renderHook(() =>
+          useChatSession({ selectedServers: ["server-1"] }),
+        );
+        await waitFor(() => {
+          expect(
+            result.current.availableModels.filter(
+              (model) => String(model.id) === "anthropic/claude-sonnet-5",
+            ),
+          ).toHaveLength(2);
+        });
+
+        act(() => {
+          result.current.setSelectedModel(picked as never, {
+            userInitiated: true,
+          });
+        });
+        // What the picker persists is the id — and every later render
+        // resolves the selection from it.
+        expect(mockState.setSelectedModelId).toHaveBeenLastCalledWith(
+          "anthropic/claude-sonnet-5",
+        );
+        mockState.selectedModelId = "anthropic/claude-sonnet-5";
+        rerender();
+
+        const selected = result.current.selectedModel;
+        unmount();
+        return selected;
+      } finally {
+        if (original) {
+          vi.mocked(buildAvailableModels).mockImplementation(original);
+        }
+      }
+    }
+
+    it("keeps an OpenRouter pick on the OpenRouter row", async () => {
+      // The reported failure: this resolved to the hosted row, the turn went
+      // to MCPJam credits, and the user got the free-allowance error.
+      const selected = await pickAndReresolve(openRouterSonnet);
+      expect(selected.provider).toBe("openrouter");
+      expect(selected).toMatchObject({ hosted: false });
+    });
+
+    it("keeps a hosted pick on the hosted row", async () => {
+      // The fix must not just prefer own-provider rows.
+      const selected = await pickAndReresolve(hostedSonnet);
+      expect(selected.provider).toBe("anthropic");
+      expect(selected).toMatchObject({ hosted: true });
+    });
   });
 
   it("uses organization provider config to expose BYOK hosted models", async () => {
