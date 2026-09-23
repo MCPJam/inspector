@@ -30,9 +30,16 @@ Four of the six. Every [predicate](/sdk/reference/eval-reporting#predicate-gate)
 | Response | 7 |
 | User value | 9 |
 
-**Connection is measured by the runner. Discovery also supports catalog assertions.** The runner records initialize and tools/list outcomes and preserves their setup attribution. Six optional discovery assertions inspect complete raw per-server catalogs before deduplication. Missing or partial catalog capture reports an evaluator error, not a pass. Scored gating catalog failures can fail Discovery; advisory failures remain visible evaluator results without failing the stage. A description-based deprecation check is advisory only.
+**Connection, Discovery, Tool call, and Response each carry a built-in runner check.** The runner measures these four stages on every iteration whether or not you author anything there. Each check appears on the scorecard with a **Built-in** badge — it reports what the stage analysis decided, in the same Expected / Actual form as your evaluators, but it never gates a trial and is never a score row.
 
-Connection remains measured from setup evidence whether or not a suite authors assertions. Discovery reports both runner evidence and configured catalog checks.
+- **Connection** — passes when the session initializes; fails when the configured server was reached but initialize failed.
+- **Discovery** — passes when tools/list succeeds; fails when listing tools failed. Discovery also supports optional catalog assertions (six kinds) that inspect the raw per-server catalog before deduplication.
+- **Tool call** — passes when the call returned a result; fails when the call never produced one (protocol error). Present on the scorecard only when the case gives the runner a call to measure.
+- **Response** — passes when the result came back without a tool error; fails when the server reported a tool error. Present only when the case implies a measurable response.
+
+When a stage fails for an evaluator's reason — a required assertion, a rejected argument, a widget that did not render — the runner check for that stage stays undecided rather than also showing failed. The failure already has its evaluator's row; two red rows for one failure would read as two failures.
+
+Missing or partial catalog capture at Discovery reports an evaluator error, not a pass. Scored gating catalog failures can fail Discovery; advisory failures remain visible evaluator results without failing the stage. A description-based deprecation check is advisory only.
 
 ## The stage is where the evidence is filed
 
@@ -62,9 +69,9 @@ A **gating** `toolCalledWith` is promoted into the matcher's expectations and gr
 
 Coverage is the question the six links exist to answer, and it is easy to write a plausible-looking suite that leaves most of the chain untouched.
 
-A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection still reports runner evidence.
+A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection, Discovery, Tool call, and Response each show their built-in runner check, but a runner check is not an authored assertion: it reports what the stage analysis decided and never closes the gap a predicate would fill.
 
-To cover Tool call, add `argumentsMatchToolSchema`. Read Connection in the run’s chain. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner’s discovery measurement.
+To cover Tool call, add `argumentsMatchToolSchema`. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner check.
 
 Two habits keep coverage honest:
 
