@@ -8,7 +8,6 @@ import type { GoalJudgePolicy } from "@/shared/judge-defaults";
  */
 
 import {
-  STANDARD_CHECKS,
   authoredRequiredRole,
   GRADER_PRESENTATION_GROUP,
   PREDICATE_KINDS,
@@ -43,9 +42,14 @@ import {
   type RuleSource,
 } from "./standard-checks-model";
 import {
+  isRunnerCheckStage,
+  runnerCheckOf,
+  RUNNER_CHECK_STAGES,
+  type RunnerCheckStage,
+} from "./runner-checks";
+import {
   judgeMode,
   stageConfigStates,
-  stageEmptyIsGap,
   type GraderRow,
   type JudgeMode,
   type StageConfigState,
@@ -157,14 +161,17 @@ export function withPredicateRole(
   return { ...(rest as Predicate), role: "advisory" };
 }
 
-export type JudgeSlot = "goalCompletion" | "groundedness";
+export type JudgeSlot = "goalCompletion" | "groundedness" | "rubricChecks";
 
-/** Groundedness cannot gate. Goal completion follows the stored role. */
+/**
+ * Groundedness and rubric checks cannot gate. Goal completion follows the
+ * stored role.
+ */
 export function roleOfJudgeSlot(
   slot: JudgeSlot,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
-  if (slot === "groundedness") return "advisory";
+  if (slot === "groundedness" || slot === "rubricChecks") return "advisory";
   // Either spelling: a suite configured before the rename stores `"gating"`
   // and one configured after stores `"required"`, and this table renders both.
   return isRequiredRole(judgeConfig?.goalCompletion?.role)
@@ -357,7 +364,7 @@ export type ScorerTableView = {
 };
 
 const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
-  runner: "Observed by the runner",
+  runner: "Built-in runner check",
   gated: "Required",
   gap: "No evaluator",
   judgeOnRequest: "Judge on request",
@@ -437,33 +444,28 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
 }
 
 /**
- * What the runner measures at a stage without any authored assertion: named
- * like one ("Successful connection"), because that is how it reads beside the
- * assertions, but never a box — it is on for every iteration and cannot be
- * turned off.
+ * The runner check at each stage that has one: named like an assertion
+ * ("Successful connection"), because that is how it reads beside the
+ * assertions, but never a box — it is on for every iteration, cannot be
+ * turned off, and decides nothing. Titled from the SDK catalog, the same name
+ * the case page and the run page use.
  */
-export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
-  connection: STANDARD_CHECKS.find(
-    (check) => check.id === "connection.success",
-  )!.name,
-  discovery: STANDARD_CHECKS.find(
-    (check) => check.id === "discovery.toolsList",
-  )!.name,
-  selection: "A tool was selected",
-  call: "Tool call completed",
-  response: "Result returned to the model",
-  userValue: "Observed by the runner",
-};
+export const RUNNER_MEASUREMENT_LABELS: Record<RunnerCheckStage, string> =
+  Object.fromEntries(
+    RUNNER_CHECK_STAGES.map((stage) => [stage, runnerCheckOf(stage).name]),
+  ) as Record<RunnerCheckStage, string>;
 
-function observedRow(stage: UserValueStage): ScorerTableRow {
+function observedRow(stage: RunnerCheckStage): ScorerTableRow {
   return {
     id: `observed:${stage}`,
     kind: "observed",
     enabled: true,
     name: RUNNER_MEASUREMENT_LABELS[stage],
-    kindLabel: "Runner",
+    kindLabel: "Runner check",
     threshold: "",
     thresholdKind: "none",
+    // Advisory only in the sense that it is never counted as a gate. The row
+    // renders a Built-in badge, not this role.
     role: "advisory",
     muted: true,
     observedStage: stage,
@@ -560,6 +562,23 @@ function judgeTableRow(
   judgeEnabled: boolean,
 ): ScorerTableRow {
   const slot: JudgeSlot = row.judgeSlot ?? "goalCompletion";
+  if (slot === "rubricChecks") {
+    // The row's own switch. Rubric checks ride the goal-completion judge, so
+    // with that judge off they do not run whatever this says; the table
+    // disables the box and says why rather than rewriting the stored value.
+    return {
+      id: row.id,
+      kind: "judge",
+      enabled: judgeConfig?.rubricChecks?.enabled !== false,
+      name: row.label,
+      kindLabel: "Judge",
+      threshold: "",
+      thresholdKind: "none",
+      role: roleOfJudgeSlot("rubricChecks", judgeConfig),
+      muted: false,
+      judgeSlot: "rubricChecks",
+    };
+  }
   if (slot === "groundedness") {
     return {
       id: row.id,
@@ -647,17 +666,15 @@ function rowsForStage(
   const familyRows = new Map<string, ScorerTableRow[]>();
   const loosePredicates: ScorerTableRow[] = [];
 
-  if (stage === "connection" || stage === "discovery") {
-    rows.push(observedRow(stage));
-    if (stage === "connection") return rows;
-  }
+  // The runner check leads its stage, ahead of anything authored there.
+  if (isRunnerCheckStage(stage)) rows.push(observedRow(stage));
+  if (stage === "connection") return rows;
 
   if (stage === "call") {
     const argument = authored.find(
       (row) => row.matchField === "argumentMatching",
     );
     if (argument) rows.push(matchTableRow(argument));
-    else rows.push(observedRow(stage));
     for (const row of authored) {
       if (row.kind === "predicate") {
         placePredicateRow(row, rules, familyRows, loosePredicates);
@@ -679,17 +696,11 @@ function rowsForStage(
     }
   }
 
-  const catalog = catalogRowsForStage(stage, familyRows, listPresets);
-  if (
-    rows.length === 0 &&
-    loosePredicates.length === 0 &&
-    catalog.length === 0 &&
-    !stageEmptyIsGap(stage)
-  ) {
-    rows.push(observedRow(stage));
-  }
-
-  return [...rows, ...loosePredicates, ...catalog];
+  return [
+    ...rows,
+    ...loosePredicates,
+    ...catalogRowsForStage(stage, familyRows, listPresets),
+  ];
 }
 
 function configCard(state: StageConfigState, index: number): StageCardView {

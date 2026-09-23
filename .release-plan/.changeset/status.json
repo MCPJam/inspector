@@ -3,23 +3,112 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Explain connection-refused and HTTP 404 failures with the MCP endpoint and a suggested next step. Preserve authentication handling and underlying transport errors, and omit credentials and query values from the displayed endpoint.",
+      "id": "clear-connection-failure-messages"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.\n\nOne limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.",
-      "id": "session-flow-column-reordering"
+      "summary": "Say why a User Testing insights view is empty, and let a reader analyze a session now. The Session flow and Findings tab used to read \"This can take a few minutes\" whatever the reason, and draw a flow of placeholder bars before any theme existed. They now name the reason from the analysis summary: no sessions yet, waiting for a session to go quiet (with the time analysis starts), analyzing N sessions, the daily limit (with when it resumes), a guest study, a failure, outcomes still to come (with when they fill in), or themes still being grouped. Where waiting, pending outcomes, a guest study or a retryable failure is the reason, members get an **Analyze now** button that treats the study's sessions as finished. A session's detail view has the same button while that session is waiting or its outcome is still pending. Early themes, proposed from fewer than eight sessions, are labelled as such under the Session flow title. Needs the matching backend release; older backends keep the previous copy.",
+      "id": "insights-empty-state-reasons"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Recover failed desktop updates with one full restart and retry instead of opening GitHub. Keep slow downloads running, show an in-app error when recovery fails, verify the installed version after restart, and report update failures through the existing team alerts.",
+      "id": "recover-desktop-updates"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.\n\nThis changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.",
+      "id": "release-inspector-cli-sdk-2026-09-23"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add rubric checks, an advisory second judge for eval suites. Each grading criterion is asked on its own as a yes or no question with a probability, and a suite can add up to ten choice or score questions with a pass line each. Answers show on the trial scorecard under User value, and a criterion near even odds reads Uncertain. They never gate a run. Settings are edited in the app; the public API refuses `settings.judge.rubricChecks`. The SDK's run-disclosure types gain the `rubricChecks` touchpoint and the `typed_decision` rail routing, and `EVALUATOR_STAGE` gains `judge:rubricChecks`.",
+      "id": "rubric-checks-judge"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "3.9.1",
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "8.14.0",
       "changesets": [
-        "session-flow-column-reordering"
+        "clear-connection-failure-messages",
+        "release-inspector-cli-sdk-2026-09-23",
+        "rubric-checks-judge"
       ],
-      "newVersion": "3.9.2"
+      "newVersion": "8.15.0"
+    },
+    {
+      "name": "@mcpjam/inspector",
+      "type": "minor",
+      "oldVersion": "3.10.0",
+      "changesets": [
+        "insights-empty-state-reasons",
+        "recover-desktop-updates",
+        "release-inspector-cli-sdk-2026-09-23",
+        "rubric-checks-judge"
+      ],
+      "newVersion": "3.11.0"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "patch",
+      "oldVersion": "5.11.0",
+      "changesets": [
+        "release-inspector-cli-sdk-2026-09-23"
+      ],
+      "newVersion": "5.11.1"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/slack-app",
+      "type": "none",
+      "oldVersion": "0.1.0",
+      "changesets": [],
+      "newVersion": "0.1.0"
     }
   ]
 }
