@@ -212,6 +212,12 @@ web.use(
 // and this is a no-op. Order against the guest limiter is immaterial — the two
 // meter disjoint credential classes.
 //
+// That also means it cannot see a sub-router that runs its OWN
+// `bearerAuthMiddleware` (`/api-keys`, `/oauth`, `/oauth/connections`): the
+// label is set after this has already passed. Those routers mount the limiter
+// themselves, behind their bearer line, as does `/xaa`, which sits beside this
+// router on the root app.
+//
 // PER-REPLICA and in memory, like every limiter in this directory: the fleet
 // ceiling is 120/min times the replica count. A spike brake, not a budget; the
 // real cap stays the backend's org-keyed limits.

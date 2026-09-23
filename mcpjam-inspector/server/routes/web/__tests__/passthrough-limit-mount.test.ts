@@ -1,5 +1,13 @@
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 /**
  * MJ-012. `/api/web/*` metered every credential class except the one nobody
@@ -52,6 +60,17 @@ async function loadApp() {
   };
 }
 
+const callProbe = (app: Hono, path: string, bearer: string, ip: string) =>
+  app.request(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": ip,
+      Authorization: `Bearer ${bearer}`,
+    },
+    body: JSON.stringify({}),
+  });
+
 /**
  * A path under `/tools/*` — the family the finding's PoC (`/tools/list`) lives
  * in — but one with no handler behind it.
@@ -65,15 +84,14 @@ async function loadApp() {
  * 404 here means admitted.
  */
 const callToolsFamily = (app: Hono, bearer: string, ip: string) =>
-  app.request("/api/web/tools/__mount_probe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "CF-Connecting-IP": ip,
-      Authorization: `Bearer ${bearer}`,
-    },
-    body: JSON.stringify({}),
-  });
+  callProbe(app, "/api/web/tools/__mount_probe", bearer, ip);
+
+// The first import of the whole `/api/web` router is a cold transform of every
+// route module, which on a loaded runner can outlast a test's own timeout.
+// Paying it here keeps each case's clock on the requests it sends.
+beforeAll(async () => {
+  await loadApp();
+}, 120_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -120,4 +138,26 @@ describe("MJ-012 — /api/web/* meters the unverified passthrough class", () => 
       expect(res.status).not.toBe(429);
     }
   });
+
+  // These sub-routers run their own `bearerAuthMiddleware`, so the label is
+  // set after the `/api/web` `*` limiter has already passed and each one has
+  // to mount the limiter itself.
+  it.each([
+    ["/api-keys", "/api/web/api-keys/__mount_probe", "203.0.113.22"],
+    ["/oauth", "/api/web/oauth/__mount_probe", "203.0.113.23"],
+  ])(
+    "429s a signed-in burst on %s, which authenticates inside its own router",
+    async (_family, path, ip) => {
+      const { app, limit, reset } = await loadApp();
+      reset();
+
+      for (let i = 0; i < limit; i++) {
+        const res = await callProbe(app, path, "workos-jwt", ip);
+        expect(res.status).not.toBe(429);
+      }
+
+      const refused = await callProbe(app, path, "workos-jwt", ip);
+      expect(refused.status).toBe(429);
+    },
+  );
 });
