@@ -2717,6 +2717,9 @@ export default function App() {
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
   const firstRunConnectionAttemptRef = useRef(0);
+  const pendingFirstRunAuthorizationRef = useRef<
+    ((authorized: boolean) => void) | null
+  >(null);
   const restoredFirstRunSelectionRef = useRef<string | null>(null);
   const restoredFirstRunServerRef = useRef<string | null>(null);
   // Bumped to ask the active debugger route to open its own "configure server"
@@ -3646,6 +3649,36 @@ export default function App() {
     (!HOSTED_MODE ||
       !isAuthenticated ||
       Boolean(projects[activeProjectId]?.sharedProjectId));
+  const requestFirstRunOAuthAuthorization = useCallback(
+    (serverName: string) =>
+      new Promise<boolean>((resolve) => {
+        pendingFirstRunAuthorizationRef.current?.(false);
+        pendingFirstRunAuthorizationRef.current = resolve;
+        setFirstRunConnectionState((current) => ({
+          status: "authorization-required",
+          serverName,
+          serverKind:
+            current.status === "idle"
+              ? serverName === EXCALIDRAW_SERVER_NAME
+                ? "demo"
+                : "personal"
+              : current.serverKind,
+        }));
+      }),
+    [],
+  );
+  const authorizeFirstRunConnection = useCallback(() => {
+    const resolve = pendingFirstRunAuthorizationRef.current;
+    if (!resolve) return;
+    pendingFirstRunAuthorizationRef.current = null;
+    setFirstRunConnectionState((current) =>
+      current.status === "authorization-required"
+        ? { ...current, status: "connecting" }
+        : current,
+    );
+    resolve(true);
+  }, []);
+
   useEffect(() => {
     if (
       !pendingFirstRunConnection ||
@@ -3664,12 +3697,14 @@ export default function App() {
     void handleConnect(pendingFirstRunConnection, {
       suppressErrorToast: true,
       suppressSuccessToast: true,
+      requestOAuthAuthorization: requestFirstRunOAuthAuthorization,
     });
   }, [
     firstRunConnectionState.status,
     handleConnect,
     isFirstRunProjectReady,
     pendingFirstRunConnection,
+    requestFirstRunOAuthAuthorization,
   ]);
 
   useEffect(() => {
@@ -3804,6 +3839,8 @@ export default function App() {
   ]);
 
   const cancelFirstRunConnection = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
     setPendingFirstRunConnection(null);
     if (firstRunConnectionState.status !== "idle") {
@@ -3813,12 +3850,16 @@ export default function App() {
   }, [firstRunConnectionState, handleRuntimeDisconnect]);
 
   const returnToFirstRunChoice = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
   }, []);
 
   const openFirstRunPlayground = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
@@ -3830,6 +3871,8 @@ export default function App() {
   }, [navigateApp]);
 
   const dismissFirstRunOverlay = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
     markFirstRunServerChoiceDismissed();
     setPendingFirstRunConnection(null);
@@ -6016,6 +6059,7 @@ export default function App() {
                 connectionState={firstRunConnectionState}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
+                onAuthorizeConnection={authorizeFirstRunConnection}
                 onCancelConnection={cancelFirstRunConnection}
                 onReturnToChoice={returnToFirstRunChoice}
                 onOpenPlayground={openFirstRunPlayground}

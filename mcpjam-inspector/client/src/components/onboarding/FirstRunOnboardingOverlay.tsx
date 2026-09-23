@@ -44,7 +44,11 @@ export type FirstRunServerKind = "demo" | "personal";
 export type FirstRunConnectionState =
   | { status: "idle" }
   | {
-      status: "preparing" | "connecting" | "loading-tools";
+      status:
+        | "preparing"
+        | "connecting"
+        | "authorization-required"
+        | "loading-tools";
       serverName: string;
       serverKind: FirstRunServerKind;
     }
@@ -74,6 +78,7 @@ interface FirstRunOnboardingOverlayProps {
   connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
+  onAuthorizeConnection: () => void;
   onCancelConnection: () => void;
   onReturnToChoice: () => void;
   onOpenPlayground: () => void;
@@ -94,6 +99,7 @@ export function FirstRunOnboardingOverlay({
   connectionState,
   onConnectOwnServer,
   onConnectDemo,
+  onAuthorizeConnection,
   onCancelConnection,
   onReturnToChoice,
   onOpenPlayground,
@@ -188,6 +194,7 @@ export function FirstRunOnboardingOverlay({
     if (
       connectionState.status === "preparing" ||
       connectionState.status === "connecting" ||
+      connectionState.status === "authorization-required" ||
       connectionState.status === "loading-tools"
     ) {
       setStep("connecting");
@@ -400,20 +407,26 @@ export function FirstRunOnboardingOverlay({
           ) : step === "connecting" &&
             (connectionState.status === "preparing" ||
               connectionState.status === "connecting" ||
+              connectionState.status === "authorization-required" ||
               connectionState.status === "loading-tools") ? (
             <div className="py-1">
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                   {connectionState.status === "preparing"
                     ? "Preparing your MCPJam workspace"
+                    : connectionState.status === "authorization-required"
+                      ? `Authorize ${connectionState.serverName}`
                     : "Connecting to "}
-                  {connectionState.status !== "preparing"
+                  {connectionState.status !== "preparing" &&
+                  connectionState.status !== "authorization-required"
                     ? connectionState.serverName
                     : null}
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
                   {connectionState.status === "preparing"
                     ? "Getting your project ready to connect to an MCP server."
+                    : connectionState.status === "authorization-required"
+                      ? "This server requires OAuth. Authorize access to finish connecting."
                     : "Checking the connection before MCPJam opens the playground."}
                 </DialogDescription>
               </DialogHeader>
@@ -421,6 +434,15 @@ export function FirstRunOnboardingOverlay({
                 status={connectionState.status}
                 prefersReducedMotion={prefersReducedMotion}
               />
+              {connectionState.status === "authorization-required" ? (
+                <Button
+                  type="button"
+                  className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                  onClick={onAuthorizeConnection}
+                >
+                  Authorize and continue
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -701,11 +723,25 @@ function ConnectionProgress({
   status,
   prefersReducedMotion,
 }: {
-  status: "preparing" | "connecting" | "loading-tools";
+  status:
+    | "preparing"
+    | "connecting"
+    | "authorization-required"
+    | "loading-tools";
   prefersReducedMotion: boolean | null;
 }) {
-  const activeIndex = status === "loading-tools" ? 2 : 0;
-  const completedThrough = status === "loading-tools" ? 1 : -1;
+  const activeIndex =
+    status === "loading-tools"
+      ? 2
+      : status === "authorization-required"
+        ? 1
+        : 0;
+  const completedThrough =
+    status === "loading-tools"
+      ? 1
+      : status === "authorization-required"
+        ? 0
+        : -1;
 
   return (
     <ol className="mt-5 grid gap-2.5" aria-label="Connection progress">
