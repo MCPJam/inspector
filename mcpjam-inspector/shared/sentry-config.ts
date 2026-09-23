@@ -11,7 +11,10 @@
  * unit-testable without stubbing globals.
  */
 
-import { isInjectedScriptStack } from "./injected-script-frames";
+import {
+  isDocumentFrame,
+  isInjectedScriptStack,
+} from "./injected-script-frames";
 
 /**
  * Where this install runs. `hosted` is app.mcpjam.com; `self_hosted` covers
@@ -277,7 +280,7 @@ export function buildBrowserBeforeSend(origin?: string) {
     if (origin !== undefined) {
       const filenames = (event.exception?.values ?? []).flatMap((value) => {
         const frames = value.stacktrace?.frames ?? [];
-        return isSynthesizedInitialFrame(frames)
+        return isSynthesizedInitialFrame(frames, origin)
           ? []
           : frames.map((frame) => frame.filename);
       });
@@ -300,13 +303,23 @@ export function buildBrowserBeforeSend(origin?: string) {
  * exactly the ones that reach `beforeSend` looking like a lone document frame,
  * so they would be the only ones it dropped.
  *
- * The count is what identifies it, not the `"?"` alone — `stripSentryFrames`
- * gives any nameless parsed frame the same placeholder. A real one-frame stack
- * that also lost its name is barely attributable either way, and sparing it is
- * the direction to err in.
+ * All three conditions are load-bearing. `stripSentryFramesAndReverse` gives
+ * any nameless PARSED frame the same `"?"` placeholder, and the SDK only ever
+ * fabricates into an empty array, so the count and the name together are what
+ * separate an invention from a one-frame stack. The filename matters because
+ * discarding a value's frames is not free: with a chained exception, erasing a
+ * lone `https://js.stripe.com/v3/` frame here let the remaining values' document
+ * frames read as an entirely injected stack and drop a real Stripe failure.
  */
-function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
-  return frames.length === 1 && frames[0]?.function === "?";
+function isSynthesizedInitialFrame(
+  frames: { filename?: string; function?: string }[],
+  origin: string,
+): boolean {
+  return (
+    frames.length === 1 &&
+    frames[0]?.function === "?" &&
+    isDocumentFrame(frames[0]?.filename, origin)
+  );
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {

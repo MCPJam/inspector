@@ -327,6 +327,45 @@ describe("surface builders", () => {
     expect(beforeSend(event)).toBe(event);
   });
 
+  // Discarding a value's frames is not free. A lone `"?"` frame pointing at a
+  // real script is a parsed stack, not an invention, and erasing it let the
+  // other values' document frames read as an entirely injected stack.
+  it("keeps a chained exception whose lone anonymous frame is third-party", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "inner",
+            stacktrace: {
+              frames: [
+                { filename: "https://js.stripe.com/v3/", function: "?" },
+              ],
+            },
+          },
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [
+                { filename: `${origin}/p/v97d1szz/playground`, function: "Tk" },
+                { filename: `${origin}/p/v97d1szz/tasks`, function: "Rk" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
+  });
+
   // The same lone document frame, but from a real parsed stack, still drops.
   it("still drops a lone document frame that Sentry did not synthesise", () => {
     const origin = "https://app.mcpjam.com";
