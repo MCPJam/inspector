@@ -135,7 +135,11 @@ const SELF_DIALING_ALLOWED = new Map(
     [
       ["services", "conformance-run-executor.ts"],
       {
-        guard: /guardPersistedConformanceTransport\(/,
+        // Anchored on the assignment because the guard is DEFINED in this same
+        // file: a bare name match is already satisfied by `export function
+        // guardPersistedConformanceTransport(`, so deleting the call site would
+        // still pass and the rule would miss the regression it exists to catch.
+        guard: /=\s*guardPersistedConformanceTransport\(/,
         why: "every persisted run's transports go through guardPersistedConformanceTransport",
       },
     ],
