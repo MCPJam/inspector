@@ -265,6 +265,20 @@ Judge results are also accessible outside the app. `mcpjam cloud eval status` re
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+### Rubric checks
+
+**Data sent for rubric checks:** when a suite has grading criteria or rubric-check questions, every trial the goal-completion judge grades is also sent to TypeSafe AI's Jev classifier through Vercel AI Gateway: the request, the expected outcome, the final answer and a clipped trajectory, with credentials redacted. If Jev can't be reached, the same questions go to a fallback model through Vercel AI Gateway or OpenRouter. Turn rubric checks off in suite settings if that isn't appropriate for your data.
+
+Rubric checks ask each of the suite's grading criteria on its own, as a yes or no question, and record the classifier's probability of yes. A suite can add up to ten questions of its own, each either a **choice** (pick one of several options; you mark which ones pass) or a **score** (an ordered scale; you pick the lowest level that passes).
+
+- **Advisory, always.** A rubric check never fails a trial, never gates a run, and never decides the User value link. There's no model, threshold or role to pick.
+- **Runs with the goal judge.** Rubric checks grade exactly the trials the goal-completion judge grades, in the same job. While that judge is off, they're paused.
+- **Uncertain is not a pass.** A criterion answered with a probability of yes from 0.4 up to 0.6 shows as **Uncertain** on the trial scorecard, beside its value. The stored row still passes at 0.5 or more.
+- **Wording is identity.** Editing a criterion's or question's wording, options, levels or pass line starts a new rubric-check row, so a baseline comparison shows the old row removed and the new one added.
+- **App only, for now.** Rubric-check settings are edited in the app, and the API refuses `settings.judge.rubricChecks`. The criteria they ask come from `settings.judge.rubric`, which the API does accept.
+
+Each answer appears on the trial scorecard under User value, after the goal judge, and under **Score rows** as `judge:rubricChecks:c:<criterion id>` or `judge:rubricChecks:q:<question id>`.
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.

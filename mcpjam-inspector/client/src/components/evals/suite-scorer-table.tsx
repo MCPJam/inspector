@@ -36,7 +36,10 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
-import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  hasRubricChecksCapability,
+  type SuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
@@ -57,7 +60,8 @@ import {
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
-import type { EvalJudgeConfig } from "./types";
+import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
+import { withRubricChecks } from "./rubric-checks-model";
 import {
   addCaseRule,
   listEffectiveRules,
@@ -108,6 +112,7 @@ export function SuiteScorerTable({
   passOrFailHint,
   judgeHint,
   groundednessEvidence,
+  judgeRubric,
   headerContent,
   headerDescription,
   headerActions,
@@ -129,6 +134,8 @@ export function SuiteScorerTable({
   passOrFailHint: string;
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
+  /** The suite's rubric, whose criteria the rubric-checks card lists. */
+  judgeRubric?: EvalJudgeRubric;
   headerContent?: React.ReactNode;
   headerDescription?: React.ReactNode;
   headerActions?: React.ReactNode;
@@ -149,9 +156,18 @@ export function SuiteScorerTable({
       rules.filter((rule) => !rule.suppressed).map((rule) => rule.predicate),
     [rules],
   );
+  // Only a deployment that grades rubric checks stores the slot, so the row
+  // and its card appear only when the capability says so.
+  const rubricChecks = hasRubricChecksCapability(capabilities);
   const model = useMemo(
-    () => groupGradersByStage({ matchOptions, predicates, judgeConfig }),
-    [matchOptions, predicates, judgeConfig],
+    () =>
+      groupGradersByStage({
+        matchOptions,
+        predicates,
+        judgeConfig,
+        rubricChecks,
+      }),
+    [matchOptions, predicates, judgeConfig, rubricChecks],
   );
   const activeModel = useMemo(
     () =>
@@ -159,8 +175,9 @@ export function SuiteScorerTable({
         matchOptions,
         predicates: activePredicates,
         judgeConfig,
+        rubricChecks,
       }),
-    [matchOptions, activePredicates, judgeConfig],
+    [matchOptions, activePredicates, judgeConfig, rubricChecks],
   );
   const judgeEnabled = scope.kind === "case" ? !scope.judgeSkipped : undefined;
   const table = useMemo(
@@ -261,6 +278,14 @@ export function SuiteScorerTable({
       }
       return undefined;
     }
+    if (row.kind === "judge" && row.judgeSlot === "rubricChecks") {
+      if (scope.kind === "case") {
+        return "Rubric checks are turned on or off in suite settings.";
+      }
+      return judgeMode(judgeConfig) === "off"
+        ? "Rubric checks run with the goal-completion judge, which is off."
+        : undefined;
+    }
     if (
       row.kind === "judge" &&
       row.judgeSlot === "goalCompletion" &&
@@ -306,6 +331,12 @@ export function SuiteScorerTable({
         scope.onDraftChange(
           setSuiteFamilySuppressed(scope.draft, row.family.id, !enabled),
         );
+      }
+      return;
+    }
+    if (row.kind === "judge" && row.judgeSlot === "rubricChecks") {
+      if (scope.kind === "suite") {
+        onJudgeConfigChange?.(withRubricChecks(judgeConfig, { enabled }));
       }
       return;
     }
@@ -560,6 +591,17 @@ export function SuiteScorerTable({
                       judgesCapabilities={capabilities?.judges}
                       groundednessEvidence={groundednessEvidence}
                     />
+                    {rubricChecks ? (
+                      <SuiteJudgeCard
+                        slot="rubricChecks"
+                        judgeConfig={judgeConfig}
+                        onJudgeConfigChange={onJudgeConfigChange}
+                        availableModels={availableModels}
+                        judgesCapabilities={capabilities?.judges}
+                        criteria={judgeRubric?.criteria ?? []}
+                        goalJudgeOff={judgeMode(judgeConfig) === "off"}
+                      />
+                    ) : null}
                   </details>
                 ) : null}
               </div>
@@ -574,7 +616,10 @@ export function SuiteScorerTable({
 /** Whether a row has an On box at all. Observed and match rows are facts. */
 function hasOnControl(row: ScorerTableRow): boolean {
   if (row.kind === "predicate" || row.kind === "preset") return true;
-  return row.kind === "judge" && row.judgeSlot === "goalCompletion";
+  return (
+    row.kind === "judge" &&
+    (row.judgeSlot === "goalCompletion" || row.judgeSlot === "rubricChecks")
+  );
 }
 
 /**

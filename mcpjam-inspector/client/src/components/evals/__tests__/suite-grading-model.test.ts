@@ -161,6 +161,29 @@ describe("groupGradersByStage", () => {
     expect(groundedness?.label).toBe("Groundedness judge");
   });
 
+  it("lists rubric checks only where the deployment grades them", () => {
+    // An older backend strips a slot it does not know, so a row there would
+    // be a switch wired to nothing.
+    const without = groupGradersByStage({ predicates: [] });
+    expect(
+      without.byStage.userValue.some((row) => row.judgeSlot === "rubricChecks"),
+    ).toBe(false);
+    const withSlot = groupGradersByStage({
+      predicates: [],
+      rubricChecks: true,
+      judgeConfig: { goalCompletion: { role: "gating" } },
+    });
+    const row = withSlot.byStage.userValue.find(
+      (candidate) => candidate.judgeSlot === "rubricChecks",
+    );
+    expect(row).toMatchObject({
+      kind: "judge",
+      label: "Rubric checks",
+      // Advisory whatever the goal judge's role: it has no other.
+      role: "advisory",
+    });
+  });
+
   it("reads a predicate's role from checkRole", () => {
     const model = groupGradersByStage({
       predicates: [
