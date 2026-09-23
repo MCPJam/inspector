@@ -35,13 +35,21 @@ vi.mock("ai", async () => {
   };
 });
 
+// Most tests here want the matcher's verdict to BE the iteration verdict, so
+// the gates are stubbed out. A test that exercises a gate flips `useReal`.
+const finalizePassedStub = vi.hoisted(() => ({ useReal: false }));
+
 vi.mock("@mcpjam/sdk", async () => {
   const actual =
     await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
   return {
     ...actual,
-    finalizePassedForEval: ({ matchPassed }: { matchPassed: boolean }) =>
-      matchPassed,
+    finalizePassedForEval: (
+      params: Parameters<typeof actual.finalizePassedForEval>[0],
+    ) =>
+      finalizePassedStub.useReal
+        ? actual.finalizePassedForEval(params)
+        : params.matchPassed,
   };
 });
 
@@ -3318,6 +3326,174 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
+  });
+
+  describe("the toolCalls:match row records the matcher's own verdict", () => {
+    // The model calls exactly the expected tool, and a required predicate
+    // fails. The iteration fails; the tool-call row must still pass, because
+    // it grades the tool calls and nothing else. Both runner paths once set
+    // `evaluation.passed` to the gated verdict BEFORE building the score rows,
+    // so every gate leaked into this row.
+    const matchedCallMessages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tc_1",
+            toolName: "lookup",
+            input: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc_1",
+            toolName: "lookup",
+            output: { type: "json", value: { ok: true } },
+          },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Done." }] },
+    ];
+
+    const caseWithFailingPredicate = (model: string, provider: string) => ({
+      title: "Right tool, failing predicate",
+      query: "Hello",
+      runs: 1,
+      model,
+      provider,
+      expectedToolCalls: [{ toolName: "lookup", arguments: {} }],
+      promptTurns: [
+        {
+          id: "turn-1",
+          prompt: "Hello",
+          expectedToolCalls: [{ toolName: "lookup", arguments: {} }],
+        },
+      ],
+      // No role: a predicate gates by default.
+      successPredicates: [
+        { type: "responseContains", needle: "a phrase the model never said" },
+      ],
+      testCaseId: "case-match-row",
+    });
+
+    beforeEach(() => {
+      finalizePassedStub.useReal = true;
+    });
+    afterEach(() => {
+      finalizePassedStub.useReal = false;
+    });
+
+    const persisted = () => {
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as {
+        result?: string;
+        metadata?: { scores?: Array<Record<string, unknown>> };
+      };
+      const matchRow = payload.metadata?.scores?.find(
+        (row) => row.scorerId === "toolCalls:match",
+      );
+      return { payload, matchRow };
+    };
+
+    it("on the local path", async () => {
+      streamTextMock.mockReturnValueOnce({
+        consumeStream: async () => {},
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: matchedCallMessages,
+        }),
+        steps: Promise.resolve([]),
+        totalUsage: Promise.resolve({
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+        finishReason: Promise.resolve("stop"),
+      });
+
+      const result = await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        gradingMode: "dual_write",
+        config: {
+          tests: [caseWithFailingPredicate("gpt-4-turbo", "openai")],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-match-row",
+      } as any);
+
+      const { payload, matchRow } = persisted();
+      expect(payload.result).toBe("failed");
+      expect(matchRow).toMatchObject({ passed: true, value: 1 });
+      // Run totals still read the gated verdict.
+      expect(result?.quickRunIterationOutcomes?.[0].evaluation.passed).toBe(
+        false,
+      );
+    });
+
+    it("on the hosted path", async () => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "Hello" },
+            ...matchedCallMessages,
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: {
+            turnId: "t_1",
+            promptIndex: 0,
+            startedAt: 0,
+            endedAt: 10,
+            modelId: "anthropic/claude-haiku-4.5",
+            spans: [],
+          },
+        } as any);
+
+      try {
+        const result = await runEvalSuiteWithAiSdk({
+          suiteId: "suite-1",
+          runId: null,
+          gradingMode: "dual_write",
+          config: {
+            tests: [caseWithFailingPredicate("claude-haiku-4.5", "anthropic")],
+            environment: { servers: ["srv-1"] },
+          },
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          mcpClientManager: mcpClientManager as any,
+          testCaseId: "case-match-row",
+        } as any);
+
+        expect(runAssistantTurnSpy).toHaveBeenCalled();
+        const { payload, matchRow } = persisted();
+        expect(payload.result).toBe("failed");
+        expect(matchRow).toMatchObject({ passed: true, value: 1 });
+        expect(result?.quickRunIterationOutcomes?.[0].evaluation.passed).toBe(
+          false,
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
   });
 
   it("records iteration failure when streamText returns no new messages (PR 4b)", async () => {
