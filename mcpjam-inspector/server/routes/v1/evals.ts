@@ -9225,9 +9225,12 @@ evals.post(
       serverNames = resolved.serverNames;
     }
 
-    const caseModels =
-      body.caseModels?.map(toPersistedModelEntry) ??
-      (await defaultCaseModels(readClient, suiteId));
+    // Only what the CALLER asked for, for the same reason as `cases/import`:
+    // the backend hashes the job input to decide whether a replayed
+    // idempotency key is the same request, so resolving the suite's model here
+    // made a retry after a suite model change look like a different request.
+    // A case with no models inherits the suite's model at run time anyway.
+    const caseModels = body.caseModels?.map(toPersistedModelEntry);
 
     return startAuthoringJobAndAwait(c, {
       token,
@@ -9242,7 +9245,8 @@ evals.post(
         instructions: "Generate cases for the suite's authorized tools.",
         options: {
           mode,
-          caseModels,
+          // Omitted, not `undefined`: its presence is part of the hash.
+          ...(caseModels ? { caseModels } : {}),
           caseMix: body.caseMix,
           varyUserStyles: body.varyUserStyles,
         },

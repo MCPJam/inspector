@@ -2387,6 +2387,30 @@ describe("v1 eval-edit routes", () => {
     }
   });
 
+  // Same hash, same failure, same fix as the import test above.
+  it("sends the same generate payload after the suite's model changes", async () => {
+    const payloadFor = async (modelId: string) => {
+      const backend = authoringBackend();
+      try {
+        await generateWith({
+          body: { mode: "normal" },
+          headers: { "Idempotency-Key": "same-key" },
+          query: (name) =>
+            name === "hostConfigsV2:getSuiteConfig"
+              ? Promise.resolve({ modelId })
+              : undefined,
+        });
+        return backend.sent();
+      } finally {
+        backend.restore();
+      }
+    };
+    const first = await payloadFor("claude-sonnet-4-5");
+    const second = await payloadFor("claude-haiku-4-5");
+    expect(second).toEqual(first);
+    expect(first.options).not.toHaveProperty("caseModels");
+  });
+
   it("still forwards the models the caller names", async () => {
     const oldUrl = process.env.CONVEX_HTTP_URL;
     process.env.CONVEX_HTTP_URL = "https://backend.test";
