@@ -37,6 +37,7 @@
  * an existence oracle for a project the caller cannot see.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
@@ -47,10 +48,57 @@ import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readCapped } from "./blob-read.js";
+import { markDeprecated } from "./deprecation.js";
+import {
+  fetchConvexV1Read,
+  proxyConvexV1Read,
+} from "./convex-v1-proxy.js";
 
-const userTesting = new Hono();
+const studies = new Hono();
 
-const BASE = "/projects/:projectId/user-testing/scenarios/:scenarioId";
+/**
+ * Two bases, one set of handlers.
+ *
+ * `STUDY_BASE` is the public surface. `LEGACY_BASE` is the pre-rename path,
+ * kept working for a caller holding a reference to it: same handler, same
+ * authorization, but its responses spell the owning id `scenarioId` and carry
+ * `Deprecation: true`. Deleted at GA.
+ */
+const STUDY_BASE = "/projects/:projectId/studies/:studyId";
+const LEGACY_BASE = "/projects/:projectId/user-testing/scenarios/:scenarioId";
+const STUDY_SUCCESSOR = "/api/v1/projects/{projectId}/studies/{studyId}";
+
+type Surface = { legacy: boolean };
+const CANONICAL: Surface = { legacy: false };
+const LEGACY: Surface = { legacy: true };
+
+/** The route parameter the surface addresses the study by. */
+function studyIdParam(surface: Surface): string {
+  return surface.legacy ? "scenarioId" : "studyId";
+}
+
+/**
+ * The key a response spells the owning id under.
+ *
+ * The canonical surface says `studyId`; the alias keeps saying `scenarioId`,
+ * because a caller that parses for it is exactly who the alias exists for.
+ */
+function nounKey(surface: Surface): "studyId" | "scenarioId" {
+  return surface.legacy ? "scenarioId" : "studyId";
+}
+
+/** Register one route on both bases, deprecating the alias. */
+function both(
+  method: "get" | "post" | "put" | "patch" | "delete",
+  suffix: string,
+  handler: (c: Context, surface: Surface) => Promise<Response>,
+): void {
+  studies[method](`${STUDY_BASE}${suffix}`, (c) => handler(c, CANONICAL));
+  studies[method](`${LEGACY_BASE}${suffix}`, (c) => {
+    markDeprecated(c, STUDY_SUCCESSOR);
+    return handler(c, LEGACY);
+  });
+}
 
 function translateReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, { scope: "v1.user-testing" });
@@ -243,16 +291,19 @@ async function parseBody<T>(
 }
 
 /** Shared scaffolding: resolve the bearer, scope the scenario, hand both back. */
-async function scopedScenario(c: {
-  req: { param: (k: string) => string };
-}): Promise<{
+async function scopedScenario(
+  c: { req: { param: (k: string) => string } },
+  surface: Surface,
+): Promise<{
   client: ConvexHttpClient;
   projectId: string;
   scenarioId: string;
   scenario: ScenarioRow;
 }> {
   const projectId = c.req.param("projectId");
-  const scenarioId = c.req.param("scenarioId");
+  // The id arrives under a different parameter name on each base; the value
+  // and everything downstream of it are identical.
+  const scenarioId = c.req.param(studyIdParam(surface));
   const client = createConvexClient(
     await getConvexBearerForRequest(c as never),
   );
@@ -300,24 +351,109 @@ const updateScenarioSchema = z
     },
   );
 
-// GET /v1/projects/:p/user-testing/scenarios/:id
-// Scenario detail, enriched with the common insights envelope: findings
-// aggregated over the latest analyzed window of real visitor sessions.
-// Project members only — this route is deliberately absent from the guest
-// allowlist, and the backend envelope query additionally requires workspace
-// MEMBERSHIP, so share-link guests can never reach other visitors' evidence.
-userTesting.get(BASE, async (c) => {
-  const { client, projectId, scenarioId, scenario } = await scopedScenario(c);
+// GET /v1/projects/:p/studies
+//
+// The project's published studies. A thin proxy, like the deprecated
+// `/scenarios` twin in `catalog.ts` that it replaces: the Convex DTO carries no
+// noun-bearing field, so the two surfaces return byte-identical bodies and only
+// the path differs. Guest-allowed, because the deprecated one was.
+studies.get("/projects/:projectId/studies", (c) =>
+  proxyConvexV1Read(c, "/v1/scenarios", (target) =>
+    target.searchParams.set("projectId", c.req.param("projectId")),
+  ),
+);
+
+// GET /v1/projects/:p/studies/:studyId   (canonical)
+// GET /v1/projects/:p/user-testing/scenarios/:id   (deprecated alias)
+//
+// THE MERGED READ, and the two bases answer differently on purpose.
+//
+// `get_scenario` served the execution settings from a Convex proxy that only
+// needs the caller to see the project, and it was guest-allowed.
+// `get_user_testing_scenario` served the environment id and the insights
+// envelope, gated on workspace MEMBERSHIP, and was deliberately not. One
+// operation now has to serve both populations, so the canonical route is built
+// the only way that keeps each one's guarantees:
+//
+//   1. the settings read first, because it is the half a guest may have;
+//   2. the two widened fields after, for a non-guest only, and TOLERANTLY —
+//      a member who cannot read the envelope gets the study without it, the
+//      same degradation the user-testing route already had.
+//
+// So a share-link guest sees exactly what `/scenarios/{id}` gave them and not
+// one field more, and a member sees the union. The deprecated alias below is
+// untouched: same workspace preflight, same shape, same members-only reach.
+studies.get(STUDY_BASE, async (c) => {
+  const projectId = c.req.param("projectId");
+  const studyId = c.req.param("studyId");
+
+  // Project-nested with a cross-check, matching the deprecated proxy: the
+  // upstream takes a bare id, so a real study in a DIFFERENT project must read
+  // as NOT_FOUND here rather than leak across projects.
+  const { status, body } = await fetchConvexV1Read(c, "/v1/scenario", (target) =>
+    target.searchParams.set("scenarioId", studyId),
+  );
+  if (status !== 200) {
+    return c.json(body as Record<string, unknown>, status as 200);
+  }
+  const settings = body as Record<string, unknown>;
+  if (String(settings.projectId ?? "") !== projectId) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Study not found");
+  }
+
+  // A guest holds a share link, not a workspace role. Both reads below are
+  // workspace-gated, so attempting them would spend two round trips to be
+  // refused — and the refusal arrives redacted, which reads as an incident.
+  if (c.get("guestId")) {
+    return v1Resource(c, settings);
+  }
+
+  const client = createConvexClient(
+    await getConvexBearerForRequest(c as never),
+  );
+  let environmentId: string | null | undefined;
+  try {
+    const row = (await client.query(
+      "scenarios:getScenario" as never,
+      { scenarioId: studyId } as never,
+    )) as ScenarioRow | null;
+    environmentId = row?.environmentId ? String(row.environmentId) : null;
+  } catch {
+    // Same reasoning as the envelope: a membership refusal is an ordinary
+    // permission outcome here, not a failure of this read. Absent, not null —
+    // null would claim the study publishes no environment, which is never true.
+    environmentId = undefined;
+  }
+  const insights = await loadInsightsEnvelope("v1.studies", () =>
+    client.query(
+      "scenarioWindowInsights:getScenarioInsightsEnvelope" as never,
+      { scenarioId: studyId } as never,
+    ),
+  );
+
+  return v1Resource(c, {
+    ...settings,
+    ...(environmentId !== undefined ? { environmentId } : {}),
+    ...(insights ? { insights } : {}),
+  });
+});
+
+// The deprecated alias keeps the pre-merge shape: metadata plus the envelope,
+// members only, no execution settings. A caller parsing for those five fields
+// is exactly who it exists for.
+studies.get(LEGACY_BASE, async (c) => {
+  markDeprecated(c, STUDY_SUCCESSOR);
+  const { client, projectId, scenarioId, scenario } = await scopedScenario(
+    c,
+    LEGACY,
+  );
 
   // The envelope is an ENRICHMENT, not the resource. It is gated on workspace
   // MEMBERSHIP while the preflight above only proved the scenario is visible,
   // so a legitimate lower-privilege viewer can be refused here — and in
   // production that refusal arrives as a redacted "Server Error"
   // indistinguishable from a crash. Failing the route on it would answer 502
-  // (plus a Sentry page) to an ordinary permission outcome. Omitting instead
-  // makes this route behave exactly like the eval and journey-run details:
-  // the resource always returns, `insights` is present when the caller may
-  // have it, and absence reads as `not_available`.
+  // (plus a Sentry page) to an ordinary permission outcome.
   const insights = await loadInsightsEnvelope("v1.user-testing", () =>
     client.query(
       "scenarioWindowInsights:getScenarioInsightsEnvelope" as never,
@@ -341,10 +477,9 @@ userTesting.get(BASE, async (c) => {
   });
 });
 
-// PATCH /v1/projects/:p/user-testing/scenarios/:id
-userTesting.patch(BASE, async (c) => {
+both("patch", "", async (c, surface) => {
   const body = await parseBody(c, updateScenarioSchema);
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
 
   try {
     if (body.mode !== undefined) {
@@ -389,8 +524,8 @@ userTesting.patch(BASE, async (c) => {
 //
 // SUMMARIES, not transcripts. `cursor` is the public spelling of the upstream
 // `before` timestamp — opaque to the caller, as everywhere else on `/v1`.
-userTesting.get(`${BASE}/sessions`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/sessions", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   const rawLimit = Number(c.req.query("limit"));
   const limit =
     Number.isFinite(rawLimit) && rawLimit > 0
@@ -497,8 +632,8 @@ function messageText(message: RawMessage): string {
 //      The gateway fetches the blob itself and serves the contents.
 //   2. It does not return raw message objects. Stored messages carry tool
 //      payloads and provider blobs; the DTO projects role, text and timing.
-userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/sessions/:sessionId", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   const sessionId = c.req.param("sessionId");
 
   const rawLimit = Number(c.req.query("limit"));
@@ -594,7 +729,7 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
   const page = messages.slice(offset, offset + limit);
   return v1Resource(c, {
     id: sessionId,
-    scenarioId,
+    [nounKey(surface)]: scenarioId,
     chatSessionId: session.chatSessionId ?? null,
     modelId: session.modelId ?? null,
     startedAt: session.startedAt ?? null,
@@ -628,8 +763,8 @@ userTesting.get(`${BASE}/sessions/:sessionId`, async (c) => {
 });
 
 // GET .../metrics
-userTesting.get(`${BASE}/metrics`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/metrics", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   const population = c.req.query("population");
   // Validated HERE, not left to Convex: the upstream union validator rejects
   // an unknown value with an ArgumentValidationError, which reads as 404 —
@@ -670,8 +805,8 @@ userTesting.get(`${BASE}/metrics`, async (c) => {
 // above it were computed over the most recent N sessions rather than all of
 // them, and a consumer that drops it turns a conditional statistic into an
 // unconditional one.
-userTesting.get(`${BASE}/usage`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/usage", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   let usage: unknown;
   try {
     usage = await client.query(
@@ -694,8 +829,8 @@ userTesting.get(`${BASE}/usage`, async (c) => {
 // ── Insights ────────────────────────────────────────────────────────────────
 
 // GET .../findings
-userTesting.get(`${BASE}/findings`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/findings", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   let rows: unknown[];
   try {
     rows = ((await client.query(
@@ -713,8 +848,8 @@ userTesting.get(`${BASE}/findings`, async (c) => {
 // Also how you learn the CURRENT window id, which the window-insights read
 // below takes. There is no separate "list windows" route because the only
 // window anyone asks about is the live one.
-userTesting.get(`${BASE}/signals`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/signals", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   let signals: unknown;
   try {
     signals = await client.query(
@@ -735,8 +870,8 @@ userTesting.get(`${BASE}/signals`, async (c) => {
 });
 
 // GET .../windows/:windowId/insights
-userTesting.get(`${BASE}/windows/:windowId/insights`, async (c) => {
-  const { client, scenarioId } = await scopedScenario(c);
+both("get", "/windows/:windowId/insights", async (c, surface) => {
+  const { client, scenarioId } = await scopedScenario(c, surface);
   const windowId = c.req.param("windowId");
   let insights: unknown;
   try {
@@ -767,7 +902,7 @@ const requestInsightsSchema = z
 //
 // 202 with the window id the request applies to. SPENDS against the org's
 // `insightsPerDay` ledger, which is SHARED with swarm wave insights.
-userTesting.post(`${BASE}/insights`, async (c) => {
+both("post", "/insights", async (c, surface) => {
   const raw = (await c.req.text()).trim();
   let body: { force?: boolean } | undefined;
   if (raw.length > 0) {
@@ -792,7 +927,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
     body = parsed.data;
   }
 
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
   let result: { windowGroupId: string };
   try {
     result = (await client.mutation(
@@ -820,7 +955,7 @@ userTesting.post(`${BASE}/insights`, async (c) => {
   return v1Resource(
     c,
     {
-      scenarioId,
+      [nounKey(surface)]: scenarioId,
       projectId,
       windowId: result.windowGroupId,
       status: "pending",
@@ -838,9 +973,9 @@ const cancelInsightsSchema = z.strictObject({
 // Takes the window id in the body because cancellation is scoped to one
 // generation, and the recovery case this exists for — a window stuck pending —
 // is precisely when you have the id and nothing else works.
-userTesting.delete(`${BASE}/insights`, async (c) => {
+both("delete", "/insights", async (c, surface) => {
   const body = await parseBody(c, cancelInsightsSchema);
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
   try {
     await client.mutation(
       "scenarioWindowInsights:cancelWindowInsights" as never,
@@ -850,7 +985,7 @@ userTesting.delete(`${BASE}/insights`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    scenarioId,
+    [nounKey(surface)]: scenarioId,
     projectId,
     windowId: body.windowId,
     canceled: true,
@@ -863,8 +998,8 @@ userTesting.delete(`${BASE}/insights`, async (c) => {
 // scope-branched upstream, authorizing a scenario finding by its workspace role
 // and a project finding by its project role. Nothing here needs to know which.
 for (const action of ["dismiss", "undismiss"] as const) {
-  userTesting.post(`${BASE}/findings/:findingId/${action}`, async (c) => {
-    const { client, projectId, scenarioId } = await scopedScenario(c);
+  both("post", `/findings/:findingId/${action}`, async (c, surface) => {
+    const { client, projectId, scenarioId } = await scopedScenario(c, surface);
     const findingId = c.req.param("findingId");
     // The finding must belong to THIS scenario, or a member of two scenarios
     // could dismiss the other's finding through this URL.
@@ -894,7 +1029,7 @@ for (const action of ["dismiss", "undismiss"] as const) {
     }
     return v1Resource(c, {
       id: findingId,
-      scenarioId,
+      [nounKey(surface)]: scenarioId,
       projectId,
       dismissed: action === "dismiss",
     });
@@ -932,9 +1067,9 @@ const guestExecutionSchema = z.strictObject({
 // patch, deliberately: these caps only mean something as a SET, and a partial
 // update that raised `dailyCreditCap` while leaving a stale
 // `maxConcurrentComputers` behind would produce a combination nobody chose.
-userTesting.put(`${BASE}/guest-execution`, async (c) => {
+both("put", "/guest-execution", async (c, surface) => {
   const body = await parseBody(c, guestExecutionSchema);
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
   try {
     await client.mutation(
       "scenarios:setScenarioGuestExecution" as never,
@@ -957,8 +1092,8 @@ userTesting.put(`${BASE}/guest-execution`, async (c) => {
 // `accessVersion` alone (see `lib/scenarioAccessLifecycle.ts`, invariant 2).
 // So this closes the door without removing anyone already inside: for a leak,
 // rotate AND remove the members who should not be there.
-userTesting.post(`${BASE}/rotate-link`, async (c) => {
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+both("post", "/rotate-link", async (c, surface) => {
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
   let result: { link?: unknown } | null;
   try {
     result = (await client.mutation(
@@ -991,9 +1126,9 @@ const upsertMemberSchema = z.strictObject({
 });
 
 // PUT .../members — upsert by email, so a re-invite is not an error.
-userTesting.put(`${BASE}/members`, async (c) => {
+both("put", "/members", async (c, surface) => {
   const body = await parseBody(c, upsertMemberSchema);
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
   let result: { memberId?: string; invited?: boolean } | null;
   try {
     result = (await client.mutation(
@@ -1013,7 +1148,7 @@ userTesting.put(`${BASE}/members`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    scenarioId,
+    [nounKey(surface)]: scenarioId,
     projectId,
     email: body.email,
     ...(result?.memberId !== undefined ? { memberId: result.memberId } : {}),
@@ -1025,8 +1160,8 @@ userTesting.put(`${BASE}/members`, async (c) => {
 //
 // Removing a member NARROWS access, which is why it is not behind the beta
 // gate: an org that has just lost the flag must still be able to revoke.
-userTesting.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+both("delete", "/members/:memberIdOrEmail", async (c, surface) => {
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
   const memberIdOrEmail = c.req.param("memberIdOrEmail");
   try {
     await client.mutation(
@@ -1036,7 +1171,11 @@ userTesting.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
   } catch (error) {
     throw translateWriteError(error);
   }
-  return v1Resource(c, { scenarioId, projectId, removed: memberIdOrEmail });
+  return v1Resource(c, {
+    [nounKey(surface)]: scenarioId,
+    projectId,
+    removed: memberIdOrEmail,
+  });
 });
 
 const rebindSchema = z.strictObject({
@@ -1053,9 +1192,9 @@ const rebindSchema = z.strictObject({
 // mutation resolves the environment on its own, so without the preflight a
 // member of two projects could rebind a scenario onto another project's
 // environment and expose it under this project's link.
-userTesting.post(`${BASE}/rebind`, async (c) => {
+both("post", "/rebind", async (c, surface) => {
   const body = await parseBody(c, rebindSchema);
-  const { client, projectId, scenarioId } = await scopedScenario(c);
+  const { client, projectId, scenarioId } = await scopedScenario(c, surface);
 
   let environment: unknown;
   try {
@@ -1087,4 +1226,4 @@ userTesting.post(`${BASE}/rebind`, async (c) => {
   });
 });
 
-export default userTesting;
+export default studies;

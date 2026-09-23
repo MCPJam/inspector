@@ -791,7 +791,10 @@ export function OrganizationBillingSection({
   onCheckoutIntentConsumed,
   currentPlanPanel,
 }: OrganizationBillingSectionProps) {
-  useCreditTopupReturnFlowBilling({ enabled: showCredits });
+  useCreditTopupReturnFlowBilling({
+    enabled: showCredits,
+    organizationId,
+  });
 
   // Plans sit below credits and payment history, so a deep link that lands at
   // the top of the page hides the one thing the user clicked for.
@@ -1237,8 +1240,7 @@ export function OrganizationBillingSection({
             <>
               {!billingConfigured ? (
                 <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                  Billing is not configured in this environment. Plans are
-                  visible, but purchase actions are unavailable.
+                  Purchases are unavailable here. You can still view the plans.
                 </div>
               ) : null}
               {!canManageBilling ? (

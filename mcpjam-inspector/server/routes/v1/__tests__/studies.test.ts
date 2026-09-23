@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 /**
- * The user-testing surface (`user-testing.ts`) and the publish fix in
+ * The studies surface (`studies.ts`) and the publish fix in
  * `scenarios.ts`.
  *
  * These pin the four things that would fail quietly and expose something:
@@ -46,14 +46,16 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
 }));
 
-import userTesting from "../user-testing.js";
+import studies from "../studies.js";
 import scenarios from "../scenarios.js";
 import { v1OnError } from "../envelope.js";
+import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
 const PROJECT = "proj_a";
 const OTHER_PROJECT = "proj_b";
 const SCENARIO = "cb_1";
-const BASE = `/api/v1/projects/${PROJECT}/user-testing/scenarios/${SCENARIO}`;
+const BASE = `/api/v1/projects/${PROJECT}/studies/${SCENARIO}`;
+const LEGACY_BASE = `/api/v1/projects/${PROJECT}/user-testing/scenarios/${SCENARIO}`;
 
 function makeApp(router: Parameters<Hono["route"]>[1]) {
   const app = new Hono();
@@ -326,7 +328,7 @@ describe("scenario update", () => {
   it("refuses a body that mixes identity and exposure", async () => {
     // Two mutations upstream. Chaining them means a failure between the two
     // leaves the scenario half-updated on the half that decides access.
-    const res = await call(userTesting, "PATCH", BASE, {
+    const res = await call(studies, "PATCH", BASE, {
       name: "Renamed",
       mode: "anyone_with_link",
     });
@@ -338,7 +340,7 @@ describe("scenario update", () => {
 
   it("routes a mode change to setScenarioMode and nothing else", async () => {
     mutationMock.mockResolvedValue(null);
-    const res = await call(userTesting, "PATCH", BASE, {
+    const res = await call(studies, "PATCH", BASE, {
       mode: "invited_only",
     });
     expect(mutationMock).toHaveBeenCalledTimes(1);
@@ -352,14 +354,14 @@ describe("scenario update", () => {
 
   it("routes a rename to updateScenario and nothing else", async () => {
     mutationMock.mockResolvedValue(null);
-    await call(userTesting, "PATCH", BASE, { name: "Renamed" });
+    await call(studies, "PATCH", BASE, { name: "Renamed" });
     expect(mutationMock).toHaveBeenCalledTimes(1);
     expect(mutationMock.mock.calls[0]?.[0]).toBe("scenarios:updateScenario");
   });
 
   it("404s a scenario that resolves into another project", async () => {
     answerQueries({ getScenario: scenarioRow(OTHER_PROJECT) });
-    const res = await call(userTesting, "PATCH", BASE, { name: "Renamed" });
+    const res = await call(studies, "PATCH", BASE, { name: "Renamed" });
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
   });
@@ -368,7 +370,7 @@ describe("scenario update", () => {
     // A separate branch from the project mismatch above: this one guards the
     // absent row, and a regression that dereferenced it would pass the other.
     answerQueries({});
-    const res = await call(userTesting, "PATCH", BASE, { name: "Renamed" });
+    const res = await call(studies, "PATCH", BASE, { name: "Renamed" });
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
   });
@@ -389,7 +391,7 @@ describe("session transcript", () => {
         status: 200,
       }),
     );
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     const raw = await res.text();
     // A direct handle with no further authorization: handing it out turns one
     // authorized read into an unbounded, shareable one.
@@ -408,7 +410,7 @@ describe("session transcript", () => {
       getScenario: scenarioRow(),
       getSession: { scenarioId: "cb_other", chatSessionId: "cs_1" },
     });
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     expect(res.status).toBe(404);
   });
 
@@ -433,7 +435,7 @@ describe("session transcript", () => {
       ),
     );
     const res = await call(
-      userTesting,
+      studies,
       "GET",
       `${BASE}/sessions/sess_1?limit=50`,
     );
@@ -455,7 +457,7 @@ describe("session transcript", () => {
       getSession: { scenarioId: SCENARIO, chatSessionId: "cs_1" },
     });
     const res = await call(
-      userTesting,
+      studies,
       "GET",
       `${BASE}/sessions/sess_1?cursor=oops`,
     );
@@ -474,7 +476,7 @@ describe("session transcript", () => {
       },
     });
     fetchMock.mockRejectedValue(new Error("network down"));
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as { messageCount: number | null };
     expect(body.messageCount).toBeNull();
   });
@@ -501,7 +503,7 @@ describe("session transcript", () => {
         headers: { "content-length": String(64 * 1024 * 1024) },
       }),
     );
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as { transcriptUnavailable?: boolean };
     expect(body.transcriptUnavailable).toBe(true);
   });
@@ -522,7 +524,7 @@ describe("session transcript", () => {
     fetchMock.mockResolvedValue(
       new Response(oversizedTranscriptStream(), { status: 200 }),
     );
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
       transcriptUnavailable?: boolean;
       messageCount: number | null;
@@ -555,7 +557,7 @@ describe("session transcript", () => {
         { status: 200 },
       ),
     );
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
       transcriptUnavailable?: boolean;
       messageCount: number | null;
@@ -576,7 +578,7 @@ describe("session transcript", () => {
       },
     });
     fetchMock.mockRejectedValue(new Error("network down"));
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     const body = (await res.json()) as {
       transcriptUnavailable?: boolean;
       messages: unknown[];
@@ -604,7 +606,7 @@ describe("exposure controls", () => {
       dailyHarnessCallCap: 250,
       maxConcurrentHarnessRuns: 2,
     };
-    const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, caps);
+    const res = await call(studies, "PUT", `${BASE}/guest-execution`, caps);
     expect(res.status).toBe(200);
     // Asserted BEFORE the destructure: a rejected body would otherwise fail
     // with "undefined is not iterable" instead of naming the real problem.
@@ -619,7 +621,7 @@ describe("exposure controls", () => {
   it("rejects a partial guest-execution body", async () => {
     // These caps only mean something as a set; raising one while leaving a
     // stale sibling produces a combination nobody chose.
-    const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, {
+    const res = await call(studies, "PUT", `${BASE}/guest-execution`, {
       enabled: true,
     });
     expect(res.status).toBe(400);
@@ -634,7 +636,7 @@ describe("exposure controls", () => {
     // `getScenario`, and `null` for the environment read is what makes this a
     // cross-project miss.
     answerQueries({ getScenario: scenarioRow(), getEnvironment: null });
-    const res = await call(userTesting, "POST", `${BASE}/rebind`, {
+    const res = await call(studies, "POST", `${BASE}/rebind`, {
       environmentId: "env_in_b",
     });
     expect(res.status).toBe(404);
@@ -650,7 +652,7 @@ describe("exposure controls", () => {
       link: { token: "tok", path: "/s/tok", url: "https://app.test/s/tok" },
       members: [],
     });
-    const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
+    const res = await call(studies, "POST", `${BASE}/rotate-link`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.rotated).toBe(true);
@@ -668,7 +670,7 @@ describe("exposure controls", () => {
     // plain error to "Server Error" before it reaches us; the preflight
     // normally answers first with its own 404 either way.)
     mutationMock.mockRejectedValue(new Error("Not a member of this workspace"));
-    const res = await call(userTesting, "POST", `${BASE}/rotate-link`);
+    const res = await call(studies, "POST", `${BASE}/rotate-link`);
     expect(res.status).toBe(404);
   });
 
@@ -681,7 +683,7 @@ describe("exposure controls", () => {
     mutationMock.mockRejectedValue(
       new Error("Only project admins can configure guest execution"),
     );
-    const res = await call(userTesting, "PUT", `${BASE}/guest-execution`, {
+    const res = await call(studies, "PUT", `${BASE}/guest-execution`, {
       enabled: true,
       computerEnabled: false,
       sharedSkillsEnabled: false,
@@ -706,7 +708,7 @@ describe("findings", () => {
     });
     mutationMock.mockResolvedValue(null);
     const res = await call(
-      userTesting,
+      studies,
       "POST",
       `${BASE}/findings/finding_1/dismiss`,
     );
@@ -720,7 +722,7 @@ describe("findings", () => {
       listScenarioFindings: [{ _id: "finding_elsewhere" }],
     });
     const res = await call(
-      userTesting,
+      studies,
       "POST",
       `${BASE}/findings/finding_1/dismiss`,
     );
@@ -732,7 +734,7 @@ describe("findings", () => {
 describe("insight lifecycle", () => {
   it("answers 202 with the window the request applies to", async () => {
     mutationMock.mockResolvedValue({ windowGroupId: "win_1" });
-    const res = await call(userTesting, "POST", `${BASE}/insights`);
+    const res = await call(studies, "POST", `${BASE}/insights`);
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({
       windowId: "win_1",
@@ -744,7 +746,7 @@ describe("insight lifecycle", () => {
     // Well-formed request, wrong moment. A 400 would tell the caller to fix
     // input that was fine, and a retry loop would never converge.
     mutationMock.mockRejectedValue(new Error("window_not_analyzed"));
-    const res = await call(userTesting, "POST", `${BASE}/insights`);
+    const res = await call(studies, "POST", `${BASE}/insights`);
     expect(res.status).toBe(409);
     const body = (await res.json()) as { message: string };
     expect(body.message).toMatch(/not been analyzed/i);
@@ -764,7 +766,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     failAllQueries(
       new Error("ArgumentValidationError: Value does not match validator"),
     );
-    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    const res = await call(studies, "GET", `${BASE}/usage`);
     expect(res.status).toBe(404);
   });
 
@@ -773,7 +775,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     // differs from the project one — before the classifier knew it, this
     // answered 502 and told the prober the id exists somewhere.
     failAllQueries(new Error("Not a member of this workspace"));
-    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    const res = await call(studies, "GET", `${BASE}/usage`);
     expect(res.status).toBe(404);
   });
 
@@ -781,7 +783,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     // In production a plain-error refusal arrives as "Server Error". At the
     // preflight, refusal and absence must be indistinguishable.
     failAllQueries(new Error("[Request ID: abc] Server Error"));
-    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    const res = await call(studies, "GET", `${BASE}/usage`);
     expect(res.status).toBe(404);
   });
 
@@ -793,7 +795,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
       if (fn === "getScenario") return Promise.resolve(scenarioRow());
       return Promise.reject(new Error("[Request ID: abc] Server Error"));
     });
-    const res = await call(userTesting, "GET", `${BASE}/usage`);
+    const res = await call(studies, "GET", `${BASE}/usage`);
     expect(res.status).toBe(502);
   });
 
@@ -801,7 +803,7 @@ describe("probe answers (the preflight is not an oracle)", () => {
     // The bad value is the caller's query parameter — they need the accepted
     // values, not a claim the scenario is gone.
     const res = await call(
-      userTesting,
+      studies,
       "GET",
       `${BASE}/metrics?population=fake`,
     );
@@ -817,7 +819,7 @@ describe("member invite default", () => {
     // working share link. This route documents quiet-add as its default, so
     // absence must reach Convex as an explicit false.
     mutationMock.mockResolvedValue({ memberId: "m_1" });
-    await call(userTesting, "PUT", `${BASE}/members`, {
+    await call(studies, "PUT", `${BASE}/members`, {
       email: "tester@example.com",
     });
     expect(mutationMock).toHaveBeenCalledTimes(1);
@@ -828,7 +830,7 @@ describe("member invite default", () => {
 
   it("still honors an explicit sendInviteEmail: true", async () => {
     mutationMock.mockResolvedValue({ memberId: "m_1", invited: true });
-    await call(userTesting, "PUT", `${BASE}/members`, {
+    await call(studies, "PUT", `${BASE}/members`, {
       email: "tester@example.com",
       sendInviteEmail: true,
     });
@@ -846,7 +848,7 @@ describe("deleted transcript blob", () => {
       getScenario: scenarioRow(),
       getSession: { scenarioId: SCENARIO, chatSessionId: "cs_1" },
     });
-    const res = await call(userTesting, "GET", `${BASE}/sessions/sess_1`);
+    const res = await call(studies, "GET", `${BASE}/sessions/sess_1`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       messageCount: number | null;
@@ -860,7 +862,10 @@ describe("deleted transcript blob", () => {
   });
 });
 
-describe("GET scenario detail (insights envelope)", () => {
+// The pre-merge detail shape, which now lives ONLY on the deprecated alias:
+// metadata plus the envelope, members only, no execution settings. The
+// canonical read is covered separately below, because it answers differently.
+describe("GET study detail on the deprecated alias", () => {
   it("returns the scenario with its envelope, members only by construction", async () => {
     const envelope = {
       schemaVersion: 1,
@@ -898,7 +903,7 @@ describe("GET scenario detail (insights envelope)", () => {
       getScenario: { ...scenarioRow(), environmentId: "env_9" },
       getScenarioInsightsEnvelope: envelope,
     });
-    const res = await call(userTesting, "GET", BASE);
+    const res = await call(studies, "GET", LEGACY_BASE);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({
@@ -915,7 +920,7 @@ describe("GET scenario detail (insights envelope)", () => {
       getScenario: scenarioRow(),
       getScenarioInsightsEnvelope: null,
     });
-    const res = await call(userTesting, "GET", BASE);
+    const res = await call(studies, "GET", LEGACY_BASE);
     expect(res.status).toBe(200);
     expect((await res.json()).insights).toBeUndefined();
   });
@@ -930,7 +935,7 @@ describe("GET scenario detail (insights envelope)", () => {
       if (fn === "getScenario") return Promise.resolve(scenarioRow());
       return Promise.reject(new Error("Server Error"));
     });
-    const res = await call(userTesting, "GET", BASE);
+    const res = await call(studies, "GET", LEGACY_BASE);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.id).toBe(SCENARIO);
@@ -942,11 +947,136 @@ describe("GET scenario detail (insights envelope)", () => {
     // passes even if the project comparison were deleted, because an
     // unmocked envelope query resolves to null and 404s anyway.
     answerQueries({ getScenario: scenarioRow(OTHER_PROJECT) });
-    const res = await call(userTesting, "GET", BASE);
+    const res = await call(studies, "GET", LEGACY_BASE);
     expect(res.status).toBe(404);
     const insightReads = queryMock.mock.calls.filter((call) =>
       String(call[0]).includes("getScenarioInsightsEnvelope"),
     );
     expect(insightReads).toHaveLength(0);
+  });
+});
+
+// ── The rename's own contract ───────────────────────────────────────────────
+//
+// Two bases, one handler. What must differ between them is exactly two things:
+// the `Deprecation` header, and the key the owning id is spelled under.
+// Everything else — authorization, refusals, bodies — must not.
+describe("study routes and their deprecated aliases", () => {
+  it("marks every alias response `Deprecation: true` and points at the successor", async () => {
+    answerQueries({
+      getScenario: scenarioRow(),
+      getScenarioSessionMetrics: { sessions: 3 },
+    });
+    const res = await call(studies, "GET", `${LEGACY_BASE}/metrics`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Deprecation")).toBe("true");
+    expect(res.headers.get("Link")).toContain(
+      "/api/v1/projects/{projectId}/studies/{studyId}",
+    );
+  });
+
+  it("leaves the canonical response unmarked", async () => {
+    answerQueries({
+      getScenario: scenarioRow(),
+      getScenarioSessionMetrics: { sessions: 3 },
+    });
+    const res = await call(studies, "GET", `${BASE}/metrics`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Deprecation")).toBeNull();
+  });
+
+  it("spells the owning id `studyId` canonically and `scenarioId` on the alias", async () => {
+    answerQueries({
+      getScenario: scenarioRow(),
+      getScenarioSessionMetrics: { sessions: 3 },
+    });
+    mutationMock.mockResolvedValue({ memberId: "m_1", invited: true });
+
+    const canonical = await call(studies, "PUT", `${BASE}/members`, {
+      email: "tester@example.com",
+    });
+    expect(canonical.status).toBe(200);
+    const canonicalBody = (await canonical.json()) as Record<string, unknown>;
+    expect(canonicalBody.studyId).toBe(SCENARIO);
+    expect(canonicalBody).not.toHaveProperty("scenarioId");
+
+    answerQueries({
+      getScenario: scenarioRow(),
+      getScenarioSessionMetrics: { sessions: 3 },
+    });
+    mutationMock.mockResolvedValue({ memberId: "m_1", invited: true });
+    const legacy = await call(studies, "PUT", `${LEGACY_BASE}/members`, {
+      email: "tester@example.com",
+    });
+    expect(legacy.status).toBe(200);
+    const legacyBody = (await legacy.json()) as Record<string, unknown>;
+    expect(legacyBody.scenarioId).toBe(SCENARIO);
+    expect(legacyBody).not.toHaveProperty("studyId");
+  });
+
+  it("refuses a study in another project on BOTH bases, identically", async () => {
+    for (const base of [BASE, LEGACY_BASE]) {
+      answerQueries({ getScenario: scenarioRow("proj_other") });
+      const res = await call(studies, "GET", `${base}/metrics`);
+      expect(res.status).toBe(404);
+    }
+  });
+});
+
+// ── Guest reach ─────────────────────────────────────────────────────────────
+//
+// The rename moved two guest-allowed reads onto a path that now also hosts a
+// WRITE. The old rules were method-less and safe only because nothing wrote at
+// those URLs; `PATCH /studies/:studyId` changes that, so the canonical rules
+// are GET-only. Getting this wrong hands a share-link visitor the ability to
+// rename a study or widen who can open it, which is why it is pinned here
+// rather than left to the route tests.
+describe("guest reach over the study paths", () => {
+  const LIST = `/projects/${PROJECT}/studies`;
+  const DETAIL = `/projects/${PROJECT}/studies/${SCENARIO}`;
+  const LEGACY_LIST = `/projects/${PROJECT}/scenarios`;
+  const LEGACY_DETAIL = `/projects/${PROJECT}/scenarios/${SCENARIO}`;
+
+  it("admits a guest to the two reads their predecessors allowed", () => {
+    for (const path of [LIST, DETAIL, LEGACY_LIST, LEGACY_DETAIL]) {
+      expect(isGuestAllowedV1Request("GET", path)).toBe(true);
+    }
+  });
+
+  it("refuses a guest every WRITE on the canonical detail path", () => {
+    for (const method of ["PATCH", "PUT", "POST", "DELETE"]) {
+      expect(isGuestAllowedV1Request(method, DETAIL)).toBe(false);
+    }
+  });
+
+  it("keeps the rest of the study subtree guest-denied", () => {
+    for (const suffix of [
+      "/sessions",
+      "/sessions/sess_1",
+      "/metrics",
+      "/usage",
+      "/findings",
+      "/signals",
+      "/insights",
+      "/members",
+      "/rotate-link",
+      "/rebind",
+      "/guest-execution",
+    ]) {
+      expect(isGuestAllowedV1Request("GET", `${DETAIL}${suffix}`)).toBe(false);
+      expect(isGuestAllowedV1Request("POST", `${DETAIL}${suffix}`)).toBe(false);
+    }
+  });
+
+  it("keeps publishing and unpublishing guest-denied on both spellings", () => {
+    for (const path of [
+      `/projects/${PROJECT}/environments/env_1/study`,
+      `/projects/${PROJECT}/environments/env_1/scenario`,
+    ]) {
+      expect(isGuestAllowedV1Request("PUT", path)).toBe(false);
+      expect(isGuestAllowedV1Request("DELETE", path)).toBe(false);
+    }
   });
 });

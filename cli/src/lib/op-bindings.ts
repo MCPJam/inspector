@@ -57,28 +57,28 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // clean "not currently available for your organization" when the flag is off,
   // which is a better answer than a command that does not exist. Same shape as
   // `environments` and `images` for an org that lacks those.
-  list_journeys: { command: "cloud journeys list" },
-  list_journey_runs: { command: "cloud journeys runs" },
-  get_journey_run: { command: "cloud journeys status" },
-  list_journey_run_sessions: { command: "cloud journeys sessions" },
-  launch_journey_run: { command: "cloud journeys run" },
-  cancel_journey_run: { command: "cloud journeys cancel" },
+  list_goals: { command: "cloud goals list" },
+  list_goal_runs: { command: "cloud goals runs" },
+  get_goal_run: { command: "cloud goals status" },
+  list_goal_run_sessions: { command: "cloud goals sessions" },
+  launch_goal_run: { command: "cloud goals run" },
+  cancel_goal_run: { command: "cloud goals cancel" },
   // Authoring + insights, in `commands/swarms.ts` but hung off the same
   // `journeys` group so `journeys run` and `journeys create` are one surface
   // to the person typing them.
-  get_journey: { command: "cloud journeys get" },
-  create_journey: { command: "cloud journeys create" },
-  update_journey: { command: "cloud journeys update" },
-  archive_journey: { command: "cloud journeys archive" },
-  generate_journeys: { command: "cloud journeys generate" },
-  get_swarms_overview: { command: "cloud journeys overview" },
-  get_journey_run_scorecard: { command: "cloud journeys scorecard" },
-  list_swarm_findings: { command: "cloud journeys findings" },
-  dismiss_swarm_finding: { command: "cloud journeys dismiss-finding" },
-  undismiss_swarm_finding: { command: "cloud journeys undismiss-finding" },
-  get_wave_insights: { command: "cloud journeys insights" },
-  request_wave_insights: { command: "cloud journeys request-insights" },
-  cancel_wave_insights: { command: "cloud journeys cancel-insights" },
+  get_goal: { command: "cloud goals get" },
+  create_goal: { command: "cloud goals create" },
+  update_goal: { command: "cloud goals update" },
+  archive_goal: { command: "cloud goals archive" },
+  generate_goals: { command: "cloud goals generate" },
+  get_swarms_overview: { command: "cloud goals overview" },
+  get_goal_run_scorecard: { command: "cloud goals scorecard" },
+  list_swarm_findings: { command: "cloud goals findings" },
+  dismiss_swarm_finding: { command: "cloud goals dismiss-finding" },
+  undismiss_swarm_finding: { command: "cloud goals undismiss-finding" },
+  get_swarm_run_insights: { command: "cloud goals insights" },
+  request_swarm_run_insights: { command: "cloud goals request-insights" },
+  cancel_swarm_run_insights: { command: "cloud goals cancel-insights" },
 
   // ── Personas and swarm containers (Swarms authoring) ────────────────────
   list_personas: { command: "cloud personas list" },
@@ -132,37 +132,37 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
   // are bound under "Chat surfaces" below — they used to be a separate group
   // under the product's older name, and now share this one command.
-  publish_scenario: { command: "cloud scenarios publish" },
-  unpublish_scenario: { command: "cloud scenarios unpublish" },
+  publish_study: { command: "cloud studies publish" },
+  unpublish_study: { command: "cloud studies unpublish" },
   // ── User testing: everything you do with a scenario once it exists ──────
-  get_user_testing_scenario: { command: "cloud user-testing get" },
-  update_user_testing_scenario: { command: "cloud user-testing update" },
-  list_user_testing_sessions: { command: "cloud user-testing sessions" },
-  get_user_testing_session: { command: "cloud user-testing session" },
-  get_user_testing_metrics: { command: "cloud user-testing metrics" },
-  get_user_testing_usage: { command: "cloud user-testing usage" },
-  list_user_testing_findings: { command: "cloud user-testing findings" },
-  get_user_testing_signals: { command: "cloud user-testing signals" },
-  get_user_testing_insights: { command: "cloud user-testing insights" },
-  request_user_testing_insights: {
-    command: "cloud user-testing request-insights",
+  get_study: { command: "cloud studies get" },
+  update_study: { command: "cloud studies update" },
+  list_study_sessions: { command: "cloud studies sessions" },
+  get_study_session: { command: "cloud studies session" },
+  get_study_metrics: { command: "cloud studies metrics" },
+  get_study_usage: { command: "cloud studies usage" },
+  list_study_findings: { command: "cloud studies findings" },
+  get_study_signals: { command: "cloud studies signals" },
+  get_study_insights: { command: "cloud studies insights" },
+  request_study_insights: {
+    command: "cloud studies request-insights",
   },
-  cancel_user_testing_insights: {
-    command: "cloud user-testing cancel-insights",
+  cancel_study_insights: {
+    command: "cloud studies cancel-insights",
   },
-  dismiss_user_testing_finding: {
-    command: "cloud user-testing dismiss-finding",
+  dismiss_study_finding: {
+    command: "cloud studies dismiss-finding",
   },
-  undismiss_user_testing_finding: {
-    command: "cloud user-testing undismiss-finding",
+  undismiss_study_finding: {
+    command: "cloud studies undismiss-finding",
   },
-  set_user_testing_guest_execution: {
-    command: "cloud user-testing guest-execution",
+  set_study_guest_execution: {
+    command: "cloud studies guest-execution",
   },
-  rotate_user_testing_link: { command: "cloud user-testing rotate-link" },
-  upsert_user_testing_member: { command: "cloud user-testing invite" },
-  remove_user_testing_member: { command: "cloud user-testing remove-member" },
-  rebind_user_testing_scenario: { command: "cloud user-testing rebind" },
+  rotate_study_link: { command: "cloud studies rotate-link" },
+  upsert_study_member: { command: "cloud studies invite" },
+  remove_study_member: { command: "cloud studies remove-member" },
+  rebind_study: { command: "cloud studies rebind" },
   // Unified share. I5 shipped SDK/MCP/agent; there is no `cloud share`
   // command yet. Exclude until one exists — a binding with no Commander path
   // fails the tree test.
@@ -302,8 +302,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   reset_computer: { command: "cloud images reset" },
 
   // ── Chat surfaces ───────────────────────────────────────────────────────
-  list_scenarios: { command: "cloud scenarios list" },
-  get_scenario: { command: "cloud scenarios get" },
+  list_studies: { command: "cloud studies list" },
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
   send_chat_message: { command: "cloud sessions send" },
