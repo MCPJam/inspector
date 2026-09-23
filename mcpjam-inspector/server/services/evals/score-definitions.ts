@@ -6,13 +6,14 @@
  * — nothing here hashes by hand, because two producers of the same digest is
  * exactly how a `definitionHash` stops meaning anything.
  *
- * Three scorers, and the roles are the load-bearing part:
+ * Four scorers, and the roles are the load-bearing part:
  *
- *   | scorerId                  | deterministic | role         | threshold |
- *   |---------------------------|---------------|--------------|-----------|
- *   | `predicate:<criterionId>` | true          | check policy | 1         |
- *   | `toolCalls:match`         | true          | gating       | 1         |
- *   | `judge:goalCompletion`    | false         | from the run | resolved  |
+ *   | scorerId                   | deterministic | role         | threshold  |
+ *   |----------------------------|---------------|--------------|------------|
+ *   | `predicate:<criterionId>`  | true          | check policy | 1          |
+ *   | `toolCalls:match`          | true          | gating       | 1          |
+ *   | `judge:goalCompletion`     | false         | from the run | resolved   |
+ *   | `judge:rubricChecks:<key>` | false         | advisory     | per answer |
  *
  * THE JUDGE'S ROLE COMES FROM THE RUN, NOT FROM THIS FILE. It used to be
  * hard-coded advisory, which made a gating judge structurally powerless: a
@@ -58,6 +59,7 @@ import {
  */
 import {
   hostedCriterionId,
+  hostedRubricCheckScorerId,
   HOSTED_JUDGE_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
@@ -65,6 +67,8 @@ import {
 export {
   hostedCriterionId,
   hostedPredicateScorerId,
+  hostedRubricCheckScorerId,
+  HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
   HOSTED_TOOL_MATCH_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
@@ -216,6 +220,60 @@ export function hostedJudgeScoreDefinition(args: {
   };
 }
 
+/** Version of the hosted rubric-check projection (NOT the question template). */
+export const HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION = "1";
+
+/**
+ * The model every rubric-check DEFINITION names. The row names the rail that
+ * actually answered (Jev, or the fallback model when Jev could not be
+ * reached), outside `definitionHash`, so a fallback on one trial never forks a
+ * criterion's identity across the run.
+ */
+export const HOSTED_RUBRIC_CHECKS_MODEL = "typesafe-ai/jev";
+
+/** One asked rubric-check question, as the backend's verdict describes it. */
+export type HostedRubricCheckDefinitionInput = {
+  /** `c:<criterionId>` for a suite criterion, `q:<questionId>` if authored. */
+  key: string;
+  kind: "boolean" | "choice" | "score";
+  label: string;
+  /** Digest of the rendered question and its pass line, from the backend. */
+  contentDigest: string;
+  passThreshold: number;
+  templateVersion?: number;
+  templateHash?: string;
+};
+
+/**
+ * `judge:rubricChecks:<key>` — non-deterministic and ALWAYS advisory.
+ *
+ * The hash covers the question's content digest (its wording, options, levels
+ * and pass line), its kind and the question template. Rewording a criterion
+ * therefore mints a new definition under the same scorer id: a different
+ * question, honestly, and one a baseline comparison shows as removed and
+ * added. The settings page says so where the wording is edited.
+ */
+export function hostedRubricCheckScoreDefinition(
+  args: HostedRubricCheckDefinitionInput,
+): ScoreDefinition {
+  return {
+    scorerId: hostedRubricCheckScorerId(args.key),
+    idSource: "platform",
+    scorerVersion: HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION,
+    implementationHash: canonicalDigest({
+      kind: args.kind,
+      contentDigest: args.contentDigest,
+      templateVersion: args.templateVersion ?? null,
+      templateHash: args.templateHash ?? null,
+    }),
+    label: `rubric check: ${args.label}`,
+    deterministic: false,
+    passThreshold: args.passThreshold,
+    role: "advisory",
+    model: HOSTED_RUBRIC_CHECKS_MODEL,
+  };
+}
+
 /**
  * Emitted only when the agent-activity guard fired, so a normal run's
  * `evaluationConfigHash` stays unchanged.
@@ -262,6 +320,8 @@ export type HostedScoreDefinitionInputs = {
   };
   /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
   agentActivityFired?: boolean;
+  /** One per question the rubric-check pass asked (second pass only). */
+  rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
 };
 
 /**
@@ -291,6 +351,9 @@ export function buildHostedScoreDefinitions(
   }
   if (inputs.agentActivityFired) {
     definitions.push(hostedAgentActivityScoreDefinition());
+  }
+  for (const question of inputs.rubricChecks ?? []) {
+    definitions.push(hostedRubricCheckScoreDefinition(question));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

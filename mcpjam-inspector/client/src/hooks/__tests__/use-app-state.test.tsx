@@ -4,6 +4,7 @@ import { initialAppState } from "@/state/app-types";
 import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
 
 const {
+  oauthMembershipState,
   loadAppStateMock,
   saveAppStateMock,
   useProjectStateMock,
@@ -13,6 +14,7 @@ const {
   projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
+  oauthMembershipState: { allProjects: undefined as { _id: string }[] | undefined },
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
   useProjectStateMock: vi.fn(),
@@ -75,6 +77,11 @@ vi.mock("convex/react", () => ({
   // Tests don't exercise mcpProfile-driven behavior, so returning undefined
   // matches the "guest / no profile" path.
   useQuery: () => undefined,
+}));
+
+vi.mock("../useProjects", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../useProjects")>(),
+  useProjectQueries: () => oauthMembershipState,
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -166,6 +173,7 @@ describe("useAppState active organization recovery", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    oauthMembershipState.allProjects = undefined;
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
@@ -185,6 +193,27 @@ describe("useAppState active organization recovery", () => {
     });
     useProjectStateMock.mockReturnValue(projectStateValue);
     useServerStateMock.mockReturnValue(serverStateValue);
+  });
+
+  it("keeps OAuth membership IDs stable until the membership query changes", () => {
+    oauthMembershipState.allProjects = [{ _id: "project-1" }];
+    const props = {
+      currentUserId: "user-1", currentActorKey: "user-1",
+      hasOrganizations: false, isLoadingOrganizations: false, validOrganizations: [],
+      isWorkOsLoading: false,
+    };
+    const { rerender } = renderHook((options) => useAppState(options), { initialProps: props });
+    const first = useServerStateMock.mock.lastCall?.[0].oauthProjectIds;
+    expect(first).toEqual(new Set(["project-1"]));
+    rerender({ ...props, isWorkOsLoading: true });
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBe(first);
+    oauthMembershipState.allProjects = [{ _id: "project-2" }];
+    rerender(props);
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toEqual(new Set(["project-2"]));
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).not.toBe(first);
+    oauthMembershipState.allProjects = undefined;
+    rerender(props);
+    expect(useServerStateMock.mock.lastCall?.[0].oauthProjectIds).toBeUndefined();
   });
 
   it("recovers a stale stored org to the first owned organization", async () => {

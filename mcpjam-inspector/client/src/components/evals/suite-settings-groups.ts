@@ -54,6 +54,7 @@ export const NESTED_SETTING_KEYS: Record<
     "judge",
     "judgeRubric",
     "judgeGroundedness",
+    "judgeRubricChecks",
     "checks",
   ],
   environments: ["computerEnvironment"],
