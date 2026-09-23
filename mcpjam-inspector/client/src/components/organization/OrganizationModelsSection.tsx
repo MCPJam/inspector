@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { convexErrMessage } from "@/lib/convex-error";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
@@ -390,9 +391,7 @@ function OrganizationProviderSettings({
               setConfigDialogOpen(false);
               setConfigTarget(null);
             } catch (err) {
-              toast.error(
-                err instanceof Error ? err.message : "Failed to save provider",
-              );
+              toast.error(convexErrMessage(err, "Failed to save provider"));
             }
           }}
           onCancel={() => {
@@ -420,9 +419,7 @@ function OrganizationProviderSettings({
             setEditingCustom(null);
           } catch (err) {
             toast.error(
-              err instanceof Error
-                ? err.message
-                : "Failed to save custom provider",
+              convexErrMessage(err, "Failed to save custom provider"),
             );
           }
         }}

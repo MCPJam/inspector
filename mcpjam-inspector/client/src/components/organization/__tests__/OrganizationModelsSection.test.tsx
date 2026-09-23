@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrganizationModelsSection } from "../OrganizationModelsSection";
 
@@ -6,7 +6,15 @@ const mocks = vi.hoisted(() => ({
   pathname: "/organizations/org_1/models/usage",
   navigate: vi.fn(),
   useQuery: vi.fn(),
-  useAction: vi.fn(() => vi.fn(async () => ({ success: true }))),
+  useAction: vi.fn(),
+  toastError: vi.fn(),
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: {
+    success: vi.fn(),
+    error: mocks.toastError,
+  },
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
@@ -31,7 +39,11 @@ describe("OrganizationModelsSection", () => {
     mocks.pathname = "/organizations/org_1/models/usage";
     mocks.navigate.mockClear();
     mocks.useQuery.mockReset();
-    mocks.useAction.mockClear();
+    mocks.useAction.mockReset();
+    mocks.useAction.mockImplementation(() =>
+      vi.fn(async () => ({ success: true })),
+    );
+    mocks.toastError.mockClear();
     mocks.useQuery.mockImplementation((name: string, args: unknown) => {
       if (name === "organizationModelProviders:getVisibleConfig") {
         return { providers: [] };
@@ -132,6 +144,51 @@ describe("OrganizationModelsSection", () => {
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "organizationModelProviders:getUsageSummary",
       "skip",
+    );
+  });
+
+  // The backend puts the reason on `err.data`. `err.message` is the masked
+  // "Server Error" line, which tells the admin nothing about what to fix.
+  it("shows the server's reason when a save is refused", async () => {
+    const refusal = Object.assign(
+      new Error(
+        "[CONVEX A(organizationModelProviders:upsertProvider)] [Request ID: abc] Server Error",
+      ),
+      {
+        data: {
+          code: "INVALID_PROVIDER_CONFIG",
+          message: 'A custom provider named "Groq" already exists',
+        },
+      },
+    );
+    mocks.useAction.mockImplementation(() =>
+      vi.fn(async () => {
+        throw refusal;
+      }),
+    );
+    mocks.pathname = "/organizations/org_1/models";
+    render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Custom Provider" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("e.g. groq, together, vllm"), {
+      target: { value: "Groq" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.groq.com/openai/v1"),
+      { target: { value: "https://api.groq.com/openai/v1" } },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("llama-3.3-70b-versatile, mixtral-8x7b"),
+      { target: { value: "llama-3.3-70b-versatile" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        'A custom provider named "Groq" already exists',
+      ),
     );
   });
 });
