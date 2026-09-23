@@ -122,7 +122,10 @@ export function subsectionForSettingKey(
   }
   if (
     groupId === "grading" &&
-    (key === "judge" || key === "judgeRubric" || key === "judgeGroundedness")
+    (key === "judge" ||
+      key === "judgeRubric" ||
+      key === "judgeGroundedness" ||
+      key === "judgeRubricChecks")
   ) {
     return subsections.find((sub) => sub.id === "checks");
   }
