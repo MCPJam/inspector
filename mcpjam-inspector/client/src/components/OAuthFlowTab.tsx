@@ -117,17 +117,30 @@ const isHttpServer = (server?: ServerWithName) =>
 const needsReauthorization = (state: OAuthFlowState) =>
   state.currentStep === "token_request" && !state.authorizationCode?.trim();
 
+// Info logs the PKCE and authorization-URL steps emit under fixed ids. The
+// machine appends without deduplicating, so a rewind must drop them or the
+// spent URL is shown beside the fresh one under a duplicate React key.
+const REGENERATED_INFO_LOG_IDS = new Set(["pkce-generation", "auth-url"]);
+
 // Rewind to just before PKCE generation, so the retry runs the machine's own
 // steps and gets a fresh code_verifier, `state` and authorization URL instead
 // of reopening the spent transaction. The stale URL is cleared so a failed
 // regeneration can never reopen it. The rejection was already toasted;
-// clearing it lets the same error toast again if the retry fails the same way.
-const REAUTHORIZE_UPDATE: Partial<OAuthFlowState> = {
+// clearing it (and its lastResponse, which would otherwise be reported as the
+// cause of a regeneration failure) lets the same error toast again if the
+// retry fails the same way.
+const buildReauthorizeUpdate = (
+  state: OAuthFlowState,
+): Partial<OAuthFlowState> => ({
   currentStep: "received_client_credentials",
   authorizationUrl: undefined,
   authorizationResponseIss: undefined,
   error: undefined,
-};
+  lastResponse: undefined,
+  infoLogs: state.infoLogs?.filter(
+    (log) => !REGENERATED_INFO_LOG_IDS.has(log.id),
+  ),
+});
 
 /**
  * Honest post-step result for the advanceOauthFlow command. Never echoes the
@@ -229,6 +242,8 @@ export const OAuthFlowTab = ({
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // Remount key for the auth modal, bumped per regenerated authorization request.
+  const [authModalAttempt, setAuthModalAttempt] = useState(0);
   // Continue is in flight. Purely presentational — the flow state machine
   // remains the source of truth for where the flow actually is.
   const [isAdvancing, setIsAdvancing] = useState(false);
@@ -453,7 +468,7 @@ export const OAuthFlowTab = ({
   // PKCE and authorization-URL steps. Resolves true only when a fresh URL is
   // ready and neither step failed; on false the flow state carries the error.
   const regenerateAuthorizationRequest = useCallback(async () => {
-    updateOAuthFlowState(REAUTHORIZE_UPDATE);
+    updateOAuthFlowState(buildReauthorizeUpdate(oauthFlowStateRef.current));
     await proceedToNextStep();
     if (
       oauthFlowStateRef.current.currentStep !== "generate_pkce_parameters" ||
@@ -463,11 +478,17 @@ export const OAuthFlowTab = ({
     }
     await proceedToNextStep();
     const after = oauthFlowStateRef.current;
-    return (
+    const ready =
       after.currentStep === "authorization_request" &&
       Boolean(after.authorizationUrl) &&
-      !after.error
-    );
+      !after.error;
+    if (ready) {
+      // The modal opens its popup only on an `open` false->true transition,
+      // and on the Electron fallback path it can still be open from the
+      // rejected attempt. A new key remounts it, so the popup opens either way.
+      setAuthModalAttempt((attempt) => attempt + 1);
+    }
+    return ready;
   }, [proceedToNextStep, updateOAuthFlowState]);
 
   const handleAdvance = useCallback(async () => {
@@ -691,6 +712,7 @@ export const OAuthFlowTab = ({
           .length,
         hasAccessToken: Boolean(view.accessToken),
         hasRefreshToken: Boolean(view.refreshToken),
+        awaitingReauthorization: needsReauthorization(view),
         serverConnected: isServerConnected,
         readyToApplyTokens: Boolean(canApplyTokens),
         steps: hasProfile
@@ -1044,6 +1066,7 @@ export const OAuthFlowTab = ({
 
       {oauthFlowState.authorizationUrl && (
         <OAuthAuthorizationModal
+          key={authModalAttempt}
           open={isAuthModalOpen}
           onOpenChange={setIsAuthModalOpen}
           authorizationUrl={oauthFlowState.authorizationUrl}
