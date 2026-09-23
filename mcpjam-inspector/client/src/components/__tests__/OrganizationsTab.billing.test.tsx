@@ -553,6 +553,25 @@ describe("OrganizationsTab billing", () => {
     expect(
       proColumn.queryByRole("button", { name: "Downgrade" }),
     ).not.toBeInTheDocument();
+
+    const original = window.location;
+    const stubbedLocation = { href: "" };
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: stubbedLocation,
+    });
+    try {
+      fireEvent.click(teamContact);
+      expect(stubbedLocation.href).toBe("https://www.mcpjam.com/contact");
+      stubbedLocation.href = "";
+      fireEvent.click(proContact);
+      expect(stubbedLocation.href).toBe("https://www.mcpjam.com/contact");
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: original,
+      });
+    }
   });
 
   it("offers the cadence change rather than calling the other cadence current", () => {
