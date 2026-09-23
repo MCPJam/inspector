@@ -460,7 +460,10 @@ function FullWidthRowCells({
       <TableCell className={cn(className, "relative", POPULAR_COLUMN_BORDER)}>
         <span
           aria-hidden
-          className={cn("pointer-events-none absolute inset-0", POPULAR_COLUMN_TINT)}
+          className={cn(
+            "pointer-events-none absolute inset-0",
+            POPULAR_COLUMN_TINT,
+          )}
         />
       </TableCell>
       {trailing > 0 ? (
@@ -482,7 +485,7 @@ function V2ComparisonRow({
   return (
     <>
       <TableRow className="border-b hover:bg-transparent">
-        <TableCell className="sticky left-0 z-10 bg-card p-0 text-base font-normal">
+        <TableCell className="sticky left-0 z-10 whitespace-normal bg-card p-0 text-base font-normal">
           <button
             type="button"
             className="flex min-h-[62px] w-full items-center gap-3 rounded-sm px-3 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -504,7 +507,7 @@ function V2ComparisonRow({
           <TableCell
             key={plan}
             className={cn(
-              "px-3 py-4 text-center align-middle",
+              "whitespace-normal px-3 py-4 text-center align-middle",
               plan === POPULAR_PLAN && POPULAR_COLUMN_CLASS,
             )}
           >
@@ -513,7 +516,10 @@ function V2ComparisonRow({
         ))}
       </TableRow>
       <TableRow hidden={!expanded} className="border-b hover:bg-transparent">
-        <FullWidthRowCells plans={plans} className="px-10 py-4">
+        <FullWidthRowCells
+          plans={plans}
+          className="whitespace-normal px-10 py-4"
+        >
           <p
             id={detailId}
             className="max-w-2xl text-sm leading-relaxed text-muted-foreground"
@@ -1572,7 +1578,7 @@ export function OrganizationBillingSection({
                                   key={`${section.title}-${rowIndex}-${row.label}`}
                                   className="border-b"
                                 >
-                                  <TableCell className="sticky left-0 z-10 max-w-[14rem] bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
+                                  <TableCell className="sticky left-0 z-10 max-w-[14rem] whitespace-normal bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
                                     <ComparePlanRowLabel
                                       label={row.label}
                                       tooltipKey={row.tooltipKey}

@@ -447,6 +447,44 @@ describe("OrganizationsTab billing", () => {
         name: "Change plan",
       }),
     ).toBeEnabled();
+    expect(screen.getByRole("table")).toHaveClass("table-fixed");
+    const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
+    expect(within(ssoRow).getAllByRole("cell")[2]).toHaveClass(
+      "border-x",
+      "border-primary/35",
+      "bg-primary/[0.06]",
+    );
+  });
+
+  it("spans section headers across the whole table when Team is not offered", () => {
+    const legacy = createPlanCatalog();
+    const catalog = {
+      ...legacy,
+      plans: {
+        free: { ...legacy.plans.free, catalogPlanId: "free" },
+        pro: {
+          ...legacy.plans.team,
+          plan: "pro",
+          displayName: "Pro",
+          billingModel: "flat",
+          catalogPlanId: "pro",
+          checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+        },
+        enterprise: legacy.plans.enterprise,
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        planCatalog: catalog,
+      }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    const headerCells = within(
+      screen.getByRole("row", { name: "Usage" }),
+    ).getAllByRole("cell") as HTMLTableCellElement[];
+    expect(headerCells).toHaveLength(1);
+    expect(headerCells[0].colSpan).toBe(offeredPlans(catalog).length + 1);
   });
 
   it.each(["upgrade", "downgrade"] as const)(
@@ -575,13 +613,14 @@ describe("OrganizationsTab billing", () => {
     // miscounted split shows up as a malformed row rather than a failure.
     const usageHeaderCells = within(
       screen.getByRole("row", { name: "Usage" }),
-    ).getAllByRole("cell");
-    expect(
-      usageHeaderCells.reduce(
-        (columns, cell) => columns + (cell as HTMLTableCellElement).colSpan,
-        0,
-      ),
-    ).toBe(offeredPlans(catalog).length + 1);
+    ).getAllByRole("cell") as HTMLTableCellElement[];
+    const plans = offeredPlans(catalog);
+    expect(usageHeaderCells).toHaveLength(3);
+    expect(usageHeaderCells[0].colSpan).toBe(plans.indexOf("team") + 1);
+    expect(usageHeaderCells[1]).not.toHaveAttribute("colspan");
+    expect(usageHeaderCells[2].colSpan).toBe(
+      plans.length - 1 - plans.indexOf("team"),
+    );
     expect(
       within(getPlanColumn("Team")).queryByText("Legacy"),
     ).not.toBeInTheDocument();
