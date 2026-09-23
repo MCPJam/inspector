@@ -11,6 +11,11 @@ import { sanitizeTraceErrorMessage } from "../trace-redaction.js";
 const MAX_REASON_CHARS = 300;
 
 const AUTHENTICATED_REQUEST_FAILURE_PREFIX = "Authenticated request failed";
+const TOKEN_REQUEST_FAILURE_PREFIX = "Token request failed";
+const RESPONSE_FAILURE_PREFIXES = [
+  TOKEN_REQUEST_FAILURE_PREFIX,
+  AUTHENTICATED_REQUEST_FAILURE_PREFIX,
+];
 
 /**
  * Whether a debugger step error is the server under test rejecting the
@@ -225,5 +230,37 @@ export function describeAuthenticatedRequestFailure(
  * the endpoint answered in a non-RFC-6749 shape.
  */
 export function describeTokenRequestFailure(response: FailedResponse): string {
-  return describeResponseFailure("Token request failed", response);
+  return describeResponseFailure(TOKEN_REQUEST_FAILURE_PREFIX, response);
+}
+
+/**
+ * The stable part of a `describeResponseFailure` message: its label, the
+ * status and — when the reason starts with one — the OAuth `error` code.
+ *
+ * The rest is chosen by the server under test. The status text varies by
+ * server ("Bad Request", "", a custom phrase), and the reason carries its free-
+ * form `error_description`, which can hold a client id or a per-request trace
+ * id. Keyed on the whole message, one finding — `invalid_grant`, say — would
+ * open a new issue for every server's wording and every request. Keyed on
+ * this, it opens one.
+ *
+ * Parses the format `describeResponseFailure` writes, in the same module, so
+ * the two cannot drift; `undefined` for any message that is not one of them.
+ * Degrades rather than guesses: a reason that does not open with a
+ * `snake_case` code contributes nothing, leaving `label: status`.
+ */
+export function responseFailureFindingKey(message: string): string | undefined {
+  for (const prefix of RESPONSE_FAILURE_PREFIXES) {
+    if (!message.startsWith(`${prefix}: `)) continue;
+    const rest = message.slice(prefix.length + 2);
+    const status = /^\d{3}/.exec(rest)?.[0];
+    if (!status) return prefix;
+    const reasonStart = rest.indexOf(": ", status.length);
+    const code =
+      reasonStart === -1
+        ? undefined
+        : /^[a-z][a-z0-9_]*(?=:|$)/.exec(rest.slice(reasonStart + 2))?.[0];
+    return code ? `${prefix}: ${status}: ${code}` : `${prefix}: ${status}`;
+  }
+  return undefined;
 }

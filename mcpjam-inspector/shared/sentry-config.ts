@@ -268,12 +268,27 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
  * fresh catch-all issue — INSPECTOR-CLIENT-2F9 is the same bucket for the
  * previous build — so every deploy re-alerts on nothing new.
  *
- * Keyed on the step and the message's FIRST SENTENCE. The machines append an
- * advisory to some failures only when a fallback exists ("… (401). Configure a
- * pre-registered client or enable DCR …"), and those are the same finding with
- * and without the hint. Cutting at the first ". " keeps them together; a
- * message with no sentence break is used whole. Coarser at worst, never merged
- * across different failures the way the stack grouping is.
+ * Keyed on the step and `extra.finding`, which the reporting adapter computes
+ * with the SDK's `stepFailureFindingKey` — not on the message text, which is
+ * wrong in both directions:
+ *
+ * - Cut at its first sentence, it MERGES different failures: every era's
+ *   machine reports `Could not discover authorization server metadata. Last
+ *   error: …`, with the cause after the period.
+ * - Whole, it SPLITS one failure: the server under test chooses part of it
+ *   (status text, free-form `error_description`, URLs, ids), so one finding
+ *   would open a new issue per server wording and per request, unbounded.
+ *
+ * The key strips exactly the known registration advisory, reduces response
+ * failures to label, status and OAuth `error` code, and otherwise keeps the
+ * full cause with URLs and ids replaced and the length capped. It lives in the
+ * SDK because the SDK writes these messages; computed here, from text alone,
+ * it would drift from them. (The first version of this rule cut at the first
+ * sentence, and claimed that never merged different failures. It did.)
+ *
+ * A report without `finding` — none should exist, since the adapter and this
+ * rule ship together — falls back to its message capped at the same length,
+ * which splits rather than merges.
  *
  * `environment` for the same reason `groupDomMutationConflicts` carries it:
  * stack grouping kept dev and prod apart only by accident of their bundles, and
@@ -287,9 +302,11 @@ export function groupOAuthDebuggerStepFailures<T extends FingerprintableEvent>(
 ): T {
   if (event.tags?.source !== "oauth_debugger_step") return event;
 
-  const value = event.exception?.values?.[0]?.value ?? "";
-  const sentenceEnd = value.indexOf(". ");
-  const finding = sentenceEnd === -1 ? value : value.slice(0, sentenceEnd + 1);
+  const reported = event.extra?.finding;
+  const finding =
+    typeof reported === "string" && reported !== ""
+      ? reported
+      : (event.exception?.values?.[0]?.value ?? "").slice(0, 160);
   const step = event.extra?.step;
 
   event.fingerprint = [

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stepFailureFindingKey } from "@mcpjam/sdk/browser";
 import {
   BROWSER_IGNORE_ERRORS,
   buildClientSentryConfig,
@@ -412,18 +413,30 @@ describe("build surfaces", () => {
 });
 
 describe("groupOAuthDebuggerStepFailures", () => {
+  // Built the way the reporting adapter builds them: `extra.finding` from the
+  // real SDK key. So these exercise the composition that ships — SDK key plus
+  // this rule — not the rule against hand-picked keys.
   function stepEvent(
     value: string,
     {
       step = "request_client_registration",
       environment = "prod",
       source = "oauth_debugger_step",
-    }: { step?: string; environment?: string; source?: string } = {},
+      withFinding = true,
+    }: {
+      step?: string;
+      environment?: string;
+      source?: string;
+      withFinding?: boolean;
+    } = {},
   ): FingerprintableEvent {
     return {
       environment,
       tags: { source },
-      extra: { step },
+      extra: {
+        step,
+        ...(withFinding ? { finding: stepFailureFindingKey(value) } : {}),
+      },
       exception: { values: [{ type: "Error", value }] },
     };
   }
@@ -433,7 +446,6 @@ describe("groupOAuthDebuggerStepFailures", () => {
 
   // INSPECTOR-CLIENT-2FE: nine events titled "Dynamic Client Registration
   // failed (400)" that were five unrelated findings, one stack between them.
-  // Each of those must now get its own issue.
   it("splits the findings that shared one stack", () => {
     const findings = [
       stepEvent("Dynamic Client Registration failed (400)."),
@@ -454,20 +466,18 @@ describe("groupOAuthDebuggerStepFailures", () => {
     expect(new Set(findings).size).toBe(5);
   });
 
-  it("keeps a failure together with and without the fallback advisory", () => {
-    // The machines append the hint only when a fallback exists, so these are
-    // one finding.
+  it("keeps a registration failure together with and without the advisory", () => {
     const withHint = fingerprint(
       stepEvent(
         "Dynamic Client Registration failed (401). Configure a pre-registered client or enable DCR on the authorization server.",
       ),
     );
-    // Pinned to a value, not only to each other: two `undefined`s are equal
-    // too, so equality alone would pass with the rule switched off.
+    // Pinned to a value, not only to its twin: two absent fingerprints would
+    // compare equal too.
     expect(withHint).toEqual([
       "oauth-debugger-step",
       "request_client_registration",
-      "Dynamic Client Registration failed (401).",
+      "Dynamic Client Registration failed (401)",
       "prod",
     ]);
     expect(withHint).toEqual(
@@ -475,21 +485,29 @@ describe("groupOAuthDebuggerStepFailures", () => {
     );
   });
 
-  it("uses a message with no sentence break whole", () => {
-    // "OAuth 2.0" has a dot, but not a sentence break — it must not be cut.
-    expect(
-      fingerprint(
-        stepEvent(
-          "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
-          { step: "request_resource_metadata" },
-        ),
-      ),
-    ).toEqual([
-      "oauth-debugger-step",
-      "request_resource_metadata",
-      "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
-      "prod",
-    ]);
+  // Review of #5473: the cause of a discovery failure comes after the first
+  // period. The first version cut there and merged all of these.
+  it("keeps discovery failures with different causes apart", () => {
+    const prefix = "Could not discover authorization server metadata. Last error:";
+    const keys = [
+      `${prefix} undefined`,
+      `${prefix} HTTP 500 from https://auth.example.com/.well-known/oauth-authorization-server`,
+      `${prefix} Failed to fetch`,
+    ].map((value) =>
+      JSON.stringify(fingerprint(stepEvent(value, { step: "request_authorization_server_metadata" }))),
+    );
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  // Review of #5473: the server writes part of a token failure, so keyed on
+  // the whole text one finding opened an issue per server wording.
+  it("keeps one token failure together across servers' wording", () => {
+    const keys = [
+      "Token request failed: 400 Bad Request: invalid_grant: Authorization code not found or expired",
+      "Token request failed: 400: invalid_grant: code already used",
+      "Token request failed: 400 Client Error: invalid_grant",
+    ].map((value) => JSON.stringify(fingerprint(stepEvent(value, { step: "token_request" }))));
+    expect(new Set(keys).size).toBe(1);
   });
 
   it("separates the same finding on different steps", () => {
@@ -498,18 +516,17 @@ describe("groupOAuthDebuggerStepFailures", () => {
     );
   });
 
-  // Stack grouping kept dev and prod apart only because their bundles differ;
-  // a message-keyed fingerprint must keep them apart on purpose.
   it("keeps environments apart", () => {
     expect(fingerprint(stepEvent("boom", { environment: "prod" }))).not.toEqual(
       fingerprint(stepEvent("boom", { environment: "dev" })),
     );
   });
 
-  it("files a report with no step under a stable bucket, not a crash", () => {
+  it("files a report with no step under a stable bucket", () => {
     const event: FingerprintableEvent = {
       environment: "prod",
       tags: { source: "oauth_debugger_step" },
+      extra: { finding: "boom" },
       exception: { values: [{ type: "Error", value: "boom" }] },
     };
     expect(groupOAuthDebuggerStepFailures(event).fingerprint).toEqual([
@@ -520,8 +537,15 @@ describe("groupOAuthDebuggerStepFailures", () => {
     ]);
   });
 
-  // `oauth_debugger_advance` is a genuine exception whose stack is the useful
-  // part, and everything else is none of this rule's business.
+  it("falls back to the capped message, never a first-sentence cut", () => {
+    // No `finding` should reach here — the adapter and this rule ship
+    // together — but if one does, it must split rather than merge.
+    const value = `Could not discover authorization server metadata. Last error: ${"x".repeat(300)}`;
+    const [, , finding] = fingerprint(stepEvent(value, { withFinding: false }))!;
+    expect(finding).toBe(value.slice(0, 160));
+    expect(finding).toContain("Last error:");
+  });
+
   it.each(["oauth_debugger_advance", "react_boundary", undefined])(
     "leaves source %j on default grouping",
     (source) => {

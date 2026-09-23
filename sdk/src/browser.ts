@@ -492,6 +492,7 @@ export {
 // lets browser hosts keep a target server's authenticated-request rejection in
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
+export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
