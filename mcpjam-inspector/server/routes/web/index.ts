@@ -35,7 +35,6 @@ import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
 import score from "./score.js";
 import bench from "./bench.js";
-import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
@@ -117,7 +116,6 @@ for (const memberGated of [
 ]) {
   web.use(memberGated, bearerAuthMiddleware, guestRateLimitMiddleware);
 }
-web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Org-registry derivation carries a per-IP ceiling on top of the per-guest
 // one. The route consumes that bucket only after it asks the backend whether
 // this caller may add to the project's organization and before any egress.
@@ -237,7 +235,6 @@ web.route("/server-connections", serverConnectionsWeb);
 web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
-web.route("/checks", checks);
 web.route("/mrtr", mrtrContinuation);
 web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in
