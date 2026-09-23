@@ -948,6 +948,14 @@ it("describes the credit exhaustion heading with plan-appropriate recovery guida
   expect(result.title).toBe("Out of MCPJam credits");
 });
 
+it("classifies the shortfall even when composed copy also says out of credits", () => {
+  expect(
+    describeError(
+      "Out of MCPJam credits. This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    ).slug,
+  ).toBe("provider/mcpjam_limit_insufficient");
+});
+
 it("does not call a partial balance used up when the request needs more than is left", () => {
   const result = describeError(
     JSON.stringify({

@@ -55,14 +55,29 @@ const intentForAuth = (
 };
 
 // A shortfall leaves credits a cheaper model can still spend, so it must not
-// gray out the MCPJam models the dialog tells the user to try.
-const latchFor = (input: MCPJamLimitNotifyInput) =>
-  input.shortfall
-    ? {}
-    : {
-        outOfCreditsHit: true,
-        outOfCreditsOrganizationId: input.organizationId ?? null,
-      };
+// gray out the MCPJam models the dialog tells the user to try. An earlier
+// exhaustion latch for the same organization is stale by then and is cleared;
+// another organization's latch is left alone.
+const latchFor = (
+  state: Pick<
+    MCPJamLimitDialogState,
+    "outOfCreditsHit" | "outOfCreditsOrganizationId"
+  >,
+  input: MCPJamLimitNotifyInput,
+) => {
+  if (!input.shortfall) {
+    return {
+      outOfCreditsHit: true,
+      outOfCreditsOrganizationId: input.organizationId ?? null,
+    };
+  }
+  const latchIsForAnotherOrg =
+    !!input.organizationId &&
+    !!state.outOfCreditsOrganizationId &&
+    state.outOfCreditsOrganizationId !== input.organizationId;
+  if (!state.outOfCreditsHit || latchIsForAnotherOrg) return {};
+  return { outOfCreditsHit: false, outOfCreditsOrganizationId: null };
+};
 
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
@@ -88,7 +103,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           return {
             notifiedRunIds,
             hasPendingLimit: true,
-            ...latchFor(input),
+            ...latchFor(state, input),
             pendingInput: input,
           };
         }
@@ -97,13 +112,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           return {
             notifiedRunIds,
             hasPendingLimit: false,
-            ...latchFor(input),
+            ...latchFor(state, input),
           };
         }
         return {
           notifiedRunIds,
           hasPendingLimit: false,
-          ...latchFor(input),
+          ...latchFor(state, input),
           isOpen: true,
           intent,
           organizationId: input.organizationId ?? null,
@@ -126,7 +141,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         return {
           authStatus,
           hasPendingLimit: false,
-          ...latchFor(input),
+          ...latchFor(state, input),
           isOpen: true,
           intent,
           organizationId: input.organizationId ?? null,

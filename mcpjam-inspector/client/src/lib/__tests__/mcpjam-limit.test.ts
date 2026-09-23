@@ -509,6 +509,62 @@ describe("a balance below the request estimate", () => {
     expect(state.outOfCreditsHit).toBe(true);
   });
 
+  it.each([
+    ["an empty balance", 0, 30],
+    ["a requirement the balance covers", 23, 23],
+    ["a fractional count", 23.5, 30],
+  ])(
+    "treats %s as exhaustion, not a shortfall",
+    (_label, creditsRemaining, creditsRequired) => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        details: {
+          refusalReason: "insufficient_for_request",
+          creditsRemaining,
+          creditsRequired,
+        },
+      });
+      const state = useMCPJamLimitDialogStore.getState();
+      expect(state.shortfall).toBeNull();
+      expect(state.outOfCreditsHit).toBe(true);
+    },
+  );
+
+  it("unlocks the models an earlier exhaustion locked for the same org", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    notifyMCPJamLimitError({
+      code: "user_rate_limit",
+      organizationId: "org_a",
+    });
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(true);
+
+    notifyMCPJamLimitError({
+      message: INSUFFICIENT_BODY,
+      organizationId: "org_a",
+    });
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.outOfCreditsHit).toBe(false);
+    expect(state.outOfCreditsOrganizationId).toBeNull();
+  });
+
+  it("leaves another org's exhaustion latch in place", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    notifyMCPJamLimitError({
+      code: "user_rate_limit",
+      organizationId: "org_a",
+    });
+
+    notifyMCPJamLimitError({
+      message: INSUFFICIENT_BODY,
+      organizationId: "org_b",
+    });
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.outOfCreditsHit).toBe(true);
+    expect(state.outOfCreditsOrganizationId).toBe("org_a");
+  });
+
   it("does not call the balance used up in the inline line", () => {
     const described = describeMCPJamLimitMessage(INSUFFICIENT_BODY);
     expect(described).toBe(

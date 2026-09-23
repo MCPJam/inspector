@@ -581,6 +581,11 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  // Composed copy can put "Out of MCPJam credits" beside the backend's
+  // shortfall sentence; the balance is not empty, so the shortfall wins.
+  if (MCPJAM_INSUFFICIENT_CREDITS_PATTERN.test(message)) {
+    return { slug: "provider/mcpjam_limit_insufficient" };
+  }
   if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
 
   // Same shape of problem as the bearer gate above, and the same surface: the

@@ -658,10 +658,12 @@ A frontier model was selected but the request requires a signed-in account.
 
 `provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
 
-MCPJam refused the call before it reached a provider, because the account's own
-allowance is spent. Which allowance depends on the plan: free accounts share a
-daily bucket per organization, paid plans spend a monthly allowance that renews
-with the billing period.
+MCPJam refused the call before it reached a provider. For the daily, monthly,
+and general codes, the account's own allowance is spent.
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. Which allowance depends on the plan: free accounts
+share a daily bucket per organization, paid plans spend a monthly allowance that
+renews with the billing period.
 
 `provider/mcpjam_limit_insufficient` means the balance is not empty but is below
 what the request could cost. MCPJam reserves a request's worst-case cost before

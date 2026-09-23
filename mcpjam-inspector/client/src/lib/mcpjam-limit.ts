@@ -179,9 +179,11 @@ const findShortfallDeep = (
   if (
     item.refusalReason === "insufficient_for_request" &&
     typeof creditsRemaining === "number" &&
-    Number.isInteger(creditsRemaining) &&
+    Number.isSafeInteger(creditsRemaining) &&
+    creditsRemaining > 0 &&
     typeof creditsRequired === "number" &&
-    Number.isInteger(creditsRequired)
+    Number.isSafeInteger(creditsRequired) &&
+    creditsRequired > creditsRemaining
   ) {
     return { creditsRemaining, creditsRequired };
   }
