@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Circle,
   CircleDashed,
+  CircleHelp,
   Loader2,
   MinusCircle,
   XCircle,
@@ -51,6 +52,14 @@ export function resultGlyph(
         Icon: Circle,
         cls: "text-muted-foreground",
         label: "Missed · advisory",
+      };
+    case "uncertain":
+      // Neither a pass nor a miss: the classifier's answer sat too close to
+      // even odds to call. The value beside it says how close.
+      return {
+        Icon: CircleHelp,
+        cls: "text-muted-foreground",
+        label: "Uncertain",
       };
     case "error":
       return {
@@ -122,7 +131,9 @@ export function TrialScorecardRow({
   onSyncStep?: (stepId: string | null) => void;
   layout?: "row" | "report";
 }) {
-  const isJudge = row.provenance === "judge";
+  // Rubric checks are judge output too: a blind label taken beside them is
+  // not blind, so they are withheld with the goal judge's own row.
+  const isJudge = row.provenance === "judge" || row.provenance === "rubricCheck";
   const withheld = isJudge && hideJudgeResult;
   const reason = withheld
     ? undefined

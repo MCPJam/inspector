@@ -10,6 +10,12 @@
  * a second implementation) with whichever advisory evidence has since
  * arrived attached, and posts only the derivation-owned keys.
  *
+ * RUBRIC CHECKS ride goal-completion's channel. The backend writes
+ * `metadata.rubricChecksVerdict` from the same job, on the same trials, under
+ * the same `goalCompletionJobId`; this pass turns it into advisory score rows
+ * beside the judge's own. It feeds no stage evidence: rubric checks describe a
+ * trial, they do not decide `userValue`.
+ *
  * TWO judges feed this ONE pass: goal-completion's `judgeVerdict`
  * (`StageEvidence.judgeEvidence`, tier-2 input to `userValue`) and D7's
  * `metadataAttributionVerdict` (`StageEvidence.metadataAttribution`, tier-2
@@ -67,7 +73,10 @@ import {
   type JudgeSecondPassIterationRow,
   type JudgeSecondPassRunRow,
 } from "./judge-stage-backend.js";
-import { buildHostedScoreContract } from "./score-rows.js";
+import {
+  buildHostedScoreContract,
+  type HostedRubricChecksVerdictLike,
+} from "./score-rows.js";
 import { evaluateMultiTurnResults } from "./types.js";
 
 /** Iteration statuses that can still receive a derivation. */
@@ -278,6 +287,22 @@ function readJudgeVerdict(
 }
 
 /**
+ * `metadata.rubricChecksVerdict`, whichever job stamped it — the same rule the
+ * goal verdict follows. The backend merges score rows by `scorerId` and
+ * REPLACES `evaluationConfig` wholesale, so a verdict this pass skipped would
+ * leave the rows an earlier pass posted from it without their definitions:
+ * unjoinable, which is worse than stale.
+ */
+export function readRubricChecksVerdict(
+  metadata: Record<string, unknown> | undefined,
+): HostedRubricChecksVerdictLike | undefined {
+  const verdict = metadata?.rubricChecksVerdict;
+  return typeof verdict === "object" && verdict !== null
+    ? (verdict as HostedRubricChecksVerdictLike)
+    : undefined;
+}
+
+/**
  * Project `metadata.judgeVerdict` onto the analyzer's tier-2 evidence.
  *
  * A verdict the judge could not produce becomes `error`, NOT a failure: "the
@@ -475,6 +500,8 @@ export function deriveIterationPayload(args: {
   mode: GradingEngineMode;
   judgeVerdict: JudgeVerdictMetadata | undefined;
   attributionVerdict: MetadataAttributionVerdictMetadata | undefined;
+  /** Goal-completion channel only: its advisory rows ride this job's write. */
+  rubricChecksVerdict?: HostedRubricChecksVerdictLike;
 }): { stage: Record<string, unknown>; scores?: unknown[]; config?: unknown } {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
@@ -611,6 +638,9 @@ export function deriveIterationPayload(args: {
     ...(storedAgentActivity ? { agentActivity: storedAgentActivity } : {}),
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
+      : {}),
+    ...(args.rubricChecksVerdict
+      ? { rubricChecksVerdict: args.rubricChecksVerdict }
       : {}),
   });
   return scores.length > 0
@@ -816,11 +846,13 @@ export async function runJudgeSecondPass(
       goalCompletionJobId !== undefined &&
       !goalCompletionFailed
     ) {
+      const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
       const { stage, scores, config } = deriveIterationPayload({
         iteration,
         mode,
         judgeVerdict,
         attributionVerdict: undefined,
+        ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
       });
       if (Object.keys(stage).length > 0) {
         const fields = stageFields(stage);

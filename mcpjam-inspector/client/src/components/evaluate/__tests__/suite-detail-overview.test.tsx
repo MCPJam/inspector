@@ -12,6 +12,7 @@ import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
   EvalIteration,
@@ -160,7 +161,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={runs}
         runsLoading={false}
-        allIterations={iterations}
+        metricsByRun={metricsByRunFromIterations(iterations)}
         hostNamesById={
           new Map([
             ["host-1", "Claude"],
@@ -263,7 +264,7 @@ describe("SuiteDetailOverview", () => {
           }),
         ]}
         runsLoading={false}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           makeIteration({
             _id: "i1",
             suiteRunId: "run-1",
@@ -278,7 +279,7 @@ describe("SuiteDetailOverview", () => {
             startedAt: 1_600_000_000_000,
             updatedAt: 1_600_000_004_000,
           }),
-        ]}
+        ])}
         hostNamesById={hostNamesById}
         onRerun={onRerun}
         onEditSuite={onEditSuite}
@@ -354,7 +355,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -411,7 +412,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -446,7 +447,9 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[makeRun({ _id: "run-1" })]}
         runsLoading={false}
-        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        metricsByRun={metricsByRunFromIterations([
+          makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+        ])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -472,7 +475,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1", namedHostId: undefined })]}
         runsLoading={false}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           makeIteration({
             _id: "i1",
             suiteRunId: "run-1",
@@ -484,7 +487,7 @@ describe("SuiteDetailOverview", () => {
               expectedToolCalls: [],
             },
           }),
-        ]}
+        ])}
         hostNamesById={new Map()}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -516,11 +519,13 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
         runsLoading={false}
-        allIterations={runs.map((run, index) =>
-          makeIteration({
-            _id: `i-${index}`,
-            suiteRunId: run._id,
-          }),
+        metricsByRun={metricsByRunFromIterations(
+          runs.map((run, index) =>
+            makeIteration({
+              _id: `i-${index}`,
+              suiteRunId: run._id,
+            }),
+          ),
         )}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
@@ -545,7 +550,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -574,7 +579,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -610,7 +615,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -642,7 +647,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -668,7 +673,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -704,7 +709,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -741,7 +746,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
         runsLoading={false}
-        allIterations={iterations}
+        metricsByRun={metricsByRunFromIterations(iterations)}
         hostNamesById={twoClientHosts}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -809,7 +814,7 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
       cases={[]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={hostNamesById}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -876,7 +881,7 @@ it("gives imported drafts their own surface with a way back to the suite", async
       cases={[makeCase({ _id: "case-1" })]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={hostNamesById}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -915,7 +920,9 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1" })]}
         runsLoading={false}
-        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        metricsByRun={metricsByRunFromIterations([
+          makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+        ])}
         hostNamesById={hostNamesById}
         onRerun={onRerun}
         onEditSuite={onEditSuite}
@@ -977,7 +984,9 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1" })]}
         runsLoading={false}
-        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        metricsByRun={metricsByRunFromIterations([
+          makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+        ])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -1004,7 +1013,7 @@ it("offers Markdown import in populated editable suites", async () => {
       cases={[makeCase({ _id: "case-import" })]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1030,7 +1039,7 @@ it("opens SDK setup from the suite header", async () => {
       cases={[]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1061,7 +1070,7 @@ it("deletes a test case from its row after confirming", async () => {
       ]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1091,7 +1100,7 @@ it("hides the row delete button when the suite config is locked", () => {
       cases={[makeCase({ _id: "case-1" })]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1126,7 +1135,7 @@ describe("SuiteDetailOverview cancel", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
