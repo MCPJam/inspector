@@ -13,6 +13,7 @@ export interface CreditTopupPreset {
 export interface PendingTopupContext {
   chatSessionId: string;
   message: string;
+  organizationId: string;
   storedAt: number;
 }
 
@@ -80,6 +81,7 @@ const normalizePresets = (raw: unknown): CreditTopupPreset[] | undefined => {
 export function stashPendingTopup(context: {
   chatSessionId: string;
   message: string;
+  organizationId: string;
 }): void {
   if (typeof window === "undefined") return;
   // Don't stash a useless entry — empty chat-session id or empty message
@@ -91,6 +93,7 @@ export function stashPendingTopup(context: {
     const payload: PendingTopupContext = {
       chatSessionId: context.chatSessionId,
       message: context.message,
+      organizationId: context.organizationId,
       storedAt: Date.now(),
     };
     window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
@@ -132,6 +135,7 @@ export function peekPendingTopup(): PendingTopupContext | null {
     if (
       typeof parsed.chatSessionId !== "string" ||
       typeof parsed.message !== "string" ||
+      typeof parsed.organizationId !== "string" ||
       typeof parsed.storedAt !== "number"
     ) {
       // Malformed entry — drop it.
@@ -146,6 +150,7 @@ export function peekPendingTopup(): PendingTopupContext | null {
     return {
       chatSessionId: parsed.chatSessionId,
       message: parsed.message,
+      organizationId: parsed.organizationId,
       storedAt: parsed.storedAt,
     };
   } catch {
@@ -164,7 +169,6 @@ export type CreditTopupSource = "chat_banner" | "billing_page" | "limit_modal";
 interface StartCheckoutInput {
   organizationId: string;
   packageId: string;
-  priceCents: number | null;
   chatSessionId: string;
   lastUserMessage: string;
   returnUrl?: string;
@@ -213,7 +217,6 @@ export function useCreditTopup() {
     async ({
       organizationId,
       packageId,
-      priceCents,
       chatSessionId,
       lastUserMessage,
       returnUrl,
@@ -221,7 +224,11 @@ export function useCreditTopup() {
     }: StartCheckoutInput): Promise<StartCheckoutResult> => {
       setIsStartingCheckout(true);
       setError(null);
-      stashPendingTopup({ chatSessionId, message: lastUserMessage });
+      stashPendingTopup({
+        chatSessionId,
+        message: lastUserMessage,
+        organizationId,
+      });
       // Track the most specific failure category we know about. Defaults to
       // `action_threw` (the fallback when the Convex action itself rejects)
       // and gets refined by the URL guards below.
@@ -238,8 +245,6 @@ export function useCreditTopup() {
         track("credit_topup_checkout_started", {
           location: "credit_topup",
           organization_id: organizationId,
-          package_id: packageId,
-          price_cents: priceCents,
           source,
           has_resume_context: Boolean(chatSessionId && lastUserMessage),
           has_return_url: Boolean(returnUrl),
@@ -250,13 +255,13 @@ export function useCreditTopup() {
         const checkoutUrl = result?.checkoutUrl;
         if (typeof checkoutUrl !== "string" || checkoutUrl.length === 0) {
           errorKind = "missing_url";
-          throw new Error("Checkout URL missing from response");
+          throw new Error("Checkout couldn’t open. Try purchasing credits again.");
         }
         if (!isAllowedCheckoutUrl(checkoutUrl)) {
           // Defense-in-depth: don't navigate to URLs that aren't on the
           // allowed checkout host even if the server told us to.
           errorKind = "invalid_url";
-          throw new Error("Refusing to redirect to non-Stripe checkout URL");
+          throw new Error("The payment link couldn’t be verified. Try purchasing credits again.");
         }
         if (isDesktopApp()) {
           // The shell sends any cross-origin navigation to the system browser,
@@ -282,10 +287,7 @@ export function useCreditTopup() {
         track("credit_topup_checkout_failed", {
           location: "credit_topup",
           organization_id: organizationId,
-          package_id: packageId,
-          price_cents: priceCents,
           error_kind: errorKind,
-          error_name: err instanceof Error ? err.name : "unknown",
           source,
         });
         throw err;

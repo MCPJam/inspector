@@ -84,6 +84,9 @@ export function scrubSensitiveUrl(value: string): string {
     const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
     out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
   }
+  // Organization ids are internal identifiers and organization routes are
+  // captured automatically by PostHog on otherwise privacy-safe events.
+  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
   return out;
 }
 
@@ -137,15 +140,27 @@ function attachFailedRequest(properties: Record<string, any>): void {
   const ageMs = Date.now() - failed.at;
   if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
 
-  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(failed.target)}`;
+  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(
+    failed.target,
+  )}`;
   properties.failed_request_age_ms = ageMs;
 }
 
-function sanitizeAnalyticsProperties(
+export function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
   eventName?: string,
 ): Record<string, any> {
-  for (const key of ["$current_url", "$referrer", "$pathname"]) {
+  for (const key of [
+    "$current_url",
+    "$referrer",
+    "$pathname",
+    "$session_entry_url",
+    "$session_entry_pathname",
+    "$session_entry_referrer",
+    "$initial_current_url",
+    "$initial_pathname",
+    "$initial_referrer",
+  ]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
     }

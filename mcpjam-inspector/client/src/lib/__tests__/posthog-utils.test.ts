@@ -4,6 +4,7 @@ import {
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
+  sanitizeAnalyticsProperties,
   scrubSensitiveUrl,
   standardEventProps,
 } from "../PosthogUtils";
@@ -29,6 +30,45 @@ describe("scrubSensitiveUrl", () => {
     expect(scrubSensitiveUrl("https://app.mcpjam.com/evals/suite/abc")).toBe(
       "https://app.mcpjam.com/evals/suite/abc",
     );
+  });
+
+  it("redacts organization ids from automatically captured route URLs", () => {
+    expect(
+      scrubSensitiveUrl(
+        "https://app.mcpjam.com/organizations/org_secret/billing?tab=plans",
+      ),
+    ).toBe("https://app.mcpjam.com/organizations/[redacted]/billing?tab=plans");
+    expect(scrubSensitiveUrl("/organizations/org_secret/plans")).toBe(
+      "/organizations/[redacted]/plans",
+    );
+  });
+
+  it("redacts organization ids from PostHog session and initial URL properties", () => {
+    const properties = sanitizeAnalyticsProperties({
+      $session_entry_url:
+        "https://app.mcpjam.com/organizations/org_secret/billing",
+      $session_entry_pathname: "/organizations/org_secret/plans",
+      $session_entry_referrer:
+        "https://app.mcpjam.com/organizations/org_secret/plans",
+      $initial_current_url:
+        "https://app.mcpjam.com/organizations/org_secret/billing",
+      $initial_pathname: "/organizations/org_secret/billing",
+      $initial_referrer:
+        "https://app.mcpjam.com/organizations/org_secret/plans",
+    });
+
+    expect(properties).toMatchObject({
+      $session_entry_url:
+        "https://app.mcpjam.com/organizations/[redacted]/billing",
+      $session_entry_pathname: "/organizations/[redacted]/plans",
+      $session_entry_referrer:
+        "https://app.mcpjam.com/organizations/[redacted]/plans",
+      $initial_current_url:
+        "https://app.mcpjam.com/organizations/[redacted]/billing",
+      $initial_pathname: "/organizations/[redacted]/billing",
+      $initial_referrer:
+        "https://app.mcpjam.com/organizations/[redacted]/plans",
+    });
   });
 });
 
@@ -160,9 +200,8 @@ describe("PosthogUtils", () => {
     // clicks are on everywhere because they cost nothing extra.
     it("self-hosted web (npx/docker): no replay, no exceptions", async () => {
       vi.resetModules();
-      const { options: opts, isErrorCaptureSurface } = await import(
-        "../PosthogUtils"
-      );
+      const { options: opts, isErrorCaptureSurface } =
+        await import("../PosthogUtils");
 
       expect(isErrorCaptureSurface()).toBe(false);
       expect(opts.capture_exceptions).toBe(false);
@@ -173,9 +212,8 @@ describe("PosthogUtils", () => {
     it("hosted: replay + exceptions on", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
       vi.resetModules();
-      const { options: opts, isErrorCaptureSurface } = await import(
-        "../PosthogUtils"
-      );
+      const { options: opts, isErrorCaptureSurface } =
+        await import("../PosthogUtils");
 
       expect(isErrorCaptureSurface()).toBe(true);
       expect(opts.capture_exceptions).toBe(true);
@@ -186,9 +224,8 @@ describe("PosthogUtils", () => {
       vi.stubEnv("PROD", true);
       vi.stubGlobal("window", { ...window, isElectron: true });
       vi.resetModules();
-      const { options: opts, isErrorCaptureSurface } = await import(
-        "../PosthogUtils"
-      );
+      const { options: opts, isErrorCaptureSurface } =
+        await import("../PosthogUtils");
 
       expect(isErrorCaptureSurface()).toBe(true);
       expect(opts.capture_exceptions).toBe(true);
@@ -201,9 +238,8 @@ describe("PosthogUtils", () => {
       // DOM and text into the production projects.
       vi.stubGlobal("window", { ...window, isElectron: true });
       vi.resetModules();
-      const { options: opts, isErrorCaptureSurface } = await import(
-        "../PosthogUtils"
-      );
+      const { options: opts, isErrorCaptureSurface } =
+        await import("../PosthogUtils");
 
       expect(import.meta.env.PROD).toBe(false);
       expect(isErrorCaptureSurface()).toBe(false);
@@ -248,9 +284,8 @@ describe("PosthogUtils", () => {
 
     it("masks inputs and every annotated secret surface", async () => {
       vi.resetModules();
-      const { SESSION_RECORDING_OPTIONS, options: opts } = await import(
-        "../PosthogUtils"
-      );
+      const { SESSION_RECORDING_OPTIONS, options: opts } =
+        await import("../PosthogUtils");
 
       expect(SESSION_RECORDING_OPTIONS.maskAllInputs).toBe(true);
       expect(SESSION_RECORDING_OPTIONS.maskInputOptions).toEqual({

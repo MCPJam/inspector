@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -131,9 +132,7 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    await user.click(
-      screen.getByRole("button", { name: "Tool errors (isError)" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     const assertionRole = screen.getByRole("group", { name: "Assertion role" });
     await user.click(
       within(assertionRole).getByRole("button", { name: "Advisory" }),
@@ -196,9 +195,7 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    await user.click(
-      screen.getByRole("button", { name: "Goal completion judge" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     const judgeRole = document.querySelector('[aria-label="Judge role"]');
     expect(within(judgeRole as HTMLElement).getByText("Advisory")).toBeTruthy();
     await user.click(within(judgeRole as HTMLElement).getByText("Advisory"));
@@ -245,9 +242,7 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Goal completion judge" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     const judgeRole = container.querySelector('[aria-label="Judge role"]');
     expect(judgeRole).toBeTruthy();
     // Warn collapsed into Advisory, so there is no third tier for the
@@ -264,7 +259,8 @@ describe("SuiteScorerTable", () => {
       '[data-scorer-id="judge:groundedness"]',
     ) as HTMLElement;
     expect(row).toBeTruthy();
-    fireEvent.click(within(row).getByRole("button"));
+    expect(within(row).queryByRole("button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
     expect(screen.getByText(/Groundedness runs on demand/)).toBeTruthy();
@@ -296,9 +292,7 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Goal completion judge" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     const required = screen
       .getAllByRole("button", { name: "Required" })
       .find((button) => button.closest('[aria-label="Judge role"]'));
@@ -341,7 +335,7 @@ describe("SuiteScorerTable", () => {
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(row).getByText("Required")).toBeTruthy();
   });
 
@@ -359,7 +353,7 @@ describe("SuiteScorerTable", () => {
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByText("Required")).toBeNull();
   });
@@ -376,10 +370,7 @@ describe("SuiteScorerTable — role colour", () => {
         { type: "noToolErrors", role: "advisory" } as never,
       ],
     });
-    for (const button of screen.getAllByRole("button", {
-      name: "Tool errors (isError)",
-    }))
-      fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
     const withSeverity = within(
       container.querySelector('[data-scorer-id="predicate:0"]') as HTMLElement,
     ).getByText("Advisory");
@@ -399,18 +390,60 @@ it("keeps each standard numeric criterion in its own editable field", () => {
       { type: "toolCallCountUnder", count: 4 },
     ],
   });
-  // Each row reads its number, and opens its own field from the title.
+  // The number lives in the field Edit evaluators opens. The title is not a control.
   const cases: [string, string, number][] = [
     ["Description quality", "Minimum description length", 31],
     ["Tool latency", "Max time in ms (strictly under)", 1234],
     ["Payload size", "Max result size in bytes (strictly under)", 64000],
     ["Tool hops before the right tool", "Max tool calls (strictly under)", 4],
   ];
-  for (const [title, field, value] of cases) {
-    fireEvent.click(screen.getByRole("button", { name: title }));
-    expect(screen.getByRole("spinbutton", { name: field })).toHaveValue(value);
-    fireEvent.click(screen.getByRole("button", { name: title }));
+  for (const [title] of cases) {
+    expect(screen.queryByRole("button", { name: title })).toBeNull();
   }
+  fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
+  for (const [, field, value] of cases) {
+    expect(screen.getByRole("spinbutton", { name: field })).toHaveValue(value);
+  }
+});
+
+it("enters edit mode when checking a box, including after the row is saved", () => {
+  function Harness() {
+    const [predicates, setPredicates] = useState<Predicate[]>([]);
+    return (
+      <SuiteScorerTable
+        matchOptions={undefined}
+        onMatchOptionsChange={() => {}}
+        scope={{
+          kind: "suite",
+          predicates,
+          onPredicatesChange: setPredicates,
+        }}
+        onJudgeConfigChange={() => {}}
+        availableModels={[]}
+        capabilities={
+          {
+            scorers: { predicateKinds: ["toolDescriptionsPresent"] },
+          } as SuiteCapabilities
+        }
+        passOrFailHint={PASS_OR_FAIL_HINT}
+        judgeHint={JUDGE_HINT}
+      />
+    );
+  }
+  render(<Harness />);
+  expect(
+    screen.getByRole("button", { name: "Edit evaluators" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: "Description quality" })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Description quality" }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Close evaluators" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    screen.getByRole("spinbutton", { name: "Minimum description length" }),
+  ).toBeEnabled();
 });
 
 it("shows short names at rest and allows multiple role editors to stay open", () => {
@@ -431,16 +464,67 @@ it("shows short names at rest and allows multiple role editors to stay open", ()
   expect(
     within(row).getByRole("checkbox", { name: "Tool errors (isError)" }),
   ).toBeChecked();
-  expect(row.textContent).toBe("Tool errors (isError)");
+  expect(within(row).getByText("No tool returns an error")).toBeInTheDocument();
   expect(within(row).queryByRole("group")).toBeNull();
-  for (const name of ["Tool errors (isError)", "Tool latency"]) {
-    fireEvent.click(screen.getByRole("button", { name }));
-    expect(screen.getByRole("button", { name })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-  }
-  expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(2);
+  expect(
+    within(row).queryByRole("button", { name: "Tool errors (isError)" }),
+  ).toBeNull();
+  fireEvent.click(
+    within(row).getByRole("checkbox", { name: "Tool errors (isError)" }),
+  );
+  expect(screen.getByRole("button", { name: "Close evaluators" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(
+    container.querySelectorAll("[data-scorer-editor]").length,
+  ).toBeGreaterThan(1);
   expect(within(row).getByText("No tool returns an error")).toBeInTheDocument();
   expect(within(row).getByText("Required")).toBeInTheDocument();
+});
+
+it("opens every evaluator's settings from Edit evaluators, then closes them", () => {
+  const { container } = renderTable({
+    predicates: [
+      { type: "noToolErrors" },
+      { type: "toolLatencyUnder", ms: 1234 },
+    ],
+  });
+  expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
+  const ids = [
+    ...container.querySelectorAll("[data-scorer-editor]"),
+  ].map((node) => node.getAttribute("data-scorer-editor"));
+  expect(ids).toEqual(
+    expect.arrayContaining([
+      "predicate:0",
+      "predicate:1",
+      "judge:goalCompletion",
+      "judge:groundedness",
+      "preset:discovery.description",
+    ]),
+  );
+  expect(ids).not.toContain("observed:discovery");
+  const description = container.querySelector(
+    '[data-scorer-id="preset:discovery.description"]',
+  ) as HTMLElement;
+  expect(
+    within(description).getByRole("spinbutton", {
+      name: "Minimum description length",
+    }),
+  ).toBeDisabled();
+  expect(
+    container.querySelector('[data-setting-key="matchOptions"]'),
+  ).toHaveAttribute("open");
+  expect(container.querySelector('[data-setting-key="judge"]')).toHaveAttribute(
+    "open",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Close evaluators" }));
+  expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(0);
+  expect(
+    container.querySelector('[data-setting-key="matchOptions"]'),
+  ).not.toHaveAttribute("open");
+  expect(
+    container.querySelector('[data-setting-key="judge"]'),
+  ).not.toHaveAttribute("open");
 });

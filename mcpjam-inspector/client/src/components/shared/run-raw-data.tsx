@@ -453,7 +453,7 @@ export async function collectRunRawData(
     }
     if (!scope.swarmRunGroupId) {
       notes.push(
-        "This legacy swarm has no swarmRunGroupId, so wave signals and generated wave insights cannot be addressed.",
+        "This legacy swarm has no swarmRunGroupId, so swarm-run signals and generated swarm-run insights cannot be addressed.",
       );
     }
   } else {

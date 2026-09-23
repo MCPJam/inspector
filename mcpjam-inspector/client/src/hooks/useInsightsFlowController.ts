@@ -9,7 +9,7 @@ import {
   selectionChipsToAdd,
   toggleChip,
   type InsightsSelection,
-  type ThemeRef,
+  type SelectionRef,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
@@ -47,9 +47,7 @@ export function useInsightsFlowController({
    * synthetic sessions on scenarios). The raw `filter` stays what the UI edits.
    */
   augmentFilter?: (filter: UsageFilterState) => UsageFilterState;
-  onSelectionChange?: (
-    themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
-  ) => void;
+  onSelectionChange?: (themes: ReadonlyArray<SelectionRef> | null) => void;
   onCohortReset?: () => void;
   initialView?: InsightsView;
 }) {
@@ -117,7 +115,8 @@ export function useInsightsFlowController({
       setFilter({ ...cleared, chips: [...cleared.chips, ...added] });
       setFlowSelection(next);
       setFlowOwnedKeys(added.map(chipKey));
-      if (!opts?.silent) onSelectionChange?.(next.themes);
+      if (!opts?.silent)
+        onSelectionChange?.([...next.themes, ...(next.questions ?? [])]);
     },
     [onSelectionChange],
   );

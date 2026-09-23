@@ -5,20 +5,46 @@
         {
           "name": "@mcpjam/sdk",
           "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
         }
       ],
-      "summary": "`EvalSuite.runWithClient` accepts a list of saved clients. It runs the suite against each in parallel and uploads one run per client, grouped in MCPJam under one run number. Adds `runGroupId` to the reporting config. The evals GitHub Action now shows grouped runs as one table with a row per client and model.",
-      "id": "multi-client-run-with-client"
+      "summary": "Negotiate the public API's resource-noun **values** behind `x-mcpjam-api-vocabulary`.\n\nThree nouns were renamed at the API boundary: scenario → study, journey → goal, wave → swarm run. Operation names, routes, type names and field names could all move behind a deprecated alias, because a caller reaches them by a name it chose. A value cannot: `sourceType` is one field with one string in it, and a client switching on `\"scenario\"` has no second name to fall back to.\n\nSo the values negotiate. `x-mcpjam-api-vocabulary: 2` asks for the canonical spellings; an absent header means vocabulary 1, byte-for-byte today's contract; anything else is a 400. A response that varies by vocabulary sends `Vary`.\n\n**What moves under vocabulary 2.** A session's `sourceType` reads `study`; its `parentRef.kind` reads `study` or `goalRun`, with `studyId` / `goalRunId` / `goalRefId` in place of `scenarioId` / `journeyRunId` / `journeyRefId`. A share's `resourceType` reads `study` — and because that value is also a path segment, `/shares/study/{id}` addresses the same rows `/shares/scenario/{id}` does. A trace destination's `sourceTypes` reads `study`.\n\n**What it accepts.** On the way in, a vocabulary-2 request may name a filter or a path segment by either spelling; a vocabulary-1 request may use only the legacy one. Widening vocabulary 1 to meet vocabulary 2 half way is exactly what makes a negotiation boundary undecidable. A trace destination's stored `sourceTypes` is the one place both are accepted at all times — it is stored configuration, so the vocabulary of the request that wrote it is a fact about that request, not about the row.\n\n**SDK.** `new PlatformApiClient({ apiVocabulary: 2 })`, or `client.withApiVocabulary(2)` on one you already hold. Separate from `evalVocabulary`, because the two negotiations are separate and a deployment may advertise one without the other — read `getProjectCapabilities()`, which now carries an `apiVocabulary` block beside `vocabulary`.\n\n**Permalinks** are the exception that proves the rule: `study` and `goal_run` are the canonical resource-type keys, `user_testing_scenario` and `journey_run` still resolve to the same routes, and which one a response carries follows the operation rather than the header. Both spellings stay in the table until general availability, because consumers outside this repo branch on them.\n\nStorage does not move. The stored literals are still `scenario`; every rename here is a projection at the boundary.",
+      "id": "api-vocabulary-negotiation"
     },
     {
       "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Rename the public `journey` surface to **goal**, and `sessionsPerTarget` to `iterations`.\n\nSwarms has called the thing a goal, and its per-target count Iterations, since the authoring flow was rebuilt; the API still said journey and `sessionsPerTarget`. It does not now. Storage is untouched — the Convex tables are still `journeys` and `journeyRuns`, and the stored config field is still `sessionsPerTarget`, exactly as the `scenarios` table stayed put when the public noun became study.\n\n**Operations.** The 12 journey operations become goal operations: `list_journeys` → `list_goals`, `launch_journey_run` → `launch_goal_run`, `generate_journeys` → `generate_goals`, and so on through the set. The selector is `goalId`, not `goal` — a goal's own task text is what `create_goal` writes, and one name cannot be both.\n\n**Routes.** `/projects/{id}/journeys` and `/journey-runs` become `/goals` and `/goal-runs`; `/journeys-overview` and `/journey-findings` follow the noun to `/goals-overview` and `/goal-findings`. Renamed responses say `goalId`, `iterations` and `swarmRunId` where they said `journeyId`, `sessionsPerTarget` and `waveId`.\n\n**SDK.** New `PlatformGoal*` types and `listGoals`…`generateGoals` client methods. `capabilities.can` gains `launchGoalRun` and `cancelGoalRun`.\n\n**CLI.** `cloud journeys` becomes `cloud goals`, which still answers to the old name. `--goal-id` takes the id, `--journey` still works, and passing both is refused rather than resolved by precedence. `--iterations` replaces `--sessions-per-target` on the same terms.\n\n**The operations that kept their names.** `get_swarms_overview`, `list_swarm_findings`, `create_swarm` and `update_swarm` did not rename, so they have no deprecated twin to hold the old field spellings. They emit both until general availability — `goalId`/`goalName`/`goalArchived`/`swarmRunId` beside `journeyId`/`journeyName`/`journeyArchived`/`waveId`, and `iterations` beside `sessionsPerTarget` — and accept either on input, never both in one request.\n\nNothing is removed. Every old operation is still exported and still executable under its old name with its old input and its old DTO, calling its own old route — they are simply absent from the advertised catalog. Every old route still answers, with its original field spellings and a `Deprecation: true` header naming the successor. A body that mixes the two vocabularies is refused rather than guessed at. Both the operations and the routes go at general availability.",
+      "id": "goal-public-api-rename"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Desktop: fix an Update button that stopped working ten minutes after the update finished downloading. The app kept checking for updates even with a build already staged, and that extra check made Electron forget the staged build — after which clicking Update did nothing at all and quitting the app was refused, leaving the only way out a reinstall. The app now stops checking once a build is staged, always lets you quit, and if the staged build has gone missing a single click restarts the app, downloads it again and installs it.",
-      "id": "quiet-pandas-repeat"
+      "summary": "Export `REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT` and `REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE` from `@mcpjam/sdk/browser`, the messages every OAuth state machine writes when an authorization server has no `registration_endpoint` (with no pre-registered client configured, or under strict conformance).\n\nThe inspector's OAuth debugger now keeps those failures out of its error reporting. It is the server under test not offering dynamic client registration, not an MCPJam fault; the toast still shows it.",
+      "id": "oauth-dcr-missing-endpoint-unreported"
     },
     {
       "releases": [
@@ -36,27 +62,17 @@
         }
       ],
       "summary": "Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.\n\nThis changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.",
-      "id": "release-inspector-cli-sdk-2026-09-21"
+      "id": "release-inspector-cli-sdk-2026-09-22"
     },
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
+          "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "Rename the server connection modal's \"Save Changes\" button to \"Save & Connect\".\n\nThe button already saved the configuration and connected to the server in one\nclick, but the label only described the save half. The new label makes it\nclear the click both saves and connects.",
-      "id": "save-and-connect-label"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Restyle the iteration scorecard as one column of stage sections. Each stage leads with its name, state word and question, then lists every evaluator that grades it as an EXPECTED / ACTUAL pair, with no separate \"added assertions\" section and no stage picker. Authored checks are titled by their purpose, and a judge row with no goal sentence names what the judge graded against.",
-      "id": "scorecard-expected-actual"
+      "summary": "Rename the User Testing permalink's label from \"Open scenario\" to \"Open study\", matching what the product has called the object since the create flow was rewritten. The resource type key, the route it builds and every id stay exactly as they were, so a permalink minted before this change still resolves and any caller switching on the type is unaffected.",
+      "id": "study-permalink-label"
     },
     {
       "releases": [
@@ -65,32 +81,16 @@
           "type": "minor"
         },
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm findings: add an `analysisUnavailable` coverage note, so a wave whose cause analysis never ran is distinguishable from one where the analysis ran and found nothing.",
-      "id": "swarm-findings-analysis-unavailable"
-    },
-    {
-      "releases": [
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "Swarm findings: the Findings card now names the cause and its fix separately, keeps full goal titles, states a recorded signal when no cause was confirmed, and gives the persona card a real supporting session's words.",
-      "id": "swarm-findings-headline"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm findings: the Findings card reads the same whichever order a mechanism's rows arrive in, claims a stage only when its rows agree on one, and no longer nests a paragraph inside a paragraph in the suggested-fix line.",
-      "id": "swarm-findings-order-independence"
+      "summary": "Rename the public `scenario` surface to **study**, and merge its two detail reads into one.\n\nThe product has called this object a study since the create flow was rewritten; the API never followed. It does now, while the preview still makes a rename free. Storage is untouched — the Convex table is still `scenarios` and always will be, the way the `hosts` table stayed put when the public noun became `client`.\n\n**Operations.** 22 become 21. `list_scenarios` → `list_studies`, `publish_scenario` / `unpublish_scenario` → `publish_study` / `unpublish_study`, and every `*_user_testing_*` operation drops the prefix for `*_study*`. `get_scenario` and `get_user_testing_scenario` were two generations of one read and collapse into `get_study`, which returns the union: the execution settings the first served, plus the environment id and insights envelope the second added. Those last two depend on the caller, not the study, so a share-link visitor gets the settings without them — absent, never null.\n\n**Routes.** `/projects/{id}/scenarios` and `/projects/{id}/user-testing/scenarios/{scenarioId}` collapse into `/projects/{id}/studies` and `/projects/{id}/studies/{studyId}`; publishing moves to `/environments/{envId}/study`. Responses that named the owning id now say `studyId`.\n\n**SDK.** New `PlatformStudy*` types and `listStudies`…`rebindStudy` client methods.\n\n**CLI.** `cloud scenarios` and `cloud user-testing` merge into `cloud studies`, which answers to both old names. `--study` takes the id; `--scenario` still works and passing both is refused rather than resolved by precedence.\n\nNothing is removed. Every old operation is still exported and still executable under its old name with its old input and its old DTO, calling its own old route — they are simply absent from the advertised catalog, so no surface can offer one. Every old route still answers, with its original body and a `Deprecation: true` header naming the successor. Both go at general availability.\n\nOne behavior change worth calling out: `get_study` is no longer offered to the in-app assistant. `get_scenario` was, because it carried settings and no visitor content; the merged read carries an envelope that quotes real visitors, and the stricter half decides. `list_studies` is unaffected.",
+      "id": "study-public-api-rename"
     },
     {
       "releases": [
@@ -99,51 +99,70 @@
           "type": "minor"
         },
         {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Rename the public `wave` noun to **swarm run**.\n\nThe last of the three nouns the API never carried over from the product. A swarm run is the batch of sibling goal runs launched together — what the Swarms surface has called it since it shipped, and what its own `/swarms/:id` route already addresses. The API called it a wave.\n\nStorage does not move. The column is `swarmRunGroupId` and stays that; so does `swarmWaveInsights:*` upstream. Only the public name changes.\n\n**Operations.** `get_wave_insights`, `request_wave_insights` and `cancel_wave_insights` become `get_swarm_run_insights`, `request_swarm_run_insights` and `cancel_swarm_run_insights`. The selector is `swarmRun`, and `wave` is still accepted as its deprecated alias — passing both is refused rather than resolved by precedence.\n\n**Routes.** `/projects/{id}/waves/{waveId}/insights` becomes `/projects/{id}/swarm-runs/{swarmRunId}/insights` on all three methods. Responses say `swarmRunId`.\n\n**SDK.** New `PlatformSwarmRunInsights*` types and `getSwarmRunInsights` / `requestSwarmRunInsights` / `cancelSwarmRunInsights` client methods.\n\n**CLI.** `--swarm-run` replaces `--wave` on `cloud goals insights`, `request-insights` and `cancel-insights`; `--wave` still works, and passing both is refused.\n\nNothing is removed. The old operations are still exported and still executable, calling their own old routes; the old routes still answer with `waveId` and a `Deprecation: true` header. Both go at general availability.",
+      "id": "swarm-run-public-api-rename"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Swarm findings: carry recorded session signals, a plain-language persona account and proposal verification counts on the wire. All three additions are optional, so existing payloads keep parsing unchanged.",
-      "id": "swarm-recorded-signals"
+      "summary": "The expected-tool-calls score row now records the tool-call matcher's own result. It used to record the whole iteration's verdict, so a failing required assertion or a tool error also failed the tool-call row.",
+      "id": "tool-match-row-matcher-verdict"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "8.11.1",
+      "oldVersion": "8.13.0",
       "changesets": [
-        "multi-client-run-with-client",
-        "release-inspector-cli-sdk-2026-09-21",
-        "swarm-findings-analysis-unavailable",
-        "swarm-recorded-signals"
+        "api-vocabulary-negotiation",
+        "goal-public-api-rename",
+        "oauth-dcr-missing-endpoint-unreported",
+        "release-inspector-cli-sdk-2026-09-22",
+        "study-permalink-label",
+        "study-public-api-rename",
+        "swarm-run-public-api-rename"
       ],
-      "newVersion": "8.12.0"
+      "newVersion": "8.14.0"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "3.8.1",
+      "oldVersion": "3.9.2",
       "changesets": [
-        "quiet-pandas-repeat",
-        "release-inspector-cli-sdk-2026-09-21",
-        "save-and-connect-label",
-        "scorecard-expected-actual",
-        "swarm-findings-analysis-unavailable",
-        "swarm-findings-headline",
-        "swarm-findings-order-independence",
-        "swarm-recorded-signals"
+        "api-vocabulary-negotiation",
+        "goal-public-api-rename",
+        "oauth-dcr-missing-endpoint-unreported",
+        "release-inspector-cli-sdk-2026-09-22",
+        "study-public-api-rename",
+        "swarm-run-public-api-rename",
+        "tool-match-row-matcher-verdict"
       ],
-      "newVersion": "3.9.0"
+      "newVersion": "3.10.0"
     },
     {
       "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "5.10.2",
+      "type": "minor",
+      "oldVersion": "5.10.3",
       "changesets": [
-        "release-inspector-cli-sdk-2026-09-21"
+        "goal-public-api-rename",
+        "release-inspector-cli-sdk-2026-09-22",
+        "study-public-api-rename",
+        "swarm-run-public-api-rename"
       ],
-      "newVersion": "5.10.3"
+      "newVersion": "5.11.0"
     },
     {
       "name": "@mcpjam/mcp",

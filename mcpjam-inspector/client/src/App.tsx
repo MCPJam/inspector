@@ -680,6 +680,7 @@ function ActiveBillingUpsellGate() {
 
   return (
     <BillingUpsellGate
+      organizationId={billingOrganizationId}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1893,7 +1894,7 @@ function SwarmsRouteContent() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, goals, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }
@@ -4300,7 +4301,7 @@ export default function App() {
     if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
-    toast.error(`${activeTab} is not available in hosted mode.`);
+    toast.error("Tracing isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.");
     setActiveOrganizationId(undefined);
     if (window.location.pathname !== routePaths.servers) {
       navigateApp(routePaths.servers, { replace: true });

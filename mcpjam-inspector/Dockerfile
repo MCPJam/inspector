@@ -43,6 +43,7 @@ FROM deps AS build
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 ARG VITE_MCPJAM_HOSTED_MODE
+ARG VITE_ENVIRONMENT
 ARG VITE_MCPJAM_NONPROD_LOCKDOWN
 ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
@@ -128,6 +129,7 @@ RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+    if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \

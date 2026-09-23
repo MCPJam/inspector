@@ -259,7 +259,6 @@ import {
   type CaseScorecardInput,
 } from "../evaluate/case-scorecard/case-scorecard-model";
 import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
-import { NextQuestionLine } from "../evaluate/case-scorecard/next-question-line";
 import { groupCaseIterations } from "./runs/group-case-iterations";
 import { useSuggestedScorers } from "../evaluate/case-scorecard/suggested-from-run-section";
 import { CaseRunSetup } from "../evaluate/case-workspace/case-run-setup";
@@ -1093,10 +1092,6 @@ export function TestTemplateEditor({
   // Left↔right Steps sync: the step hovered in either the left step list or the
   // right replay pane; highlights the matching card/row in both.
   const [syncedStepId, setSyncedStepId] = useState<string | null>(null);
-  const [trialTabRequest, setTrialTabRequest] = useState<{
-    iterationId: string;
-    mode: "steps";
-  } | null>(null);
   const [mobileVisibleModelValue, setMobileVisibleModelValue] = useState<
     string | null
   >(null);
@@ -1487,49 +1482,6 @@ export function TestTemplateEditor({
    * run id, so the same projection + assembler runs locally on the doc
    * the client already holds.
    */
-  const nextQuestionForTrial = (iteration: EvalIteration | null) => {
-    return useSpine && iteration ? (
-      <NextQuestionLine
-        state={{
-          hasTrial: true,
-          judgedPass: Boolean(
-            iteration.suiteRunId &&
-            resolveIterationJudge(iteration, suiteRuns)?.passed,
-          ),
-          hasFailure: iteration.result === "failed",
-          trials: suggestionBatch?.iterations.length ?? 1,
-          hasChecks:
-            Boolean(editForm?.predicates?.list?.length) ||
-            (editForm?.steps ?? []).some((step) => step.kind === "assert"),
-          // The suggestions section left the scorecard, so "Review the
-          // suggestions" has nothing to point at. The other prompts stand.
-          hasSuggestions: false,
-          suiteHasGate: Boolean(
-            suite?.defaultPredicates?.some(
-              (p: Predicate) => p.role !== "advisory",
-            ),
-          ),
-        }}
-        onAct={(action) => {
-          if (action === "trials" || action === "models") {
-            // The next-run sheet left with the workspace redesign: the run
-            // controls sit in the header now, so the action primes the count
-            // there and leaves the model choice to that same control.
-            if (action === "trials") {
-              setEditForm((current) =>
-                current ? { ...current, runs: 3 } : current,
-              );
-              setIterationOverride((current) => Math.max(current, 3));
-            }
-          } else if (action === "gate") onOpenSuiteSettings?.();
-          else if (action === "failure") {
-            setTrialTabRequest({ iterationId: iteration._id, mode: "steps" });
-          }
-        }}
-      />
-    ) : null;
-  };
-
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
     let chain: ReactNode = null;
     // On the spine the chain lives INSIDE the Scorecard as a chip strip: the
@@ -2494,13 +2446,8 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
-      ...(caseCapabilities.capabilities?.scorers
-        ?.suppressedSuiteStandardCheckIds === true
-        ? {
-            suppressedSuiteStandardCheckIds:
-              form.suppressedSuiteStandardCheckIds ?? [],
-          }
-        : {}),
+      suppressedSuiteStandardCheckIds:
+        form.suppressedSuiteStandardCheckIds ?? [],
       // Omitted when undefined: `createTestCase` admits no `null` for this
       // field, and `handleSave` supplies the null-clear on the update path.
       ...(form.judgeConfigOverride !== undefined
@@ -5101,7 +5048,6 @@ export function TestTemplateEditor({
                     ) : workspacePersistedIteration ? (
                       <IterationDetails
                         iteration={workspacePersistedIteration}
-                        requestedTab={trialTabRequest}
                         testCase={currentTestCase}
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
@@ -5143,9 +5089,6 @@ export function TestTemplateEditor({
                               judgeCase={resolveIterationJudge(
                                 workspacePersistedIteration,
                                 suiteRuns,
-                              )}
-                              nextQuestionSlot={nextQuestionForTrial(
-                                workspacePersistedIteration,
                               )}
                               envelope={ctx.envelope}
                               trace={ctx.trace}

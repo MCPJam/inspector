@@ -1811,7 +1811,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
     expect(toastWarning).toHaveBeenCalledWith(
-      expect.stringContaining("can't auto-refresh in hosted mode")
+      expect.stringContaining("hosted web app can’t renew this connection automatically")
     );
   });
 
