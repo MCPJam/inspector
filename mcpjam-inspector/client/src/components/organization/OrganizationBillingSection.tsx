@@ -121,6 +121,7 @@ function getPlanColumnCta(params: {
   variant: "default" | "outline" | "secondary";
   onClick?: () => void;
   tooltip?: string;
+  ariaLabel?: string;
 } {
   const {
     plan,
@@ -171,6 +172,11 @@ function getPlanColumnCta(params: {
         label: "Scheduled",
         disabled: true,
         variant: "outline",
+        // The visible label is shortened to fit the column; the date stays in
+        // the accessible name rather than only in the hover tooltip.
+        ariaLabel: scheduledCancellationDate
+          ? `Downgrade scheduled for ${scheduledCancellationDate}`
+          : "Downgrade scheduled",
         tooltip: scheduledCancellationDate
           ? `Your plan is already scheduled to return to Free on ${scheduledCancellationDate}.`
           : "Your plan is already scheduled to return to Free at the end of the current billing period.",
@@ -779,6 +785,7 @@ function FreePlanTeamUpsell({
               size="sm"
               variant={cta.variant}
               aria-disabled={true}
+              aria-label={cta.ariaLabel}
               tabIndex={0}
               onClick={undefined}
             >
@@ -1512,6 +1519,7 @@ export function OrganizationBillingSection({
                                           size="sm"
                                           variant={cta.variant}
                                           aria-disabled={true}
+                                          aria-label={cta.ariaLabel}
                                           tabIndex={0}
                                           onClick={undefined}
                                         >

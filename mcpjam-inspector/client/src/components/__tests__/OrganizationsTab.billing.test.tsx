@@ -1217,9 +1217,11 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
-    expect(
-      within(getPlanColumn("Free")).getByRole("button", { name: "Scheduled" }),
-    ).toHaveAttribute("aria-disabled", "true");
+    const scheduled = within(getPlanColumn("Free")).getByRole("button", {
+      name: "Downgrade scheduled for May 1, 2026",
+    });
+    expect(scheduled).toHaveAttribute("aria-disabled", "true");
+    expect(scheduled).toHaveTextContent("Scheduled");
     expect(
       within(getPlanColumn("Free")).queryByRole("button", {
         name: "Downgrade",
@@ -1826,6 +1828,32 @@ describe("OrganizationsTab billing", () => {
     expect(upsell.getByText(/\$38/)).toBeInTheDocument();
     fireEvent.click(upsell.getByRole("button", { name: /^Annual$/ }));
     expect(upsell.getByText(/\$30/)).toBeInTheDocument();
+  });
+
+  it("marks the selected interval in the compare-table toggle without a discount badge", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    const toggle = within(
+      within(screen.getByRole("table")).getByRole("group", {
+        name: "Billing interval",
+      }),
+    );
+    const annual = toggle.getByRole("button", { name: /^Annual/ });
+    const monthly = toggle.getByRole("button", { name: "Monthly" });
+    expect(annual).toHaveAttribute("aria-pressed", "true");
+    expect(monthly).toHaveAttribute("aria-pressed", "false");
+    // The legacy Team prices imply a 21% annual discount; the toggle no longer
+    // advertises it.
+    expect(toggle.queryByText(/-\d+%/)).not.toBeInTheDocument();
+    fireEvent.click(monthly);
+    expect(annual).toHaveAttribute("aria-pressed", "false");
+    expect(monthly).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
