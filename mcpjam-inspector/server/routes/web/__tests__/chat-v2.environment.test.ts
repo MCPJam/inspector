@@ -215,6 +215,9 @@ describe("web chat-v2 — environment execution target", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = Array.isArray(payload?.serverIds)
@@ -779,6 +782,9 @@ describe("web chat-v2 — plugin capability attribution", () => {
       new Response("ok", { status: 200 })
     );
     global.fetch = vi.fn(async (input: any, init: any) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = Array.isArray(payload?.serverIds)
@@ -946,6 +952,9 @@ describe("web chat-v2 — turn provenance (P1)", () => {
       return new Response("ok", { status: 200 });
     });
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = Array.isArray(payload?.serverIds)
