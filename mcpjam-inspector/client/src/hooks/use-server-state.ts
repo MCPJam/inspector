@@ -3516,6 +3516,7 @@ export function useServerState({
         // project-server snapshot yet, and a name lookup would fall through
         // to create-if-missing, which returns the row without the edit.
         hostedWriteTarget?: HostedServerWriteTarget;
+        requestOAuthAuthorization?: (serverName: string) => Promise<boolean>;
       }
     ) => {
       const showConnectionError = (
@@ -3801,7 +3802,9 @@ export function useServerState({
               showConnectionError(errorMessage);
               return;
             }
-            const proceed = await confirmAutoOAuthEscalation(formData.name);
+            const requestOAuthAuthorization =
+              options?.requestOAuthAuthorization ?? confirmAutoOAuthEscalation;
+            const proceed = await requestOAuthAuthorization(formData.name);
             if (isStaleOp(formData.name, token)) return;
             if (!proceed) {
               failWithoutEscalation(
