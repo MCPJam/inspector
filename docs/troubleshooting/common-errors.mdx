@@ -217,6 +217,17 @@ The fix is included in 3.8.1 and later. If you are on an affected version:
 - **Update button stuck:** click **Update** once. If the staged build has gone missing, the app relaunches automatically, re-downloads the update, and installs it without a second click.
 - **If neither works:** use the **Reset app data and quit** option in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
 
+### Update fails and shows "Update failed" in the sidebar
+
+When an update cannot be installed, the app automatically quits and relaunches once to retry. During this recovery the sidebar button reads **Restarting to retry update…** and is disabled.
+
+If the retry also fails, the button changes to **Update failed** and a persistent notification appears explaining what to do:
+
+- **"Update failed. Please reopen MCPJam and try again."** — close and reopen the app manually to attempt the update again.
+- **"Update failed. Force quit MCPJam and reopen it."** — the app was unable to shut down cleanly during the update. Use Force Quit (macOS: **⌘ Option Esc → Force Quit**; Windows: **Task Manager → End Task**), then reopen the app.
+
+Clicking **Update failed** in the sidebar reopens the notification if you dismissed it. If the problem persists after reopening, download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
+
 ## Getting Help
 
 If you're still experiencing issues:
