@@ -15,12 +15,15 @@
 
 import { describe, expect, it } from "vitest";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import { GRADER_STAGE } from "@mcpjam/sdk/contract";
+import * as hostedIds from "../hosted-criterion-id";
 import {
   hostedCriterionId,
   hostedPredicateScorerId,
   hostedRubricCheckScorerId,
   HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
   HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "../hosted-criterion-id";
 
@@ -87,8 +90,9 @@ describe("hostedCriterionId", () => {
     );
   });
 
-  it("names the two platform scorers the same way the server does", () => {
+  it("names the platform scorers the same way the server does", () => {
     expect(HOSTED_TOOL_MATCH_SCORER_ID).toBe("toolCalls:match");
+    expect(HOSTED_TOOL_ARGUMENTS_SCORER_ID).toBe("toolCalls:arguments");
     expect(HOSTED_JUDGE_SCORER_ID).toBe("judge:goalCompletion");
   });
 
@@ -102,5 +106,19 @@ describe("hostedCriterionId", () => {
     expect(hostedRubricCheckScorerId("q:tone")).toBe(
       "judge:rubricChecks:q:tone",
     );
+  });
+
+  it("files every hosted platform scorer at a stage of the chain", () => {
+    // A hosted id with no stage renders under no heading on the settings page
+    // and cannot be placed by the report. Enumerated off the module, so a new
+    // id added without a stage fails here rather than going missing.
+    const ids = Object.entries(hostedIds)
+      .filter(([name]) => /^HOSTED_[A-Z_]+_SCORER_ID$/.test(name))
+      .map(([, id]) => id as string);
+    expect(ids.length).toBeGreaterThanOrEqual(3);
+    for (const id of ids) {
+      expect(GRADER_STAGE, id).toHaveProperty([id]);
+    }
+    expect(GRADER_STAGE[HOSTED_TOOL_ARGUMENTS_SCORER_ID]).toBe("call");
   });
 });

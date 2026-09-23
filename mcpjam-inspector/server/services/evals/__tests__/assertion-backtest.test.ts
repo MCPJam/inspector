@@ -260,3 +260,81 @@ it("returns a resumable cursor after bounded pages and binds continuation to the
     }),
   ).rejects.toThrow("SOURCE_CHANGED");
 });
+
+it("previews both halves of a hosted tool-call verdict, and removes neither", async () => {
+  const { buildHostedScoreContract } = await import("../score-rows");
+  const expectedToolCalls = [{ toolName: "search", arguments: { q: "cats" } }];
+  const actualToolCalls = [{ toolName: "search", arguments: { q: "dogs" } }];
+  const matchOptions = {
+    toolCallOrder: "ignore",
+    maxExtraToolCalls: null,
+    argumentMatching: "partial",
+  };
+  // What a hosted run stored after the split: the right tool, the wrong
+  // argument.
+  const stored = buildHostedScoreContract({
+    evaluation: {
+      passed: false,
+      expectedToolCalls,
+      missing: [],
+      unexpected: [],
+      argumentMismatches: [
+        {
+          toolName: "search",
+          expectedArgs: { q: "cats" },
+          actualArgs: { q: "dogs" },
+        },
+      ],
+    },
+    matchOptions,
+  });
+  const differences = backtestIteration(
+    {
+      ...row,
+      expectedToolCalls,
+      actualToolCalls,
+      isNegativeTest: false,
+      evaluationConfig: stored.evaluationConfig,
+      results: stored.scores,
+    },
+    {
+      assertions: { mode: "replace", list: [] },
+      // Loosening the comparison flips the arguments half and only it.
+      matchOptions: { argumentMatching: "ignore" },
+    },
+  );
+  const byId = new Map(differences.map((item) => [item.evaluatorId, item]));
+  expect(byId.get("toolCalls:match")).toMatchObject({
+    change: "configuration_changed",
+    comparable: true,
+    flipped: false,
+  });
+  // Ignored arguments are not compared, so the draft has no such scorer; the
+  // stored one is outside it rather than silently kept.
+  expect(byId.get("toolCalls:arguments")).toMatchObject({ change: "removed" });
+
+  const stricter = backtestIteration(
+    {
+      ...row,
+      expectedToolCalls,
+      actualToolCalls,
+      isNegativeTest: false,
+      evaluationConfig: stored.evaluationConfig,
+      results: stored.scores,
+    },
+    {
+      assertions: { mode: "replace", list: [] },
+      matchOptions: { argumentMatching: "exact" },
+    },
+  );
+  const arguments_ = stricter.find(
+    (item) => item.evaluatorId === "toolCalls:arguments",
+  );
+  expect(arguments_).toMatchObject({
+    change: "configuration_changed",
+    comparable: true,
+    flipped: false,
+    draft: { status: "scored", passed: false },
+  });
+  expect(stricter.map((item) => item.change)).not.toContain("removed");
+});

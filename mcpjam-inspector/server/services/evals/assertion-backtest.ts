@@ -1,8 +1,9 @@
 import {
   hostedPredicateScoreDefinition,
-  hostedToolMatchScoreDefinition,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "./score-definitions.js";
+import { buildHostedScoreContract } from "./score-rows.js";
 import { evaluateToolCalls, resolveMatchOptions } from "@mcpjam/sdk/matchers";
 import {
   buildIterationTranscript,
@@ -22,6 +23,7 @@ import {
   toEvaluatorResult,
   scoreResultSchema,
   resolvedScoreDefinitionSchema,
+  type ResolvedScoreDefinition,
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
 import type {
@@ -143,7 +145,8 @@ export function backtestIteration(
     (definition) =>
       definition.idSource === "platform" &&
       (definition.scorerId.startsWith("predicate:") ||
-        definition.scorerId === HOSTED_TOOL_MATCH_SCORER_ID),
+        definition.scorerId === HOSTED_TOOL_MATCH_SCORER_ID ||
+        definition.scorerId === HOSTED_TOOL_ARGUMENTS_SCORER_ID),
   );
   const seen = new Set<string>();
   const differences: EvalBacktestDifference[] = rules.map((rule, index) => {
@@ -207,74 +210,21 @@ export function backtestIteration(
     };
   });
   if (draft.matchOptions) {
-    const evaluatorId = hosted
-      ? HOSTED_TOOL_MATCH_SCORER_ID
-      : TOOL_MATCH_SCORER_ID;
-    seen.add(evaluatorId);
-    const prior = definitions.find((item) => item.scorerId === evaluatorId);
-    const old = stored.find(
-      (item) =>
-        item.scorerId === evaluatorId &&
-        prior &&
-        item.definitionHash === definitionHash(prior),
+    differences.push(
+      ...(hosted
+        ? hostedToolCallDifferences(row, draft.matchOptions, {
+            missing,
+            definitions,
+            stored,
+            seen,
+          })
+        : sdkToolMatchDifferences(row, draft.matchOptions, {
+            missing,
+            definitions,
+            stored,
+            seen,
+          })),
     );
-    if (
-      missing ||
-      !Array.isArray(row.expectedToolCalls) ||
-      typeof row.isNegativeTest !== "boolean"
-    ) {
-      differences.push({
-        iterationId: row.iterationId,
-        caseId: row.caseId,
-        evaluatorId,
-        change: prior ? "configuration_changed" : "added",
-        comparable: false,
-        reason:
-          missing ??
-          "Frozen tool expectations or test polarity are unavailable",
-        ...(old ? { stored: toEvaluatorResult(old) } : {}),
-      });
-    } else {
-      const matchOptions = resolveMatchOptions(draft.matchOptions);
-      const definition = resolveScoreDefinition(
-        hosted
-          ? hostedToolMatchScoreDefinition({
-              matchOptions,
-              isNegativeTest: row.isNegativeTest,
-            })
-          : toolMatchScoreDefinition({
-              expectedToolCalls: row.expectedToolCalls,
-              matchOptions,
-              isNegativeTest: row.isNegativeTest,
-            }),
-      );
-      const next = toEvaluatorResult(
-        fromToolMatchResult(
-          definition,
-          evaluateToolCalls(row.expectedToolCalls, row.actualToolCalls ?? [], {
-            ...matchOptions,
-            isNegativeTest: row.isNegativeTest,
-          }),
-        ),
-      );
-      const comparable = old?.status === "scored";
-      differences.push({
-        iterationId: row.iterationId,
-        caseId: row.caseId,
-        evaluatorId,
-        change: !prior
-          ? "added"
-          : definitionHash(prior) === definitionHash(definition)
-          ? "unchanged"
-          : "configuration_changed",
-        comparable,
-        draft: next,
-        ...(old ? { stored: toEvaluatorResult(old) } : {}),
-        ...(comparable
-          ? { flipped: old!.passed !== next.passed }
-          : { reason: "Original matcher observation is unavailable" }),
-      });
-    }
   }
   for (const definition of definitions) {
     if (seen.has(definition.scorerId)) continue;
@@ -292,6 +242,170 @@ export function backtestIteration(
     });
   }
   return differences;
+}
+
+type ToolCallBacktestContext = {
+  missing: string | undefined;
+  definitions: ResolvedScoreDefinition[];
+  stored: ScoreResult[];
+  seen: Set<string>;
+};
+
+function frozenToolEvidenceMissing(
+  row: EvidenceRow,
+  missing: string | undefined,
+): string | undefined {
+  return (
+    missing ??
+    (!Array.isArray(row.expectedToolCalls) ||
+    typeof row.isNegativeTest !== "boolean"
+      ? "Frozen tool expectations or test polarity are unavailable"
+      : undefined)
+  );
+}
+
+/** One matcher-backed evaluator's difference, stored result against draft. */
+function toolCallDifference(
+  row: EvidenceRow,
+  context: ToolCallBacktestContext,
+  evaluatorId: string,
+  next:
+    | { definition: ResolvedScoreDefinition; result: ScoreResult }
+    | { unavailable: string },
+): EvalBacktestDifference {
+  context.seen.add(evaluatorId);
+  const prior = context.definitions.find(
+    (item) => item.scorerId === evaluatorId,
+  );
+  const old = context.stored.find(
+    (item) =>
+      item.scorerId === evaluatorId &&
+      prior &&
+      item.definitionHash === definitionHash(prior),
+  );
+  if ("unavailable" in next) {
+    return {
+      iterationId: row.iterationId,
+      caseId: row.caseId,
+      evaluatorId,
+      change: prior ? "configuration_changed" : "added",
+      comparable: false,
+      reason: next.unavailable,
+      ...(old ? { stored: toEvaluatorResult(old) } : {}),
+    };
+  }
+  const draftResult = toEvaluatorResult(next.result);
+  const comparable = old?.status === "scored";
+  return {
+    iterationId: row.iterationId,
+    caseId: row.caseId,
+    evaluatorId,
+    change: !prior
+      ? "added"
+      : definitionHash(prior) === definitionHash(next.definition)
+      ? "unchanged"
+      : "configuration_changed",
+    comparable,
+    draft: draftResult,
+    ...(old ? { stored: toEvaluatorResult(old) } : {}),
+    ...(comparable
+      ? { flipped: toEvaluatorResult(old!).passed !== draftResult.passed }
+      : { reason: "Original matcher observation is unavailable" }),
+  };
+}
+
+/**
+ * A hosted run grades tool calls with TWO scorers since the split: which tools
+ * (`toolCalls:match`) and how (`toolCalls:arguments`). Both are rebuilt here
+ * through the runner's own projection (`buildHostedScoreContract`), so the
+ * preview agrees with what a real run under the draft would store — and a
+ * stored arguments definition is never reported as removed by a draft that
+ * changes the match options it depends on.
+ */
+function hostedToolCallDifferences(
+  row: EvidenceRow,
+  draftMatchOptions: NonNullable<EvalBacktestDraft["matchOptions"]>,
+  context: ToolCallBacktestContext,
+): EvalBacktestDifference[] {
+  const matchOptions = resolveMatchOptions(draftMatchOptions);
+  const unavailable = frozenToolEvidenceMissing(row, context.missing);
+  if (unavailable) {
+    const ids = [
+      HOSTED_TOOL_MATCH_SCORER_ID,
+      ...(matchOptions.argumentMatching !== "ignore" &&
+      row.isNegativeTest !== true
+        ? [HOSTED_TOOL_ARGUMENTS_SCORER_ID]
+        : []),
+    ];
+    return ids.map((id) =>
+      toolCallDifference(row, context, id, { unavailable }),
+    );
+  }
+  const expected = row.expectedToolCalls ?? [];
+  const result = evaluateToolCalls(expected, row.actualToolCalls ?? [], {
+    ...matchOptions,
+    isNegativeTest: row.isNegativeTest,
+  });
+  const contract = buildHostedScoreContract({
+    // Declared from the frozen case, as the runner declares it.
+    toolMatchAuthored: true,
+    evaluation: {
+      passed: result.passed,
+      expectedToolCalls: expected,
+      missing: result.missing,
+      unexpected: result.extra,
+      argumentMismatches: result.argumentMismatches,
+    },
+    matchOptions: matchOptions as unknown as Record<string, unknown>,
+    ...(row.isNegativeTest ? { isNegativeTest: true } : {}),
+  });
+  return contract.evaluationConfig.definitions.flatMap((definition) => {
+    const scored = contract.scores.find(
+      (score) => score.scorerId === definition.scorerId,
+    );
+    return scored
+      ? [
+          toolCallDifference(row, context, definition.scorerId, {
+            definition,
+            result: scored,
+          }),
+        ]
+      : [];
+  });
+}
+
+/** The SDK's single `tool-match` scorer, which the split does not touch. */
+function sdkToolMatchDifferences(
+  row: EvidenceRow,
+  draftMatchOptions: NonNullable<EvalBacktestDraft["matchOptions"]>,
+  context: ToolCallBacktestContext,
+): EvalBacktestDifference[] {
+  const unavailable = frozenToolEvidenceMissing(row, context.missing);
+  if (unavailable) {
+    return [
+      toolCallDifference(row, context, TOOL_MATCH_SCORER_ID, { unavailable }),
+    ];
+  }
+  const matchOptions = resolveMatchOptions(draftMatchOptions);
+  const definition = resolveScoreDefinition(
+    toolMatchScoreDefinition({
+      expectedToolCalls: row.expectedToolCalls!,
+      matchOptions,
+      isNegativeTest: row.isNegativeTest,
+    }),
+  );
+  return [
+    toolCallDifference(row, context, TOOL_MATCH_SCORER_ID, {
+      definition,
+      result: fromToolMatchResult(
+        definition,
+        evaluateToolCalls(row.expectedToolCalls!, row.actualToolCalls ?? [], {
+          ...matchOptions,
+          isNegativeTest: row.isNegativeTest,
+        }),
+      ),
+    }),
+  ];
 }
 
 export async function runAssertionBacktest(input: {

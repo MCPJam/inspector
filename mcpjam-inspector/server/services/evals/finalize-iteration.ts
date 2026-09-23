@@ -61,6 +61,7 @@ import {
   buildHostedScoreContract,
   shadowVerdictFromScores,
   type HostedEvaluationLike,
+  type HostedMatcherTurnLike,
   type HostedPredicateResultLike,
 } from "./score-rows.js";
 import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
@@ -309,16 +310,16 @@ function isHostedPredicateResult(
 }
 
 /** Read only the matcher fields the projection needs, typed rather than cast. */
-function narrowEvaluation(
-  evaluation: Record<string, unknown>,
-): HostedEvaluationLike {
+function narrowMatcherTurn(
+  turn: Record<string, unknown>,
+): HostedMatcherTurnLike {
   const list = (key: string): readonly unknown[] | undefined => {
-    const value = evaluation[key];
+    const value = turn[key];
     return Array.isArray(value) ? value : undefined;
   };
   return {
-    ...(typeof evaluation.passed === "boolean"
-      ? { passed: evaluation.passed }
+    ...(typeof turn.promptIndex === "number"
+      ? { promptIndex: turn.promptIndex }
       : {}),
     ...(list("expectedToolCalls")
       ? { expectedToolCalls: list("expectedToolCalls") }
@@ -328,6 +329,28 @@ function narrowEvaluation(
     ...(list("argumentMismatches")
       ? { argumentMismatches: list("argumentMismatches") }
       : {}),
+  };
+}
+
+function narrowEvaluation(
+  evaluation: Record<string, unknown>,
+): HostedEvaluationLike {
+  // Per turn, because the matcher applies the extras cap per turn and the
+  // selection verdict has to read it the same way.
+  const promptSummaries = Array.isArray(evaluation.promptSummaries)
+    ? evaluation.promptSummaries
+        .filter(
+          (turn): turn is Record<string, unknown> =>
+            typeof turn === "object" && turn !== null,
+        )
+        .map(narrowMatcherTurn)
+    : undefined;
+  return {
+    ...(typeof evaluation.passed === "boolean"
+      ? { passed: evaluation.passed }
+      : {}),
+    ...narrowMatcherTurn(evaluation),
+    ...(promptSummaries?.length ? { promptSummaries } : {}),
   };
 }
 

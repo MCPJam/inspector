@@ -643,6 +643,85 @@ describe("joinTrialResults — built-in runner checks", () => {
   );
 });
 
+describe("joinTrialResults — the route's arguments", () => {
+  const routedInput: CaseScorecardInput = {
+    steps: [
+      prompt("p1", "who am I?"),
+      assert("t1", {
+        type: "toolCalledWith",
+        toolName: "get_me",
+        args: { args: { id: 7 } },
+      } as Predicate),
+    ],
+    toolsChoice: "tools",
+  };
+  const argumentsDefinition: ScoreDefinition = {
+    scorerId: "toolCalls:arguments",
+    idSource: "platform",
+    scorerVersion: "1",
+    implementationHash: "impl:arguments",
+    deterministic: true,
+    passThreshold: 1,
+    role: "gating",
+  };
+
+  it("reads its own score row", () => {
+    const fixture = scoreFixture([
+      {
+        definition: argumentsDefinition,
+        result: {
+          status: "scored",
+          value: 0,
+          rationale: "`get_me` was called with a different `id` than expected",
+        },
+      },
+    ]);
+    const rows = join(routedInput, { iteration: iteration(fixture) });
+    expect(rowByKey(rows, "route:arguments").result).toMatchObject({
+      state: "failed",
+      source: "scoreRow",
+      reason: "`get_me` was called with a different `id` than expected",
+    });
+  });
+
+  it("never borrows the call stage's verdict, which is not about arguments", () => {
+    const fixture = scoreFixture([
+      { definition: argumentsDefinition, result: { status: "skipped" } },
+    ]);
+    // Declared, with no scored row: not measured, whatever the chain says.
+    const rows = join(routedInput, {
+      iteration: iteration({
+        evaluationConfig: fixture.evaluationConfig,
+        scores: [],
+      }),
+      chain: {
+        status: "verified",
+        analyzerVersion: 12,
+        stages: [{ stage: "call", state: "failed", reason: "protocolError" }],
+      } as TrialFacts["chain"],
+    });
+    expect(rowByKey(rows, "route:arguments").result).toEqual({
+      state: "notMeasured",
+    });
+  });
+
+  it("is not on a trial graded before the split, which checked arguments in the route row", () => {
+    for (const metadata of [
+      {},
+      scoreFixture([
+        {
+          definition: { ...argumentsDefinition, scorerId: "toolCalls:match" },
+          result: { status: "scored", value: 1 },
+        },
+      ]),
+    ]) {
+      const rows = join(routedInput, { iteration: iteration(metadata) });
+      expect(rows.map((row) => row.key)).not.toContain("route:arguments");
+      expect(rows.map((row) => row.key)).toContain("route");
+    }
+  });
+});
+
 describe("joinTrialResults — the judge", () => {
   it("shows the verdict and the score it was measured against", () => {
     const rows = join(authored, {

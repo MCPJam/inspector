@@ -336,9 +336,16 @@ export function joinTrialResults(
     );
   }
 
-  const scores = indexScores(
-    parseIterationScores(metadata),
-    parseEvaluationConfig(metadata),
+  const evaluationConfig = parseEvaluationConfig(metadata);
+  const scores = indexScores(parseIterationScores(metadata), evaluationConfig);
+  // Scorers this trial was graded with. The arguments row exists only where
+  // the trial declared it: a trial graded before the split graded arguments
+  // inside the route row, and a second row saying "not measured" would claim
+  // they went unchecked.
+  const declared = new Set(
+    (evaluationConfig?.definitions ?? []).map(
+      (definition) => definition.scorerId,
+    ),
   );
 
   // A chain the analyzer withheld (`unverified`) carries no stages at all —
@@ -351,7 +358,17 @@ export function joinTrialResults(
   );
   const selectionStage = chainStages.get("selection");
 
-  return groups.map((group) => ({
+  const graded = groups
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter(
+        (row) =>
+          row.join?.kind !== "toolArguments" || declared.has(row.join.scorerId),
+      ),
+    }))
+    .filter((group) => group.rows.length > 0);
+
+  return graded.map((group) => ({
     ...group,
     rows: group.rows.map((row) => {
       const joined = joinRow(row, {
@@ -513,6 +530,17 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
       };
     }
     return { ...row, result: NOT_MEASURED };
+  }
+
+  if (join.kind === "toolArguments") {
+    const scored = ctx.scores.byScorerId.get(join.scorerId);
+    return scored
+      ? {
+          ...row,
+          result: resultFromScore(scored.score, scored.definition),
+          evidence: scoreEvidence(scored.score, scored.definition, row),
+        }
+      : { ...row, result: NOT_MEASURED };
   }
 
   if (join.kind === "toolMatch") {
