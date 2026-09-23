@@ -370,27 +370,31 @@ export function ShareUsageThreadDetail({
    */
   const [spanError, setSpanError] = useState<string | null>(null);
 
-  // Fetch messages from blob URL. Keyed on the transcript the link points at,
-  // not the link: a re-minted link to the same transcript (links expire and
-  // are renewed) must not refetch it or swap the viewer for a spinner.
-  // `fetchArtifact` reads the freshest link for it either way.
-  const messagesBlobKey = thread?.messagesBlobUrl
-    ? artifactStableKey(thread.messagesBlobUrl)
-    : null;
+  // Fetch messages from blob URL. Links expire and are re-minted for the same
+  // transcript: a renewed link to the transcript already on screen is not new
+  // content and must not refetch it or swap the viewer for a spinner, while a
+  // renewed link after a FAILED load is exactly how that load gets retried.
+  const loadedMessagesKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!thread?.messagesBlobUrl) {
+    const messagesBlobUrl = thread?.messagesBlobUrl;
+    if (!messagesBlobUrl) {
+      loadedMessagesKeyRef.current = null;
       setMessages(null);
       return;
     }
+    const messagesKey = artifactStableKey(messagesBlobUrl);
+    if (loadedMessagesKeyRef.current === messagesKey) return;
+    // Names only what is on screen: from here the shown transcript is stale.
+    loadedMessagesKeyRef.current = null;
 
     let isActive = true;
     const controller = new AbortController();
 
-    async function fetchMessages() {
+    async function fetchMessages(url: string) {
       setIsLoadingMessages(true);
       setError(null);
       try {
-        const response = await fetchArtifact(thread!.messagesBlobUrl!, {
+        const response = await fetchArtifact(url, {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -399,6 +403,7 @@ export function ShareUsageThreadDetail({
         const data = await response.json();
         if (isActive) {
           setMessages(data);
+          loadedMessagesKeyRef.current = messagesKey;
         }
       } catch (err) {
         if (!isActive) return;
@@ -414,13 +419,12 @@ export function ShareUsageThreadDetail({
       }
     }
 
-    void fetchMessages();
+    void fetchMessages(messagesBlobUrl);
     return () => {
       isActive = false;
       controller.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messagesBlobKey]);
+  }, [thread?.messagesBlobUrl]);
 
   /**
    * Eval blobs are anchored at the RUN start by `drive-local-eval-turn`, while

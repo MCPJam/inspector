@@ -86,6 +86,51 @@ describe("usePersistedSessionTrace — transcript links", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
+  it("retries a failed load when a renewed link to the same transcript arrives", async () => {
+    // Fetching once per transcript must not mean failing once per transcript:
+    // a load that failed is retried by the next link to it.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    mockThread.current = { messagesBlobUrl: signedLink("kg-flaky", T0) };
+    const { rerender } = render(<Probe threadId="t1" />);
+    await waitFor(() =>
+      expect(last?.error).toBe("Failed to fetch messages: 503"),
+    );
+
+    mockThread.current = {
+      messagesBlobUrl: signedLink("kg-flaky", T0 + 3600),
+    };
+    rerender(<Probe threadId="t1" />);
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+    expect(last?.error).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads a thread it left mid-load when the selection comes back", async () => {
+    // Switching threads clears the transcript during render. Leaving t1 for a
+    // thread whose load then fails, and coming back, must load t1 again rather
+    // than treat it as still on screen.
+    const threads: Record<string, Record<string, unknown>> = {
+      t1: { messagesBlobUrl: signedLink("kg-one", T0) },
+      t2: { messagesBlobUrl: signedLink("kg-two", T0) },
+    };
+    mockThread.current = threads.t1;
+    const { rerender } = render(<Probe threadId="t1" />);
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    mockThread.current = threads.t2;
+    rerender(<Probe threadId="t2" />);
+    await waitFor(() =>
+      expect(last?.error).toBe("Failed to fetch messages: 503"),
+    );
+
+    mockThread.current = threads.t1;
+    rerender(<Probe threadId="t1" />);
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+    expect(last?.loading).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("stops loading once the row arrives without a transcript", async () => {
     mockThread.current = undefined;
     const { rerender } = render(<Probe threadId="t1" />);

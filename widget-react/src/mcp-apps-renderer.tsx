@@ -1755,6 +1755,10 @@ export function MCPAppsRendererSurface({
       }
       const html = await cachedResponse.text();
       if (!isStillCurrent()) return;
+      // A retry that succeeded (e.g. a re-minted link after an expired one)
+      // replaces the failure it recovered from: the identity reset that used
+      // to clear it no longer runs when only the link changed.
+      setLoadError(null);
       // Reset readiness so the previous bridge's transport doesn't
       // get reused with the new HTML before its connect resolves.
       setBridgeTransportReady(false);

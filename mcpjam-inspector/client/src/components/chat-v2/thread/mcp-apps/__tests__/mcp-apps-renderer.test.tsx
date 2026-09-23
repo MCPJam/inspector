@@ -2380,6 +2380,38 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("shows a cached replay that recovers on a re-minted link after a failed load", async () => {
+    resetArtifactUrlsForTests();
+    const first = signedArtifactUrl("kg-widget", 1_800_000_000);
+    const reminted = signedArtifactUrl("kg-widget", 1_800_003_600);
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      text: () => Promise.resolve(""),
+      json: () => Promise.resolve({}),
+      headers: new Headers(),
+    } as Response);
+
+    const { rerender } = render(
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={first} />,
+    );
+    expect(
+      await screen.findByText(/Failed to load MCP App/),
+    ).toBeInTheDocument();
+
+    // Same widget, fresh link: the retry succeeds and must be what shows.
+    rerender(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={reminted} />);
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    expect(
+      screen.queryByText(/Failed to load MCP App/),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the widget's declared display modes when its artifact link is re-minted", async () => {
     resetArtifactUrlsForTests();
     // The app declares inline only, so the advertised set is the host's

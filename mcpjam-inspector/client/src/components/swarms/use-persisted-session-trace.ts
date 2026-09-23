@@ -115,21 +115,25 @@ export function usePersistedSessionTrace(threadId: string | null): {
     setLoadingSpans(Boolean(threadId));
   }
 
-  // Keyed on the transcript the link points at, not the link or the row: a
-  // re-minted link to the same transcript (links expire and are renewed) must
-  // not refetch it, and neither must an unrelated change to the session row.
-  // `fetchArtifact` reads the freshest link for it either way.
-  const messagesBlobKey = thread?.messagesBlobUrl
-    ? artifactStableKey(thread.messagesBlobUrl)
-    : null;
+  // Links expire and are re-minted for the same transcript. A renewed link to
+  // the transcript already loaded is not new content and does not refetch it,
+  // and neither does an unrelated change to the session row; a renewed link
+  // after a FAILED load is exactly how that load gets retried.
+  const loadedMessagesKeyRef = useRef<string | null>(null);
+  const messagesBlobUrl = thread?.messagesBlobUrl;
   const threadLoaded = thread !== undefined;
   useEffect(() => {
-    if (!threadId || !thread?.messagesBlobUrl) {
+    if (!threadId || !messagesBlobUrl) {
+      loadedMessagesKeyRef.current = null;
       setMessages(null);
-      setLoadingMessages(Boolean(threadId && thread === undefined));
+      setLoadingMessages(Boolean(threadId && !threadLoaded));
       setError(null);
       return;
     }
+    const messagesKey = `${threadId}|${artifactStableKey(messagesBlobUrl)}`;
+    if (loadedMessagesKeyRef.current === messagesKey) return;
+    // Names only what is on screen: from here the shown transcript is stale.
+    loadedMessagesKeyRef.current = null;
 
     let active = true;
     const controller = new AbortController();
@@ -138,7 +142,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
 
     void (async () => {
       try {
-        const response = await fetchArtifact(thread.messagesBlobUrl!, {
+        const response = await fetchArtifact(messagesBlobUrl, {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -153,6 +157,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
           return;
         }
         setMessages(extracted);
+        loadedMessagesKeyRef.current = messagesKey;
       } catch (err) {
         if (!active) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -169,8 +174,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
       active = false;
       controller.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, messagesBlobKey, threadLoaded]);
+  }, [threadId, messagesBlobUrl, threadLoaded]);
 
   useEffect(() => {
     if (!threadId) {
