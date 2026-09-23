@@ -163,7 +163,7 @@ function makeProjectRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
     runNumber: 1,
     status: "completed",
     result: "passed",
-    summary: { total: 4, passed: 3, failed: 1, passRate: 75 },
+    summary: { total: 4, passed: 3, failed: 1, passRate: 0.75 },
     source: "sdk",
     ciMetadata: null,
     createdBy: "user_1",
