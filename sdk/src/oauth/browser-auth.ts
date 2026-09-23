@@ -1,5 +1,8 @@
 import pkceChallenge from "pkce-challenge";
-import { RESOURCE_METADATA_NOT_IMPLEMENTED } from "./state-machines/shared/resource-metadata-error.js";
+import {
+  RESOURCE_METADATA_NO_RESPONSE,
+  RESOURCE_METADATA_NOT_IMPLEMENTED,
+} from "./state-machines/shared/resource-metadata-error.js";
 import type {
   AuthResult,
   AuthorizationServerMetadata,
@@ -785,8 +788,12 @@ export async function discoverOAuthProtectedResourceMetadata(
     },
   );
 
-  if (!response || response.status === 404) {
-    await response?.text?.().catch(() => {});
+  if (!response) {
+    throw new Error(RESOURCE_METADATA_NO_RESPONSE);
+  }
+
+  if (response.status === 404) {
+    await response.text().catch(() => {});
     throw new Error(RESOURCE_METADATA_NOT_IMPLEMENTED);
   }
 

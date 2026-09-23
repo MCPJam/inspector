@@ -4,7 +4,7 @@
  *
  * `discoverOAuthProtectedResourceMetadata` throws
  * {@link RESOURCE_METADATA_NOT_IMPLEMENTED} when the well-known document is
- * absent (no response, or a 404). RFC 9728 is how a resource names the
+ * absent (a 404). RFC 9728 is how a resource names the
  * authorization servers allowed to issue tokens for it, and MCP has required
  * it from 2025-06-18 onward — so a server without one is nonconforming, and
  * saying so is the entire job of pointing a debugger at it.
@@ -22,6 +22,18 @@
 /** Thrown by protected-resource-metadata discovery when the document is absent. */
 export const RESOURCE_METADATA_NOT_IMPLEMENTED =
   "Resource server does not implement OAuth 2.0 Protected Resource Metadata.";
+
+/**
+ * Thrown by protected-resource-metadata discovery when no response arrived at
+ * all — every attempt failed at the transport (network error, CORS rejection).
+ *
+ * Kept apart from {@link RESOURCE_METADATA_NOT_IMPLEMENTED} on purpose: the
+ * debugger's requests go through our own proxy, so "no response" is as likely
+ * to be MCPJam's fetch path breaking as the server under test. Sharing the
+ * sentinel would let that outage pass as a nonconforming server.
+ */
+export const RESOURCE_METADATA_NO_RESPONSE =
+  "No response while loading OAuth protected resource metadata.";
 
 const RESOURCE_METADATA_REQUEST_FAILURE_PREFIX =
   "Failed to request resource metadata";

@@ -222,6 +222,19 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(reportCaught).toHaveBeenCalledTimes(1);
   });
 
+  // No response at all is a transport failure — our proxy being unreachable
+  // looks exactly like this — so it is not the server's missing document.
+  it("still reports a resource-metadata request that got no response", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({
+      error:
+        "Failed to request resource metadata: No response while loading OAuth protected resource metadata.",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
   it("still reports a real failure that follows a warning", () => {
     const { wrapped } = wrappedUpdateState();
 
