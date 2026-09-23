@@ -9,6 +9,20 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-23
+
+#### Changed
+
+- **User Testing insights views name the reason they are empty** — the Session flow and Findings tab used to read "This can take a few minutes" whatever the state. They now show a specific message drawn from the analysis summary: no sessions yet, waiting for a session to go quiet (with the time analysis starts), analyzing N sessions, the daily limit (with when it resumes), a guest study, a failure, outcomes still to come (with when they fill in), or themes still being grouped. A flow made entirely of placeholder bars shows the status panel instead of a fake diagram.
+
+- **Analyze now button for User Testing studies** — when the reason an insights view is empty is one that can be changed — a session still waiting to go quiet, a pending outcome, a guest study, or a retryable failure — study members see an **Analyze now** button. Clicking it treats the study's sessions as finished and starts analysis immediately. The button appears in the Session flow and Findings tab. Guests never see it.
+
+- **Analyze now button on individual session detail** — the session detail header shows **Analyze now** while that session's analysis is waiting (`owed`) or was analyzed before its outcome could be asserted (`provisional`). Clicking it requests analysis for that session only. The button reads **Analyzing…** and stays disabled while a pass runs. Members only; guests see no button.
+
+- **Early themes note under Session flow** — when a study's theme catalog was built from fewer sessions than needed for a stable grouping, a muted note appears under the Session flow title: "Early themes. They settle after N more sessions."
+
+- **Drawn Session flow shows a live status banner** — when a flow is drawn but analysis is still in progress (sessions waiting, outcomes pending, or the daily limit reached), a one-line banner appears above the diagram. Members see an **Analyze now** link in the banner where it applies.
+
 ### 2026-09-22 (2)
 
 #### Changed
