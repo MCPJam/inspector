@@ -98,7 +98,7 @@ jobs:
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve deployed commit metadata
         id: preview_commit
@@ -276,7 +276,7 @@ jobs:
 
       - name: Dispatch backend preview request
         if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
@@ -300,7 +300,7 @@ jobs:
         # always() so the comment reflects truth even when an earlier step
         # (Railway config, origin allowlists, health check) failed.
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           # 'preview requested' is string-matched by preview-watchdog.yml —
@@ -410,7 +410,7 @@ jobs:
       # at its default branch anyway; the co-developed inspector-PR case
       # arrives as `backend_preview_ready` carrying a real inspector ref.
       - name: Checkout default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || 'main' }}
 
@@ -540,7 +540,7 @@ jobs:
 
       - name: Dispatch backend preview request
         if: steps.preview_domain.outputs.url != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
@@ -575,7 +575,7 @@ jobs:
             });
 
       - name: Upsert preview comment on backend PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
@@ -663,7 +663,7 @@ jobs:
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
       # Checkout is required so the `.github/scripts/` helpers are on disk.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.57.1
@@ -709,7 +709,7 @@ jobs:
             --yes || true
 
       - name: Dispatch backend preview cleanup
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
@@ -737,7 +737,7 @@ jobs:
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
       # Checkout is required so the `.github/scripts/` helpers are on disk.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.57.1
@@ -811,7 +811,7 @@ jobs:
       # `backend_preview_failed` normally carry `inspector_git_ref`, so this
       # only bites when that resolves empty -- but then it bites the same way.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || 'main' }}
 
@@ -947,7 +947,7 @@ jobs:
         # always() so a failed Railway/WorkOS/health step doesn't leave the
         # comment lying about the previous state.
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
