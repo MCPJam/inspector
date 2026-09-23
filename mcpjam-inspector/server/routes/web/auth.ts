@@ -880,6 +880,61 @@ export async function authorizeBatch(
   };
 }
 
+/**
+ * Project membership with no servers to authorize: the same backend
+ * `resolveProjectAccess` verdict {@link authorizeBatch} applies, for a turn
+ * that selected none (MJ-013). A refusal is rethrown with the backend's own
+ * status and body, so it reads exactly like the batch path's
+ * `403 Not a member of this project`.
+ */
+export async function authorizeProject(
+  caller: ManagerCallerContext,
+  bearerToken: string,
+  projectId: string,
+): Promise<void> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}/web/authorize-project`, {
+      method: "POST",
+      headers: buildConvexAuthHeaders(caller, bearerToken),
+      body: JSON.stringify({ projectId }),
+    });
+  } catch (error) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      `Failed to reach authorization service: ${parseErrorMessage(error)}`,
+    );
+  }
+  if (response.ok) return;
+
+  // A refusal with no JSON body still fails closed, with a generic message. A
+  // backend that predates the route is one: its router answers 404 in plain
+  // text, so guest chat stops until the backend half is deployed.
+  const body = (await response.json().catch(() => null)) as {
+    code?: unknown;
+    message?: unknown;
+  } | null;
+  throw new WebRouteError(
+    response.status,
+    (typeof body?.code === "string"
+      ? body.code
+      : ErrorCode.INTERNAL_ERROR) as ErrorCode,
+    typeof body?.message === "string"
+      ? body.message
+      : `Authorization failed (${response.status})`,
+  );
+}
+
 export function toHttpConfig(
   authResponse: AuthorizedServerConfigHolder,
   timeoutMs: number,

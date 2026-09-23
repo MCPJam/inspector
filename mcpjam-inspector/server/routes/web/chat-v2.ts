@@ -69,6 +69,7 @@ import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
+  authorizeProject,
   createAuthorizedManager,
   buildServerNamesById,
   callerContextFromHono,
@@ -327,6 +328,20 @@ chatV2.post("/", async (c) => {
     // True when this turn flows through a scenario surface. sourceType +
     // accessScope decisions hinge on this.
     const isScenarioSession = executionTarget.kind === "scenario";
+    // A guest's `projectId` is checked here, before anything is resolved or
+    // billed against it (MJ-013). The server batch below applies the same
+    // membership check, but only to the servers a turn selected, and a turn
+    // with none skipped it: a guest token could run a hosted completion
+    // against any project id. Scenario turns are exempt, since their access is
+    // the `scenarioId` grant, re-checked by the runtime-config fetch, not
+    // membership.
+    if (c.get("guestId") && !isScenarioSession) {
+      await authorizeProject(
+        callerContextFromHono(c),
+        bearerToken,
+        hostedBody.projectId,
+      );
+    }
     // True when the execution context was RESOLVED SERVER-SIDE, so its host
     // config — not the request body — is authoritative for capability
     // declarations. Scenario (a share-link visitor controls the body) and
