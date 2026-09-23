@@ -663,9 +663,10 @@ const SETUP_ABORTED_SENTENCE = `${STAGE_REASON_LABELS.setupAborted
  * runner check says when its stage failed for an evaluator's reason.
  */
 function evaluatorDecidedSentence(row: StageResultRow): string {
-  return row.reason
-    ? `Decided by an evaluator: ${STAGE_REASON_LABELS[row.reason]}.`
-    : "Decided by an evaluator.";
+  // A reason newer than this client's catalog has no label; say less rather
+  // than print "undefined".
+  const label = row.reason ? STAGE_REASON_LABELS[row.reason] : undefined;
+  return label ? `Decided by an evaluator: ${label}.` : "Decided by an evaluator.";
 }
 
 /**
