@@ -166,18 +166,34 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
 }
 
 /**
- * Is this detail the guard's own verdict rather than a socket outcome?
+ * The three exact sentences a refusal is worded as.
  *
- * Matched against the message `classifyPinnedTransportError` and
- * `hosted-egress-guard` produce — the only two places a refusal is worded — so
- * a reworded refusal degrades to the uniform message above rather than to a
- * leak. The regression test drives the real transport at a real reserved
- * address, so a rewording fails a test here instead of silently changing what
- * callers are told.
+ * `classifyPinnedTransportError` writes the first; `hosted-egress-guard`
+ * writes the other two. Every pattern is anchored end to end, which is the
+ * point: these used to be bare substring tests, and a substring test asks
+ * whether the phrase appears ANYWHERE in the detail rather than whether the
+ * detail IS a refusal. A socket error carrying attacker-influenced text — a
+ * certificate subject, a SAN, a redirect target echoed into the message — only
+ * had to contain "private or internal address" to be waved through with its
+ * open-versus-closed differential intact, which is the leak this module exists
+ * to close.
+ *
+ * The variable spans are bounded to exclude `"` so a quote inside a host or
+ * label cannot extend a match past its own field.
+ *
+ * Failure direction is unchanged and deliberate: a reworded refusal matches
+ * nothing, so it degrades to the uniform message above rather than leaking.
+ * The regression test drives the real transport at a real reserved address, so
+ * a rewording fails a test here instead of silently changing what callers are
+ * told.
  */
+const EGRESS_REFUSAL_DETAILS: readonly RegExp[] = [
+  /^Refusing to connect to "[^"]*": it is not a publicly routable address\.$/i,
+  /^[^"]*points at a private or internal address \("[^"]*"\) that the hosted inspector will not dial\. Run this server locally in the inspector instead\.$/i,
+  /^[^"]*hostname "[^"]*" resolves to a private or internal address that the hosted inspector will not dial\.$/i,
+];
+
+/** Is this detail the guard's own verdict rather than a socket outcome? */
 function isEgressRefusalDetail(detail: string): boolean {
-  return (
-    /not a publicly routable address/i.test(detail) ||
-    /private or internal address/i.test(detail)
-  );
+  return EGRESS_REFUSAL_DETAILS.some((pattern) => pattern.test(detail.trim()));
 }
