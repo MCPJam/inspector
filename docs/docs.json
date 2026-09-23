@@ -247,12 +247,12 @@
       "destination": "/inspector/xaa-debugger"
     },
     {
-      "source": "/sdk/reference/test-agent",
-      "destination": "/sdk/reference/host-runner"
-    },
-    {
       "source": "/inspector/views",
       "destination": "/inspector/playground"
+    },
+    {
+      "source": "/sdk/reference/test-agent",
+      "destination": "/sdk/reference/host-runner"
     },
     {
       "source": "/api-reference/chatboxes/get-a-chatbox",

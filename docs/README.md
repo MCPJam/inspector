@@ -82,3 +82,10 @@ operation's first tag and its summary — so renaming either moves the page.
 produced, and `mcpjam-inspector/server/routes/v1/__tests__/api-reference-urls.test.ts`
 fails until a new page is added to it, or until a URL the spec no longer
 produces has a redirect in `docs.json` to the page that replaced it.
+
+Treat a red run as blocking even though CI will not: the test runs in the
+`Inspector Tests` shards, and the checks `main` requires are `Build and Test`
+and `Run Tests`. A rename that breaks URLs goes red but can still be merged.
+
+The ledger is append-only. Never drop a row, including when resolving a merge
+conflict in it — a URL that was ever published must keep resolving.
