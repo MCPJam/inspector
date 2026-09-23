@@ -68,6 +68,7 @@ import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
   REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
 } from "./shared/dynamic-client-registration.js";
 import {
   applyEmulationToDcrMetadata,
@@ -1044,8 +1045,7 @@ export const createDebugOAuthStateMachine = (
             } else {
               if (strictConformance) {
                 updateState({
-                  error:
-                    "Authorization server metadata does not include a registration_endpoint required for DCR conformance.",
+                  error: REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
                   isInitiatingAuth: false,
                 });
                 return;

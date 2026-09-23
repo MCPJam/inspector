@@ -31,6 +31,15 @@ export const REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT =
   "Authorization server metadata does not include a registration_endpoint. " +
   "Configure a pre-registered client or use a different registration strategy.";
 
+/**
+ * Rejection message for the same missing `registration_endpoint` under strict
+ * conformance, where DCR is required and no pre-registered fallback is tried.
+ * Exported for the same reason as the constant above.
+ */
+export const REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE =
+  "Authorization server metadata does not include a registration_endpoint " +
+  "required for DCR conformance.";
+
 export interface DynamicClientRegistrationRequestInput {
   registrationEndpoint: string;
   redirectUri: string;

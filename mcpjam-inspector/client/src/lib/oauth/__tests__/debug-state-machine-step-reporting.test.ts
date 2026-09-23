@@ -18,6 +18,7 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
 import {
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
 } from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
@@ -152,13 +153,15 @@ describe("OAuth debugger step-failure reporting", () => {
       "register_client",
     );
 
-    const notOurs = {
-      error: REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
-    };
-    wrapped(notOurs);
+    for (const error of [
+      REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+      REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+    ]) {
+      wrapped({ error });
+      expect(updateState).toHaveBeenCalledWith({ error });
+    }
 
     expect(reportCaught).not.toHaveBeenCalled();
-    expect(updateState).toHaveBeenCalledWith(notOurs);
   });
 
   it("ignores an authenticated request failure from the server under test", () => {

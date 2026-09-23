@@ -484,7 +484,10 @@ export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-mach
 // Same reason: an authorization server that offers no dynamic client
 // registration and no configured fallback client is a target-server
 // configuration, not a host bug.
-export { REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT } from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export {
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
 // The debug proxy's own failures use a different error shape. This classifier
 // lets browser hosts keep a target server's authenticated-request rejection in
 // the debugger without sending it to their own exception tracker.

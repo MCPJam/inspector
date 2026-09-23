@@ -1,6 +1,7 @@
 import {
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -269,8 +270,9 @@ function createHostedClientSecretResolver({
  *
  * The missing `registration_endpoint` failure is the same shape: the server
  * under test offers no dynamic client registration and the user configured no
- * pre-registered client to fall back to. That is a setup the debugger exists to
- * surface, and the toast says exactly what to do about it.
+ * pre-registered client to fall back to (or strict conformance forbids the
+ * fallback). That is a setup the debugger exists to surface, and the toast
+ * says exactly what to do about it.
  *
  * The SDK owns both messages and exports them, so matching here cannot drift
  * out of sync with what the machines actually throw.
@@ -278,6 +280,7 @@ function createHostedClientSecretResolver({
 const UNREPORTED_STEP_FAILURES = new Set([
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
 ]);
 
 function isUnreportedStepFailure(error: string): boolean {
