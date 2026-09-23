@@ -9,6 +9,7 @@ import {
   electronBuildSurface,
   type FingerprintableEvent,
   groupDomMutationConflicts,
+  groupOAuthDebuggerStepFailures,
   isSentryBuildSurface,
   resolveClientBuildSurface,
   SENTRY_BUILD_SURFACES,
@@ -224,13 +225,41 @@ describe("surface builders", () => {
     );
   });
 
-  it("groups DOM mutation conflicts on the browser client only", () => {
+  // Behaviour, not identity: `beforeSend` is a composition now, so asserting
+  // it IS one of the rules would pass only while there is exactly one.
+  it("applies both fingerprinting rules on the browser client only", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
-    expect(buildClientSentryConfig(ctx).beforeSend).toBe(
-      groupDomMutationConflicts,
-    );
+    const beforeSend = buildClientSentryConfig(ctx).beforeSend;
+
+    const dom = beforeSend({
+      environment: "prod",
+      exception: {
+        values: [
+          {
+            type: "NotFoundError",
+            value:
+              "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
+          },
+        ],
+      },
+    });
+    expect(dom.fingerprint).toEqual(["dom-mutation-conflict", "prod"]);
+
+    const step = beforeSend({
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      extra: { step: "request_client_registration" },
+      exception: {
+        values: [
+          { type: "Error", value: "Dynamic Client Registration failed (400)." },
+        ],
+      },
+    });
+    expect(step.fingerprint?.[0]).toBe("oauth-debugger-step");
+
     // A server-side NotFoundError is an upstream or storage failure, so
-    // collapsing those by message would merge unrelated defects.
+    // collapsing those by message would merge unrelated defects — and the
+    // OAuth debugger never runs off the browser client.
     expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
     expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
   });
@@ -380,4 +409,128 @@ describe("build surfaces", () => {
       /not a client build surface/,
     );
   });
+});
+
+describe("groupOAuthDebuggerStepFailures", () => {
+  function stepEvent(
+    value: string,
+    {
+      step = "request_client_registration",
+      environment = "prod",
+      source = "oauth_debugger_step",
+    }: { step?: string; environment?: string; source?: string } = {},
+  ): FingerprintableEvent {
+    return {
+      environment,
+      tags: { source },
+      extra: { step },
+      exception: { values: [{ type: "Error", value }] },
+    };
+  }
+
+  const fingerprint = (event: FingerprintableEvent) =>
+    groupOAuthDebuggerStepFailures(event).fingerprint;
+
+  // INSPECTOR-CLIENT-2FE: nine events titled "Dynamic Client Registration
+  // failed (400)" that were five unrelated findings, one stack between them.
+  // Each of those must now get its own issue.
+  it("splits the findings that shared one stack", () => {
+    const findings = [
+      stepEvent("Dynamic Client Registration failed (400)."),
+      stepEvent("Dynamic Client Registration failed (401)."),
+      stepEvent("Token request failed: 400: invalid_client: invalid_client_secret", {
+        step: "token_request",
+      }),
+      stepEvent(
+        "MCP server returned HTTP 404 Not Found where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+      stepEvent(
+        "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        { step: "request_resource_metadata" },
+      ),
+    ].map((event) => JSON.stringify(fingerprint(event)));
+
+    expect(new Set(findings).size).toBe(5);
+  });
+
+  it("keeps a failure together with and without the fallback advisory", () => {
+    // The machines append the hint only when a fallback exists, so these are
+    // one finding.
+    const withHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (401). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    // Pinned to a value, not only to each other: two `undefined`s are equal
+    // too, so equality alone would pass with the rule switched off.
+    expect(withHint).toEqual([
+      "oauth-debugger-step",
+      "request_client_registration",
+      "Dynamic Client Registration failed (401).",
+      "prod",
+    ]);
+    expect(withHint).toEqual(
+      fingerprint(stepEvent("Dynamic Client Registration failed (401).")),
+    );
+  });
+
+  it("uses a message with no sentence break whole", () => {
+    // "OAuth 2.0" has a dot, but not a sentence break — it must not be cut.
+    expect(
+      fingerprint(
+        stepEvent(
+          "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+          { step: "request_resource_metadata" },
+        ),
+      ),
+    ).toEqual([
+      "oauth-debugger-step",
+      "request_resource_metadata",
+      "Failed to request resource metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+      "prod",
+    ]);
+  });
+
+  it("separates the same finding on different steps", () => {
+    expect(fingerprint(stepEvent("boom", { step: "a" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { step: "b" })),
+    );
+  });
+
+  // Stack grouping kept dev and prod apart only because their bundles differ;
+  // a message-keyed fingerprint must keep them apart on purpose.
+  it("keeps environments apart", () => {
+    expect(fingerprint(stepEvent("boom", { environment: "prod" }))).not.toEqual(
+      fingerprint(stepEvent("boom", { environment: "dev" })),
+    );
+  });
+
+  it("files a report with no step under a stable bucket, not a crash", () => {
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      tags: { source: "oauth_debugger_step" },
+      exception: { values: [{ type: "Error", value: "boom" }] },
+    };
+    expect(groupOAuthDebuggerStepFailures(event).fingerprint).toEqual([
+      "oauth-debugger-step",
+      "unknown",
+      "boom",
+      "prod",
+    ]);
+  });
+
+  // `oauth_debugger_advance` is a genuine exception whose stack is the useful
+  // part, and everything else is none of this rule's business.
+  it.each(["oauth_debugger_advance", "react_boundary", undefined])(
+    "leaves source %j on default grouping",
+    (source) => {
+      const event: FingerprintableEvent = {
+        environment: "prod",
+        ...(source ? { tags: { source } } : {}),
+        exception: { values: [{ type: "Error", value: "boom" }] },
+      };
+      expect(groupOAuthDebuggerStepFailures(event).fingerprint).toBeUndefined();
+    },
+  );
 });

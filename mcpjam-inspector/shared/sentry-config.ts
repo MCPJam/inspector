@@ -211,6 +211,8 @@ export interface FingerprintableEvent {
   exception?: {
     values?: { type?: string; value?: string }[];
   };
+  tags?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 }
 
 /**
@@ -245,6 +247,57 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
   if (!BLINK_DOM_MUTATION_CONFLICT.test(value)) return event;
 
   event.fingerprint = ["dom-mutation-conflict", event.environment ?? "unknown"];
+  return event;
+}
+
+/**
+ * Group OAuth-debugger step failures by WHAT failed, not by where they were
+ * reported.
+ *
+ * The inverse of the problem above. There, one bug's frames moved with every
+ * build and scattered it across nine issues. Here, every step failure the
+ * debugger has — a missing metadata document, a registration endpoint that
+ * wants a token, a wrong client secret, a server answering 404 where MCP
+ * requires 401 — is reported from the SAME line (`withStepFailureReporting` in
+ * `debug-state-machine-adapter.ts` builds the `Error` there), so they share one
+ * stack and Sentry files them all as one issue.
+ *
+ * INSPECTOR-CLIENT-2FE shows the cost. Titled "Dynamic Client Registration
+ * failed (400)", its 9 events are five unrelated findings; the headline is one
+ * of them. And because the bundle hash is in the frames, each release opens a
+ * fresh catch-all issue — INSPECTOR-CLIENT-2F9 is the same bucket for the
+ * previous build — so every deploy re-alerts on nothing new.
+ *
+ * Keyed on the step and the message's FIRST SENTENCE. The machines append an
+ * advisory to some failures only when a fallback exists ("… (401). Configure a
+ * pre-registered client or enable DCR …"), and those are the same finding with
+ * and without the hint. Cutting at the first ". " keeps them together; a
+ * message with no sentence break is used whole. Coarser at worst, never merged
+ * across different failures the way the stack grouping is.
+ *
+ * `environment` for the same reason `groupDomMutationConflicts` carries it:
+ * stack grouping kept dev and prod apart only by accident of their bundles, and
+ * a message-keyed fingerprint would otherwise merge them.
+ *
+ * Only `oauth_debugger_step`. `oauth_debugger_advance` is a genuine exception
+ * thrown out of the flow, and its stack is the useful part.
+ */
+export function groupOAuthDebuggerStepFailures<T extends FingerprintableEvent>(
+  event: T,
+): T {
+  if (event.tags?.source !== "oauth_debugger_step") return event;
+
+  const value = event.exception?.values?.[0]?.value ?? "";
+  const sentenceEnd = value.indexOf(". ");
+  const finding = sentenceEnd === -1 ? value : value.slice(0, sentenceEnd + 1);
+  const step = event.extra?.step;
+
+  event.fingerprint = [
+    "oauth-debugger-step",
+    typeof step === "string" && step !== "" ? step : "unknown",
+    finding,
+    event.environment ?? "unknown",
+  ];
   return event;
 }
 
@@ -304,8 +357,10 @@ export function buildClientSentryConfig(
     ignoreErrors: BROWSER_IGNORE_ERRORS,
     // Browser surfaces only. A `NotFoundError` on the server is an upstream
     // or storage failure that has nothing to do with DOM mutation, and
-    // collapsing those by message would merge unrelated defects.
-    beforeSend: groupDomMutationConflicts,
+    // collapsing those by message would merge unrelated defects. The OAuth
+    // debugger runs only in the browser client too.
+    beforeSend: <T extends FingerprintableEvent>(event: T) =>
+      groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event)),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),
