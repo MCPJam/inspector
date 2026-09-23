@@ -4079,7 +4079,11 @@ describe("App hosted OAuth callback handling", () => {
         useOAuth: true,
         authMethod: "auto",
       }),
-      { suppressErrorToast: true, suppressSuccessToast: true },
+      expect.objectContaining({
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+        requestOAuthAuthorization: expect.any(Function),
+      }),
     );
     expect(
       JSON.parse(
@@ -4105,6 +4109,50 @@ describe("App hosted OAuth callback handling", () => {
         "Failed to connect to MCP server",
       );
     });
+  });
+
+  it("asks for OAuth authorization inside onboarding and resumes on approval", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    let authorizationResult: Promise<boolean> | undefined;
+    appState.handleConnect.mockImplementation(
+      (_formData: unknown, options: Record<string, unknown>) => {
+        const requestOAuthAuthorization = options.requestOAuthAuthorization as (
+          serverName: string,
+        ) => Promise<boolean>;
+        authorizationResult = requestOAuthAuthorization("Multiaccount");
+      },
+    );
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://multiaccount.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await screen.findByRole("heading", { name: "Authorize Multiaccount" });
+    expect(
+      screen.getByRole("button", { name: "Authorize and continue" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize and continue" }),
+    );
+
+    await expect(authorizationResult).resolves.toBe(true);
+    expect(
+      screen.getByRole("heading", { name: "Connecting to Multiaccount" }),
+    ).toBeInTheDocument();
   });
 
   it("preserves quoted arguments in a first-run stdio command", async () => {
@@ -4134,7 +4182,11 @@ describe("App hosted OAuth callback handling", () => {
           command: "node",
           args: ["server.js", "--config", "My Files/config.json", ""],
         }),
-        { suppressErrorToast: true, suppressSuccessToast: true },
+        expect.objectContaining({
+          suppressErrorToast: true,
+          suppressSuccessToast: true,
+          requestOAuthAuthorization: expect.any(Function),
+        }),
       );
     });
   });
@@ -4185,7 +4237,11 @@ describe("App hosted OAuth callback handling", () => {
         type: "http",
         url: "https://mcp.excalidraw.com/mcp",
       }),
-      { suppressErrorToast: true, suppressSuccessToast: true },
+      expect.objectContaining({
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+        requestOAuthAuthorization: expect.any(Function),
+      }),
     );
 
     appState.appState.servers = {
@@ -4435,7 +4491,11 @@ describe("App hosted OAuth callback handling", () => {
           name: "Excalidraw (App)",
           url: "https://mcp.excalidraw.com/mcp",
         }),
-        { suppressErrorToast: true, suppressSuccessToast: true },
+        expect.objectContaining({
+          suppressErrorToast: true,
+          suppressSuccessToast: true,
+          requestOAuthAuthorization: expect.any(Function),
+        }),
       );
       expect(
         screen.getByRole("heading", {
@@ -4485,7 +4545,11 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(appState.handleConnect).toHaveBeenCalledWith(
         expect.objectContaining({ name: "Excalidraw (App)" }),
-        { suppressErrorToast: true, suppressSuccessToast: true },
+        expect.objectContaining({
+          suppressErrorToast: true,
+          suppressSuccessToast: true,
+          requestOAuthAuthorization: expect.any(Function),
+        }),
       );
     });
   });
