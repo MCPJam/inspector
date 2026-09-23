@@ -1,3 +1,4 @@
+import type { DesktopActivity } from "../../../shared/desktop-diagnostics";
 export type UpdateStatus =
   | { kind: "idle" }
   | { kind: "pending"; version?: string; installRequested: boolean }
@@ -7,6 +8,7 @@ export type UpdateStatus =
   | { kind: "manual"; version?: string };
 
 export interface ElectronAPI {
+  diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
     getVersion: () => Promise<string>;

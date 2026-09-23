@@ -1,3 +1,4 @@
+import type { DesktopActivity } from "../shared/desktop-diagnostics";
 import { contextBridge, ipcRenderer } from "electron";
 
 // Mirror of the main-process UpdateStatus union (kept inline to avoid a shared module).
@@ -11,6 +12,7 @@ type UpdateStatus =
 
 // Define the API interface
 interface ElectronAPI {
+  diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
     getVersion: () => Promise<string>;
@@ -106,6 +108,7 @@ interface ElectronAPI {
 
 // Expose protected methods that allow the renderer process to use
 const electronAPI: ElectronAPI = {
+  diagnostics: { record: activity => ipcRenderer.send("desktop:diagnostic", activity) },
   app: {
     getVersion: () => ipcRenderer.invoke("app:version"),
     getPlatform: () => ipcRenderer.invoke("app:platform"),

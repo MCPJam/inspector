@@ -1,3 +1,4 @@
+import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
@@ -203,6 +204,19 @@ export function useAppState({
   validOrganizations: Array<{ _id: string; myRole?: string }>;
   requestSignIn?: (returnPath?: string) => void | Promise<void>;
 }) {
+  useEffect(() => {
+    if (!window.electronAPI?.diagnostics) return;
+    const report = () =>
+      recordDesktopActivity({
+        kind: "auth",
+        phase: "state",
+        auth: isWorkOsLoading ? "loading" : currentUserId ? "signed_in" : "guest",
+        version: __APP_VERSION__,
+      });
+    report();
+    const timer = setInterval(report, 15_000);
+    return () => clearInterval(timer);
+  }, [currentUserId, isWorkOsLoading]);
   const isUserReady = useDbUserReady();
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
