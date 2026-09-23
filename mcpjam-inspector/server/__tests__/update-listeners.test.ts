@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   feed: vi.fn(),
   capture: vi.fn(),
   flush: vi.fn(),
+  warn: vi.fn(),
 }));
 vi.mock("node:fs", () => ({
   default: {
@@ -54,7 +55,7 @@ vi.mock("electron", () => ({
   },
 }));
 vi.mock("electron-log", () => ({
-  default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+  default: { error: vi.fn(), info: vi.fn(), warn: mocks.warn },
 }));
 vi.mock("@sentry/electron/main", () => ({
   captureEvent: mocks.capture,
@@ -230,7 +231,7 @@ describe("update recovery", () => {
     expect(mocks.relaunch).toHaveBeenCalledTimes(1);
   });
 
-  it("does not restart on background failure", async () => {
+  it("does not restart on background download failure", async () => {
     emit("update-available");
     emit("error", new Error("offline"));
     await settle();
@@ -414,10 +415,20 @@ describe("update recovery", () => {
   });
 
   it("checks again without unattended installation after reopening a failed attempt", async () => {
+    emit("update-available");
     emit("error", new Error("offline"));
     await boot();
-    expect(status().kind).toBe("failed");
+    const failure = status();
+    expect(failure.kind).toBe("failed");
+    const reports = mocks.capture.mock.calls.length;
     mod.startUpdatePolling();
+    emit("error", new Error("offline again"));
+    expect(status()).toEqual(failure);
+    expect(mocks.capture).toHaveBeenCalledTimes(reports);
+    expect(mocks.files.has(file)).toBe(false);
+    expect(mocks.warn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(mocks.check).toHaveBeenCalledTimes(2);
     downloaded();
     expect(status().kind).toBe("downloaded");
     expect(mocks.install).not.toHaveBeenCalled();
@@ -485,12 +496,38 @@ describe("polling and IPC", () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(mocks.check).toHaveBeenCalledTimes(1);
   });
-  it("captures synchronous check failures", () => {
+  it.each(["event", "throw"])(
+    "only warns for an idle check failure: %s",
+    async (source) => {
+      mocks.check.mockImplementation(() => {
+        if (source === "throw") throw new Error("offline");
+        emit("error", new Error("offline"));
+      });
+      mod.startUpdatePolling();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(status().kind).toBe("idle");
+      expect(mocks.check).toHaveBeenCalledTimes(2);
+      expect(mocks.warn).toHaveBeenCalledTimes(2);
+      expect(mocks.capture).not.toHaveBeenCalled();
+      expect(mocks.files.has(file)).toBe(false);
+      expect(mocks.relaunch).not.toHaveBeenCalled();
+      expect(mocks.quit).not.toHaveBeenCalled();
+    },
+  );
+  it("still fails a recovery when its check throws", async () => {
+    downloaded();
+    click();
+    emit("error", new Error("failure"));
+    await settle();
+    await boot();
+    mocks.capture.mockClear();
     mocks.check.mockImplementation(() => {
-      throw new Error("failure");
+      throw new Error("offline");
     });
     mod.startUpdatePolling();
-    expect(status().reason).toBe("updater_error");
+    expect(status()).toMatchObject({ kind: "failed", reason: "updater_error" });
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1);
   });
   it("captures feed setup failures", () => {
     mocks.feed.mockImplementation(() => {
@@ -543,6 +580,23 @@ describe("persisted attempts", () => {
       expect(mocks.install).not.toHaveBeenCalled();
     },
   );
+  it("preserves an expired failed marker without reporting another failure", async () => {
+    downloaded();
+    click();
+    emit("error", new Error("failure"));
+    await settle();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(status().reason).toBe("shutdown_stuck");
+    const failure = status();
+    const data = marker();
+    data.at -= 16 * 60_000;
+    mocks.files.set(file, JSON.stringify(data));
+    mocks.capture.mockClear();
+    await boot();
+    expect(status()).toEqual(failure);
+    expect(mocks.capture).not.toHaveBeenCalled();
+    expect(mocks.files.has(file)).toBe(false);
+  });
   it("does not auto-resume an expired recovery", async () => {
     downloaded();
     click();

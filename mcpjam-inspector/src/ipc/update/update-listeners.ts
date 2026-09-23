@@ -234,16 +234,6 @@ function restoreAttempt(): void {
     attempt = undefined;
     return;
   }
-  if (loaded.kind === "expired") {
-    // Expiry revokes unattended recovery, not verification: a successful
-    // update is still successful when the user reopens the app next week.
-    finishFailure("recovery_expired");
-    if (removeAttempt(markerPath())) {
-      terminal = false;
-      attempt = undefined;
-    }
-    return;
-  }
   if (attempt.phase === "failed") {
     setStatus({
       kind: "failed",
@@ -258,6 +248,16 @@ function restoreAttempt(): void {
       return;
     }
     attempt = undefined;
+    return;
+  }
+  if (loaded.kind === "expired") {
+    // Expiry revokes unattended recovery, not verification: a successful
+    // update is still successful when the user reopens the app next week.
+    finishFailure("recovery_expired");
+    if (removeAttempt(markerPath())) {
+      terminal = false;
+      attempt = undefined;
+    }
     return;
   }
   if (attempt.phase === "installing") {
@@ -285,6 +285,18 @@ function restoreAttempt(): void {
     return;
   }
   attempt = undefined;
+}
+
+function handleUpdaterError(reason: UpdateFailureReason): void {
+  if (
+    !isQuittingForUpdate &&
+    !installingOnQuit &&
+    (currentStatus.kind === "idle" || currentStatus.kind === "failed")
+  ) {
+    log.warn("Update check failed; will retry on the next poll");
+    return;
+  }
+  handleFailure(reason);
 }
 
 export function setupAutoUpdaterEvents(): void {
@@ -324,7 +336,7 @@ export function setupAutoUpdaterEvents(): void {
       /AutoUpdater process .* is already running/i.test(error.message)
     )
       return;
-    handleFailure(
+    handleUpdaterError(
       error.message?.includes("No update available, can't quit and install")
         ? "install_refused"
         : "updater_error",
@@ -376,7 +388,7 @@ export function startUpdatePolling(): void {
       try {
         autoUpdater.checkForUpdates();
       } catch {
-        handleFailure("updater_error");
+        handleUpdaterError("updater_error");
       }
     };
     pollTimer = setInterval(() => {
