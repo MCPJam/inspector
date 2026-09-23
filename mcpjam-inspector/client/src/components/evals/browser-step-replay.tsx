@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceVideoMeta,
@@ -241,7 +242,7 @@ export function BrowserStepDetail({
       ) : null}
 
       {step.screenshotUrl ? (
-        <img
+        <ArtifactImage
           src={step.screenshotUrl}
           alt={browserStepLabel(step)}
           className="max-h-72 w-full rounded-md border border-border/50 object-contain"
@@ -554,7 +555,7 @@ export function BrowserStepFilmstrip({
                   )}
                 >
                   {step.screenshotUrl ? (
-                    <img
+                    <ArtifactImage
                       src={step.screenshotUrl}
                       alt={browserStepLabel(step)}
                       loading="lazy"

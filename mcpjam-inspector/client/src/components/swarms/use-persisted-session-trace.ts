@@ -20,6 +20,7 @@ import {
   turnTraceWallClockRange,
 } from "@/components/evals/turn-trace-spans";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 /** One pinned plugin version recorded on a synthetic session's resume config. */
 export type SessionPluginVersion = {
@@ -129,7 +130,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
 
     void (async () => {
       try {
-        const response = await fetch(thread.messagesBlobUrl!, {
+        const response = await fetchArtifact(thread.messagesBlobUrl!, {
           signal: controller.signal,
         });
         if (!response.ok) {

@@ -15,6 +15,7 @@ import { useAction } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EvalIteration } from "@/components/evals/types";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import { registerArtifactUrls } from "@/lib/artifact-urls";
 
 export type TrialBlobRead =
   | { state: "ok"; blob: TraceEnvelope }
@@ -159,6 +160,7 @@ export function useTrialBlobs({
       const next = new Map<string, TrialBlobRead>(initial);
       settled.forEach((outcome, index) => {
         const id = fetchIds[index]!;
+        if (outcome.status === "fulfilled") registerArtifactUrls(outcome.value);
         next.set(
           id,
           outcome.status === "fulfilled"

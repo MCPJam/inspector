@@ -279,6 +279,10 @@ import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { InspectorWidgetHostProvider } from "../use-widget-host";
+import {
+  registerArtifactUrls,
+  resetArtifactUrlsForTests,
+} from "@/lib/artifact-urls";
 
 // The renderer relocated to @mcpjam/widget-react reads its host through the
 // package `useWidgetHost()` context. Wrap each mount in the inspector's provider
@@ -305,6 +309,16 @@ function HostedSurfaceHost(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+/** A link shaped like the backend's short-lived artifact links. */
+function signedArtifactUrl(storageId: string, expiresAtSeconds: number) {
+  const encode = (value: string) =>
+    btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const body = encode(
+    JSON.stringify({ v: 1, s: storageId, k: "html", e: expiresAtSeconds }),
+  );
+  return `https://test.convex.site/web/artifact?t=${body}.${encode("sig")}`;
+}
+
 const baseProps = {
   serverId: "server-1",
   serverName: "test-server",
@@ -2315,6 +2329,55 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vi.mocked(global.fetch)).toHaveBeenCalledWith("blob:cached");
     // Cached path forces permissive rendering.
     expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+  });
+
+  it("reads a cached artifact link through the host's fetcher, using the freshest known link", async () => {
+    resetArtifactUrlsForTests();
+    const stale = signedArtifactUrl("kg-widget", 1_800_000_000);
+    const fresh = signedArtifactUrl("kg-widget", 1_800_003_600);
+    registerArtifactUrls([fresh]);
+
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={stale} />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledWith(fresh);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith(stale);
+  });
+
+  it("keeps a cached replay mounted when its artifact link is re-minted for the same widget", async () => {
+    resetArtifactUrlsForTests();
+    const first = signedArtifactUrl("kg-widget", 1_800_000_000);
+    const reminted = signedArtifactUrl("kg-widget", 1_800_003_600);
+
+    const { rerender } = render(
+      <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={first} />,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    const mounts = sandboxedIframeMountsRef.current;
+    vi.mocked(global.fetch).mockClear();
+
+    // Same widget, new expiry: nothing reloads.
+    rerender(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={reminted} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+
+    // A different widget still loads its own bytes.
+    const other = signedArtifactUrl("kg-other-widget", 1_800_003_600);
+    rerender(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl={other} />);
+    await vi.waitFor(() => {
+      expect(vi.mocked(global.fetch)).toHaveBeenCalledWith(other);
+    });
   });
 
   it("first-render cspMode derives from WidgetSurfaceProvider, not isPlaygroundActive", async () => {

@@ -20,6 +20,7 @@ import { modelDefinitionForId } from "@/lib/model-definition-for-id";
 import { useHostSnapshotForSession } from "@/hooks/use-host-snapshot";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { hydrateMessageTimestamps } from "@mcpjam/chat-ui";
+import { fetchArtifact } from "@/lib/artifact-urls";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -383,7 +384,7 @@ export function ShareUsageThreadDetail({
       setIsLoadingMessages(true);
       setError(null);
       try {
-        const response = await fetch(thread!.messagesBlobUrl!, {
+        const response = await fetchArtifact(thread!.messagesBlobUrl!, {
           signal: controller.signal,
         });
         if (!response.ok) {

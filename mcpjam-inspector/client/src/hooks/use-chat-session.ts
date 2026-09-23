@@ -245,6 +245,7 @@ import {
   readScenarioChatTranscript,
   writeScenarioChatTranscript,
 } from "@/lib/scenario-chat-transcript";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -974,7 +975,7 @@ async function resolveHydratedTurnTraces(
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
-          const response = await fetch(trace.spansBlobUrl);
+          const response = await fetchArtifact(trace.spansBlobUrl);
           if (response.ok) {
             const parsed = (await response.json()) as unknown;
             if (Array.isArray(parsed)) {
@@ -1029,7 +1030,7 @@ async function resolveHydratedWidgetSnapshots(
       }
 
       try {
-        const response = await fetch(snapshot.toolOutputUrl);
+        const response = await fetchArtifact(snapshot.toolOutputUrl);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
