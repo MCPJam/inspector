@@ -21,8 +21,31 @@ beforeEach(() => {
     isOpen: false,
     intent: null,
     organizationId: null,
+    shortfall: null,
     pendingInput: null,
   });
+});
+
+const HOLDS_COMMITTED_BODY = JSON.stringify({
+  code: "user_rate_limit",
+  limitKind: "total",
+  refusalReason: "holds_committed",
+  isRetryable: true,
+  retryAfter: 15000,
+  outstandingHolds: 2,
+  heldCredits: 180,
+  error:
+    "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+});
+
+const INSUFFICIENT_BODY = JSON.stringify({
+  code: "user_rate_limit",
+  limitKind: "total",
+  refusalReason: "insufficient_for_request",
+  creditsRemaining: 23,
+  creditsRequired: 30,
+  error:
+    "This request needs about 30 MCPJam credits; your organization has 23 left today.",
 });
 
 describe("isMCPJamModelLimitError", () => {
@@ -415,6 +438,82 @@ describe("spend budget never reaches the top-up dialog", () => {
         }),
       }),
     ).toBe(false);
+  });
+});
+
+describe("credits held by in-flight requests", () => {
+  it("neither opens the dialog nor locks the models", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+
+    expect(notifyMCPJamLimitError({ message: HOLDS_COMMITTED_BODY })).toBe(
+      false,
+    );
+    expect(
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        limitKind: "total",
+        details: JSON.parse(HOLDS_COMMITTED_BODY),
+        message: "MCPJam model limit reached for the moment.",
+      }),
+    ).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
+  });
+
+  it("describes the refusal as a retry instead of echoing the body", () => {
+    expect(describeMCPJamLimitMessage(HOLDS_COMMITTED_BODY)).toBe(
+      "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.",
+    );
+  });
+});
+
+describe("a balance below the request estimate", () => {
+  it("opens the dialog with the numbers but does not lock the models", async () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+
+    expect(
+      await notifyMCPJamLimitErrorFromResponse(
+        new Response(INSUFFICIENT_BODY, { status: 429 }),
+      ),
+    ).toBe(true);
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    expect(state.shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+    expect(state.outOfCreditsHit).toBe(false);
+  });
+
+  it("keeps the numbers through the loading-to-signed-in handoff", () => {
+    expect(notifyMCPJamLimitError({ message: INSUFFICIENT_BODY })).toBe(true);
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    expect(useMCPJamLimitDialogStore.getState().shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+  });
+
+  it("treats a refusal without the numbers as exhaustion, as before", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+
+    expect(
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        details: { refusalReason: "insufficient_for_request" },
+      }),
+    ).toBe(true);
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.shortfall).toBeNull();
+    expect(state.outOfCreditsHit).toBe(true);
+  });
+
+  it("does not call the balance used up in the inline line", () => {
+    const described = describeMCPJamLimitMessage(INSUFFICIENT_BODY);
+    expect(described).toBe(
+      "Not enough MCPJam credits. This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    );
   });
 });
 

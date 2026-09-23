@@ -180,6 +180,12 @@ function maybePromoteRawMessage(
   slug: string,
   rawMessage: string,
 ): ErrorCatalogEntry {
+  // The backend's sentence carries the two numbers that make this refusal
+  // make sense; the catalog copy cannot know them.
+  if (slug === "provider/mcpjam_limit_insufficient") {
+    const sentence = MCPJAM_INSUFFICIENT_CREDITS_PATTERN.exec(rawMessage)?.[0];
+    return sentence ? { ...entry, oneLine: sentence } : entry;
+  }
   if (slug !== "internal/unknown") return entry;
   if (!rawMessage) return entry;
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
@@ -958,13 +964,25 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
   };
 }
 
+/**
+ * The backend's refusal when the bucket is not empty but is below the
+ * request's worst-case estimate. Checked before the period phrase: the balance
+ * is not used up, so "daily credits are used up" would be false.
+ */
+const MCPJAM_INSUFFICIENT_CREDITS_PATTERN =
+  /\bThis request needs about \d+ MCPJam credits; your organization has \d+ left[^.]{0,40}\./i;
+
 export function mcpjamLimitSlugForMessage(
   message: string
 ):
   | "provider/mcpjam_limit"
   | "provider/mcpjam_limit_daily"
   | "provider/mcpjam_limit_monthly"
+  | "provider/mcpjam_limit_insufficient"
   | undefined {
+  if (MCPJAM_INSUFFICIENT_CREDITS_PATTERN.test(message)) {
+    return "provider/mcpjam_limit_insufficient";
+  }
   const limitPeriod =
     /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
   if (limitPeriod) {
