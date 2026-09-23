@@ -51,7 +51,7 @@ One list, one **Add assertion** menu. Each row says what it checks, who wrote it
 - **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
 - **Step N** — an assertion written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level assertion.
 - **This case** — an assertion you added here. It is graded once, over the finished transcript.
-- **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite's **Checks by stage** settings.
+- **Suite** — a default the suite applies to every case. Standard check families inherited from the suite can be unchecked here to turn them off for this case only; other suite-level evaluators link to the suite's **Checks by stage** settings.
 
 The list reads as a checklist with progressive disclosure. An off row shows only its short name. Once on, clicking the name opens an inline editor showing the full criterion, the **Required / Advisory** role control, and any editable fields (thresholds, match criteria). Multiple editors can stay open at once. An assertion that carries a number (such as a latency budget) shows it under the name at rest.
 
