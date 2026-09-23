@@ -202,6 +202,47 @@ describe("sk_ validation against a real WorkOS", () => {
     });
   }, 30_000);
 
+  it("stops admitting a key once WorkOS says it has expired", async () => {
+    // The native half of key expiry: mint gives WorkOS an `expires_at`, and a
+    // key past it no longer validates. Expiring it now (the emulator's
+    // `/expire` sets `expires_at` to the present) stands in for waiting.
+    const expiring = await mintUserApiKey(h, {
+      userId: SEED.user.id,
+      organizationId: SEED.org.id,
+      name: "expiring",
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+    expect((await request(expiring.value)).status).toBe(200);
+
+    const expired = await emulatorRest(
+      h,
+      "POST",
+      `/api_keys/${expiring.id}/expire`,
+      {},
+    );
+    expect(expired.status, JSON.stringify(expired.body)).toBe(200);
+
+    const res = await request(expiring.value);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ message: "Invalid API key" });
+  }, 30_000);
+
+  it("refuses a key WorkOS still admits once MCPJam's own expiry has passed", async () => {
+    // The other half: the binding carries the same instant, so expiry holds
+    // even for a key WorkOS would still accept.
+    lookupWorkosKeyBindingMock.mockResolvedValue({
+      mcpjamOrganizationId: "org_convex_1",
+      expiresAt: Date.now() - 1_000,
+    });
+
+    const res = await request(key.value);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({
+      details: { reason: "EXPIRED_KEY" },
+    });
+  }, 30_000);
+
   it("rejects a valid key whose WorkOS user has no MCPJam account", async () => {
     resolveUserByExternalIdMock.mockResolvedValue(null);
 

@@ -145,6 +145,7 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -834,6 +835,58 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // WHICH BUILT-IN TOOLS THIS TURN MAY HAVE (MJ-008). The body's list is
+    // bounded by the host/project configuration, unknown ids are dropped, and
+    // workspace tools follow the caller's project role — see
+    // `built-in-tool-policy.ts`. Every consumer below reads this, never the
+    // resolved body value.
+    const builtInToolPolicy = await resolveTurnBuiltInToolIds({
+      requested: resolvedExecution.builtInToolIds,
+      targetKind: executionTarget.kind,
+      hostRuntimeConfig,
+      isGuest: Boolean(c.get("guestId")),
+      loadProjectDefaultBuiltInToolIds: async () => {
+        const projectDefault = (await createConvexClient(
+          await getConvexBearerForRequest(c),
+        ).query(
+          "hostConfigsV2:getProjectDefault" as never,
+          {
+            projectId: hostedBody.projectId,
+          } as never,
+        )) as { builtInToolIds?: unknown } | null;
+        if (!projectDefault) return null;
+        return Array.isArray(projectDefault.builtInToolIds)
+          ? projectDefault.builtInToolIds.filter(
+              (id): id is string => typeof id === "string",
+            )
+          : [];
+      },
+      loadProjectAccess: async () =>
+        (await createConvexClient(await getConvexBearerForRequest(c)).query(
+          "projects:getProjectCapabilities" as never,
+          { projectId: hostedBody.projectId } as never,
+        )) as { projectRole?: string | null } | null,
+    });
+    if (builtInToolPolicy.dropped.length > 0) {
+      getRequestLogger(c, "routes.web.chat-v2").event(
+        "chat.builtin_tools.withheld",
+        {
+          // Catalog ids only. An unknown id is whatever the body said, so it
+          // is counted and never echoed.
+          toolIds: builtInToolPolicy.dropped
+            .filter((entry) => entry.reason !== "unknown")
+            .map((entry) => entry.id),
+          unknownCount: builtInToolPolicy.dropped.filter(
+            (entry) => entry.reason === "unknown",
+          ).length,
+          reasons: [
+            ...new Set(builtInToolPolicy.dropped.map((entry) => entry.reason)),
+          ],
+          targetKind: executionTarget.kind,
+        },
+      );
+    }
+    const turnBuiltInToolIds = builtInToolPolicy.ids;
     // `modelId` stays a special case — the resolver yields the resolved
     // string, and `resolveHostModelDefinition` lifts it (catalog hit →
     // full def; miss → org provider config lookup, then id-shape
@@ -1579,9 +1632,7 @@ chatV2.post("/", async (c) => {
     //     personal shell to a share-link-reachable scenario turn.
     const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
-      bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
-        BASH_TOOL_NAME,
-      ),
+      bashRequested: (turnBuiltInToolIds ?? []).includes(BASH_TOOL_NAME),
       ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
       hasChatSessionId: Boolean(body.chatSessionId),
       secretsUnavailable,
@@ -1756,7 +1807,7 @@ chatV2.post("/", async (c) => {
       ...(browserSessionScope
         ? { conversationId: browserSessionScope.sessionId }
         : {}),
-      builtInToolIds: resolvedExecution.builtInToolIds,
+      builtInToolIds: turnBuiltInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
       isHarnessTurn: Boolean(resolvedExecution.harness),
@@ -1794,7 +1845,7 @@ chatV2.post("/", async (c) => {
       | undefined;
     const builtInTools = resolveHostTools(
       {
-        builtInToolIds: resolvedExecution.builtInToolIds,
+        builtInToolIds: turnBuiltInToolIds,
         // Computer comes exclusively from the server-resolved runtime config —
         // scenario OR host-by-id — never the request body.
         computer:
