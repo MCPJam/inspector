@@ -178,19 +178,34 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
  * open-versus-closed differential intact, which is the leak this module exists
  * to close.
  *
- * The variable spans are bounded to exclude `"` so a quote inside a host or
- * label cannot extend a match past its own field.
+ * No span is free text. The label is one of the fixed strings callers pass
+ * to `assertAllowedHostedTargetUrl`, and the host is limited to the
+ * characters a URL host can hold (plus `safeHost`'s own fallback). An earlier
+ * `^[^"]*` label span accepted any quote-free prefix, so a socket error
+ * written BEFORE the guard's sentence still rode through with it.
  *
- * Failure direction is unchanged and deliberate: a reworded refusal matches
- * nothing, so it degrades to the uniform message above rather than leaking.
- * The regression test drives the real transport at a real reserved address, so
- * a rewording fails a test here instead of silently changing what callers are
- * told.
+ * Failure direction is unchanged and deliberate: a reworded refusal — or a
+ * new label nobody added here — matches nothing, so it degrades to the
+ * uniform message above rather than leaking. The regression test drives the
+ * real transport at a real reserved address, so a rewording fails a test
+ * here instead of silently changing what callers are told.
  */
+const EGRESS_REFUSAL_LABEL =
+  "(?:Server URL|Request URL|OAuth profile server URL)";
+const EGRESS_REFUSAL_HOST = "(?:[a-z0-9.:%_\\[\\]-]+|an unparseable URL)";
 const EGRESS_REFUSAL_DETAILS: readonly RegExp[] = [
-  /^Refusing to connect to "[^"]*": it is not a publicly routable address\.$/i,
-  /^[^"]*points at a private or internal address \("[^"]*"\) that the hosted inspector will not dial\. Run this server locally in the inspector instead\.$/i,
-  /^[^"]*hostname "[^"]*" resolves to a private or internal address that the hosted inspector will not dial\.$/i,
+  new RegExp(
+    `^Refusing to connect to "${EGRESS_REFUSAL_HOST}": it is not a publicly routable address\\.$`,
+    "i"
+  ),
+  new RegExp(
+    `^${EGRESS_REFUSAL_LABEL} points at a private or internal address \\("${EGRESS_REFUSAL_HOST}"\\) that the hosted inspector will not dial\\. Run this server locally in the inspector instead\\.$`,
+    "i"
+  ),
+  new RegExp(
+    `^${EGRESS_REFUSAL_LABEL} hostname "${EGRESS_REFUSAL_HOST}" resolves to a private or internal address that the hosted inspector will not dial\\.$`,
+    "i"
+  ),
 ];
 
 /** Is this detail the guard's own verdict rather than a socket outcome? */

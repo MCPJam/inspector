@@ -371,7 +371,7 @@ describe("hosted doctor transport-detail redaction", () => {
     restore = loaded.restore;
 
     const refusal =
-      'Metadata pointer hostname "metadata.example.test" resolves to a private or internal address that the hosted inspector will not dial.';
+      'Request URL hostname "metadata.example.test" resolves to a private or internal address that the hosted inspector will not dial.';
     const redacted = loaded.redact(oauthDiscoveryEnvelope(refusal));
 
     expect(redacted.probe?.oauth?.discoveryError).toBe(refusal);
@@ -442,6 +442,17 @@ describe("hosted doctor transport-detail redaction", () => {
         "address. connect ECONNREFUSED 127.0.0.1:6379",
       "resolves to a private or internal address that the hosted inspector " +
         "will not dial. ssl3_get_record:wrong version number",
+      // Leading text: the label span used to be `^[^"]*`, which swallowed any
+      // quote-free prefix, so the socket outcome only had to come FIRST.
+      "connect ECONNREFUSED 127.0.0.1:6379; Server URL hostname " +
+        '"a.test" resolves to a private or internal address that the hosted ' +
+        "inspector will not dial.",
+      "ssl3_get_record:wrong version number Server URL points at a private " +
+        'or internal address ("10.0.0.1") that the hosted inspector will not ' +
+        "dial. Run this server locally in the inspector instead.",
+      // Socket text inside the quoted host field.
+      'Refusing to connect to "a.test: connect ECONNREFUSED 127.0.0.1:6379 ' +
+        '": it is not a publicly routable address.',
     ];
 
     const loaded = await loadRedactor(true);
