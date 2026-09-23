@@ -3,13 +3,15 @@
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
+import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // Must stay below that guard: `security-policy.js` reaches into `server/`,
 // which pulls in `ws`. Hoisted above it, `ws` evaluates before
 // WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
-import { app, BrowserWindow, shell, Menu, dialog, session } from "electron";
+import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
+import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
   buildElectronSentryConfig,
   electronBuildSurface,
@@ -39,6 +41,8 @@ Sentry.init({
   // already on by default in @sentry/electron 5.12 and is left alone.
   integrations: crashReportingIntegrations,
 });
+
+const desktopDiagnostics = installDesktopDiagnostics();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -620,8 +624,11 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     show: false, // Don't show until ready
   });
 
+  desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
+
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
+  window.on("closed", () => mcpCallbackDelivery.setReady(false));
   window.loadURL(rendererDevServerUrl ?? serverUrl);
 
   if (isDev) {
@@ -727,6 +734,22 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   return window;
 }
 
+const mcpCallbackDelivery = new OAuthCallbackDelivery((url) => {
+  mainWindow?.webContents.send("oauth-callback", url);
+  log.info("MCP OAuth callback delivered", {
+    deliveryMode: "ipc",
+    appVersion: app.getVersion(),
+  });
+});
+ipcMain.on("oauth:listener-ready", (event, ready: unknown) => {
+  if (
+    !mainWindow ||
+    event.sender !== mainWindow.webContents ||
+    event.senderFrame !== mainWindow.webContents.mainFrame
+  )
+    return;
+  mcpCallbackDelivery.setReady(ready === true);
+});
 async function handleOAuthCallbackUrl(url: string): Promise<void> {
   if (!url.startsWith("mcpjam://oauth/callback")) {
     return;
@@ -750,6 +773,16 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
     }
 
     const baseUrl = getRendererBaseUrl();
+    if (isMcpCallback && callbackFlow !== "debug") {
+      if (!mainWindow) {
+        mainWindow = createMainWindow(baseUrl);
+        setTrustedUpdateWindow(mainWindow);
+      }
+      mcpCallbackDelivery.enqueue(url);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      return;
+    }
     const rendererCallbackUrl = buildRendererCallbackUrl(parsed, baseUrl);
 
     if (!mainWindow) {
@@ -783,8 +816,10 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
 
     if (mainWindow?.isMinimized()) mainWindow.restore();
     mainWindow?.focus();
-  } catch (error) {
-    log.error("Failed processing OAuth callback URL:", error);
+  } catch {
+    log.error("Failed processing OAuth callback", {
+      failureStage: "delivery", deliveryMode: "ipc", appVersion: app.getVersion(),
+    });
   }
 }
 

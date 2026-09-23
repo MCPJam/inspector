@@ -10,6 +10,12 @@
  * a second implementation) with whichever advisory evidence has since
  * arrived attached, and posts only the derivation-owned keys.
  *
+ * RUBRIC CHECKS ride goal-completion's channel. The backend writes
+ * `metadata.rubricChecksVerdict` from the same job, on the same trials, under
+ * the same `goalCompletionJobId`; this pass turns it into advisory score rows
+ * beside the judge's own. It feeds no stage evidence: rubric checks describe a
+ * trial, they do not decide `userValue`.
+ *
  * TWO judges feed this ONE pass: goal-completion's `judgeVerdict`
  * (`StageEvidence.judgeEvidence`, tier-2 input to `userValue`) and D7's
  * `metadataAttributionVerdict` (`StageEvidence.metadataAttribution`, tier-2
@@ -46,7 +52,7 @@
 import type { StageEvidence } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
-import { turnsNeedModel } from "@/shared/steps";
+import { resolveCasePromptTurns, turnsNeedModel } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
 import { buildStageAuthoredCase } from "./stage-inputs.js";
@@ -67,7 +73,11 @@ import {
   type JudgeSecondPassIterationRow,
   type JudgeSecondPassRunRow,
 } from "./judge-stage-backend.js";
-import { buildHostedScoreContract } from "./score-rows.js";
+import {
+  buildHostedScoreContract,
+  type HostedRubricChecksVerdictLike,
+} from "./score-rows.js";
+import { evaluateMultiTurnResults } from "./types.js";
 
 /** Iteration statuses that can still receive a derivation. */
 const DERIVABLE_STATUSES = new Set(["completed", "failed"]);
@@ -277,6 +287,22 @@ function readJudgeVerdict(
 }
 
 /**
+ * `metadata.rubricChecksVerdict`, whichever job stamped it — the same rule the
+ * goal verdict follows. The backend merges score rows by `scorerId` and
+ * REPLACES `evaluationConfig` wholesale, so a verdict this pass skipped would
+ * leave the rows an earlier pass posted from it without their definitions:
+ * unjoinable, which is worse than stale.
+ */
+export function readRubricChecksVerdict(
+  metadata: Record<string, unknown> | undefined,
+): HostedRubricChecksVerdictLike | undefined {
+  const verdict = metadata?.rubricChecksVerdict;
+  return typeof verdict === "object" && verdict !== null
+    ? (verdict as HostedRubricChecksVerdictLike)
+    : undefined;
+}
+
+/**
  * Project `metadata.judgeVerdict` onto the analyzer's tier-2 evidence.
  *
  * A verdict the judge could not produce becomes `error`, NOT a failure: "the
@@ -474,6 +500,8 @@ export function deriveIterationPayload(args: {
   mode: GradingEngineMode;
   judgeVerdict: JudgeVerdictMetadata | undefined;
   attributionVerdict: MetadataAttributionVerdictMetadata | undefined;
+  /** Goal-completion channel only: its advisory rows ride this job's write. */
+  rubricChecksVerdict?: HostedRubricChecksVerdictLike;
 }): { stage: Record<string, unknown>; scores?: unknown[]; config?: unknown } {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
@@ -595,8 +623,10 @@ export function deriveIterationPayload(args: {
     // pass's tool-match row therefore survived with its definition gone: an
     // unjoinable row, a per-case `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a
     // GATING scorer silently dropped from the verdict.
-    toolMatchAuthored:
-      (iteration.authoredCase?.expectedToolCalls?.length ?? 0) > 0,
+    //
+    // Read from the RESOLVED case, never the raw top-level list: see
+    // `firstPassDeclaredToolMatch`.
+    toolMatchAuthored: firstPassDeclaredToolMatch(iteration.authoredCase),
     // The SAME resolved options and polarity the first pass hashed into
     // `toolCalls:match`. Omitting them would rebuild that definition under a
     // different `implementationHash` and orphan the first pass's row.
@@ -609,10 +639,40 @@ export function deriveIterationPayload(args: {
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
       : {}),
+    ...(args.rubricChecksVerdict
+      ? { rubricChecksVerdict: args.rubricChecksVerdict }
+      : {}),
   });
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
     : { stage };
+}
+
+/**
+ * Whether the FIRST pass declared `toolCalls:match` for this case.
+ *
+ * It declares the scorer when the matcher's expected-call list is non-empty
+ * (`hostedScoreDefinitionInputs`), so this asks the same matcher for that list,
+ * over the turns the runner resolves. The list does not depend on which calls
+ * were made, which is why none are passed: pinned turns and negative tests
+ * contribute nothing, and every other turn's expectations count, not only the
+ * first turn's.
+ *
+ * The raw `expectedToolCalls` this replaced is undefined on a steps-authored
+ * case, whose expectations live in its steps. Reading it dropped the definition
+ * and orphaned the first pass's row.
+ */
+function firstPassDeclaredToolMatch(
+  authoredCase: JudgeSecondPassIterationRow["authoredCase"],
+): boolean {
+  if (!authoredCase) return false;
+  return (
+    evaluateMultiTurnResults(
+      resolveCasePromptTurns(authoredCase),
+      [],
+      authoredCase.isNegativeTest === true,
+    ).expectedToolCalls.length > 0
+  );
 }
 
 /** Narrow on purpose: only `no_agent_activity` redeclares a scorer. */
@@ -786,11 +846,13 @@ export async function runJudgeSecondPass(
       goalCompletionJobId !== undefined &&
       !goalCompletionFailed
     ) {
+      const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
       const { stage, scores, config } = deriveIterationPayload({
         iteration,
         mode,
         judgeVerdict,
         attributionVerdict: undefined,
+        ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
       });
       if (Object.keys(stage).length > 0) {
         const fields = stageFields(stage);

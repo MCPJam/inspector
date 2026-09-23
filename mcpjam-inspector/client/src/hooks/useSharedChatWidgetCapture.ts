@@ -13,6 +13,7 @@ import {
 } from "@/stores/widget-debug-store";
 import {
   sanitizeWidgetForBackend,
+  WIDGET_HTML_STORAGE_CONTENT_TYPE,
   type SharedChatWidgetSnapshotPayload,
 } from "@/shared/widget-snapshot";
 import { isStaleHostedAccessError } from "@/lib/hosted-access-errors";
@@ -448,7 +449,8 @@ export function useSharedChatWidgetCapture({
       if (!cached || cached.htmlHash !== htmlHash) {
         const [widgetHtmlBlobId, toolInputBlobId, toolOutputBlobId] =
           await Promise.all([
-            uploadBlob(widget.widgetHtml, "text/html"),
+            // Text, not `text/html` — see WIDGET_HTML_STORAGE_CONTENT_TYPE.
+            uploadBlob(widget.widgetHtml, WIDGET_HTML_STORAGE_CONTENT_TYPE),
             uploadBlob(
               JSON.stringify(toolSource.input ?? null),
               "application/json",

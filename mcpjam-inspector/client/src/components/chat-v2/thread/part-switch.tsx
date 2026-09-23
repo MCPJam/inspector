@@ -1,4 +1,5 @@
 import { WidgetPlaceholder } from "@mcpjam/chat-ui";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
@@ -99,7 +100,7 @@ function FrozenWidgetScreenshot({
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
-      <img
+      <ArtifactImage
         src={url}
         alt={`${toolName} recorded render`}
         className="w-full rounded-md border border-border/60 bg-background"

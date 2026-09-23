@@ -19,17 +19,34 @@
  * (the agent may roam; authority is the caller's bearer either way), which
  * is why this is a default rather than a clamp.
  *
- * Approval policy: operations that open a connection to a saved MCP server
- * inherit the host's `requireToolApproval`, mirroring the blanket approval
- * MCP tools get from the orchestration layer. `list_project_servers` is a
- * pure platform read and never needs approval, like `web_search`.
+ * Approval policy has three floors, and the first is not the host's to lower:
+ *
+ *   - ALWAYS asks: every operation the agent-op catalog marks `tier: "gated"`
+ *     (`routes/v1/agent-op-registry.ts`), plus every WRITE that catalog
+ *     refuses to offer an agent at all. The headless agent turns those into
+ *     proposals a human clicks; in chat the equivalent is the approval pill,
+ *     and a request body saying `requireToolApproval: false` does not remove
+ *     it (MJ-008). Derived from the catalog, not listed here, so the two
+ *     surfaces cannot drift apart.
+ *   - Follows the switch: operations that open a connection to a saved MCP
+ *     server, and the other spends in `APPROVAL_REQUIRED_IDS`.
+ *   - Never asks: pure platform reads like `list_project_servers`.
  *
  * `execute` returns `{ error: string }` instead of throwing so the model can
  * relay problems conversationally instead of breaking the turn. Results are
  * capped before they reach model context (`MODEL_OUTPUT_CAP`).
  */
 import { tool, type ToolSet } from "ai";
-import { needsApprovalFor } from "@/shared/tool-approval";
+import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
+import {
+  AGENT_OP_REGISTRY,
+  EXCLUDED_FROM_AGENT,
+} from "../../routes/v1/agent-op-registry.js";
+import {
+  isToolApprovalSigningAvailable,
+  markServerVerifiedApproval,
+  requiresServerVerifiedApproval,
+} from "../tool-approval-token.js";
 import {
   describePlatformRefusal,
   platformRefusalHint,
@@ -561,6 +578,11 @@ export function isMcpjamToolId(id: string): boolean {
   return OPERATIONS_BY_ID.has(id);
 }
 
+/** A workspace operation that only reads platform state. */
+export function isReadOnlyMcpjamToolId(id: string): boolean {
+  return OPERATIONS_BY_ID.get(id)?.readOnly === true;
+}
+
 // Operations that open an ephemeral connection to a user's saved MCP server
 // inherit the host's requireToolApproval. Pure platform API reads (project,
 // eval, scenario) never need approval.
@@ -621,6 +643,72 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // row and its connection.
   uninstallRegistryServerOperation.name,
 ]);
+
+/**
+ * Operations that pause for the user's approval WHATEVER the host's switch
+ * says (MJ-008), derived from the agent-op catalog:
+ *
+ *   - `tier: "gated"` there means "a human must click before this runs" — the
+ *     headless agent can only PROPOSE it. The chat equivalent of that click is
+ *     the approval pill, so the switch may add pills but can never remove one.
+ *   - A WRITE the catalog excludes from the agent altogether
+ *     (`EXCLUDED_FROM_AGENT`, e.g. `create_project_server`) is held to at
+ *     least the same bar: the registry judged it too consequential to even
+ *     propose unattended, and a chat turn is unattended with the switch off.
+ *
+ * Reads never land here, whichever list they are on.
+ */
+const CATALOG_GATED_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  AGENT_OP_REGISTRY.filter((entry) => entry.tier === "gated").map(
+    (entry) => entry.operation.name,
+  ),
+);
+
+export const ALWAYS_APPROVAL_TOOL_IDS: ReadonlySet<string> = new Set(
+  WORKSPACE_OPERATIONS.filter(
+    (operation) =>
+      operation.readOnly !== true &&
+      (CATALOG_GATED_OPERATION_NAMES.has(operation.name) ||
+        Object.prototype.hasOwnProperty.call(
+          EXCLUDED_FROM_AGENT,
+          operation.name,
+        )),
+  ).map((operation) => operation.name),
+);
+
+/** The approval floor a workspace operation is built with. */
+export function workspaceApprovalFloor(id: string): ApprovalFloor {
+  if (ALWAYS_APPROVAL_TOOL_IDS.has(id)) return "always";
+  return APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never";
+}
+
+/**
+ * Drop the always-ask workspace tools from a toolset, for an engine that
+ * cannot resume a server-executed approval (the local-runtime org path
+ * refuses a whole turn that advertises one). Everything else survives.
+ */
+export function withoutServerVerifiedApprovalTools(tools: ToolSet): {
+  tools: ToolSet;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  const kept: ToolSet = {};
+  for (const [name, entry] of Object.entries(tools)) {
+    if (requiresServerVerifiedApproval(entry)) {
+      removed.push(name);
+      continue;
+    }
+    kept[name] = entry;
+  }
+  return removed.length > 0 ? { tools: kept, removed } : { tools, removed };
+}
+
+/**
+ * Why an always-ask operation is refused on a deployment that cannot sign
+ * approvals. Said to the MODEL, so it can tell the user instead of retrying.
+ */
+export const SERVER_APPROVAL_UNAVAILABLE_ERROR =
+  "This operation needs an approval the server can verify, and this deployment has no signing key for tool approvals (INSPECTOR_SERVICE_TOKEN is not set). It was not run.";
 
 // Surface note appended to each operation's description: in-app, an omitted
 // `project` means the chat's project, not the catalog's "most recently
@@ -775,17 +863,31 @@ export function buildMcpjamTool(
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;
 
-  // Floors: the ops that open a connection, spend credits or write a server row
-  // follow the switch; everything else is a read of the user's own workspace,
-  // which pausing cannot make safer.
+  // Floors (see `workspaceApprovalFloor`): catalog-gated operations and
+  // agent-excluded writes always ask; connection-opening ops and the other
+  // spends follow the switch; reads of the user's own workspace never ask.
+  const floor = workspaceApprovalFloor(id);
+
+  // An always-ask operation on a deployment that cannot sign approvals FAILS
+  // CLOSED: advertised so the model can say why, but it never runs and never
+  // pauses on a pill whose answer could not be verified.
+  if (floor === "always" && !isToolApprovalSigningAvailable()) {
+    return tool({
+      description: `${operation.description}${AMBIENT_PROJECT_NOTE}`,
+      inputSchema: operation.inputSchema,
+      needsApproval: false,
+      execute: async () => ({ error: SERVER_APPROVAL_UNAVAILABLE_ERROR }),
+    });
+  }
+
   const needsApproval = needsApprovalFor(
-    APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never",
+    floor,
     opts.requireToolApproval === true,
   );
 
   const clamp = WORKSPACE_INPUT_CLAMPS[id];
 
-  return tool({
+  const built = tool({
     description: `${operation.description}${AMBIENT_PROJECT_NOTE}${
       clamp?.descriptionNote ?? ""
     }`,
@@ -831,4 +933,5 @@ export function buildMcpjamTool(
       }
     },
   });
+  return floor === "always" ? markServerVerifiedApproval(built) : built;
 }

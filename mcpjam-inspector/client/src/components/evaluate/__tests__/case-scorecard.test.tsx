@@ -72,7 +72,16 @@ describe("CaseScorecard", () => {
     ).map((node) => node.getAttribute("data-stage-group"));
     // Response sits between them under analyzer 11: `noToolErrors` grades the
     // answer coming back, not whether the person got what they asked for.
-    expect(groups).toEqual(["selection", "response", "userValue"]);
+    // Every other stage the runner measures leads with its built-in runner
+    // check; `firstToolWas` expects a call, so Tool call is among them.
+    expect(groups).toEqual([
+      "connection",
+      "discovery",
+      "selection",
+      "call",
+      "response",
+      "userValue",
+    ]);
     expect(screen.getByText("Selection")).toBeInTheDocument();
     expect(
       screen.getByText("Did the model choose the right tool for the request?"),
@@ -93,6 +102,27 @@ describe("CaseScorecard", () => {
       "data-provenance",
       "suite",
     );
+  });
+
+  it("shows each runner check as a locked Built-in row, not an evaluator", () => {
+    renderCard();
+    const builtins = rows().filter(
+      (row) => row.getAttribute("data-provenance") === "builtin",
+    );
+    expect(builtins.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Successful connection"),
+      expect.stringContaining("Tools listed"),
+      expect.stringContaining("Tool call completed"),
+      expect.stringContaining("Result returned to the model"),
+    ]);
+    for (const row of builtins) {
+      expect(within(row).getByText("Built-in")).toBeInTheDocument();
+      // No role to author, nothing to edit or remove.
+      expect(within(row).queryByText("Required")).not.toBeInTheDocument();
+      expect(within(row).queryByText("Advisory")).not.toBeInTheDocument();
+      expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+      expect(row.textContent).not.toMatch(/assertion/i);
+    }
   });
 
   it("never shows a wire enum", () => {
