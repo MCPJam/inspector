@@ -5,8 +5,10 @@ import { toast } from "@/lib/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -143,7 +145,7 @@ export function HostCanvasSelector({
       const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent user testing scenarios/evals first`,
+          `${msg} — use force delete or remove dependent user testing studies/evals first`,
         );
       } else {
         toast.error(msg);
@@ -175,9 +177,8 @@ export function HostCanvasSelector({
       className="flex min-w-0 items-center gap-1.5"
       data-testid="host-canvas-selector"
     >
-      {/* Add client — left-most. Carries the quick-add template logos so the
-          add path stays a single control (the switcher menu no longer has its
-          own add action). */}
+      {/* Add client pill — Client view only. Servers hides this pill so the
+          header stays a switcher; Add clients still lives in the menu. */}
       {showAddClient && (
         <div className={cn(PILL_CLASS, "shrink-0")}>
           <button
@@ -322,6 +323,20 @@ export function HostCanvasSelector({
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid="host-canvas-menu-add"
+              onSelect={() => {
+                track("connect_host_overlay_add_clicked", {
+                  location: ANALYTICS_LOCATION,
+                  host_count: hosts.length,
+                });
+                openCreateWithTemplate(undefined);
+              }}
+            >
+              <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+              Add clients
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

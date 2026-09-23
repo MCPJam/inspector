@@ -1,7 +1,5 @@
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
-import { AssertionBacktestPanel } from "./assertion-backtest-panel";
-import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
 import {
@@ -627,19 +625,19 @@ export function SuiteIterationsView({
   // `onDuplicateSuite` is deliberately NOT in here: duplicating is the way out
   // of the lock, and it writes a new suite rather than this one.
   //
-  // DELETE IS THE SAME KIND OF THING, from a different vocabulary. The prop
-  // answers by ROLE (`canDeleteArtifact` over the suite's author);
-  // `suite.delete` is in the backend's CI-locked set, so on a CI-owned suite
-  // the answer is no regardless of role — an org owner holds the permission
-  // and still gets a `409`. Folded in here rather than at each call site for
-  // the reason the callbacks below are, and for the reason the row is read
-  // here rather than passed: the call site that forgets is the whole failure
-  // mode.
+  // DELETE IS NOT ONE OF THEM, and the asymmetry is the point. Case authoring
+  // is withheld above because it would edit what the CI-owned suite IS, and
+  // the next sync would undo it. Deleting edits nothing: it says what this
+  // workspace keeps, and the next sync or SDK report creates the suite again.
   //
-  // `configLocked`, NOT `editingDisabled`: `readOnlyConfig` is about editing
-  // configuration, and the platform refuses delete for ownership, not for
-  // that.
-  const canDeleteSuite = canDeleteSuiteProp && !configLocked;
+  // It was gated on `configLocked` here, and the backend refused it to match.
+  // Together they left the one case with no way out: `onDuplicateSuite` gives
+  // an editable copy but leaves the original, so a suite orphaned by a renamed
+  // `suiteName` could not be removed from any surface at all (issue #5381).
+  // `suite.delete` is no longer in the backend's CI-locked set, so the prop's
+  // ROLE answer (`canDeleteArtifact` over the suite's author) is the whole
+  // answer again.
+  const canDeleteSuite = canDeleteSuiteProp;
   const onCreateTestCase = configLocked ? undefined : onCreateTestCaseProp;
   const onRecordTestCase = configLocked ? undefined : onRecordTestCaseProp;
   const onGenerateTestCases = configLocked
@@ -1625,10 +1623,15 @@ export function SuiteIterationsView({
     />
   );
 
+  // The folded layout drops the SuiteHeader action row, so the run body is the
+  // only place a stop control can live there. Every other surface already has
+  // one — RunDetailPlaygroundActions in the header, or EvaluateRunPage.
   const runDetailView = selectedRunDetails ? (
     <RunDetailView
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      onCancelRun={foldRunDetail ? onCancelRun : undefined}
+      cancellingRunId={cancellingRunId}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
       onShare={
         unifiedShareEvals &&
@@ -2786,31 +2789,6 @@ export function SuiteIterationsView({
                     ) : null
                   }
                 />
-                <details className="space-y-4">
-                  <summary className="cursor-pointer text-sm text-muted-foreground">
-                    Preview against the latest run
-                  </summary>
-                  <AssertionBacktestPanel
-                    projectId={projectId ?? undefined}
-                    runId={
-                      sortRunsNewestFirst(runs).find((run) =>
-                        TERMINAL_RUN_STATUSES.has(run.status ?? ""),
-                      )?._id
-                    }
-                    assertions={draftDefaultPredicates}
-                  />
-                  {pickBacktestableRun(runs) && draft.current.judgeRubric ? (
-                    <JudgeBacktestPanel
-                      key={`${suite._id}:${JSON.stringify(
-                        draft.current.judgeRubric,
-                      )}`}
-                      suiteId={suite._id}
-                      runId={pickBacktestableRun(runs)!._id}
-                      runNumber={pickBacktestableRun(runs)!.runNumber}
-                      draftRubric={draft.current.judgeRubric}
-                    />
-                  ) : null}
-                </details>
               </div>
             </fieldset>
           </div>

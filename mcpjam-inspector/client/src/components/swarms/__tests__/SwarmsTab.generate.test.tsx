@@ -127,6 +127,11 @@ vi.mock("@/components/hosts/server-picker", () => ({
   ),
 }));
 
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
+
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
     serverAttachments: [],

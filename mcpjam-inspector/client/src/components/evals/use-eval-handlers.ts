@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
+import { convexErrMessage } from "@/lib/convex-error";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -1137,17 +1138,22 @@ export function useEvalHandlers({
           // the run is on its way.
           toast.dismiss(runStartedToastId);
         } else {
-          if (options?.stayOnPage)
-            throw new Error(
-              formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
-                remoteServers: projectServers,
-                kind: "suite",
-              }),
-            );
-          toast.error(
-            getEnvironmentConflictMessage(error) ??
-              getBillingErrorMessage(error, "Failed to start eval run"),
-          );
+          // An environment suite has no browser-side server list to prompt
+          // about — the backend resolved the set — so a "connect your servers"
+          // message would name servers this run never asked for. Its 409 says
+          // what is actually wrong (no group picked, a group that is gone), so
+          // that sentence is what reaches the user.
+          const message = isEnvironmentSuite
+            ? convexErrMessage(error, "Failed to start eval run")
+            : options?.stayOnPage
+              ? formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
+                  remoteServers: projectServers,
+                  kind: "suite",
+                })
+              : getEnvironmentConflictMessage(error) ??
+                getBillingErrorMessage(error, "Failed to start eval run");
+          if (options?.stayOnPage) throw new Error(message);
+          toast.error(message);
         }
         if (options?.stayOnPage) throw error;
       } finally {

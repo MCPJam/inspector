@@ -1163,35 +1163,19 @@ describe("SuiteDetailOverview cancel", () => {
     expect(screen.queryByTestId("suite-detail-cancel")).toBeNull();
   });
 
-  it("cancels a launch from its history row without opening the run", async () => {
-    const user = userEvent.setup();
-    const onCancelRun = vi.fn();
-    const onRunClick = vi.fn();
+  it("offers no cancel on a running history row", () => {
     renderSuite({
-      runs: [
-        runningRun({
-          _id: "run-1",
-          runNumber: 1,
-          runGroupId: "together",
-          namedHostId: "host-1",
-        }),
-        runningRun({
-          _id: "run-2",
-          runNumber: 1,
-          runGroupId: "together",
-          namedHostId: "host-2",
-        }),
-      ],
-      onCancelRun,
-      onRunClick,
+      runs: [runningRun({ _id: "run-1", runNumber: 1 })],
+      onCancelRun: vi.fn(),
     });
 
-    await user.click(screen.getByTestId("suite-run-row-cancel"));
-    expect(onCancelRun).toHaveBeenCalledWith(["run-1", "run-2"]);
-    expect(onRunClick).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Open run #1" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel run #1" })).toBeNull();
   });
 
-  it("disables both cancels while one is in flight", () => {
+  it("disables the header cancel while one is in flight", () => {
     renderSuite({
       runs: [runningRun({ _id: "run-1", runNumber: 1 })],
       onCancelRun: vi.fn(),
@@ -1199,6 +1183,5 @@ describe("SuiteDetailOverview cancel", () => {
     });
 
     expect(screen.getByTestId("suite-detail-cancel")).toBeDisabled();
-    expect(screen.getByTestId("suite-run-row-cancel")).toBeDisabled();
   });
 });

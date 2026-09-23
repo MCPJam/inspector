@@ -7,103 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Every finding on a stage can now reach the sessions it is about, in Findings on a Swarm run and in Findings on a User Testing scenario.\n\nA stage that failed two rubric checks over the same session showed the first one with its session list underneath and the second as plain text with nothing to click. That is what \"none of the sessions link to anything\" looked like on the report that opened this: `Rubric check \"Final message non-empty\" failed` had a session under it, and `Rubric check \"Calls create_view\" failed`, directly below, had none.\n\nThe cause was a rule written for the empty-stage footer — one session is a link rather than something to expand — reused for the evidence rows, where it collapses to \"only row 0 renders the list\". With several findings over one session, every row after the first lost its only way in.\n\nSeveral findings now earn the toggle even over a single session. A lone finding over a lone session still shows its session directly, with no toggle, and the empty-stage footer is untouched: it only renders when a stage has no evidence at all.\n\nOne visible change where the list used to be permanent. With several findings over one session, the first row's session list was rendered with no control to collapse it. It is now a toggle that starts open, so the first paint is unchanged, and because the panel opens one finding at a time, opening the second finding closes the first.",
-      "id": "findings-every-row-reaches-its-sessions"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Drop the \"AI explanation · cited trace evidence\" disclosure from evaluation scorecards. It only showed raw internal ids like `m:0 · tc:toolu_…`, which mean nothing to a reader.",
-      "id": "hide-trace-citation-ids"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.",
-      "id": "imported-draft-review-surface"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "A reused persona's iterations can be set for the run you are about to launch.\n\nConfirm showed reused goals as read-only text — \"5 goals at the iterations already saved = 25 conversations\" — so bringing a persona in meant taking whatever its owner had saved. One in the recording arrives at 25 conversations with no way to bring it down, which is the opposite of what someone reusing a persona for a quick run wants, and it spends model quota that is already rate-limited.\n\nReused cards now carry the same iterations stepper the authored ones do. The control starts at what the persona's goals already hold, so leaving it alone launches the size it always did; goals that disagree, or carry nothing saved, start at the default instead, because there is no single saved value to show and picking one would misreport the others.\n\nThe number is sent as a per-run override and the shared journey is not rewritten, which was the reason the control was withheld in the first place. A persona reused across swarms keeps its own saved size for everyone else.\n\nThe launch quote follows the same number, so what Confirm promises and what the run fans out to cannot disagree.",
-      "id": "reused-persona-iterations"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.\n\nReporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with \"Request body exceeds 1MB limit\". Chunking could not save it: it splits between results, never inside one.\n\nSmall widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.\n\nThe upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.",
-      "id": "widget-snapshot-offload"
+      "summary": "Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.\n\nOne limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.",
+      "id": "session-flow-column-reordering"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.7.1",
+      "oldVersion": "3.9.1",
       "changesets": [
-        "findings-every-row-reaches-its-sessions",
-        "hide-trace-citation-ids",
-        "imported-draft-review-surface",
-        "reused-persona-iterations"
+        "session-flow-column-reordering"
       ],
-      "newVersion": "3.7.2"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "5.10.0",
-      "changesets": [
-        "imported-draft-review-surface"
-      ],
-      "newVersion": "5.10.1"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "8.10.0",
-      "changesets": [
-        "imported-draft-review-surface",
-        "widget-snapshot-offload"
-      ],
-      "newVersion": "8.10.1"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/slack-app",
-      "type": "none",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.0"
+      "newVersion": "3.9.2"
     }
   ]
 }

@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 
 import { CreditBalanceCard } from "../CreditBalanceCard";
 
+const navigate = vi.fn();
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
+
 let balanceState:
   | {
       outstandingDeficitCredits?: number;
@@ -112,6 +118,22 @@ describe("CreditBalanceCard", () => {
     evalQuotaLoadingState = false;
     window.location.hash = "";
   });
+
+  it("opens organization usage from the See Usage action", async () => {
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    await userEvent.click(screen.getByRole("button", { name: "See Usage" }));
+    expect(navigate).toHaveBeenCalledWith("/organizations/org-1/billing/usage");
+  });
+
+  it.each([{ organizationId: "org-1" }, { canManageCredits: true }])(
+    "hides usage navigation without an organization and management permission: %o",
+    (props) => {
+      render(<CreditBalanceCard {...props} />);
+      expect(
+        screen.queryByRole("button", { name: "See Usage" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it.each([500, 0, null])(
     "shows the V2 Free starter balance only when granted (%s)",
@@ -283,7 +305,7 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Upgrade to Pro to buy credits" }),
+      screen.getByRole("link", { name: "Compare plans for more monthly credits and top-ups" }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");
     window.history.replaceState({}, "", "/");
   });
@@ -296,7 +318,7 @@ describe("CreditBalanceCard", () => {
     };
     render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
     expect(
-      screen.queryByText("Upgrade to Pro to buy credits"),
+      screen.queryByText("Compare plans for more monthly credits and top-ups"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("usage-wallet-locked")).toBeInTheDocument();
     expect(
@@ -554,7 +576,7 @@ describe("CreditBalanceCard", () => {
       screen.queryByRole("button", { name: /Buy credits/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("usage-ask-admin")).toHaveTextContent(
-      /Ask org admin to top up credits/,
+      /Ask an owner or admin to add credits/,
     );
   });
 

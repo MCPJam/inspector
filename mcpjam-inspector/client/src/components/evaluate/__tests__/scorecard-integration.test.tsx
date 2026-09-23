@@ -1,4 +1,3 @@
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
   render,
@@ -125,18 +124,21 @@ describe("scorecard integration regressions", () => {
     };
     const view = render(<TrialScorecard {...props} judgeHidden />);
     expect(screen.queryByTestId("stage-strip")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
     expect(
       screen.queryByText("Suggestions based on judge success"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("0.93")).not.toBeInTheDocument();
+    expect(screen.queryByText("Judge-only rationale")).not.toBeInTheDocument();
     view.rerender(<TrialScorecard {...props} judgeHidden={false} />);
-    expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /User value:/ }));
-    expect(screen.getByTestId("trial-stage-state")).toHaveTextContent("passed");
-    expect(screen.getByText("0.93")).toBeInTheDocument();
+    const userValue = document.querySelector('[data-stage-group="userValue"]');
+    expect(
+      userValue?.querySelector('[data-testid="scorecard-group-state"]'),
+    ).toHaveTextContent("passed");
+    const judgeRow = screen
+      .getAllByTestId("trial-scorecard-row")
+      .find((row) => row.getAttribute("data-row-key") === "judge:goalCompletion");
+    expect(judgeRow).toBeDefined();
+    expect(judgeRow).toHaveTextContent("Judge-only rationale");
   });
 
   it("hides judge results until the reviewer reveals them", () => {

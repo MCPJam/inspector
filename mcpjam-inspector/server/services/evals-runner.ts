@@ -1,4 +1,6 @@
+import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
 import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
@@ -717,6 +719,7 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
+  creditsExhausted?: boolean;
 };
 
 /**
@@ -1397,7 +1400,7 @@ export function resolveConfiguredServerIds(args: {
     return [];
   }
 
-  const availableServerIds = args.mcpClientManager.listServers();
+  const availableServerIds = listBaseServers(args.mcpClientManager);
   if (availableServerIds.length === 0) {
     return configuredServerRefs;
   }
@@ -1439,7 +1442,7 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
             trimmedServerRef.toLowerCase(),
@@ -1467,7 +1470,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef;
+        trimmedServerRef);
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -1745,8 +1748,10 @@ async function createIterationDirectly(
   },
 ): Promise<string | undefined> {
   try {
-    const result = await convexClient.mutation(
-      "testSuites:recordIterationStartWithoutRun" as any,
+    // ACTION, not the mutation — same starter-pool contention as the suite
+    // path above, retried server-side.
+    const result = await convexClient.action(
+      "testSuites:startQuickRunIteration" as any,
       {
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
@@ -1878,15 +1883,14 @@ async function persistRunSetupFailure(args: {
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-            ? row.iterationId
-            : undefined;
+              ? row.iterationId
+              : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          | { query?: string; expectedToolCalls?: unknown[] }
-          | undefined;
+          { query?: string; expectedToolCalls?: unknown[] } | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
@@ -2641,6 +2645,7 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
+  creditStop?: { exhausted: boolean };
   compareRunId?: string;
   /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
   toolDescriptionOverride?: ToolDescriptionOverrideMarker;
@@ -2741,6 +2746,7 @@ const executeTestCase = async (params: {
   // Run a single iteration under the per-iteration timeout + run-abort guards.
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
+  const creditStop = params.creditStop ?? { exhausted: false };
   const runSingleIteration = async <T extends EvalIterationOutcome>(
     runner: (
       iterationSignal: AbortSignal,
@@ -2775,14 +2781,27 @@ const executeTestCase = async (params: {
         abortSignal,
       });
 
+    const runAndCheckCredits = async (
+      signal: AbortSignal,
+      deadline: number,
+    ) => {
+      const outcome = await runner(signal, deadline, noteIterationStarted);
+      if (outcome.creditsExhausted && !creditStop.exhausted) {
+        creditStop.exhausted = true;
+        logger.info("[evals] credits exhausted; remaining iterations skipped", {
+          event: "evals.credits_exhausted",
+          iterationId: startedIterationId,
+        });
+      }
+      return outcome;
+    };
     if (!isolatedIterationTimeoutEnabled()) {
       // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
       // release. An iteration timeout aborts the WHOLE run and rejects, which
       // is the contract `evals-runner.test.ts` pinned before this change.
       try {
         return await runIterationUnderBudget({
-          run: (signal, deadlineAt) =>
-            runner(signal, deadlineAt, noteIterationStarted),
+          run: runAndCheckCredits,
           runSignal: abortSignal,
           unitTimeoutMs: budgets.unitTimeoutMs,
           graceMs: EVAL_ABORT_GRACE_MS,
@@ -2811,8 +2830,7 @@ const executeTestCase = async (params: {
 
     try {
       return await runIterationUnderBudget({
-        run: (signal, deadlineAt) =>
-          runner(signal, deadlineAt, noteIterationStarted),
+        run: runAndCheckCredits,
         runSignal: abortSignal,
         unitTimeoutMs: budgets.unitTimeoutMs,
         graceMs: EVAL_ABORT_GRACE_MS,
@@ -3019,6 +3037,28 @@ const executeTestCase = async (params: {
   }
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    if (creditStop.exhausted) {
+      // Only untouched rows are skipped. Completed evidence remains intact.
+      const iterationId = await findIterationIdForTimeout({
+        convexClient,
+        runId,
+        test,
+        runIndex,
+        precreatedIterationId: precreatedIterationIds[runIndex],
+      });
+      if (iterationId) {
+        await convexClient.action("testSuites:updateTestIteration" as any, {
+          iterationId,
+          status: "skipped",
+          result: "failed",
+          actualToolCalls: [],
+          tokensUsed: 0,
+          error:
+            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+        });
+      }
+      continue;
+    }
     const precreatedIterationId = shouldPrecreateIterations
       ? precreatedIterationIds[runIndex]
       : undefined;
@@ -3301,12 +3341,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : providedRecorder ??
+      : (providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        });
+        }));
 
   const summary = {
     total: 0,
@@ -3527,14 +3567,12 @@ export const runEvalSuiteWithAiSdk = async ({
         caseCount: tests.length,
         // Cases may configure different repeat counts. This is the total
         // number of iteration rows expected for the whole attempt.
-        repetitionCount: tests.reduce(
-          (sum, test) => sum + (test.runs || 1),
-          0,
-        ),
+        repetitionCount: tests.reduce((sum, test) => sum + (test.runs || 1), 0),
         renderConcurrencyLimit: MAX_CONCURRENT_RENDER_CHECKS,
         modelIdentifiers,
       });
     }
+    const creditStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -3556,6 +3594,7 @@ export const runEvalSuiteWithAiSdk = async ({
         runId,
         abortSignal: abortController.signal,
         abortRun,
+        creditStop,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         ...(gradingMode ? { gradingMode } : {}),
@@ -3784,7 +3823,13 @@ export const runEvalSuiteWithAiSdk = async ({
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {
       await recorder.finalize({
-        status: "completed",
+        status: creditStop.exhausted ? "failed" : "completed",
+        ...(creditStop.exhausted
+          ? {
+              notes:
+                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+            }
+          : {}),
         summary: {
           total: summary.total,
           passed: summary.passed,
@@ -3969,7 +4014,7 @@ const runLocalIteration = async ({
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...(testCaseId ?? test.testCaseId
+    ...((testCaseId ?? test.testCaseId)
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -4274,6 +4319,7 @@ const runLocalIteration = async ({
         null,
       );
       prepared = await prepareChatV2({
+        connectionsByServerId: {},
         mcpClientManager,
         selectedServers,
         modelDefinition,
@@ -4928,6 +4974,10 @@ const runLocalIteration = async ({
     });
 
     return {
+      creditsExhausted: isCreditExhaustion({
+        message: acc.iterationError,
+        details: acc.iterationErrorDetails,
+      }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -5175,6 +5225,10 @@ const runLocalIteration = async ({
       finishParams: failParams,
     });
     return {
+      creditsExhausted: isCreditExhaustion({
+        message: errorMessage,
+        details: errorDetails,
+      }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -5274,7 +5328,7 @@ const runHostedIterationWithBrowser = async (
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...(testCaseId ?? test.testCaseId
+    ...((testCaseId ?? test.testCaseId)
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -5524,7 +5578,9 @@ const runHostedIterationWithBrowser = async (
           ...(builtInTarget && "projectId" in builtInTarget
             ? { projectId: builtInTarget.projectId }
             : {}),
-          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+          ...(projectEnvironmentId
+            ? { environmentId: projectEnvironmentId }
+            : {}),
         })
       : [];
     return resolveHostTools(
@@ -5760,6 +5816,7 @@ const runHostedIterationWithBrowser = async (
     builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
+      connectionsByServerId: {},
       mcpClientManager,
       selectedServers,
       modelDefinition,
@@ -5908,6 +5965,7 @@ const runHostedIterationWithBrowser = async (
     );
     failedEvaluation.passed = false;
     return {
+      creditsExhausted: isCreditExhaustion(error),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
@@ -6355,10 +6413,10 @@ const runHostedIterationWithBrowser = async (
       toolSurface: {
         mcpTools: Object.keys(prepared?.allTools ?? {}).length,
         browserTools:
-        parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
-          source: "agent-activity",
-          quiet: true,
-        }) !== undefined,
+          parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+            source: "agent-activity",
+            quiet: true,
+          }) !== undefined,
       },
       toolCalls: toolsCalledByPromptWithWidgets.flat().length,
       modelInvocations: countModelInvocations({
@@ -6523,6 +6581,10 @@ const runHostedIterationWithBrowser = async (
   });
 
   return {
+    creditsExhausted: isCreditExhaustion({
+      message: iterationError,
+      details: iterationErrorDetails,
+    }),
     evaluation,
     iterationId: iterationId ?? undefined,
     ...(toolPolicyGate?.blocks.length

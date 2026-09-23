@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -88,6 +88,7 @@ import {
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useHostList } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -98,13 +99,25 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
-import { environmentLabel } from "@/lib/environment-label";
+import {
+  environmentLabel,
+  environmentLabelsById,
+} from "@/lib/environment-label";
+import {
+  sameEnvironmentSelection,
+  type EnvironmentMoveRow,
+} from "@/components/swarms/reused-environment-move";
 import { ErrorCard } from "@/components/ui/error-card";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import {
+  preflightSwarmTargets,
+  missingSwarmModelMessage,
+  SwarmTargetPreflightError,
+} from "./swarm-target-preflight";
 
 /**
  * The authoring rail. Findings is a state of a finished swarm, not a fourth
@@ -325,21 +338,6 @@ async function runWithConcurrency<T>(
   await Promise.all(runners);
 }
 
-/**
- * Set equality over environment ids — order is irrelevant to what a run
- * executes, so a reordered-but-identical selection must not trigger an
- * override that says nothing.
- */
-function sameEnvironmentSelection(
-  stored: readonly string[] | null,
-  selection: readonly string[],
-): boolean {
-  const current = stored ?? [];
-  if (current.length !== selection.length) return false;
-  const wanted = new Set(selection);
-  return current.every((id) => wanted.has(id));
-}
-
 function errorMessageOf(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message) return err.message;
   return fallback;
@@ -361,7 +359,6 @@ export function NewSwarmCreateFlow({
   onDone,
   onOpenSession,
   onSaveExistingPersona,
-  onSetInsightsTuning: _onSetInsightsTuning,
 }: {
   projectId: string;
   organizationId?: string;
@@ -445,11 +442,21 @@ export function NewSwarmCreateFlow({
    * a surface on an older backend renders the flow unchanged rather than
    * offering a control whose mutation would be rejected.
    */
-  onSetInsightsTuning?: (tuning: ClusterTuning) => Promise<void>;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Ad-hoc AND archived, because this is the lookup Confirm uses to say where a
+  // reused goal is set up to run, and both kinds are exactly what a journey
+  // ends up pointing at. It never feeds a list anyone picks from.
+  const allEnvironments = useProjectEnvironments(projectId, {
+    includeArchived: true,
+    includeAdhoc: true,
+  });
+  const convex = useConvex();
+  const navigate = useAppNavigate();
+  const [preflightModelFailure, setPreflightModelFailure] =
+    useState<SwarmTargetPreflightError | null>(null);
   const resolveComposerTargets = useComposerResolver(projectId);
   const { user: workOsUser } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -527,8 +534,7 @@ export function NewSwarmCreateFlow({
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   // Sizes GENERATION only — how many personas and goals the Describe step
   // asks for. Confirm no longer picks it: iterations is the control there.
-  const pushIntensity =
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  const pushIntensity = restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
   // One entry per persona, keyed by its proposal key. Absent means the
   // default: a persona the user has not touched costs nothing to store,
   // and a regenerated slate mints new keys rather than inheriting numbers
@@ -665,8 +671,14 @@ export function NewSwarmCreateFlow({
       serverAttachments,
       environmentsEnabled,
     });
+    // Latch only once something was actually seeded. Latching first meant a
+    // mount where hosts and environments were both momentarily empty — `next`
+    // is null then — latched forever and never re-seeded when the queries
+    // landed, leaving the composer blank for the rest of the flow.
+    // `use-swarm-default-target.ts` has always done it in this order.
+    if (!next) return;
     targetSeededRef.current = true;
-    if (next) setTargetState(next);
+    setTargetState(next);
   }, [
     attachmentsLoading,
     attachmentsQueryEnabled,
@@ -783,6 +795,38 @@ export function NewSwarmCreateFlow({
     environments: envList,
   });
   const serverBlock = describeCloudServerBlock(serverReadiness);
+  // An explicit override can run a legacy client without a default, but an
+  // inherit cell still needs that client's model (even alongside overrides).
+  const missingModelHost = composeMode
+    ? hosts.find(
+        (host) =>
+          targetState.stack.hostIds.includes(host.hostId) &&
+          host.modelId !== undefined &&
+          !host.modelId.trim() &&
+          (
+            targetState.stack.modelSelectionsByHost?.[host.hostId] ??
+            targetState.stack.modelSelection
+          )?.includeClientDefaults !== false,
+      )
+    : hosts.find(
+        (host) =>
+          host.modelId !== undefined &&
+          !host.modelId.trim() &&
+          envList.some(
+            (env) =>
+              targetState.environmentIds.includes(env.environmentId) &&
+              env.hostId === host.hostId &&
+              !env.modelId?.trim(),
+          ),
+      );
+  const modelBlock = missingModelHost
+    ? missingSwarmModelMessage(missingModelHost.name)
+    : null;
+  useEffect(() => {
+    setPreflightModelFailure(null);
+  }, [targetState]);
+  const modelRepairHostId =
+    missingModelHost?.hostId ?? preflightModelFailure?.hostId;
 
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
@@ -798,7 +842,11 @@ export function NewSwarmCreateFlow({
     !materializing;
   const hasSwarmName = swarmName.trim().length > 0;
   const canContinue =
-    generating || materializing || serverBlock !== null || !hasSwarmName
+    generating ||
+    materializing ||
+    serverBlock !== null ||
+    modelBlock !== null ||
+    !hasSwarmName
       ? false
       : wantsGenerate
       ? canGenerate
@@ -811,6 +859,7 @@ export function NewSwarmCreateFlow({
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
       if (serverBlock) return "Pick a server to continue.";
+      if (modelBlock) return modelBlock;
       if (!hasSwarmName) return "This swarm needs a name to continue.";
       if (wantsGenerate) {
         if (!workOsUser) {
@@ -955,6 +1004,29 @@ export function NewSwarmCreateFlow({
     }
 
     if (!resolved) return null;
+    // Runs before generation and again before persisting personas/goals. The
+    // launch mutation remains authoritative if the client changes afterwards.
+    try {
+      setPreflightModelFailure(null);
+      await preflightSwarmTargets({
+        environmentIds: resolved.environmentIds,
+        targets: resolved.environments,
+        hosts,
+        resolve: (environmentId) =>
+          convex.query(
+            "projectEnvironments:resolveEnvironmentForLaunch" as any,
+            { projectId, environmentId },
+          ),
+      });
+    } catch (error) {
+      if (
+        error instanceof SwarmTargetPreflightError &&
+        error.code === "ENV_MODEL_REQUIRED"
+      ) {
+        setPreflightModelFailure(error);
+      }
+      throw error;
+    }
     setResolvedEnvironmentIds(resolved.environmentIds);
     setResolvedEnvironments(resolved.environments);
     if (resolved.materialized?.createdIds.length) {
@@ -969,6 +1041,9 @@ export function NewSwarmCreateFlow({
     }
     return resolved;
   }, [
+    convex,
+    hosts,
+    projectId,
     composeMode,
     createdEnvOverlay,
     envList,
@@ -1065,11 +1140,11 @@ export function NewSwarmCreateFlow({
         limitDialogRaised
           ? null
           : err instanceof SwarmTargetMaterializeError ||
-              err instanceof ComposerResolveError ||
-              err instanceof SwarmGenerateError ||
-              err instanceof WebApiError
-            ? err.message
-            : errorMessageOf(err, "Failed to generate personas."),
+            err instanceof ComposerResolveError ||
+            err instanceof SwarmGenerateError ||
+            err instanceof WebApiError
+          ? err.message
+          : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;
@@ -1094,21 +1169,62 @@ export function NewSwarmCreateFlow({
    * screen without writing a description or paying for a slate they didn't
    * ask for.
    */
-  const handleContinue = useCallback(() => {
-    if (!canContinue) return;
-    if (wantsGenerate) {
-      void handleGenerate();
-      return;
+  /**
+   * Enter Confirm for a swarm built only from personas that already exist.
+   *
+   * Resolves the target FIRST, which generation has always done here and this
+   * path never did. In compose mode, which is every project without
+   * `project-environments-enabled`, the environment ids do not exist until this
+   * call mints or matches them, so Confirm used to render with an empty
+   * selection and could say nothing true: not where the swarm would run, not
+   * which reused goals were being moved off the setup they were written for,
+   * and not how many conversations the launch buys, since the estimate
+   * multiplies by `Math.max(1, environmentCount)` and quoted a multi-client
+   * fan-out as a single target.
+   *
+   * Ad-hoc rows are fingerprint-deduped, so resolving here reuses the row the
+   * launch would have minted moments later rather than accumulating one per
+   * visit. Generation already pays exactly this cost at exactly this point.
+   *
+   * Best effort, and deliberately NON-BLOCKING. A reuse-only swarm is allowed
+   * to reach Confirm with no target at all — its goals carry their own, and
+   * `canContinue` says as much. Failing the step here would strand exactly the
+   * returning user that rule exists to protect, over a target their run may
+   * never need. So a throw is swallowed: Confirm then discloses nothing about
+   * the target, which is what it did before this existed, and the launch
+   * reports the failure as loudly as it always has.
+   */
+  const handleContinueReused = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setMaterializing(true);
+    setErrorMessage(null);
+    setDescribeStepError(null);
+    try {
+      await resolveTargets();
+    } catch {
+      // Intentionally ignored — see above. `resolveTargets` throws before it
+      // publishes anything, so there is no half-resolved target to clean up.
+    } finally {
+      setMaterializing(false);
+      inFlightRef.current = false;
     }
     persistedTargetsRef.current = null;
     persistedRunGroupIdRef.current = null;
     persistedSwarmIdRef.current = null;
     flowIdRef.current = null;
     setProposed([]);
-    setErrorMessage(null);
-    setDescribeStepError(null);
     setStep("confirm");
-  }, [canContinue, handleGenerate, wantsGenerate]);
+  }, [resolveTargets]);
+
+  const handleContinue = useCallback(() => {
+    if (!canContinue) return;
+    if (wantsGenerate) {
+      void handleGenerate();
+      return;
+    }
+    void handleContinueReused();
+  }, [canContinue, handleContinueReused, handleGenerate, wantsGenerate]);
 
   const handleLaunch = useCallback(
     async (payload: ConfirmLaunchPayload) => {
@@ -1730,10 +1846,7 @@ export function NewSwarmCreateFlow({
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
-    onDone(
-      launchedRunLabelsRef.current,
-      persistedRunGroupIdRef.current,
-    );
+    onDone(launchedRunLabelsRef.current, persistedRunGroupIdRef.current);
   }, [onDone]);
 
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
@@ -1837,20 +1950,51 @@ export function NewSwarmCreateFlow({
     });
   }, [envListForPayload, environmentIds, hostNameById]);
 
+  /**
+   * Every environment row in the project, INCLUDING ad-hoc ones, keyed by id.
+   *
+   * Named-only lists are right for pickers; this is a LOOKUP, and the rows it
+   * must answer for are exactly the ones a picker hides. Whenever the
+   * environments flag is off, which is every project but one, a reused goal was
+   * set up against an ad-hoc row minted from a client and a server group.
+   * Without those rows Confirm cannot name where a goal runs today, and cannot
+   * compare its client or server group against where this launch will run it.
+   *
+   * Rows this flow just minted are layered on top, because the mutation returns
+   * them before the query that lists them catches up. Appending rather than
+   * prepending keeps every other row's `#n` stable.
+   */
+  const environmentRowsById = useMemo(() => {
+    const byId = new Map<string, ProjectEnvironmentView>();
+    for (const env of allEnvironments ?? []) byId.set(env.environmentId, env);
+    for (const env of envListForPayload) byId.set(env.environmentId, env);
+    const rows = [...byId.values()];
+    const labels = environmentLabelsById(rows, { hostName: hostNameById });
+    const out = new Map<string, EnvironmentMoveRow>();
+    for (const env of rows) {
+      out.set(env.environmentId, {
+        environmentId: env.environmentId,
+        label:
+          labels.get(env.environmentId) ??
+          environmentLabel(env, { hostName: hostNameById }),
+        hostId: env.hostId,
+        serverAttachmentId: env.serverAttachmentId ?? null,
+      });
+    }
+    return out;
+  }, [allEnvironments, envListForPayload, hostNameById]);
+
   const environmentLabels = useMemo(
     () =>
-      environmentIds.map((environmentId) => {
-        const env = envListForPayload.find(
-          (entry) => entry.environmentId === environmentId,
-        );
-        // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
-        // different failure from a row that merely has no name, which
-        // `environmentLabel` covers with the client name.
-        return env
-          ? environmentLabel(env, { hostName: hostNameById })
-          : environmentId.slice(0, 8);
-      }),
-    [envListForPayload, environmentIds, hostNameById],
+      environmentIds.map(
+        (environmentId) =>
+          // `slice(0, 8)` stays for a row that isn't in the map AT ALL, a
+          // different failure from a row that merely has no name, which
+          // `environmentLabel` covers with the client name.
+          environmentRowsById.get(environmentId)?.label ??
+          environmentId.slice(0, 8),
+      ),
+    [environmentIds, environmentRowsById],
   );
 
   const groundingEnvironmentId =
@@ -1922,6 +2066,9 @@ export function NewSwarmCreateFlow({
             onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}
+            environmentIds={environmentIds}
+            environmentRowsById={environmentRowsById}
+            hostNameById={hostNameById}
             launching={launching}
             errorMessage={errorMessage}
             // Back is the same move as the Describe breadcrumb, so it goes
@@ -2091,6 +2238,15 @@ export function NewSwarmCreateFlow({
                 sentence readable instead of a wall of red text. */}
             {describeStepError || errorMessage ? (
               <ErrorCard error={describeStepError ?? errorMessage} />
+            ) : null}
+            {modelRepairHostId ? (
+              <Button
+                type="button"
+                variant="link"
+                onClick={() => navigate(buildHostsPath(modelRepairHostId))}
+              >
+                Edit client
+              </Button>
             ) : null}
 
             <div className="flex flex-wrap items-center justify-end gap-3 pt-4">

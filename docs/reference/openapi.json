@@ -31,7 +31,7 @@
     },
     {
       "name": "Environments",
-      "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and journeys run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
+      "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and goals run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
     },
     {
       "name": "Plugins",
@@ -78,8 +78,8 @@
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     },
     {
-      "name": "Scenarios",
-      "description": "Read-only access to the scenarios published from a project: listing, settings, attached servers, and share links."
+      "name": "Studies",
+      "description": "Publish a project environment as a **study** for people outside the project to talk to, read what they did, and control who can reach it. Several of these NARROW access and take effect immediately.\n\nThe pre-rename paths — `/projects/{projectId}/scenarios`, `/projects/{projectId}/scenarios/{scenarioId}`, `/projects/{projectId}/environments/{environmentId}/scenario` and `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` — keep working and are deliberately not documented here. They return their original bodies, which spell the owning id `scenarioId` and whose detail read carries no execution settings, and every response answers with `Deprecation: true` and a `Link` header naming its successor. They are removed at general availability; a new integration should use the paths on this page."
     },
     {
       "name": "Catalog",
@@ -104,10 +104,6 @@
     {
       "name": "Swarm insights",
       "description": "What a swarm run revealed. The scorecard and findings are deterministic and free; requesting wave insights runs models and draws on your shared daily ledger."
-    },
-    {
-      "name": "User testing",
-      "description": "Publishing an environment for real visitors, and controlling who can reach it. Several of these NARROW access and take effect immediately."
     },
     {
       "name": "Directory readiness",
@@ -1577,7 +1573,7 @@
         "operationId": "listClients",
         "tags": ["Clients"],
         "summary": "List a project's clients",
-        "description": "The clients saved in the project — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns the `id`s and `configId`s the detail and write routes take. Clients that exist only as the private backing of a User Testing scenario are omitted unless `includePrivateBacking=true`.",
+        "description": "The clients saved in the project — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns the `id`s and `configId`s the detail and write routes take. Clients that exist only as the private backing of a User Testing study are omitted unless `includePrivateBacking=true`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -1804,7 +1800,7 @@
         "operationId": "deleteClient",
         "tags": ["Clients"],
         "summary": "Delete a client",
-        "description": "Permanently deletes the client. Refused while a live environment, an active legacy journey or an eval suite still holds it — the error names what to detach first. Guest callers are denied (a write).",
+        "description": "Permanently deletes the client. Refused while a live environment, an active legacy goal or an eval suite still holds it — the error names what to detach first. Guest callers are denied (a write).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -5352,8 +5348,14 @@
         "operationId": "listSessions",
         "tags": ["Catalog"],
         "summary": "Search or list unified sessions",
-        "description": "The unified, cross-surface sessions feed for one project: Playground, user-testing, eval, and swarm transcripts in one list, newest first. Project-NESTED (unlike `/chat-sessions`) because `projectId` owns the scope here rather than filtering it.\n\nSupplying `q` at all switches to relevance-ordered search; `scope` then chooses what is searched. Row-level visibility applies in every mode: a caller never receives another member's private Playground session.\n\nThe response echoes the honored `scope`. A deployment predating that parameter omits the echo — clients requesting a non-default scope MUST treat its absence as \"unsupported\" rather than accepting the results.",
+        "x-mcpjam-api-vocabulary": {
+          "2": {"values": ["sourceType", "parentRef.kind"]}
+        },
+        "description": "The unified, cross-surface sessions feed for one project: Playground, user-testing, eval, and swarm transcripts in one list, newest first. Project-NESTED (unlike `/chat-sessions`) because `projectId` owns the scope here rather than filtering it.\n\nUnder `x-mcpjam-api-vocabulary: 2` each item\u2019s `sourceType` reads `study` where it reads `scenario` today, and `parentRef` reads `kind: \"study\"` / `kind: \"goalRun\"` with its id fields re-keyed to `studyId` / `goalRunId` / `goalRefId`. The `sourceType` filter accepts either spelling under that header.\n\nSupplying `q` at all switches to relevance-ordered search; `scope` then chooses what is searched. Row-level visibility applies in every mode: a caller never receives another member's private Playground session.\n\nThe response echoes the honored `scope`. A deployment predating that parameter omits the echo — clients requesting a non-default scope MUST treat its absence as \"unsupported\" rather than accepting the results.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/apiVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -5532,12 +5534,12 @@
         }
       }
     },
-    "/projects/{projectId}/scenarios": {
+    "/projects/{projectId}/studies": {
       "get": {
-        "operationId": "listScenarios",
-        "tags": ["Scenarios"],
+        "operationId": "listStudies",
+        "tags": ["Studies"],
         "summary": "List a project's scenarios",
-        "description": "The scenarios published from this project — name, access mode, attached servers, and share link. Read-only.",
+        "description": "The studies published from this project — name, access mode, attached servers, and share link. Read-only.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -5545,60 +5547,11 @@
         ],
         "responses": {
           "200": {
-            "description": "The project's scenarios.",
+            "description": "The project's studies.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ValidationError"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "502": {
-            "$ref": "#/components/responses/ServerUnreachable"
-          }
-        }
-      }
-    },
-    "/projects/{projectId}/scenarios/{scenarioId}": {
-      "get": {
-        "operationId": "getScenario",
-        "tags": ["Scenarios"],
-        "summary": "Get a scenario",
-        "description": "One scenario's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A scenario that exists but belongs to a different project reads as `404 NOT_FOUND`.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/projectId"
-          },
-          {
-            "$ref": "#/components/parameters/projectScenarioId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The scenario settings.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScenarioDetail"
+                  "$ref": "#/components/schemas/StudyPage"
                 }
               }
             }
@@ -5632,7 +5585,7 @@
         "operationId": "createTunnel",
         "tags": ["Tunnels"],
         "summary": "Create (or revive) a relay tunnel for a named project server",
-        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and scenarios can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam cloud tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and studies can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam cloud tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -7742,8 +7695,11 @@
         "operationId": "exportTracesOtlp",
         "tags": ["Catalog"],
         "summary": "Export project traces as OTLP/JSON",
-        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.",
+        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.\n\nThe OTLP body carries no session DTO, so `x-mcpjam-api-vocabulary: 2` changes nothing this route emits \u2014 it widens what `sourceTypes` accepts, so a caller can filter by the spelling its other reads answer with.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/apiVocabularyHeader"
+          },
           {
             "name": "projectId",
             "in": "query",
@@ -8185,7 +8141,7 @@
         "operationId": "updatePersona",
         "tags": ["Swarms"],
         "summary": "Update a persona",
-        "description": "Partial update. Journeys reference the persona by id, so renaming one does not disturb anything pointing at it.",
+        "description": "Partial update. Goals reference the persona by id, so renaming one does not disturb anything pointing at it.",
         "requestBody": {
           "required": true,
           "description": "Fields to change.",
@@ -8232,7 +8188,7 @@
         "operationId": "deletePersona",
         "tags": ["Swarms"],
         "summary": "Delete a persona",
-        "description": "Refused with 409 while journeys still reference this persona — deleting it would strand them.",
+        "description": "Refused with 409 while goals still reference this persona — deleting it would strand them.",
         "responses": {
           "200": {
             "description": "The persona was deleted.",
@@ -8289,7 +8245,7 @@
         },
         "responses": {
           "200": {
-            "description": "Draft personas and journeys.",
+            "description": "Draft personas and goals.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8546,14 +8502,14 @@
         }
       }
     },
-    "/projects/{projectId}/journeys/generate": {
+    "/projects/{projectId}/goals/generate": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         }
       ],
       "post": {
-        "operationId": "generateJourneys",
+        "operationId": "generateGoals",
         "tags": ["Swarms"],
         "summary": "Draft journeys for a persona",
         "description": "Returns DRAFTS and persists nothing — see `POST /projects/{projectId}/personas/generate` for why, and for the quota this counts against.",
@@ -8563,14 +8519,14 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyGenerateRequest"
+                "$ref": "#/components/schemas/GoalGenerateRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Draft journeys.",
+            "description": "Draft goals.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8600,26 +8556,26 @@
         }
       }
     },
-    "/projects/{projectId}/journeys/{journeyId}": {
+    "/projects/{projectId}/goals/{goalId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/journeyId"
+          "$ref": "#/components/parameters/goalId"
         }
       ],
       "get": {
-        "operationId": "getJourney",
+        "operationId": "getGoal",
         "tags": ["Swarms"],
         "summary": "Get a journey",
         "responses": {
           "200": {
-            "description": "The journey.",
+            "description": "The goal.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Journey"
+                  "$ref": "#/components/schemas/Goal"
                 }
               }
             }
@@ -8642,28 +8598,28 @@
         }
       },
       "patch": {
-        "operationId": "updateJourney",
+        "operationId": "updateGoal",
         "tags": ["Swarms"],
         "summary": "Update a journey",
-        "description": "Editing a journey never disturbs a run already under way: a run pins its own immutable snapshot of the definition at launch.",
+        "description": "Editing a goal never disturbs a run already under way: a run pins its own immutable snapshot of the definition at launch.",
         "requestBody": {
           "required": true,
           "description": "Fields to change.",
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyUpdateRequest"
+                "$ref": "#/components/schemas/GoalUpdateRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The updated journey.",
+            "description": "The updated goal.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Journey"
+                  "$ref": "#/components/schemas/Goal"
                 }
               }
             }
@@ -8689,17 +8645,17 @@
         }
       },
       "delete": {
-        "operationId": "archiveJourney",
+        "operationId": "archiveGoal",
         "tags": ["Swarms"],
         "summary": "Archive a journey",
         "description": "ARCHIVES rather than deletes, and the response says so. Existing runs keep pointing at the definition they executed, so their history stays readable.",
         "responses": {
           "200": {
-            "description": "The journey was archived.",
+            "description": "The goal was archived.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyArchived"
+                  "$ref": "#/components/schemas/GoalArchived"
                 }
               }
             }
@@ -8767,7 +8723,7 @@
         "operationId": "createSwarm",
         "tags": ["Swarms"],
         "summary": "Create a swarm",
-        "description": "A swarm is an authoring container holding DEFAULTS for the journeys made under it. Creating one starts nothing.",
+        "description": "A swarm is an authoring container holding DEFAULTS for the goals made under it. Creating one starts nothing.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -8870,7 +8826,7 @@
         "operationId": "updateSwarm",
         "tags": ["Swarms"],
         "summary": "Update a swarm",
-        "description": "Changes the container's DEFAULTS. Journeys already authored under it keep the values they were created with — this is not a cascade.",
+        "description": "Changes the container's DEFAULTS. Goals already authored under it keep the values they were created with — this is not a cascade.",
         "requestBody": {
           "required": true,
           "description": "Fields to change.",
@@ -8917,7 +8873,7 @@
         "operationId": "archiveSwarm",
         "tags": ["Swarms"],
         "summary": "Archive a swarm",
-        "description": "ARCHIVES the container. The journeys authored under it are not touched — they keep their own definitions and stay launchable.",
+        "description": "ARCHIVES the container. The goals authored under it are not touched — they keep their own definitions and stay launchable.",
         "responses": {
           "200": {
             "description": "The swarm was archived.",
@@ -8947,27 +8903,27 @@
         }
       }
     },
-    "/projects/{projectId}/journeys": {
+    "/projects/{projectId}/goals": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         }
       ],
       "get": {
-        "operationId": "listJourneys",
+        "operationId": "listGoals",
         "tags": ["Swarms"],
         "summary": "List journeys",
-        "description": "The project's journeys, newest first. Archived journeys are excluded.",
+        "description": "The project's goals, newest first. Archived goals are excluded.",
         "requestBody": {
           "$ref": "#/components/requestBodies/cursorBody"
         },
         "responses": {
           "200": {
-            "description": "A page of journeys.",
+            "description": "A page of goals.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyPage"
+                  "$ref": "#/components/schemas/GoalPage"
                 }
               }
             }
@@ -8990,10 +8946,10 @@
         }
       },
       "post": {
-        "operationId": "createJourney",
+        "operationId": "createGoal",
         "tags": ["Swarms"],
         "summary": "Create a journey",
-        "description": "Creates one journey: a persona pursuing a `goal` against one or more environments. To draft several with a model first, use `POST /projects/{projectId}/journeys/generate` — that route persists nothing.\n\n`personaId` and `swarmId` must belong to THIS project. Naming one from another project is a `404`, not a silent cross-project reference.\n\nCreating a journey does not run it. Launch it with `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
+        "description": "Creates one goal: a persona pursuing a task against one or more environments. To draft several with a model first, use `POST /projects/{projectId}/goals/generate` — that route persists nothing.\n\n`personaId` and `swarmId` must belong to THIS project. Naming one from another project is a `404`, not a silent cross-project reference.\n\nCreating a goal does not run it. Launch it with `POST /projects/{projectId}/goals/{goalId}/runs`.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -9007,22 +8963,22 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "The journey to create.",
+          "description": "The goal to create.",
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyCreateRequest"
+                "$ref": "#/components/schemas/GoalCreateRequest"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "The created journey.",
+            "description": "The created goal.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Journey"
+                  "$ref": "#/components/schemas/Goal"
                 }
               }
             }
@@ -9051,17 +9007,17 @@
         }
       }
     },
-    "/projects/{projectId}/journeys/{journeyId}/runs": {
+    "/projects/{projectId}/goals/{goalId}/runs": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/journeyId"
+          "$ref": "#/components/parameters/goalId"
         }
       ],
       "get": {
-        "operationId": "listJourneyRuns",
+        "operationId": "listGoalRuns",
         "tags": ["Swarm runs"],
         "summary": "List a journey's runs",
         "description": "Newest first. Compact records — `attempts` is on the single-run read.",
@@ -9074,7 +9030,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunPage"
+                  "$ref": "#/components/schemas/GoalRunPage"
                 }
               }
             }
@@ -9097,16 +9053,16 @@
         }
       },
       "post": {
-        "operationId": "launchJourneyRun",
+        "operationId": "launchGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Launch a journey",
-        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished — poll `GET /projects/{projectId}/journey-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets × sessionsPerTarget` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both normally carry `Retry-After` — honor it when it is there, and back off on your own when it is not, rather than blocking on a header that may not come. A retried `Idempotency-Key` consumes NO quota.",
+        "description": "Answers **202**: the run row exists and its fan-out has started. It is not finished — poll `GET /projects/{projectId}/goal-runs/{runId}` until `status` leaves `running`.\n\n**SPENDS.** A launch fans out into `targets × iterations` chat sessions, every one of which runs a model on your organization's account.\n\nTwo different 429s can come back and they mean different waits: the per-minute burst brake (retry in seconds) and your plan's daily launch cap (resets at UTC midnight). Both normally carry `Retry-After` — honor it when it is there, and back off on your own when it is not, rather than blocking on a header that may not come. A retried `Idempotency-Key` consumes NO quota.",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
-            "description": "**Send one.** A launch spends model credits, so a retry of a dropped response must not run the journey twice. Replaying a key returns the ORIGINAL run with `deduped: true` and starts no second runner.\n\nOmitting the header is read as a request that declined to identify itself, and gets a FRESH run every time.",
+            "description": "**Send one.** A launch spends model credits, so a retry of a dropped response must not run the goal twice. Replaying a key returns the ORIGINAL run with `deduped: true` and starts no second runner.\n\nOmitting the header is read as a request that declined to identify itself, and gets a FRESH run every time.",
             "schema": {
               "type": "string"
             }
@@ -9114,11 +9070,11 @@
         ],
         "requestBody": {
           "required": false,
-          "description": "Optional launch options. Omit the body entirely to run the journey as authored.",
+          "description": "Optional launch options. Omit the body entirely to run the goal as authored.",
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/JourneyRunLaunchRequest"
+                "$ref": "#/components/schemas/GoalRunLaunchRequest"
               }
             }
           }
@@ -9129,7 +9085,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunLaunched"
+                  "$ref": "#/components/schemas/GoalRunLaunched"
                 }
               }
             }
@@ -9158,7 +9114,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}": {
+    "/projects/{projectId}/goal-runs/{runId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9168,7 +9124,7 @@
         }
       ],
       "get": {
-        "operationId": "getJourneyRun",
+        "operationId": "getGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Get a journey run",
         "description": "The full record, including per-session `attempts` and `targetSummaries`.\n\nRead `canceled` before reporting a failure: a stopped run carries `status: \"failed\"`.",
@@ -9178,7 +9134,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRun"
+                  "$ref": "#/components/schemas/GoalRun"
                 }
               }
             }
@@ -9201,7 +9157,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}/sessions": {
+    "/projects/{projectId}/goal-runs/{runId}/sessions": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9211,7 +9167,7 @@
         }
       ],
       "get": {
-        "operationId": "listJourneyRunSessions",
+        "operationId": "listGoalRunSessions",
         "tags": ["Swarm runs"],
         "summary": "List a run's sessions",
         "description": "One entry per chat session the run produced. Summaries, not transcripts — read a transcript through the chat-session routes using `id`.",
@@ -9224,7 +9180,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunSessionPage"
+                  "$ref": "#/components/schemas/GoalRunSessionPage"
                 }
               }
             }
@@ -9247,7 +9203,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}/cancel": {
+    "/projects/{projectId}/goal-runs/{runId}/cancel": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9257,7 +9213,7 @@
         }
       ],
       "post": {
-        "operationId": "cancelJourneyRun",
+        "operationId": "cancelGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Cancel a journey run",
         "description": "Stops a run and settles its in-flight attempts. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
@@ -9267,7 +9223,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JourneyRunCanceled"
+                  "$ref": "#/components/schemas/GoalRunCanceled"
                 }
               }
             }
@@ -9293,7 +9249,7 @@
         }
       }
     },
-    "/projects/{projectId}/journeys-overview": {
+    "/projects/{projectId}/goals-overview": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9333,7 +9289,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-runs/{runId}/scorecard": {
+    "/projects/{projectId}/goal-runs/{runId}/scorecard": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9343,7 +9299,7 @@
         }
       ],
       "get": {
-        "operationId": "getJourneyRunScorecard",
+        "operationId": "getGoalRunScorecard",
         "tags": ["Swarm insights"],
         "summary": "Get a run's rubric scorecard",
         "description": "The deterministic rubric result for one run. No model, no spend.\n\nDivide by `sessionsGraded`, never `sessionsTotal`, and keep `failedGradingCount` separate from `failCount` — a crashed judge is not a regression.",
@@ -9376,7 +9332,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-findings": {
+    "/projects/{projectId}/goal-findings": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9419,7 +9375,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-findings/{findingId}/dismiss": {
+    "/projects/{projectId}/goal-findings/{findingId}/dismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9462,7 +9418,7 @@
         }
       }
     },
-    "/projects/{projectId}/journey-findings/{findingId}/undismiss": {
+    "/projects/{projectId}/goal-findings/{findingId}/undismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9505,27 +9461,27 @@
         }
       }
     },
-    "/projects/{projectId}/waves/{waveId}/insights": {
+    "/projects/{projectId}/swarm-runs/{swarmRunId}/insights": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/waveId"
+          "$ref": "#/components/parameters/swarmRunId"
         }
       ],
       "get": {
-        "operationId": "getWaveInsights",
+        "operationId": "getSwarmRunInsights",
         "tags": ["Swarm insights"],
-        "summary": "Get wave insights",
+        "summary": "Get swarm run insights",
         "description": "Poll this after requesting insights. **404 means nobody asked** — it is deliberately not an empty `status: \"none\"` body, so a caller in a polling loop cannot mistake \"never requested\" for \"asked and still working\".",
         "responses": {
           "200": {
-            "description": "The wave's insights.",
+            "description": "The swarm run's insights.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaveInsights"
+                  "$ref": "#/components/schemas/SwarmRunInsights"
                 }
               }
             }
@@ -9548,9 +9504,9 @@
         }
       },
       "post": {
-        "operationId": "requestWaveInsights",
+        "operationId": "requestSwarmRunInsights",
         "tags": ["Swarm insights"],
-        "summary": "Request wave insights",
+        "summary": "Request swarm run insights",
         "description": "Answers **202**: generation is scheduled, not done. Poll the GET above rather than re-requesting.\n\n**No credits are consumed** — the model cost is on MCPJam. It still draws on the `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and user-testing insights, so a request here takes one from there too.\n\nThree refusals, and they mean different things:\n- `429` with `code: \"RATE_LIMITED\"` and a short `Retry-After` — the per-minute burst brake. Wait seconds.\n- `429` naming `insightsPerDay` in `details` — the daily ledger. `Retry-After` counts to UTC midnight.\n- `403` — the feature is not available to your organization. Waiting will never help; collapsing this into the 429s would send someone who hit today's cap shopping for a plan they already have.",
         "requestBody": {
           "required": false,
@@ -9558,7 +9514,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/WaveInsightsRequest"
+                "$ref": "#/components/schemas/SwarmRunInsightsRequest"
               }
             }
           }
@@ -9569,7 +9525,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaveInsightsRequested"
+                  "$ref": "#/components/schemas/SwarmRunInsightsRequested"
                 }
               }
             }
@@ -9595,17 +9551,17 @@
         }
       },
       "delete": {
-        "operationId": "cancelWaveInsights",
+        "operationId": "cancelSwarmRunInsights",
         "tags": ["Swarm insights"],
-        "summary": "Cancel a pending wave-insights generation",
-        "description": "Stops a generation that is still `pending`. A wave with no generation in progress answers 409 — there is nothing to cancel, and reporting success would tell a caller it stopped something it did not.",
+        "summary": "Cancel a pending swarm-run-insights generation",
+        "description": "Stops a generation that is still `pending`. A swarm run with no generation in progress answers 409 — there is nothing to cancel, and reporting success would tell a caller it stopped something it did not.",
         "responses": {
           "200": {
             "description": "The generation was cancelled.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WaveInsightsCanceled"
+                  "$ref": "#/components/schemas/SwarmRunInsightsCanceled"
                 }
               }
             }
@@ -9631,7 +9587,7 @@
         }
       }
     },
-    "/projects/{projectId}/environments/{environmentId}/scenario": {
+    "/projects/{projectId}/environments/{environmentId}/study": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
@@ -9641,28 +9597,28 @@
         }
       ],
       "put": {
-        "operationId": "publishScenario",
-        "tags": ["User testing"],
+        "operationId": "publishStudy",
+        "tags": ["Studies"],
         "summary": "Publish an environment for user testing",
-        "description": "PUT, not POST, because publishing is IDEMPOTENT: one scenario per environment, and publishing an already-published environment returns the existing one rather than minting a second. `created` says which happened.\n\nRequires project ADMIN.",
+        "description": "PUT, not POST, because publishing is IDEMPOTENT: one study per environment, and publishing an already-published environment returns the existing one rather than minting a second. `created` says which happened.\n\nRequires project ADMIN.",
         "requestBody": {
           "required": false,
           "description": "Optional create-time overrides. A bodyless publish is the common case.",
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioPublishRequest"
+                "$ref": "#/components/schemas/StudyPublishRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The scenario, new or existing.",
+            "description": "The study, new or existing.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Scenario"
+                  "$ref": "#/components/schemas/Study"
                 }
               }
             }
@@ -9688,26 +9644,26 @@
         }
       },
       "delete": {
-        "operationId": "unpublishScenario",
-        "tags": ["User testing"],
+        "operationId": "unpublishStudy",
+        "tags": ["Studies"],
         "summary": "Unpublish an environment",
-        "description": "Takes the scenario down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live scenario down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `scenarioId` names which one to take down. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
+        "description": "Takes the study down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live study down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `studyId` names which one to take down; the pre-rename `scenarioId` is still read, so a caller holding that spelling does not need a lookup to migrate. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
         "parameters": [
           {
-            "name": "scenarioId",
+            "name": "studyId",
             "in": "query",
             "required": false,
             "schema": { "type": "string" },
-            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them."
+            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them. The pre-rename `scenarioId` is still read here, so a caller holding that spelling does not need a lookup to migrate."
           }
         ],
         "responses": {
           "200": {
-            "description": "The scenario was removed (or there was none).",
+            "description": "The study was removed (or there was none).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioDeleted"
+                  "$ref": "#/components/schemas/StudyDeleted"
                 }
               }
             }
@@ -9730,37 +9686,37 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}": {
+    "/projects/{projectId}/studies/{studyId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "patch": {
-        "operationId": "updateUserTestingScenario",
-        "tags": ["User testing"],
+        "operationId": "updateStudy",
+        "tags": ["Studies"],
         "summary": "Update a scenario",
-        "description": "Change a scenario's identity or its exposure — but not both in one call. **Send `mode` on its own.** Identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.\n\nNarrowing `mode` bumps `accessVersion` upstream and invalidates sessions minted under the old one.",
+        "description": "Change a study's identity or its exposure — but not both in one call. **Send `mode` on its own.** Identity and exposure are separate operations upstream, and applying them in sequence could leave the study live in a mode you did not ask for.\n\nNarrowing `mode` bumps `accessVersion` upstream and invalidates sessions minted under the old one.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioUpdateRequest"
+                "$ref": "#/components/schemas/StudyUpdateRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The updated scenario.",
+            "description": "The updated study.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingScenario"
+                  "$ref": "#/components/schemas/StudyUpdated"
                 }
               }
             }
@@ -9786,17 +9742,17 @@
         }
       },
       "get": {
-        "operationId": "getUserTestingScenario",
-        "tags": ["User testing"],
-        "summary": "Get a scenario",
-        "description": "The scenario, plus the insights envelope over its latest analyzed window when the caller may have it.\n\nProject members only. This route is deliberately outside the guest allowlist, and the envelope additionally needs workspace membership — share-link visitors can never read other visitors' evidence.",
+        "operationId": "getStudy",
+        "tags": ["Studies"],
+        "summary": "Get a study",
+        "description": "One study's full read: execution settings (model, system prompt, tool-approval policy, attached servers, share link), the environment it publishes, and the insights envelope over its latest analyzed window.\n\n`environmentId` and `insights` depend on the CALLER, not on the study: both need workspace membership, so a share-link visitor receives the settings without them rather than an error. They are ABSENT in that case, never null — null would claim the study publishes no environment, which is never true.\n\nA study that exists but belongs to a different project reads as `404 NOT_FOUND`.\n\nReplaces the deprecated `getScenario` (settings only) and `getUserTestingScenario` (envelope only).",
         "responses": {
           "200": {
-            "description": "The scenario.",
+            "description": "The study.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingScenarioDetail"
+                  "$ref": "#/components/schemas/StudyDetail"
                 }
               }
             }
@@ -9819,18 +9775,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions": {
+    "/projects/{projectId}/studies/{studyId}/sessions": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "listUserTestingSessions",
-        "tags": ["User testing"],
+        "operationId": "listStudySessions",
+        "tags": ["Studies"],
         "summary": "List a scenario's sessions",
         "description": "What visitors did, as summaries. Project members only — this route is deliberately absent from the guest allowlist, so a share-link visitor can never read other visitors' sessions.",
         "requestBody": {
@@ -9842,7 +9798,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingSessionPage"
+                  "$ref": "#/components/schemas/StudySessionPage"
                 }
               }
             }
@@ -9865,21 +9821,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}": {
+    "/projects/{projectId}/studies/{studyId}/sessions/{sessionId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/sessionId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingSession",
-        "tags": ["User testing"],
+        "operationId": "getStudySession",
+        "tags": ["Studies"],
         "summary": "Get a session transcript",
         "description": "The projected transcript, paged. Tool payloads and blobs are dropped, and the stored blob URL is never returned.\n\nCheck `transcriptUnavailable` before trusting `messageCount`: an unreadable transcript reports `null`, never `0`.",
         "requestBody": {
@@ -9891,7 +9847,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingSessionDetail"
+                  "$ref": "#/components/schemas/StudySessionDetail"
                 }
               }
             }
@@ -9914,18 +9870,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution": {
+    "/projects/{projectId}/studies/{studyId}/guest-execution": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "put": {
-        "operationId": "setGuestExecution",
-        "tags": ["User testing"],
+        "operationId": "setStudyGuestExecution",
+        "tags": ["Studies"],
         "summary": "Set the guest-execution caps",
         "description": "The spend dial for anonymous visitors. A FULL REPLACEMENT — send every field. These caps only mean something as a set, and a partial update that raised one while leaving another stale would produce a combination nobody chose.\n\nRequires project ADMIN: it is the one exposure control that genuinely does, because it authorizes strangers to spend.",
         "requestBody": {
@@ -9970,27 +9926,27 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link": {
+    "/projects/{projectId}/studies/{studyId}/rotate-link": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "post": {
-        "operationId": "rotateScenarioLink",
-        "tags": ["User testing"],
+        "operationId": "rotateStudyLink",
+        "tags": ["Studies"],
         "summary": "Rotate the share link",
-        "description": "Mints a new share link and stops the old URL from granting access. Everyone you shared it with needs the new one.\n\n**Rotation does NOT evict anyone who already redeemed the old link.** Their grant is a stored row, not a property of the URL, and it survives rotation — `accessVersion` is deliberately not bumped here. So rotation alone does not undo a leak: rotate to close the door, then `DELETE .../members/{memberIdOrEmail}` for anyone who already walked through it.\n\nBodyless: the scenario is the whole request, and the new secret is minted server-side by definition.",
+        "description": "Mints a new share link and stops the old URL from granting access. Everyone you shared it with needs the new one.\n\n**Rotation does NOT evict anyone who already redeemed the old link.** Their grant is a stored row, not a property of the URL, and it survives rotation — `accessVersion` is deliberately not bumped here. So rotation alone does not undo a leak: rotate to close the door, then `DELETE .../members/{memberIdOrEmail}` for anyone who already walked through it.\n\nBodyless: the study is the whole request, and the new secret is minted server-side by definition.",
         "responses": {
           "200": {
             "description": "The new link.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioLinkRotated"
+                  "$ref": "#/components/schemas/StudyLinkRotated"
                 }
               }
             }
@@ -10013,18 +9969,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/members": {
+    "/projects/{projectId}/studies/{studyId}/members": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "put": {
-        "operationId": "upsertScenarioMember",
-        "tags": ["User testing"],
+        "operationId": "upsertStudyMember",
+        "tags": ["Studies"],
         "summary": "Invite a member",
         "description": "Upsert by email, so re-inviting somebody is not an error. Only meaningful while `mode` is `invited_only`.",
         "requestBody": {
@@ -10032,7 +9988,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioMemberRequest"
+                "$ref": "#/components/schemas/StudyMemberRequest"
               }
             }
           }
@@ -10043,7 +9999,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserTestingScenario"
+                  "$ref": "#/components/schemas/StudyMemberUpserted"
                 }
               }
             }
@@ -10069,21 +10025,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}": {
+    "/projects/{projectId}/studies/{studyId}/members/{memberIdOrEmail}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/memberIdOrEmail"
         }
       ],
       "delete": {
-        "operationId": "removeScenarioMember",
-        "tags": ["User testing"],
+        "operationId": "removeStudyMember",
+        "tags": ["Studies"],
         "summary": "Remove a member",
         "description": "Removal NARROWS access, so it bumps `accessVersion` and cuts off any session that member already had — it takes effect at once rather than at expiry.",
         "responses": {
@@ -10092,7 +10048,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioMemberRemoved"
+                  "$ref": "#/components/schemas/StudyMemberRemoved"
                 }
               }
             }
@@ -10115,37 +10071,37 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind": {
+    "/projects/{projectId}/studies/{studyId}/rebind": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "post": {
-        "operationId": "rebindScenario",
-        "tags": ["User testing"],
+        "operationId": "rebindStudy",
+        "tags": ["Studies"],
         "summary": "Point a scenario at a different environment",
-        "description": "Keeps the scenario's LINK, its members and its session history while changing what visitors actually reach. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone.\n\nThe new environment must belong to THIS project; one that does not answers 404 rather than confirming it exists elsewhere.",
+        "description": "Keeps the study's LINK, its members and its session history while changing what visitors actually reach. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone.\n\nThe new environment must belong to THIS project; one that does not answers 404 rather than confirming it exists elsewhere.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioRebindRequest"
+                "$ref": "#/components/schemas/StudyRebindRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The scenario now points at the new environment.",
+            "description": "The study now points at the new environment.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Scenario"
+                  "$ref": "#/components/schemas/Study"
                 }
               }
             }
@@ -10171,20 +10127,20 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics": {
+    "/projects/{projectId}/studies/{studyId}/metrics": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingMetrics",
-        "tags": ["User testing"],
+        "operationId": "getStudyMetrics",
+        "tags": ["Studies"],
         "summary": "Session metrics",
-        "description": "Volumes, completion and feedback rates over the scenario's sessions.\n\n`404` when the scenario has produced no sessions yet — an empty scenario has no metrics, which is different from metrics that are all zero.",
+        "description": "Volumes, completion and feedback rates over the study's sessions.\n\n`404` when the study has produced no sessions yet — an empty study has no metrics, which is different from metrics that are all zero.",
         "parameters": [
           {
             "name": "population",
@@ -10203,7 +10159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioMetrics"
+                  "$ref": "#/components/schemas/StudyMetrics"
                 }
               }
             }
@@ -10229,27 +10185,27 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/usage": {
+    "/projects/{projectId}/studies/{studyId}/usage": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingUsage",
-        "tags": ["User testing"],
+        "operationId": "getStudyUsage",
+        "tags": ["Studies"],
         "summary": "Usage breakdown",
-        "description": "Which models, tools and servers the scenario's sessions used.\n\n**Check `scan.truncated` before quoting a rate.** `404` when there is no usage data yet.",
+        "description": "Which models, tools and servers the study's sessions used.\n\n**Check `scan.truncated` before quoting a rate.** `404` when there is no usage data yet.",
         "responses": {
           "200": {
             "description": "The breakdown.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioUsage"
+                  "$ref": "#/components/schemas/StudyUsage"
                 }
               }
             }
@@ -10272,18 +10228,18 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/signals": {
+    "/projects/{projectId}/studies/{studyId}/signals": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingSignals",
-        "tags": ["User testing"],
+        "operationId": "getStudySignals",
+        "tags": ["Studies"],
         "summary": "Current window signals",
         "description": "What the miner extracted from the current window — and where you get the window id the insights read takes.\n\n`404` when no window has been analyzed yet.",
         "responses": {
@@ -10292,7 +10248,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioSignals"
+                  "$ref": "#/components/schemas/StudySignals"
                 }
               }
             }
@@ -10315,27 +10271,27 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings": {
+    "/projects/{projectId}/studies/{studyId}/findings": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "get": {
-        "operationId": "listUserTestingFindings",
-        "tags": ["User testing"],
+        "operationId": "listStudyFindings",
+        "tags": ["Studies"],
         "summary": "List scenario findings",
-        "description": "Every finding raised over this scenario's windows, dismissed ones included — dismissal is a state on the finding, not a deletion.",
+        "description": "Every finding raised over this study's windows, dismissed ones included — dismissal is a state on the finding, not a deletion.",
         "responses": {
           "200": {
             "description": "The findings.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioFindingPage"
+                  "$ref": "#/components/schemas/StudyFindingPage"
                 }
               }
             }
@@ -10358,21 +10314,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights": {
+    "/projects/{projectId}/studies/{studyId}/windows/{windowId}/insights": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/windowId"
         }
       ],
       "get": {
-        "operationId": "getUserTestingWindowInsights",
-        "tags": ["User testing"],
+        "operationId": "getStudyWindowInsights",
+        "tags": ["Studies"],
         "summary": "Read a window's insights",
         "description": "Poll this after requesting a generation.\n\n`404` means NOBODY ASKED — deliberately distinct from a `pending` status, so a caller looping on this cannot mistake \"never requested\" for \"requested and still working\".",
         "responses": {
@@ -10381,7 +10337,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioWindowInsights"
+                  "$ref": "#/components/schemas/StudyWindowInsights"
                 }
               }
             }
@@ -10404,26 +10360,26 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/insights": {
+    "/projects/{projectId}/studies/{studyId}/insights": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         }
       ],
       "post": {
-        "operationId": "requestUserTestingInsights",
-        "tags": ["User testing"],
+        "operationId": "requestStudyInsights",
+        "tags": ["Studies"],
         "summary": "Request insights for the current window",
-        "description": "**No credits are consumed** — the model cost is on MCPJam. Runs a model over the scenario's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm wave insights, so a request here takes one from there.\n\n`202`: scheduled, not done. Poll `GET .../windows/{windowId}/insights` with the returned `windowId` rather than re-requesting.\n\n`409` when the current window has not been mined yet: the request was well formed and retrying it verbatim will not help until sessions have been processed.",
+        "description": "**No credits are consumed** — the model cost is on MCPJam. Runs a model over the study's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm run insights, so a request here takes one from there.\n\n`202`: scheduled, not done. Poll `GET .../windows/{windowId}/insights` with the returned `windowId` rather than re-requesting.\n\n`409` when the current window has not been mined yet: the request was well formed and retrying it verbatim will not help until sessions have been processed.",
         "requestBody": {
           "required": false,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioInsightsRequest"
+                "$ref": "#/components/schemas/StudyInsightsRequest"
               }
             }
           }
@@ -10434,7 +10390,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioInsightsRequested"
+                  "$ref": "#/components/schemas/StudyInsightsRequested"
                 }
               }
             }
@@ -10463,8 +10419,8 @@
         }
       },
       "delete": {
-        "operationId": "cancelUserTestingInsights",
-        "tags": ["User testing"],
+        "operationId": "cancelStudyInsights",
+        "tags": ["Studies"],
         "summary": "Cancel a window's generation",
         "description": "Releases a generation that is stuck `pending`. Idempotent against an already-finished one.",
         "requestBody": {
@@ -10472,7 +10428,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScenarioInsightsCancelRequest"
+                "$ref": "#/components/schemas/StudyInsightsCancelRequest"
               }
             }
           }
@@ -10483,7 +10439,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioInsightsCanceled"
+                  "$ref": "#/components/schemas/StudyInsightsCanceled"
                 }
               }
             }
@@ -10509,21 +10465,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss": {
+    "/projects/{projectId}/studies/{studyId}/findings/{findingId}/dismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/findingId"
         }
       ],
       "post": {
-        "operationId": "dismissUserTestingFinding",
-        "tags": ["User testing"],
+        "operationId": "dismissStudyFinding",
+        "tags": ["Studies"],
         "summary": "Dismiss a finding",
         "description": "Keyed on the finding's stable remediation id, so the same problem stays dismissed when insights regenerate. Bodyless: the path names the finding.",
         "responses": {
@@ -10532,7 +10488,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioFindingDismissed"
+                  "$ref": "#/components/schemas/StudyFindingDismissed"
                 }
               }
             }
@@ -10555,21 +10511,21 @@
         }
       }
     },
-    "/projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss": {
+    "/projects/{projectId}/studies/{studyId}/findings/{findingId}/undismiss": {
       "parameters": [
         {
           "$ref": "#/components/parameters/projectId"
         },
         {
-          "$ref": "#/components/parameters/scenarioId"
+          "$ref": "#/components/parameters/studyId"
         },
         {
           "$ref": "#/components/parameters/findingId"
         }
       ],
       "post": {
-        "operationId": "undismissUserTestingFinding",
-        "tags": ["User testing"],
+        "operationId": "undismissStudyFinding",
+        "tags": ["Studies"],
         "summary": "Restore a dismissed finding",
         "description": "Undoes a dismissal. Bodyless: the path names the finding.",
         "responses": {
@@ -10578,7 +10534,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScenarioFindingDismissed"
+                  "$ref": "#/components/schemas/StudyFindingDismissed"
                 }
               }
             }
@@ -13570,6 +13526,17 @@
         },
         "example": "2"
       },
+      "apiVocabularyHeader": {
+        "name": "x-mcpjam-api-vocabulary",
+        "in": "header",
+        "required": false,
+        "description": "Which spelling of the API's resource-noun VALUES this request and its response speak. Absent means `1`, byte-for-byte today's contract. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nThree nouns were renamed at this boundary \u2014 scenario \u2192 study, journey \u2192 goal, wave \u2192 swarm run. Operation names, routes, type names and field names each moved behind a deprecated alias, because a caller reaches them by a name it chose. A VALUE cannot: `sourceType` is one field with one string in it, and a client switching on `\"scenario\"` has no second name to fall back to. Under vocabulary 2 a session\u2019s `sourceType` reads `study`, a share\u2019s `resourceType` reads `study`, and a session\u2019s `parentRef.kind` reads `study` or `goalRun` with its id fields re-keyed to match.\n\nOn the way IN, a vocabulary-2 request may name a filter or a path segment by EITHER spelling; a vocabulary-1 request may use only the legacy one, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-api-vocabulary`. A SEPARATE header from `x-mcpjam-eval-vocabulary`, which is eval-scoped by name and moves on its own schedule.",
+        "schema": {
+          "type": "string",
+          "enum": ["1", "2"]
+        },
+        "example": "2"
+      },
       "organizationId": {
         "name": "organizationId",
         "in": "path",
@@ -13624,15 +13591,6 @@
           "type": "string"
         }
       },
-      "projectScenarioId": {
-        "name": "scenarioId",
-        "in": "path",
-        "required": true,
-        "description": "Scenario ID, as returned by the project's scenario list.",
-        "schema": {
-          "type": "string"
-        }
-      },
       "client": {
         "name": "client",
         "in": "path",
@@ -13678,11 +13636,11 @@
           "type": "string"
         }
       },
-      "journeyId": {
-        "name": "journeyId",
+      "goalId": {
+        "name": "goalId",
         "in": "path",
         "required": true,
-        "description": "Journey ID, as returned by the project's journey list.",
+        "description": "Goal ID, as returned by the project's goal list.",
         "schema": {
           "type": "string"
         }
@@ -13696,11 +13654,11 @@
           "type": "string"
         }
       },
-      "waveId": {
-        "name": "waveId",
+      "swarmRunId": {
+        "name": "swarmRunId",
         "in": "path",
         "required": true,
-        "description": "Wave ID — the opaque group id shared by every run of one co-launched swarm. Returned on every run in the wave.",
+        "description": "Swarm run ID — the opaque group id shared by every run of one co-launched swarm. Returned on every run in the swarm run.",
         "schema": {
           "type": "string"
         }
@@ -13714,11 +13672,11 @@
           "type": "string"
         }
       },
-      "scenarioId": {
-        "name": "scenarioId",
+      "studyId": {
+        "name": "studyId",
         "in": "path",
         "required": true,
-        "description": "Scenario ID, as returned by publishing an environment or by the project's scenario reads.",
+        "description": "Study ID, as returned by publishing an environment or by the project's study reads.",
         "schema": {
           "type": "string"
         }
@@ -13727,7 +13685,7 @@
         "name": "sessionId",
         "in": "path",
         "required": true,
-        "description": "Chat session ID, as returned by the scenario's session list.",
+        "description": "Chat session ID, as returned by the study's session list.",
         "schema": {
           "type": "string"
         }
@@ -15735,7 +15693,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying and comparing are unaffected. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected \u2014 deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -18675,7 +18633,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying and comparing are unaffected. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected \u2014 deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -22866,11 +22824,11 @@
       "SessionParentRef": {
         "type": "object",
         "required": ["kind", "label"],
-        "description": "The session's parent run, discriminated on `kind`. Additive: switch on `kind` and tolerate an unknown value.",
+        "description": "The session's parent run, discriminated on `kind`. Additive: switch on `kind` and tolerate an unknown value.\n\nThe enum lists BOTH vocabularies. A response carries exactly one spelling, decided by `x-mcpjam-api-vocabulary`: without it (or with `1`) `scenario` and `journeyRun` with `scenarioId` / `journeyRunId` / `journeyRefId`; with `2`, `study` and `goalRun` with `studyId` / `goalRunId` / `goalRefId`. `evalRun` is unaffected — no noun there was renamed.",
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["evalRun", "journeyRun", "scenario"]
+            "enum": ["evalRun", "journeyRun", "goalRun", "scenario", "study"]
           },
           "label": {
             "type": "string",
@@ -22890,14 +22848,30 @@
             "nullable": true
           },
           "journeyRunId": {
-            "type": "string"
+            "type": "string",
+            "description": "swarm only, vocabulary 1."
+          },
+          "goalRunId": {
+            "type": "string",
+            "description": "swarm only, vocabulary 2."
           },
           "journeyRefId": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "swarm only, vocabulary 1."
+          },
+          "goalRefId": {
+            "type": "string",
+            "nullable": true,
+            "description": "swarm only, vocabulary 2."
           },
           "scenarioId": {
-            "type": "string"
+            "type": "string",
+            "description": "study only, vocabulary 1."
+          },
+          "studyId": {
+            "type": "string",
+            "description": "study only, vocabulary 2."
           }
         }
       },
@@ -22937,7 +22911,8 @@
           },
           "sourceType": {
             "type": "string",
-            "enum": ["direct", "scenario", "eval", "swarm"]
+            "description": "`scenario` and `study` are the SAME surface under the two vocabularies; a response carries whichever one `x-mcpjam-api-vocabulary` selected.",
+            "enum": ["direct", "scenario", "study", "eval", "swarm"]
           },
           "origin": {
             "type": "string",
@@ -23094,9 +23069,9 @@
           }
         }
       },
-      "ScenarioLink": {
+      "StudyLink": {
         "type": "object",
-        "description": "Share link for the scenario. The URL embeds the access token; visible to any caller who can read the scenario (the same audience that sees it in the hosted UI).",
+        "description": "Share link for the study. The URL embeds the access token; visible to any caller who can read the study (the same audience that sees it in the hosted UI).",
         "required": ["path", "url"],
         "properties": {
           "path": {
@@ -23109,9 +23084,9 @@
           }
         }
       },
-      "ScenarioServer": {
+      "StudyServer": {
         "type": "object",
-        "description": "A server attached to the scenario. Scenarios attach HTTP servers only, so `url` is the server's endpoint.",
+        "description": "A server attached to the study. Studies attach HTTP servers only, so `url` is the server's endpoint.",
         "required": ["id", "name", "useOAuth"],
         "properties": {
           "id": {
@@ -23129,9 +23104,9 @@
           }
         }
       },
-      "ProjectScenario": {
+      "StudySummary": {
         "type": "object",
-        "description": "Summary of a published scenario, as returned by the list endpoint.",
+        "description": "Summary of a published study, as returned by the list endpoint.",
         "required": ["id", "name", "serverCount", "serverNames"],
         "properties": {
           "id": {
@@ -23148,7 +23123,7 @@
           },
           "mode": {
             "type": ["string", "null"],
-            "description": "Who can use the scenario.",
+            "description": "Who can use the study.",
             "enum": [
               "project_members",
               "invited_only",
@@ -23158,11 +23133,11 @@
           },
           "hostStyle": {
             "type": ["string", "null"],
-            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the study renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": ["string", "null"],
-            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
+            "description": "The named host the study publishes (hosts and studies are 1:1)."
           },
           "hostName": {
             "type": ["string", "null"]
@@ -23179,7 +23154,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ScenarioLink"
+                "$ref": "#/components/schemas/StudyLink"
               },
               {
                 "type": "null"
@@ -23196,9 +23171,9 @@
           }
         }
       },
-      "ScenarioDetail": {
+      "StudyDetail": {
         "type": "object",
-        "description": "A scenario's full read-only settings: the summary fields plus the host execution config and resolved servers.",
+        "description": "A study's full read-only settings: the summary fields plus the host execution config and resolved servers.",
         "required": [
           "id",
           "name",
@@ -23208,6 +23183,16 @@
           "servers"
         ],
         "properties": {
+          "environmentId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The environment this study publishes. ABSENT — not null — when the caller may not see it, which is the case for a share-link visitor: null would claim the study publishes no environment, which is never true."
+          },
+          "insights": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Findings aggregated over the latest analyzed window of real visitor sessions. Absent when the caller may not have it, and on a deployment that predates the envelope — the two degrade identically, and absence means `not_available`, never \"no findings\"."
+          },
           "id": {
             "type": "string"
           },
@@ -23222,7 +23207,7 @@
           },
           "mode": {
             "type": ["string", "null"],
-            "description": "Who can use the scenario.",
+            "description": "Who can use the study.",
             "enum": [
               "project_members",
               "invited_only",
@@ -23232,11 +23217,11 @@
           },
           "hostStyle": {
             "type": ["string", "null"],
-            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the study renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": ["string", "null"],
-            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
+            "description": "The named host the study publishes (hosts and studies are 1:1)."
           },
           "hostName": {
             "type": ["string", "null"]
@@ -23253,7 +23238,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ScenarioLink"
+                "$ref": "#/components/schemas/StudyLink"
               },
               {
                 "type": "null"
@@ -23270,7 +23255,7 @@
           },
           "modelId": {
             "type": ["string", "null"],
-            "description": "Model the scenario chats with."
+            "description": "Model the study chats with."
           },
           "systemPrompt": {
             "type": ["string", "null"]
@@ -23284,19 +23269,19 @@
           "servers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ScenarioServer"
+              "$ref": "#/components/schemas/StudyServer"
             }
           }
         }
       },
-      "ScenarioPage": {
+      "StudyPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ProjectScenario"
+              "$ref": "#/components/schemas/StudySummary"
             }
           }
         }
@@ -24050,7 +24035,7 @@
       },
       "ProjectEnvironment": {
         "type": "object",
-        "description": "A project environment: a named, live-editable execution bundle that eval suites and journeys run against.",
+        "description": "A project environment: a named, live-editable execution bundle that eval suites and goals run against.",
         "required": [
           "id",
           "projectId",
@@ -25575,7 +25560,7 @@
       },
       "Persona": {
         "type": "object",
-        "description": "A reusable synthetic character. The GOAL lives on the journey, not here — one persona can be pointed at many different tasks.",
+        "description": "A reusable synthetic character. The TASK lives on the goal, not here — one persona can be pointed at many different tasks.",
         "required": [
           "id",
           "projectId",
@@ -25591,7 +25576,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Durable id — what journeys reference and what every route here addresses."
+            "description": "Durable id — what goals reference and what every route here addresses."
           },
           "projectId": {
             "type": "string"
@@ -25741,9 +25726,9 @@
           }
         }
       },
-      "Journey": {
+      "Goal": {
         "type": "object",
-        "description": "A persona's task: what they are trying to accomplish, and across which targets. Launching one is `POST /projects/{projectId}/journeys/{journeyId}/runs`.",
+        "description": "A persona's task: what they are trying to accomplish, and across which targets. Launching one is `POST /projects/{projectId}/goals/{goalId}/runs`.",
         "required": [
           "id",
           "projectId",
@@ -25752,7 +25737,7 @@
           "personaId",
           "swarmId",
           "environmentIds",
-          "sessionsPerTarget",
+          "iterations",
           "maxTurns",
           "createdAt",
           "updatedAt"
@@ -25776,20 +25761,20 @@
           },
           "swarmId": {
             "type": ["string", "null"],
-            "description": "The swarm container this journey was authored under. Provenance only — nothing resolves through it at run time, and a journey created outside a swarm has none."
+            "description": "The swarm container this goal was authored under. Provenance only — nothing resolves through it at run time, and a goal created outside a swarm has none."
           },
           "environmentIds": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Environments this journey fans out across. EMPTY on a host-pinned journey — that is a different execution model, not a journey with no targets."
+            "description": "Environments this goal fans out across. EMPTY on a host-pinned goal — that is a different execution model, not a goal with no targets."
           },
           "serverAttachmentId": {
             "type": "string",
-            "description": "Legacy host-pinned grounding. Absent on an environment-based journey."
+            "description": "Legacy host-pinned grounding. Absent on an environment-based goal."
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": ["integer", "null"],
             "description": "Sessions run against EACH target. Total sessions = targets × this."
           },
@@ -25810,14 +25795,14 @@
           }
         }
       },
-      "JourneyPage": {
+      "GoalPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Journey"
+              "$ref": "#/components/schemas/Goal"
             }
           },
           "nextCursor": {
@@ -25826,9 +25811,9 @@
           }
         }
       },
-      "JourneyCreateRequest": {
+      "GoalCreateRequest": {
         "type": "object",
-        "required": ["goal", "personaId", "sessionsPerTarget", "maxTurns"],
+        "required": ["goal", "personaId", "iterations", "maxTurns"],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -25866,7 +25851,7 @@
               "type": "string"
             }
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
@@ -25878,9 +25863,9 @@
           }
         }
       },
-      "JourneyUpdateRequest": {
+      "GoalUpdateRequest": {
         "type": "object",
-        "description": "PATCH with a TRI-STATE, and the third state is the point: a field absent leaves it alone, present sets it, and `null` CLEARS it. There is no other way to say \"stop fanning this journey out across environments and go back to its host targets\".\n\n`sessionsPerTarget` and `maxTurns` must be sent TOGETHER — they are one config object upstream, so a partial update would need a read-modify-write that could silently clobber a concurrent edit. Requiring both is a 400 you can fix rather than a lost update you never see.",
+        "description": "PATCH with a TRI-STATE, and the third state is the point: a field absent leaves it alone, present sets it, and `null` CLEARS it. There is no other way to say \"stop fanning this goal out across environments and go back to its host targets\".\n\n`iterations` and `maxTurns` must be sent TOGETHER — they are one config object upstream, so a partial update would need a read-modify-write that could silently clobber a concurrent edit. Requiring both is a 400 you can fix rather than a lost update you never see.",
         "additionalProperties": false,
         "minProperties": 1,
         "properties": {
@@ -25917,7 +25902,7 @@
               "type": "string"
             }
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
@@ -25929,9 +25914,9 @@
           }
         }
       },
-      "JourneyArchived": {
+      "GoalArchived": {
         "type": "object",
-        "description": "Journeys ARCHIVE rather than delete: existing runs keep pointing at the definition they executed.",
+        "description": "Goals ARCHIVE rather than delete: existing runs keep pointing at the definition they executed.",
         "required": ["id", "projectId", "archived"],
         "properties": {
           "id": {
@@ -25948,13 +25933,14 @@
       },
       "Swarm": {
         "type": "object",
-        "description": "An authoring container for journeys. It holds DEFAULTS, not execution state — launching happens per journey.",
+        "description": "An authoring container for goals. It holds DEFAULTS, not execution state — launching happens per goal.",
         "required": [
           "id",
           "projectId",
           "name",
           "description",
           "environmentIds",
+          "iterations",
           "sessionsPerTarget",
           "maxTurns",
           "createdAt",
@@ -25978,10 +25964,16 @@
             "items": {
               "type": "string"
             },
-            "description": "Default fan-out for journeys authored under this container."
+            "description": "Default fan-out for goals authored under this container."
+          },
+          "iterations": {
+            "type": ["integer", "null"],
+            "description": "Sessions run against EACH target. Total sessions = targets x this."
           },
           "sessionsPerTarget": {
-            "type": ["integer", "null"]
+            "type": ["integer", "null"],
+            "deprecated": true,
+            "description": "Pre-rename spelling of `iterations`, emitted alongside it until general availability."
           },
           "maxTurns": {
             "type": ["integer", "null"]
@@ -26018,8 +26010,13 @@
       },
       "SwarmCreateRequest": {
         "type": "object",
-        "required": ["name", "sessionsPerTarget", "maxTurns"],
+        "description": "Send `iterations` or its deprecated `sessionsPerTarget` alias — exactly one of the two.",
+        "required": ["name", "maxTurns"],
         "additionalProperties": false,
+        "oneOf": [
+          { "required": ["iterations"] },
+          { "required": ["sessionsPerTarget"] }
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -26036,10 +26033,17 @@
             },
             "minItems": 1
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "deprecated": true,
+            "description": "Pre-rename spelling of `iterations`. Accepted until general availability; never alongside it."
           },
           "maxTurns": {
             "type": "integer",
@@ -26050,9 +26054,10 @@
       },
       "SwarmUpdateRequest": {
         "type": "object",
-        "description": "Same tri-state as the journey patch (`null` clears), and the same rule that `sessionsPerTarget` and `maxTurns` travel together.",
+        "description": "Same tri-state as the goal patch (`null` clears), and the same rule that `iterations` (or its deprecated `sessionsPerTarget` alias, never both) and `maxTurns` travel together.",
         "additionalProperties": false,
         "minProperties": 1,
+        "not": { "required": ["iterations", "sessionsPerTarget"] },
         "properties": {
           "name": {
             "type": "string",
@@ -26076,10 +26081,17 @@
               }
             ]
           },
-          "sessionsPerTarget": {
+          "iterations": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "sessionsPerTarget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "deprecated": true,
+            "description": "Pre-rename spelling of `iterations`. Accepted until general availability; never alongside it."
           },
           "maxTurns": {
             "type": "integer",
@@ -26117,7 +26129,7 @@
           },
           "journeyCount": {
             "type": "integer",
-            "description": "Journeys to draft per persona."
+            "description": "Goals to draft per persona."
           },
           "personaCount": {
             "type": "integer",
@@ -26148,7 +26160,7 @@
           }
         }
       },
-      "JourneyGenerateRequest": {
+      "GoalGenerateRequest": {
         "type": "object",
         "description": "Exactly ONE grounding source: `serverAttachmentId` or `environmentId`. Sending both is a 400 — a request that is already confused about what it wants should not have a winner picked for it.",
         "required": ["persona"],
@@ -26160,12 +26172,12 @@
           "environmentId": {
             "type": "string"
           },
-          "journeyCount": {
+          "goalCount": {
             "type": "integer"
           },
           "persona": {
             "type": "object",
-            "description": "The persona to draft journeys FOR, passed BY VALUE rather than by id. Not an oversight: the create flow drafts a persona and its journeys before either exists, so requiring a persisted persona would force you to save a draft you may discard.",
+            "description": "The persona to draft goals FOR, passed BY VALUE rather than by id. Not an oversight: the create flow drafts a persona and its goals before either exists, so requiring a persisted persona would force you to save a draft you may discard.",
             "required": ["name", "role"],
             "properties": {
               "name": {
@@ -26187,7 +26199,7 @@
       },
       "GenerationDrafts": {
         "type": "object",
-        "description": "DRAFTS. Nothing here is persisted — feed what you want to keep to `POST /projects/{projectId}/personas` or `POST /projects/{projectId}/journeys`.\n\nThe shape depends on the request: `POST /personas/generate` returns `{persona, journeys}` without `personaCount` and `{personas: [{persona, journeys}]}` with it; `POST /journeys/generate` returns `{journeys}`.",
+        "description": "DRAFTS. Nothing here is persisted — feed what you want to keep to `POST /projects/{projectId}/personas` or `POST /projects/{projectId}/goals`.\n\nThe shape depends on the request: `POST /personas/generate` returns `{persona, journeys}` without `personaCount` and `{personas: [{persona, journeys}]}` with it; `POST /goals/generate` returns `{journeys}`. The payload KEY is still `journeys`: it is the drafting service's own shape, not a resource noun, and it moves at general availability with the rest of the deprecated surface.",
         "additionalProperties": true,
         "properties": {
           "persona": {
@@ -26204,7 +26216,7 @@
                 "journeys": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/JourneyDraft"
+                    "$ref": "#/components/schemas/GoalDraft"
                   }
                 }
               }
@@ -26213,7 +26225,7 @@
           "journeys": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyDraft"
+              "$ref": "#/components/schemas/GoalDraft"
             }
           }
         }
@@ -26442,7 +26454,7 @@
           }
         }
       },
-      "JourneyDraft": {
+      "GoalDraft": {
         "type": "object",
         "required": ["goal"],
         "additionalProperties": true,
@@ -26472,7 +26484,7 @@
           }
         }
       },
-      "JourneyRunTarget": {
+      "GoalRunTarget": {
         "type": "object",
         "required": ["hostId"],
         "properties": {
@@ -26491,7 +26503,7 @@
           }
         }
       },
-      "JourneyRunAttempt": {
+      "GoalRunAttempt": {
         "type": "object",
         "description": "One session's execution record: (target, session index).",
         "required": [
@@ -26537,13 +26549,13 @@
           }
         }
       },
-      "JourneyRunSummary": {
+      "GoalRunSummary": {
         "type": "object",
         "required": ["total", "succeeded", "failed", "rateLimited"],
         "properties": {
           "total": {
             "type": "integer",
-            "description": "Targets × `sessionsPerTarget`, fixed at launch."
+            "description": "Targets × `iterations`, fixed at launch."
           },
           "succeeded": {
             "type": "integer"
@@ -26556,12 +26568,12 @@
           }
         }
       },
-      "JourneyRun": {
+      "GoalRun": {
         "type": "object",
         "required": [
           "id",
           "projectId",
-          "journeyId",
+          "goalId",
           "status",
           "canceled",
           "stale",
@@ -26576,12 +26588,12 @@
           "projectId": {
             "type": "string"
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
-          "waveId": {
+          "swarmRunId": {
             "type": "string",
-            "description": "The batch this run was launched with. Sibling runs of one co-launched wave share it; a solo relaunch is a wave of one. Absent on a run launched without one."
+            "description": "The batch this run was launched with. Sibling runs of one co-launched swarm run share it; a solo relaunch is a swarm run of one. Absent on a run launched without one."
           },
           "status": {
             "type": "string",
@@ -26607,12 +26619,12 @@
             "description": "Raw marker behind `canceled` / `stale`."
           },
           "summary": {
-            "$ref": "#/components/schemas/JourneyRunSummary"
+            "$ref": "#/components/schemas/GoalRunSummary"
           },
           "targets": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyRunTarget"
+              "$ref": "#/components/schemas/GoalRunTarget"
             }
           },
           "persona": {
@@ -26643,7 +26655,7 @@
             "type": "array",
             "description": "Per-session execution records. Present on the single-run read only — lists stay compact.",
             "items": {
-              "$ref": "#/components/schemas/JourneyRunAttempt"
+              "$ref": "#/components/schemas/GoalRunAttempt"
             }
           },
           "targetSummaries": {
@@ -26704,14 +26716,14 @@
           }
         }
       },
-      "JourneyRunPage": {
+      "GoalRunPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyRun"
+              "$ref": "#/components/schemas/GoalRun"
             }
           },
           "nextCursor": {
@@ -26720,7 +26732,7 @@
           }
         }
       },
-      "JourneyRunSession": {
+      "GoalRunSession": {
         "type": "object",
         "required": [
           "id",
@@ -26751,7 +26763,7 @@
           "runId": {
             "type": "string"
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
           "personaId": {
@@ -26909,14 +26921,14 @@
           }
         }
       },
-      "JourneyRunSessionPage": {
+      "GoalRunSessionPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/JourneyRunSession"
+              "$ref": "#/components/schemas/GoalRunSession"
             }
           },
           "nextCursor": {
@@ -26925,12 +26937,12 @@
           }
         }
       },
-      "JourneyRunLaunchRequest": {
+      "GoalRunLaunchRequest": {
         "type": "object",
         "description": "Optional. A launch with no options is a BODYLESS POST — omit the body entirely rather than sending `null`, which is rejected.",
         "additionalProperties": false,
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string",
             "maxLength": 64,
             "description": "Opaque id linking the sibling runs of one co-launched batch. Mint it yourself and reuse it across the launches you want grouped."
@@ -26941,19 +26953,19 @@
               "type": "string"
             },
             "minItems": 1,
-            "description": "Fan out across THESE environments instead of the journey's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+            "description": "Fan out across THESE environments instead of the goal's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
           }
         }
       },
-      "JourneyRunLaunched": {
+      "GoalRunLaunched": {
         "type": "object",
-        "required": ["id", "journeyId", "projectId", "status", "deduped"],
+        "required": ["id", "goalId", "projectId", "status", "deduped"],
         "properties": {
           "id": {
             "type": "string",
             "description": "The run id. Poll it, or stop it with `cancel`."
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
           "projectId": {
@@ -26961,7 +26973,7 @@
           },
           "status": {
             "type": "string",
-            "description": "Always `running` — the run row exists and its fan-out has started. This is a 202: nothing here says the journey has finished, only that it is under way.",
+            "description": "Always `running` — the run row exists and its fan-out has started. This is a 202: nothing here says the goal run has finished, only that it is under way.",
             "enum": ["running"]
           },
           "deduped": {
@@ -26970,7 +26982,7 @@
           }
         }
       },
-      "JourneyRunCanceled": {
+      "GoalRunCanceled": {
         "type": "object",
         "required": [
           "id",
@@ -27040,7 +27052,7 @@
       },
       "RunScorecard": {
         "type": "object",
-        "description": "Deterministic rubric result for one run. NO MODEL IS INVOLVED and nothing is spent — reach for this before the model-generated wave insights, which usually is not the question you actually have.",
+        "description": "Deterministic rubric result for one run. NO MODEL IS INVOLVED and nothing is spent — reach for this before the model-generated swarm run insights, which usually is not the question you actually have.",
         "required": ["runId", "criteria", "sessionsTotal", "sessionsGraded"],
         "properties": {
           "runId": {
@@ -27209,7 +27221,7 @@
           },
           "runStreak": {
             "type": "integer",
-            "description": "Consecutive runs of this journey where the criterion failed."
+            "description": "Consecutive runs of this goal where the criterion failed."
           }
         }
       },
@@ -27217,6 +27229,9 @@
         "type": "object",
         "required": [
           "runId",
+          "goalId",
+          "goalName",
+          "goalArchived",
           "journeyId",
           "journeyName",
           "journeyArchived",
@@ -27232,15 +27247,30 @@
           "runId": {
             "type": "string"
           },
-          "journeyId": {
+          "goalId": {
             "type": "string"
           },
-          "journeyName": {
+          "goalName": {
             "type": "string"
+          },
+          "goalArchived": {
+            "type": "boolean",
+            "description": "The run stays readable after its goal is archived; this is how you tell."
+          },
+          "journeyId": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Pre-rename spelling of `goalId`, emitted alongside it until general availability."
+          },
+          "journeyName": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Pre-rename spelling of `goalName`, emitted alongside it until general availability."
           },
           "journeyArchived": {
             "type": "boolean",
-            "description": "The run stays readable after its journey is archived; this is how you tell."
+            "deprecated": true,
+            "description": "Pre-rename spelling of `goalArchived`, emitted alongside it until general availability."
           },
           "personaName": {
             "type": "string"
@@ -27248,11 +27278,16 @@
           "status": {
             "type": "string"
           },
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
+          "waveId": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Pre-rename spelling of `swarmRunId`, emitted alongside it until general availability."
+          },
           "summary": {
-            "$ref": "#/components/schemas/JourneyRunSummary"
+            "$ref": "#/components/schemas/GoalRunSummary"
           },
           "goalCompletion": {
             "description": "`null` when nothing has been graded — never zeroes, which would read as \"everything failed\".",
@@ -27388,11 +27423,11 @@
           }
         }
       },
-      "WaveInsights": {
+      "SwarmRunInsights": {
         "type": "object",
-        "description": "Model analysis over a whole wave. Produced asynchronously — POLL this rather than re-requesting, because a second request SPENDS again.",
+        "description": "Model analysis over a whole swarm run — the batch of sibling goal runs launched together. Produced asynchronously — POLL this rather than re-requesting, because a second request SPENDS again.",
         "required": [
-          "waveId",
+          "swarmRunId",
           "status",
           "insights",
           "discovery",
@@ -27401,7 +27436,7 @@
           "updatedAt"
         ],
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
           "status": {
@@ -27430,11 +27465,11 @@
           }
         }
       },
-      "WaveInsightsRequested": {
+      "SwarmRunInsightsRequested": {
         "type": "object",
-        "required": ["waveId", "projectId", "status"],
+        "required": ["swarmRunId", "projectId", "status"],
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
           "projectId": {
@@ -27446,11 +27481,11 @@
           }
         }
       },
-      "WaveInsightsCanceled": {
+      "SwarmRunInsightsCanceled": {
         "type": "object",
-        "required": ["waveId", "projectId", "canceled"],
+        "required": ["swarmRunId", "projectId", "canceled"],
         "properties": {
-          "waveId": {
+          "swarmRunId": {
             "type": "string"
           },
           "projectId": {
@@ -27462,17 +27497,17 @@
           }
         }
       },
-      "WaveInsightsRequest": {
+      "SwarmRunInsightsRequest": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "force": {
             "type": "boolean",
-            "description": "Regenerate over a wave that already has insights. OFF by default because it takes a SECOND slice of your organization's shared daily insight quota (no credits either way) — and the common cause of a repeated request is a caller that did not poll."
+            "description": "Regenerate over a swarm run that already has insights. OFF by default because it takes a SECOND slice of your organization's shared daily insight quota (no credits either way) — and the common cause of a repeated request is a caller that did not poll."
           }
         }
       },
-      "Scenario": {
+      "Study": {
         "type": "object",
         "description": "A published environment: what a visitor lands on when you share a link.",
         "required": [
@@ -27504,21 +27539,21 @@
           },
           "link": {
             "type": ["string", "null"],
-            "description": "The share link. `null` when the scenario has no link token."
+            "description": "The share link. `null` when the study has no link token."
           },
           "created": {
             "type": "boolean",
-            "description": "False when the environment was ALREADY published and this returned the existing scenario. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
+            "description": "False when the environment was ALREADY published and this returned the existing study. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
           },
           "overridesIgnored": {
             "type": "boolean",
-            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` — change an existing scenario with `PATCH .../user-testing/scenarios/{scenarioId}`."
+            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` — change an existing study with `PATCH .../studies/{studyId}`."
           }
         }
       },
-      "ScenarioPublishRequest": {
+      "StudyPublishRequest": {
         "type": "object",
-        "description": "Optional CREATE-TIME overrides, applied in the same call so the scenario is never briefly live in a wider mode than you asked for. Ignored on a republish — see `overridesIgnored`.",
+        "description": "Optional CREATE-TIME overrides, applied in the same call so the study is never briefly live in a wider mode than you asked for. Ignored on a republish — see `overridesIgnored`.",
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -27536,7 +27571,7 @@
           }
         }
       },
-      "ScenarioDeleted": {
+      "StudyDeleted": {
         "type": "object",
         "required": ["environmentId", "deleted"],
         "properties": {
@@ -27545,16 +27580,16 @@
           },
           "deleted": {
             "type": "boolean",
-            "description": "False when the environment had no scenario. NOT an error — unpublishing something already unpublished is a no-op."
+            "description": "False when the environment had no study. NOT an error — unpublishing something already unpublished is a no-op."
           },
           "id": {
             "type": "string"
           }
         }
       },
-      "UserTestingScenario": {
+      "StudyUpdated": {
         "type": "object",
-        "description": "Scenario metadata after an update. Deliberately WITHOUT `accessVersion`: a mode change bumps it upstream, but the envelope this route re-reads does not carry the new value — reporting a stale one would document a revocation signal the response cannot deliver. The publish response carries the real one.",
+        "description": "Study metadata after an update. Deliberately WITHOUT `accessVersion`: a mode change bumps it upstream, but the envelope this route re-reads does not carry the new value — reporting a stale one would document a revocation signal the response cannot deliver. The publish response carries the real one.",
         "required": ["id", "projectId", "name", "description", "mode"],
         "properties": {
           "id": {
@@ -27580,9 +27615,9 @@
           }
         }
       },
-      "ScenarioUpdateRequest": {
+      "StudyUpdateRequest": {
         "type": "object",
-        "description": "At least one field. **Send `mode` on its own**: identity and exposure are separate operations upstream, and applying them in sequence could leave the scenario live in a mode you did not ask for.",
+        "description": "At least one field. **Send `mode` on its own**: identity and exposure are separate operations upstream, and applying them in sequence could leave the study live in a mode you did not ask for.",
         "additionalProperties": false,
         "minProperties": 1,
         "properties": {
@@ -27601,9 +27636,9 @@
           }
         }
       },
-      "UserTestingSession": {
+      "StudySession": {
         "type": "object",
-        "description": "One visitor's session with a published scenario. A SUMMARY, not a transcript.",
+        "description": "One visitor's session with a published study. A SUMMARY, not a transcript.",
         "required": [
           "id",
           "chatSessionId",
@@ -27707,14 +27742,14 @@
           }
         }
       },
-      "UserTestingSessionPage": {
+      "StudySessionPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/UserTestingSession"
+              "$ref": "#/components/schemas/StudySession"
             }
           },
           "nextCursor": {
@@ -27743,12 +27778,12 @@
           }
         }
       },
-      "UserTestingSessionDetail": {
+      "StudySessionDetail": {
         "type": "object",
         "description": "A session's transcript, paged. The stored blob URL is NEVER returned: it is a direct handle with no further authorization, so handing it out would turn one authorized read into an unbounded, unrevocable one.",
         "required": [
           "id",
-          "scenarioId",
+          "studyId",
           "chatSessionId",
           "modelId",
           "startedAt",
@@ -27760,7 +27795,7 @@
           "id": {
             "type": "string"
           },
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "chatSessionId": {
@@ -27849,7 +27884,7 @@
           }
         }
       },
-      "ScenarioLinkRotated": {
+      "StudyLinkRotated": {
         "type": "object",
         "required": ["id", "projectId", "rotated", "link"],
         "properties": {
@@ -27869,11 +27904,34 @@
           }
         }
       },
-      "ScenarioMemberRemoved": {
+      "StudyMemberUpserted": {
         "type": "object",
-        "required": ["scenarioId", "projectId", "removed"],
+        "description": "Receipt for an invite. Documented as the study metadata object before the rename, which it never was.",
+        "required": ["studyId", "projectId", "email"],
         "properties": {
-          "scenarioId": {
+          "studyId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "memberId": {
+            "type": "string"
+          },
+          "invited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StudyMemberRemoved": {
+        "type": "object",
+        "required": ["studyId", "projectId", "removed"],
+        "properties": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -27885,7 +27943,7 @@
           }
         }
       },
-      "ScenarioMemberRequest": {
+      "StudyMemberRequest": {
         "type": "object",
         "description": "UPSERT by email, so re-inviting somebody is not an error.",
         "required": ["email"],
@@ -27901,14 +27959,14 @@
           }
         }
       },
-      "ScenarioRebindRequest": {
+      "StudyRebindRequest": {
         "type": "object",
         "required": ["environmentId"],
         "additionalProperties": false,
         "properties": {
           "environmentId": {
             "type": "string",
-            "description": "The environment to point this scenario at. Must belong to the SAME project."
+            "description": "The environment to point this study at. Must belong to the SAME project."
           }
         }
       },
@@ -28170,7 +28228,9 @@
         "properties": {
           "schemaVersion": {
             "type": "integer",
-            "enum": [1]
+            "enum": [
+              1
+            ]
           },
           "scope": {
             "$ref": "#/components/schemas/InsightScope"
@@ -28187,7 +28247,10 @@
             ]
           },
           "reasonCode": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "retryable": {
             "type": "boolean",
@@ -28197,7 +28260,10 @@
             "oneOf": [
               {
                 "type": "object",
-                "required": ["code", "message"],
+                "required": [
+                  "code",
+                  "message"
+                ],
                 "properties": {
                   "code": {
                     "type": "string"
@@ -28213,13 +28279,22 @@
             ]
           },
           "generatedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "updatedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "summary": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "coverage": {
             "type": "object",
@@ -28234,7 +28309,10 @@
             "properties": {
               "unit": {
                 "type": "string",
-                "enum": ["iterations", "sessions"]
+                "enum": [
+                  "iterations",
+                  "sessions"
+                ]
               },
               "analyzed": {
                 "type": "integer"
@@ -28274,16 +28352,28 @@
           "observationState": {
             "type": "string",
             "description": "How much of the population `currentFindings` describes — distinct from `status`, which describes a model GENERATION. `unavailable` means nothing could be measured, which is NOT the same as an empty `currentFindings`.",
-            "enum": ["ready", "partial", "unavailable"]
+            "enum": [
+              "ready",
+              "partial",
+              "unavailable"
+            ]
           },
           "observationCoverage": {
             "type": "object",
-            "required": ["unit", "analyzed", "total", "gradedCount", "exclusions"],
+            "required": [
+              "unit",
+              "analyzed",
+              "total",
+              "gradedCount",
+              "exclusions"
+            ],
             "description": "Coverage for `currentFindings`, describing ITS population. Deliberately separate from `coverage`, whose counters describe the generation's population.",
             "properties": {
               "unit": {
                 "type": "string",
-                "enum": ["iterations"]
+                "enum": [
+                  "iterations"
+                ]
               },
               "analyzed": {
                 "type": "integer"
@@ -28316,47 +28406,91 @@
             "properties": {
               "capability": {
                 "type": "string",
-                "enum": ["unified_findings_v1"]
+                "enum": [
+                  "unified_findings_v1"
+                ]
               },
               "analysis": {
                 "type": "object",
                 "description": "The trace analysis pipeline's progress while one exists for the run. Absent when none has been requested.",
-                "required": ["phase", "progress", "models", "completeness"],
+                "required": [
+                  "phase",
+                  "progress",
+                  "models",
+                  "completeness"
+                ],
                 "properties": {
                   "phase": {
                     "type": "string",
-                    "enum": ["reading", "grouping", "checking", "done", "failed"]
+                    "enum": [
+                      "reading",
+                      "grouping",
+                      "checking",
+                      "done",
+                      "failed"
+                    ]
                   },
                   "progress": {
                     "type": "object",
-                    "required": ["done", "total", "unit"],
+                    "required": [
+                      "done",
+                      "total",
+                      "unit"
+                    ],
                     "properties": {
-                      "done": { "type": "integer" },
-                      "total": { "type": "integer" },
-                      "unit": { "type": "string", "enum": ["iterations"] }
+                      "done": {
+                        "type": "integer"
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "enum": [
+                          "iterations"
+                        ]
+                      }
                     }
                   },
                   "models": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "completeness": {
                     "type": "object",
-                    "required": ["iterationReports", "total", "missingTraces"],
+                    "required": [
+                      "iterationReports",
+                      "total",
+                      "missingTraces"
+                    ],
                     "properties": {
-                      "iterationReports": { "type": "integer" },
-                      "total": { "type": "integer" },
-                      "missingTraces": { "type": "integer" }
+                      "iterationReports": {
+                        "type": "integer"
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "missingTraces": {
+                        "type": "integer"
+                      }
                     }
                   }
                 }
               },
               "snapshot": {
-                "type": ["object", "null"],
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "description": "The built findings snapshot: its deterministic findings, per-finding provenance, and any pipeline-verified mechanisms. `null` means none has been built for this run."
               },
               "job": {
-                "type": ["object", "null"],
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "description": "The in-flight or last-failed operation, so a refusal never renders as a completed analysis."
               },
               "canBuild": {
@@ -28369,7 +28503,9 @@
           },
           "runHealth": {
             "type": "object",
-            "required": ["targets"],
+            "required": [
+              "targets"
+            ],
             "description": "Swarm only. Launch outcomes never appear as findings — a run that could not start is an operational fact, not something the server under test did.",
             "properties": {
               "targets": {
@@ -28388,7 +28524,10 @@
                   "properties": {
                     "subjectKind": {
                       "type": "string",
-                      "enum": ["environment", "host"]
+                      "enum": [
+                        "environment",
+                        "host"
+                      ]
                     },
                     "subjectId": {
                       "type": "string"
@@ -28436,92 +28575,68 @@
                 "type": "boolean"
               }
             }
-          }
-        }
-      },
-      "UserTestingScenarioDetail": {
-        "type": "object",
-        "required": [
-          "id",
-          "projectId",
-          "name",
-          "description",
-          "mode",
-          "environmentId"
-        ],
-        "description": "A published scenario, enriched with findings over its latest analyzed window. NO `accessVersion`: the settings envelope this is read from does not carry it — the publish and rebind responses do.",
-        "properties": {
-          "id": {
-            "type": "string"
           },
-          "projectId": {
-            "type": "string"
-          },
-          "name": {
-            "type": ["string", "null"]
-          },
-          "description": {
-            "type": ["string", "null"]
-          },
-          "mode": {
-            "type": ["string", "null"]
-          },
-          "environmentId": {
-            "type": ["string", "null"]
-          },
-          "insights": {
+          "journeyFindings": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/InsightsEnvelope"
+                "$ref": "#/components/schemas/SwarmJourneyFindings"
               }
             ],
-            "description": "Present when the caller may have it. The envelope needs workspace MEMBERSHIP while the scenario itself is visible more widely, so a lower-privilege viewer gets the scenario without this field rather than a 403."
+            "nullable": true
+          },
+          "journeyFindingsJob": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SwarmJourneyFindingsJob"
+              }
+            ],
+            "nullable": true
           }
         }
       },
-      "ScenarioMetrics": {
+      "StudyMetrics": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Session metrics for the scenario: volumes, completion and feedback rates, cohort splits.\n\nDeliberately UNPINNED. The upstream projection grows with the product and the SDK types it as an open record for the same reason — pinning a field list here would turn every added metric into a spec violation. Read what you recognize and ignore the rest.",
+        "description": "Session metrics for the study: volumes, completion and feedback rates, cohort splits.\n\nDeliberately UNPINNED. The upstream projection grows with the product and the SDK types it as an open record for the same reason — pinning a field list here would turn every added metric into a spec violation. Read what you recognize and ignore the rest.",
         "properties": {}
       },
-      "ScenarioUsage": {
+      "StudyUsage": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Usage breakdown: models, tools and servers the scenario's sessions actually used.\n\n**Read `scan.truncated` before quoting any rate from this.** True means the rates were computed over the most recent N sessions rather than all of them, and dropping the flag turns a conditional statistic into an unconditional claim.\n\nUnpinned for the same reason as `ScenarioMetrics`.",
+        "description": "Usage breakdown: models, tools and servers the study's sessions actually used.\n\n**Read `scan.truncated` before quoting any rate from this.** True means the rates were computed over the most recent N sessions rather than all of them, and dropping the flag turns a conditional statistic into an unconditional claim.\n\nUnpinned for the same reason as `ScenarioMetrics`.",
         "properties": {}
       },
-      "ScenarioSignals": {
+      "StudySignals": {
         "type": "object",
         "additionalProperties": true,
-        "description": "What the miner extracted from the scenario's current window — and how you learn the current window id, which the window-insights read takes. There is no separate \"list windows\" route because the only window anyone asks about is the live one.\n\nUnpinned; see `ScenarioMetrics`.",
+        "description": "What the miner extracted from the study's current window — and how you learn the current window id, which the window-insights read takes. There is no separate \"list windows\" route because the only window anyone asks about is the live one.\n\nUnpinned; see `ScenarioMetrics`.",
         "properties": {}
       },
-      "ScenarioWindowInsights": {
+      "StudyWindowInsights": {
         "type": "object",
         "required": ["windowId"],
         "additionalProperties": true,
-        "description": "One window's generated insights, plus the `windowId` they belong to. The generated part is unpinned; see `ScenarioMetrics`.",
+        "description": "One window's generated insights, plus the `windowId` they belong to. The generated part is unpinned; see `StudyMetrics`.",
         "properties": {
           "windowId": {
             "type": "string"
           }
         }
       },
-      "ScenarioFinding": {
+      "StudyFinding": {
         "type": "object",
         "additionalProperties": true,
-        "description": "One finding over a scenario window. Unpinned; see `ScenarioMetrics`. The stable fields are the document id (used by dismiss/undismiss) and the dismissal state.",
+        "description": "One finding over a study window. Unpinned; see `StudyMetrics`. The stable fields are the document id (used by dismiss/undismiss) and the dismissal state.",
         "properties": {}
       },
-      "ScenarioFindingPage": {
+      "StudyFindingPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ScenarioFinding"
+              "$ref": "#/components/schemas/StudyFinding"
             }
           },
           "nextCursor": {
@@ -28529,7 +28644,7 @@
           }
         }
       },
-      "ScenarioInsightsRequest": {
+      "StudyInsightsRequest": {
         "type": "object",
         "additionalProperties": false,
         "description": "Optional. A bodyless POST is the ordinary case.",
@@ -28540,11 +28655,11 @@
           }
         }
       },
-      "ScenarioInsightsRequested": {
+      "StudyInsightsRequested": {
         "type": "object",
-        "required": ["scenarioId", "projectId", "windowId", "status"],
+        "required": ["studyId", "projectId", "windowId", "status"],
         "properties": {
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -28560,7 +28675,7 @@
           }
         }
       },
-      "ScenarioInsightsCancelRequest": {
+      "StudyInsightsCancelRequest": {
         "type": "object",
         "required": ["windowId"],
         "additionalProperties": false,
@@ -28572,11 +28687,11 @@
           }
         }
       },
-      "ScenarioInsightsCanceled": {
+      "StudyInsightsCanceled": {
         "type": "object",
-        "required": ["scenarioId", "projectId", "windowId", "canceled"],
+        "required": ["studyId", "projectId", "windowId", "canceled"],
         "properties": {
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -28591,14 +28706,14 @@
           }
         }
       },
-      "ScenarioFindingDismissed": {
+      "StudyFindingDismissed": {
         "type": "object",
-        "required": ["id", "scenarioId", "projectId", "dismissed"],
+        "required": ["id", "studyId", "projectId", "dismissed"],
         "properties": {
           "id": {
             "type": "string"
           },
-          "scenarioId": {
+          "studyId": {
             "type": "string"
           },
           "projectId": {
@@ -28774,12 +28889,45 @@
               }
             }
           },
+          "apiVocabulary": {
+            "type": "object",
+            "description": "The resource-noun VALUE vocabulary this deployment understands (see the `x-mcpjam-api-vocabulary` header). Absent on a deployment that predates the negotiation, which then speaks only vocabulary 1. SEPARATE from `vocabulary` above, which is eval-scoped by name and moves on its own schedule.",
+            "required": ["version", "values", "resourceTypes"],
+            "properties": {
+              "version": {
+                "type": "integer",
+                "enum": [2]
+              },
+              "values": {
+                "type": "object",
+                "description": "Value family -> (stored spelling -> canonical spelling). A family with no renamed member is absent rather than empty, so a client can read \"nothing moves here\" from the shape.",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "resourceTypes": {
+                "type": "object",
+                "description": "Permalink resource type -> the pre-rename keys that resolve to the same route. Listed apart from `values` because these are table KEYS, not a per-request projection: both spellings resolve at all times, and which one a response carries follows the OPERATION rather than the header.",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "can": {
             "type": "object",
             "required": [
               "readSwarms",
               "readUserTesting",
               "writeSwarms",
+              "launchGoalRun",
+              "cancelGoalRun",
               "launchJourneyRun",
               "cancelJourneyRun",
               "publishUserTestingScenario",
@@ -28804,14 +28952,24 @@
               },
               "writeSwarms": {
                 "type": "boolean",
-                "description": "Authoring personas, journeys and swarms."
+                "description": "Authoring personas, goals and swarms."
+              },
+              "launchGoalRun": {
+                "type": "boolean"
+              },
+              "cancelGoalRun": {
+                "type": "boolean",
+                "description": "Stays TRUE for an organization that has lost the beta. Losing the feature is exactly when stopping a run matters most."
               },
               "launchJourneyRun": {
-                "type": "boolean"
+                "type": "boolean",
+                "deprecated": true,
+                "description": "Pre-rename spelling of `launchGoalRun`, emitted alongside it until general availability."
               },
               "cancelJourneyRun": {
                 "type": "boolean",
-                "description": "Stays TRUE for an organization that has lost the beta. Losing the feature is exactly when stopping a run matters most."
+                "deprecated": true,
+                "description": "Pre-rename spelling of `cancelGoalRun`, emitted alongside it until general availability."
               },
               "publishUserTestingScenario": {
                 "type": "boolean",
@@ -32969,6 +33127,605 @@
           "reasons",
           "validity",
           "cases"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFinding": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "verifiedMechanism",
+              "sessionReport",
+              "populationFact"
+            ],
+            "description": "`verifiedMechanism`, `sessionReport`, `populationFact`"
+          },
+          "scopeLevel": {
+            "type": "string",
+            "enum": [
+              "session",
+              "goal",
+              "persona",
+              "target",
+              "wave"
+            ],
+            "description": "`session`, `goal`, `persona`, `target`, `wave`"
+          },
+          "persona": {
+            "type": "object",
+            "properties": {
+              "personaRefId": {
+                "nullable": true,
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "personaRefId",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "goal": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "journeyRefId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "runId",
+              "journeyRefId",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "environment",
+                  "host"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "modelId": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "label",
+              "modelId"
+            ],
+            "additionalProperties": false
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "sessions"
+                ]
+              }
+            },
+            "required": [
+              "count",
+              "total",
+              "unit"
+            ],
+            "additionalProperties": false
+          },
+          "sessionIds": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "citations": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[^/]+\\/.+$"
+            }
+          },
+          "verdictSeen": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "notEstablished"
+            ]
+          },
+          "chainStage": {
+            "nullable": true,
+            "description": "`connection`, `discovery`, `selection`, `call`, `response`, `userValue`",
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ]
+          },
+          "chainStageState": {
+            "nullable": true,
+            "description": "`passed`: passed; `failed`: failed; `notReached`: never ran (an earlier stage failed); `notMeasured`: not measured; `notApplicable`: not applicable to this case",
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "notReached",
+              "notMeasured",
+              "notApplicable"
+            ]
+          },
+          "chainStageBasis": {
+            "type": "string",
+            "enum": [
+              "derived",
+              "reported",
+              "unmeasured"
+            ]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "notRun",
+              "blockedConnecting",
+              "lostFindingTool",
+              "blockedCallingTool",
+              "blockedByResponse",
+              "goalMissed",
+              "goalMetWithFriction",
+              "goalMet",
+              "notMeasured"
+            ],
+            "description": "`notRun`, `blockedConnecting`, `lostFindingTool`, `blockedCallingTool`, `blockedByResponse`, `goalMissed`, `goalMetWithFriction`, `goalMet`, `notMeasured`"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "warn",
+              "ok",
+              "muted"
+            ]
+          },
+          "coverageNotes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessionScanCapped",
+                "budgetExhausted",
+                "transcriptMissing",
+                "contextTooLarge",
+                "extractionRejected",
+                "chainUnmeasured",
+                "judgeNotRun",
+                "sessionsWithdrawn",
+                "sessionsRateLimited",
+                "partialRead",
+                "toolCatalogMissing",
+                "mechanismsRejected",
+                "analysisUnavailable"
+              ],
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`, `analysisUnavailable`"
+            }
+          },
+          "outcomePhrase": {
+            "nullable": true,
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[^0-9]*$"
+          },
+          "mechanismPhrase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "fixPhrase": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reportExcerpt": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "actual": {
+                "type": "string",
+                "maxLength": 1800
+              },
+              "account": {
+                "nullable": true,
+                "type": "string",
+                "maxLength": 600
+              },
+              "citations": {
+                "maxItems": 30,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^/]+\\/.+$"
+                }
+              }
+            },
+            "required": [
+              "actual",
+              "citations"
+            ],
+            "additionalProperties": false
+          },
+          "mechanismId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "signal": {
+            "nullable": true,
+            "type": "string",
+            "enum": [
+              "outputTruncated",
+              "hallucinatedTool",
+              "toolErrored",
+              "noToolCalled",
+              "turnCapReached"
+            ],
+            "description": "`outputTruncated`, `hallucinatedTool`, `toolErrored`, `noToolCalled`, `turnCapReached`"
+          }
+        },
+        "required": [
+          "id",
+          "basis",
+          "scopeLevel",
+          "persona",
+          "goal",
+          "target",
+          "population",
+          "sessionIds",
+          "citations",
+          "verdictSeen",
+          "chainStage",
+          "chainStageState",
+          "chainStageBasis",
+          "disposition",
+          "tone",
+          "coverageNotes",
+          "outcomePhrase",
+          "mechanismPhrase",
+          "fixPhrase",
+          "reportExcerpt",
+          "mechanismId"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFindings": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "sourceRevision": {
+            "type": "string"
+          },
+          "pipelineVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "extractionVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "extractionModel": {
+            "type": "string"
+          },
+          "reasoningModel": {
+            "type": "string"
+          },
+          "summaryKind": {
+            "type": "string",
+            "enum": [
+              "notLaunched",
+              "broken",
+              "friction",
+              "landed",
+              "ungraded",
+              "unread"
+            ],
+            "description": "`notLaunched`, `broken`, `friction`, `landed`, `ungraded`, `unread`"
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "started": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "read": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unread": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "withdrawn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "limited": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "graded": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "configured",
+              "started",
+              "read",
+              "unread",
+              "withdrawn",
+              "limited",
+              "graded"
+            ],
+            "additionalProperties": false
+          },
+          "coverageNotes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessionScanCapped",
+                "budgetExhausted",
+                "transcriptMissing",
+                "contextTooLarge",
+                "extractionRejected",
+                "chainUnmeasured",
+                "judgeNotRun",
+                "sessionsWithdrawn",
+                "sessionsRateLimited",
+                "partialRead",
+                "toolCatalogMissing",
+                "mechanismsRejected",
+                "analysisUnavailable"
+              ],
+              "description": "`sessionScanCapped`, `budgetExhausted`, `transcriptMissing`, `contextTooLarge`, `extractionRejected`, `chainUnmeasured`, `judgeNotRun`, `sessionsWithdrawn`, `sessionsRateLimited`, `partialRead`, `toolCatalogMissing`, `mechanismsRejected`, `analysisUnavailable`"
+            }
+          },
+          "disclosure": {
+            "type": "object",
+            "properties": {
+              "rail": {
+                "type": "string",
+                "enum": [
+                  "gateway",
+                  "openrouter"
+                ]
+              },
+              "evidenceSent": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "rail",
+              "evidenceSent"
+            ],
+            "additionalProperties": false
+          },
+          "personas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "persona": {
+                  "type": "object",
+                  "properties": {
+                    "personaRefId": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "personaRefId",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                },
+                "disposition": {
+                  "type": "string",
+                  "enum": [
+                    "notRun",
+                    "blockedConnecting",
+                    "lostFindingTool",
+                    "blockedCallingTool",
+                    "blockedByResponse",
+                    "goalMissed",
+                    "goalMetWithFriction",
+                    "goalMet",
+                    "notMeasured"
+                  ],
+                  "description": "`notRun`, `blockedConnecting`, `lostFindingTool`, `blockedCallingTool`, `blockedByResponse`, `goalMissed`, `goalMetWithFriction`, `goalMet`, `notMeasured`"
+                },
+                "tone": {
+                  "type": "string",
+                  "enum": [
+                    "fail",
+                    "warn",
+                    "ok",
+                    "muted"
+                  ]
+                },
+                "goalRunIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "persona",
+                "disposition",
+                "tone",
+                "goalRunIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "findings": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmJourneyFinding"
+            }
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "proposed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "confirmed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "rejected": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unverified": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "omitted": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "proposed",
+              "confirmed",
+              "rejected",
+              "unverified",
+              "omitted"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "contractVersion",
+          "generatedAt",
+          "sourceRevision",
+          "pipelineVersion",
+          "extractionVersion",
+          "extractionModel",
+          "reasoningModel",
+          "summaryKind",
+          "population",
+          "coverageNotes",
+          "disclosure",
+          "personas",
+          "findings"
+        ],
+        "additionalProperties": false
+      },
+      "SwarmJourneyFindingsJob": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "status",
+          "updatedAt"
         ],
         "additionalProperties": false
       }

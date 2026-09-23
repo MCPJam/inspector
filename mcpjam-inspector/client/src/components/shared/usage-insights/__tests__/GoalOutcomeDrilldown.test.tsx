@@ -20,6 +20,12 @@ vi.mock("@/hooks/useUsageInsights", () => ({
     mockUseGoalOutcomeDrilldown(...args),
 }));
 
+vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
+  ShareUsageThreadDetail: ({ threadId }: { threadId: string }) => (
+    <div data-testid="share-usage-thread-detail">{threadId}</div>
+  ),
+}));
+
 function session(id: string, preview: string) {
   return {
     _id: id,
@@ -54,6 +60,36 @@ function renderDrilldown(
 }
 
 describe("GoalOutcomeDrilldown", () => {
+  it("opens a dismissable sheet instead of an in-flow panel", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s1", "first")],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    render(
+      <GoalOutcomeDrilldown
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+        selection={CELL_A}
+        filter={EMPTY_USAGE_FILTER}
+        onClose={onClose}
+        onOpenSession={vi.fn()}
+        variant="sheet"
+      />,
+    );
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Invoice lookup" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("renders nothing when nothing is selected", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: undefined,
@@ -296,7 +332,7 @@ describe("GoalOutcomeDrilldown", () => {
     expect(screen.getByText("second")).toBeInTheDocument();
   });
 
-  it("opens a session when its row is clicked", async () => {
+  it("previews the session in-place instead of navigating away", async () => {
     const user = userEvent.setup();
     const onOpenSession = vi.fn();
     mockUseGoalOutcomeDrilldown.mockReturnValue({
@@ -311,7 +347,78 @@ describe("GoalOutcomeDrilldown", () => {
     renderDrilldown(CELL_A, onOpenSession);
 
     await user.click(screen.getByText("first"));
+    expect(onOpenSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("goal-outcome-session-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("goal-outcome-session-preview")).toHaveClass(
+      "flex",
+      "min-h-0",
+      "flex-1",
+      "flex-col",
+    );
+    expect(screen.getByTestId("share-usage-thread-detail")).toHaveTextContent(
+      "s1",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Open in Sessions tab →" }),
+    );
     expect(onOpenSession).toHaveBeenCalledWith("s1");
+  });
+
+  it("returns to the session list from the in-place preview", async () => {
+    const user = userEvent.setup();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s1", "first")],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    renderDrilldown(CELL_A);
+
+    await user.click(screen.getByText("first"));
+    expect(screen.getByTestId("goal-outcome-session-preview")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Back to selected sessions" }),
+    );
+    expect(
+      screen.queryByTestId("goal-outcome-session-preview"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("first")).toBeInTheDocument();
+  });
+
+  it("lays sessions out like an eval case list", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          {
+            ...session("s1", "find the eval suite and show revisions"),
+            lastActivityAt: Date.now() - 3 * 60 * 1000,
+            outcome: "unresolved",
+            messageCount: 4,
+            modelId: "gpt-5",
+          },
+        ],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    renderDrilldown(CELL_A);
+
+    expect(screen.getByText("Session")).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Open session: find the eval suite and show revisions",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Unresolved · 4 messages · gpt-5")).toBeInTheDocument();
+    expect(screen.getByText("3m ago")).toBeInTheDocument();
   });
 
   it("resets the cursor and rows when another facet chip changes", async () => {

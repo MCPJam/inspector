@@ -20,6 +20,7 @@ type StoredScopeStepUpContinuation = {
   continuationId: string;
   bindingKey: string;
   serverId: string;
+  connectionId?: string;
   resourceUrl?: string;
   toolCallId: string;
   toolName: string;
@@ -38,6 +39,7 @@ export type ClaimedScopeStepUpContinuation = Readonly<{
   continuationId: string;
   bindingKey: string;
   serverId: string;
+  connectionId?: string;
   resourceUrl?: string;
   toolCallId: string;
   toolName: string;
@@ -123,6 +125,7 @@ export function isScopeStepUpSuspendSignal(
 export function createLocalScopeStepUpContinuation(input: {
   bindingKey: string;
   serverId: string;
+  connectionId?: string;
   resourceUrl?: string;
   toolCallId: string;
   toolName: string;
@@ -137,6 +140,7 @@ export function createLocalScopeStepUpContinuation(input: {
     continuationId,
     bindingKey: input.bindingKey,
     serverId: input.serverId,
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {}),
     toolCallId: input.toolCallId,
     toolName: input.toolName,
@@ -153,6 +157,7 @@ export function createLocalScopeStepUpContinuation(input: {
     kind: "scope_step_up_required",
     continuationId,
     serverId: input.serverId,
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     ...(input.serverName ? { serverName: input.serverName } : {}),
     toolCallId: input.toolCallId,
     operation: { method: "tools/call", operation: input.toolName },
@@ -194,6 +199,7 @@ export function claimLocalScopeStepUpContinuation(input: {
     continuationId: record.continuationId,
     bindingKey: record.bindingKey,
     serverId: record.serverId,
+    ...(record.connectionId ? { connectionId: record.connectionId } : {}),
     ...(record.resourceUrl ? { resourceUrl: record.resourceUrl } : {}),
     toolCallId: record.toolCallId,
     toolName: record.toolName,

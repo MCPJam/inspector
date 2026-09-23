@@ -398,8 +398,8 @@ export async function collectRunRawData(
         client,
         queries,
         "swarm:topicMap",
-        "chatSessions:getSwarmTopicMapSnapshot",
-        { projectId: scope.projectId },
+        "chatSessions:getSessionMapNodes",
+        { projectId: scope.projectId, journeyRunIds: scope.runIds },
       ),
       captureQuery(
         client,
@@ -453,7 +453,7 @@ export async function collectRunRawData(
     }
     if (!scope.swarmRunGroupId) {
       notes.push(
-        "This legacy swarm has no swarmRunGroupId, so wave signals and generated wave insights cannot be addressed.",
+        "This legacy swarm has no swarmRunGroupId, so swarm-run signals and generated swarm-run insights cannot be addressed.",
       );
     }
   } else {
@@ -496,7 +496,7 @@ export async function collectRunRawData(
           client,
           queries,
           "scenario:topicMap",
-          "chatSessions:getTopicMapSnapshot",
+          "chatSessions:getSessionMapNodes",
           { scenarioId: scope.scenarioId },
         ),
         captureQuery(

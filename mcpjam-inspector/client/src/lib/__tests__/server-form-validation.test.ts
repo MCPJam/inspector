@@ -30,13 +30,13 @@ describe("validateServerFormData", () => {
 
   it("requires a URL for HTTP connections", async () => {
     const validate = await importValidator(false);
-    expect(validate(httpForm({ url: "" }))).toMatch(/URL is required/i);
+    expect(validate(httpForm({ url: "" }))).toMatch(/Enter your server’s URL/i);
   });
 
   it("rejects a malformed URL", async () => {
     const validate = await importValidator(false);
     expect(validate(httpForm({ url: "not a url" }))).toMatch(
-      /Invalid URL format/i,
+      /Enter a complete server URL/i,
     );
   });
 
@@ -44,7 +44,7 @@ describe("validateServerFormData", () => {
     const validate = await importValidator(false);
     expect(
       validate({ name: "x", type: "stdio", command: "" } as ServerFormData),
-    ).toMatch(/Command is required/i);
+    ).toMatch(/Enter the command/i);
   });
 
   it("allows plain http in local mode", async () => {
@@ -55,7 +55,7 @@ describe("validateServerFormData", () => {
   it("rejects plain http in hosted mode", async () => {
     const validate = await importValidator(true);
     expect(validate(httpForm({ url: "http://localhost:8787/mcp" }))).toMatch(
-      /Hosted mode requires HTTPS/i,
+      /hosted web app requires an HTTPS/i,
     );
   });
 

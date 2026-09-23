@@ -73,7 +73,10 @@ describe("SuiteSwitcher", () => {
     expect(onSelectSuite).toHaveBeenCalledWith("suite-b");
   });
 
-  it("badges CI-created suites and hides their delete action", async () => {
+  it("badges CI-created suites and still offers their delete action", async () => {
+    // The badge says where the configuration lives. Deleting does not edit
+    // that configuration, so the badge is not a reason to withhold the only
+    // way to remove a row the SDK re-mints on every `suiteName` change.
     const user = userEvent.setup();
 
     render(
@@ -100,11 +103,11 @@ describe("SuiteSwitcher", () => {
       screen.getByRole("button", { name: "Delete suite amazon" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Delete suite nightly" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Delete suite nightly" }),
+    ).toBeInTheDocument();
   });
 
-  it("hides delete for ui suites that CI has reported into", async () => {
+  it("offers delete for ui suites that CI has reported into", async () => {
     const user = userEvent.setup();
     const mixedEntry = makeEntry("suite-mixed", "mixed");
     (mixedEntry.suite as { lastSdkRunAt?: number }).lastSdkRunAt = 123;
@@ -129,8 +132,8 @@ describe("SuiteSwitcher", () => {
       screen.getByRole("button", { name: "Delete suite amazon" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Delete suite mixed" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Delete suite mixed" }),
+    ).toBeInTheDocument();
   });
 
   it("offers delete per SUITE, not per caller", async () => {

@@ -650,7 +650,7 @@ export function useOrganizationBilling(
       }
       if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
         // Cancelled while we were reopening it. Leave it cancelled.
-        return;
+        return { status: "noop", reason: "seat_payment_canceled" } as const;
       }
       return await finishSeatPayment(result.seatPaymentIntentId);
     } catch (err) {

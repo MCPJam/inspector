@@ -1791,11 +1791,12 @@ export function ChatTabV2({
     }
     track("credit_topup_cta_clicked", {
       location: "chat_tab",
+      organization_id: organizationId,
       source: "chat_banner",
     });
     setPendingResendMessage(text);
     setIsTopupDialogOpen(true);
-  }, []);
+  }, [organizationId]);
 
   const handleTopupDialogOpenChange = useCallback((open: boolean) => {
     setIsTopupDialogOpen(open);
@@ -2441,6 +2442,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -2710,6 +2712,7 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                               onTopUp={handleOpenTopupDialog}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
@@ -2857,6 +2860,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             canManageCredits={canManageOrgCreditsForActiveOrg}
+                            organizationId={organizationId}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -3118,6 +3122,7 @@ export function ChatTabV2({
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
           organizationId={organizationId}
+          organizationName={sortedOrganizations.find((org) => org._id === organizationId)?.name}
           source="chat_banner"
         />
       )}

@@ -289,11 +289,64 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps":
     "getEvalRunSteps",
 
-  // Scenarios (deprecated publicly; superseded by scenarios at GA)
+
+  // ── Studies ───────────────────────────────────────────────────────────────
+  //
+  // The canonical surface. The `/scenarios` and `/user-testing/scenarios`
+  // rows below are their deprecated aliases, each still mapped to the
+  // deprecated client method that calls it.
+  "get /projects/{projectId}/studies": "listStudies",
+  "get /projects/{projectId}/studies/{studyId}": "getStudy",
+  "patch /projects/{projectId}/studies/{studyId}": "updateStudy",
+  "get /projects/{projectId}/studies/{studyId}/sessions": "listStudySessions",
+  "get /projects/{projectId}/studies/{studyId}/sessions/{sessionId}":
+    "getStudySession",
+  "get /projects/{projectId}/studies/{studyId}/metrics": "getStudyMetrics",
+  "get /projects/{projectId}/studies/{studyId}/usage": "getStudyUsage",
+  "get /projects/{projectId}/studies/{studyId}/findings": "listStudyFindings",
+  "get /projects/{projectId}/studies/{studyId}/signals": "getStudySignals",
+  "get /projects/{projectId}/studies/{studyId}/windows/{windowId}/insights":
+    "getStudyInsights",
+  "post /projects/{projectId}/studies/{studyId}/insights":
+    "requestStudyInsights",
+  "delete /projects/{projectId}/studies/{studyId}/insights":
+    "cancelStudyInsights",
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/dismiss":
+    "dismissStudyFinding",
+  "post /projects/{projectId}/studies/{studyId}/findings/{findingId}/undismiss":
+    "undismissStudyFinding",
+  "put /projects/{projectId}/studies/{studyId}/guest-execution":
+    "setStudyGuestExecution",
+  "post /projects/{projectId}/studies/{studyId}/rotate-link": "rotateStudyLink",
+  "put /projects/{projectId}/studies/{studyId}/members": "upsertStudyMember",
+  "delete /projects/{projectId}/studies/{studyId}/members/{memberIdOrEmail}":
+    "removeStudyMember",
+  "post /projects/{projectId}/studies/{studyId}/rebind": "rebindStudy",
+  "put /projects/{projectId}/environments/{environmentId}/study":
+    "publishStudy",
+  "delete /projects/{projectId}/environments/{environmentId}/study":
+    "unpublishStudy",
+  // Scenarios and user testing: the DEPRECATED aliases of the studies rows
+  // above. Each keeps its own client method, which calls its own old route.
   "get /projects/{projectId}/scenarios": "listScenarios",
   "get /projects/{projectId}/scenarios/{scenarioId}": "getScenario",
 
-  // Journeys (Swarms). Flag-gated beta, but the SDK carries them.
+  // Goals (Swarms). Flag-gated beta, but the SDK carries them.
+  "get /projects/{projectId}/goals": "listGoals",
+  "get /projects/{projectId}/goals/{goalId}/runs": "listGoalRuns",
+  "get /projects/{projectId}/goal-runs/{runId}": "getGoalRun",
+  "get /projects/{projectId}/goal-runs/{runId}/sessions": "listGoalRunSessions",
+  "post /projects/{projectId}/goals/{goalId}/runs": "launchGoalRun",
+  "post /projects/{projectId}/goal-runs/{runId}/cancel": "cancelGoalRun",
+  // Goals authoring — the create half of create -> run -> read.
+  "get /projects/{projectId}/goals/{goalId}": "getGoal",
+  "post /projects/{projectId}/goals": "createGoal",
+  "patch /projects/{projectId}/goals/{goalId}": "updateGoal",
+  "delete /projects/{projectId}/goals/{goalId}": "archiveGoal",
+  "post /projects/{projectId}/goals/generate": "generateGoals",
+  // The DEPRECATED `/journeys` aliases. Each keeps its own client method,
+  // which calls its own old route — never the canonical one — so a caller on
+  // the old SDK keeps receiving the old response shape.
   "get /projects/{projectId}/journeys": "listJourneys",
   "get /projects/{projectId}/journeys/{journeyId}/runs": "listJourneyRuns",
   "get /projects/{projectId}/journey-runs/{runId}": "getJourneyRun",
@@ -301,7 +354,6 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listJourneyRunSessions",
   "post /projects/{projectId}/journeys/{journeyId}/runs": "launchJourneyRun",
   "post /projects/{projectId}/journey-runs/{runId}/cancel": "cancelJourneyRun",
-  // Swarms authoring — the create half of create -> run -> read.
   "get /projects/{projectId}/journeys/{journeyId}": "getJourney",
   "post /projects/{projectId}/journeys": "createJourney",
   "patch /projects/{projectId}/journeys/{journeyId}": "updateJourney",
@@ -327,7 +379,17 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/swarms": "createSwarm",
   "patch /projects/{projectId}/swarms/{swarmId}": "updateSwarm",
   "delete /projects/{projectId}/swarms/{swarmId}": "archiveSwarm",
-  // The insights layer over runs.
+  // The insights layer over runs. `get_swarms_overview` and the finding
+  // operations KEPT their names; only the routes under them moved with the
+  // noun, so the SDK method is the same on both spellings.
+  "get /projects/{projectId}/goals-overview": "getSwarmOverview",
+  "get /projects/{projectId}/goal-runs/{runId}/scorecard":
+    "getGoalRunScorecard",
+  "get /projects/{projectId}/goal-findings": "listSwarmFindings",
+  "post /projects/{projectId}/goal-findings/{findingId}/dismiss":
+    "dismissSwarmFinding",
+  "post /projects/{projectId}/goal-findings/{findingId}/undismiss":
+    "undismissSwarmFinding",
   "get /projects/{projectId}/journeys-overview": "getSwarmOverview",
   "get /projects/{projectId}/journey-runs/{runId}/scorecard":
     "getJourneyRunScorecard",
@@ -345,6 +407,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
   "post /organizations/{organizationId}/eval-check-repos":
     "connectEvalCheckRepo",
+  "get /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
+    "getSwarmRunInsights",
+  "post /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
+    "requestSwarmRunInsights",
+  "delete /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
+    "cancelSwarmRunInsights",
+  // The DEPRECATED `/waves` aliases, each on its own client method calling
+  // its own old route.
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",

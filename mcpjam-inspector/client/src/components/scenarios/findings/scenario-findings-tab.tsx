@@ -15,8 +15,8 @@
  *    counts. Reading without it would report a different total for the same
  *    study, which is exactly what BB-145 asks us not to do.
  *
- * The grid is built from one page of sessions. Beyond that page the card
- * footnotes its own coverage rather than presenting a subset as the whole.
+ * The grid is built from one page of sessions. Beyond that page the
+ * persona panel still describes the sessions it has, not the whole study.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -28,17 +28,13 @@ import {
   useGoalOutcomeDrilldown,
   useUsageInsights,
 } from "@/hooks/useUsageInsights";
-import { useEnsureFirstAnalysis } from "@/hooks/useInsightsFlowController";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import { SectionLabel } from "@/components/shared/section-label";
 import { FindingsSummaryCard } from "@/components/swarms/findings/findings-summary-card";
 import { FindingsPersonaTabs } from "@/components/swarms/findings/findings-persona-tabs";
 import { FindingsPersonaCard } from "@/components/swarms/findings/findings-persona-card";
 import type { JourneyStageId } from "@/components/swarms/findings/journey-stages";
-import {
-  deriveScenarioFindingsFootnotes,
-  deriveScenarioFindingsModel,
-} from "./scenario-findings-derivation";
+import { deriveScenarioFindingsModel } from "./scenario-findings-derivation";
 import { composeScenarioFindingsSummary } from "./scenario-findings-summary";
 import { ScenarioGoalChain } from "./scenario-goal-chain";
 import type { ScenarioGoalStages } from "./scenario-findings-stages";
@@ -75,17 +71,11 @@ export function ScenarioFindingsTab({
    * the only honest signal for the former. Same hook and same one-attempt
    * discipline as the Insights workbench.
    */
-  const { breakdown, rebuild } = useUsageInsights({
+  const { breakdown } = useUsageInsights({
     scope: { kind: "scenario", scenarioId },
     filters,
     threadsEnabled: false,
     breakdownEnabled: true,
-  });
-  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
-    enabled: true,
-    cohortKey: scenarioId,
-    breakdown,
-    rebuild,
   });
   /**
    * Is an analysis on its way? Same rule the session-flow diagram applies: on
@@ -96,11 +86,12 @@ export function ScenarioFindingsTab({
    * flash "analyzing" at a study that has simply never been analyzed and never
    * will be.
    */
-  const latestRun = breakdown?.latestRun ?? null;
   const analysisInFlight =
-    latestRun?.status === "queued" ||
-    latestRun?.status === "running" ||
-    (!firstAnalysisRefused && Boolean(breakdown) && latestRun === null);
+    !!breakdown?.analysis &&
+    breakdown.analysis.pending +
+      breakdown.analysis.running -
+      breakdown.analysis.deferred >
+      0;
 
   const model = useMemo(
     () =>
@@ -119,10 +110,6 @@ export function ScenarioFindingsTab({
   );
 
   const summary = useMemo(() => composeScenarioFindingsSummary(model), [model]);
-  const footnotes = useMemo(
-    () => deriveScenarioFindingsFootnotes(model),
-    [model],
-  );
 
   // Keyed by name rather than index: the strip re-derives as sessions load, and
   // an index would quietly select someone else underneath the reader.
@@ -232,21 +219,7 @@ export function ScenarioFindingsTab({
   const selectedStage: JourneyStageId =
     stageChoice && stageChoice.goalId === expandedGoal?.runId
       ? stageChoice.stage
-      : (expandedGoal?.defaultStage ?? "value");
-
-  // Goal-scoped, so it is only shown while that goal is open and it names the
-  // goal it is about. The study-level footnotes describe a different
-  // population and must not absorb this one.
-  const cardFootnotes = useMemo(
-    () =>
-      goalChain?.truncated && expandedGoal
-        ? [
-            ...footnotes,
-            `"${expandedGoal.title}" has more sessions than the chain scan covers. Its stages describe the most recent ones.`,
-          ]
-        : footnotes,
-    [footnotes, goalChain, expandedGoal],
-  );
+      : expandedGoal?.defaultStage ?? "value";
 
   if (isLoading && drilldown === undefined) {
     return (
@@ -273,8 +246,8 @@ export function ScenarioFindingsTab({
         {model.unanalyzedCount === 0
           ? "No sessions in this study yet."
           : analysisInFlight
-            ? "Analyzing sessions — grouping goals, behaviors, outcomes, and sentiment. This can take a few minutes."
-            : "No session has been analyzed yet."}
+          ? "Analyzing sessions to group goals, behaviors, outcomes, and sentiment. This can take a few minutes."
+          : "No session has been analyzed yet."}
       </div>
     );
   }
@@ -294,7 +267,6 @@ export function ScenarioFindingsTab({
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary}
-        footnotes={cardFootnotes}
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">

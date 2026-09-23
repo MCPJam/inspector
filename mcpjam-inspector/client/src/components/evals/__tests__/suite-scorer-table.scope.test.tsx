@@ -96,6 +96,24 @@ describe("suite scope", () => {
     expect(next()).toEqual([]);
   });
 
+  it("paints a clickable off check in foreground text and a locked one muted", () => {
+    const { container } = renderSuite([], {
+      scorers: { predicateKinds: ["toolDescriptionsPresent"] },
+    } as SuiteCapabilities);
+    const description = row(container, "preset:discovery.description");
+    expect(description.className).toContain("text-foreground");
+    expect(description.className).not.toContain("text-muted-foreground");
+    expect(
+      within(description).getByRole("checkbox", { name: "Description quality" }),
+    ).toBeEnabled();
+    expect(row(container, "preset:discovery.annotations").className).toContain(
+      "text-muted-foreground",
+    );
+    expect(row(container, "observed:discovery").className).toContain(
+      "text-muted-foreground",
+    );
+  });
+
   it("keeps a preset the deployment cannot accept off, and says why", () => {
     const { container } = renderSuite([], {
       scorers: { predicateKinds: ["noToolErrors"] },
@@ -115,13 +133,14 @@ describe("suite scope", () => {
     const latencyRow = row(container, "predicate:0");
     expect(latencyRow).toHaveAttribute("data-scorer-enabled", "true");
     expect(within(latencyRow).getByText(latency.name)).toBeInTheDocument();
-    expect(within(latencyRow).getByText(/1,234/)).toBeInTheDocument();
+    expect(within(latencyRow).getByText(latency.label)).toBeInTheDocument();
+    expect(within(latencyRow).queryByText(/1,234/)).toBeNull();
     // On, so no second preset row for the same family.
     expect(row(container, `preset:${latency.id}`)).toBeNull();
-    // Still editable: the title opens the assertion's own fields.
-    await user.click(
-      within(latencyRow).getByRole("button", { name: latency.name }),
-    );
+    expect(
+      within(latencyRow).queryByRole("button", { name: latency.name }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(
       within(latencyRow).getByRole("spinbutton", {
         name: "Max time in ms (strictly under)",
@@ -154,20 +173,13 @@ describe("case scope", () => {
     });
     const inherited = row(container, "predicate:0");
     expect(inherited).toHaveAttribute("data-scorer-source", "suite");
-    expect(within(inherited).getByText("From suite")).toBeInTheDocument();
-    await user.click(
-      within(inherited).getByRole("button", { name: latency.name }),
-    );
+    expect(within(inherited).queryByText("From suite")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(inherited).queryByRole("spinbutton")).toBeNull();
-    expect(within(inherited).getByText(/1,234/)).toBeInTheDocument();
+    expect(within(inherited).getByText(latency.label)).toBeInTheDocument();
     const own = row(container, "predicate:1");
     expect(own).toHaveAttribute("data-scorer-source", "case");
     expect(within(own).getByText("This case")).toBeInTheDocument();
-    await user.click(
-      within(own).getByRole("button", {
-        name: "User turns to completion",
-      }),
-    );
     expect(
       within(own).getByRole("spinbutton", {
         name: "User turns (strictly under)",
@@ -215,20 +227,20 @@ describe("case scope", () => {
     ).toBeInTheDocument();
   });
 
-  it("holds inherited boxes until the deployment stores suppression", () => {
-    const { container } = renderCase(
-      [latency.preset],
-      {},
-      {
-        capabilities: {
-          scorers: { predicateKinds: [latency.preset.type] },
-        } as SuiteCapabilities,
-      },
-    );
-    expect(screen.getByRole("checkbox", { name: latency.name })).toBeDisabled();
-    expect(
-      within(row(container, "predicate:0")).getByText(BACKEND_SUPPORT_HINT),
-    ).toBeInTheDocument();
+  it("turns off an inherited family even when capabilities omit the flag", async () => {
+    const user = userEvent.setup();
+    const { onDraftChange } = renderCase([latency.preset], {}, {
+      capabilities: {
+        scorers: { predicateKinds: [latency.preset.type] },
+      } as SuiteCapabilities,
+    });
+    const box = screen.getByRole("checkbox", { name: latency.name });
+    expect(box).toBeEnabled();
+    await user.click(box);
+    expect(onDraftChange).toHaveBeenCalledWith({
+      predicates: undefined,
+      suppressedSuiteStandardCheckIds: [latency.id],
+    });
   });
 
   it("removes and edits the case's own rules, and adds through the library", async () => {
@@ -251,9 +263,14 @@ describe("case scope", () => {
       suppressedSuiteStandardCheckIds: [],
     });
     await user.click(
-      screen.getByRole("button", { name: "User turns to completion" }),
+      within(
+        screen.getByRole("checkbox", {
+          name: STANDARD_ASSERTION_CHECKS.find(
+            (c) => c.id === "userValue.turns",
+          )!.name,
+        }).closest("li") as HTMLElement,
+      ).getByRole("button", { name: "Advisory" }),
     );
-    await user.click(screen.getByRole("button", { name: "Advisory" }));
     expect(onDraftChange).toHaveBeenLastCalledWith({
       predicates: {
         mode: "extend",
@@ -296,9 +313,7 @@ describe("case scope", () => {
     );
     // Read-only threshold and role: the suite's, not the case's to edit.
     expect(screen.getByText(/threshold 0\.7/i)).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Goal completion judge" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(
       screen.queryByRole("spinbutton", { name: "Judge threshold" }),
     ).toBeNull();
