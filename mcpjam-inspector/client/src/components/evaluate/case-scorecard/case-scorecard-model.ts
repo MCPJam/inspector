@@ -163,7 +163,18 @@ export function spineLibraryKinds(): PredicateKind[] {
 }
 
 export type ScorecardProvenance =
-  "route" | "step" | "case" | "suite" | "snapshot" | "judge";
+  | "route"
+  | "step"
+  | "case"
+  | "suite"
+  | "snapshot"
+  | "judge"
+  /**
+   * One rubric-check answer. Never authored on a case: these rows come from
+   * the trial's own stored score rows (`rubricCheckTrialRows`), so a trial
+   * shows exactly the questions it was asked.
+   */
+  | "rubricCheck";
 
 /** How a row finds its result on a trial. See `joinTrialResults`. */
 export type ScorecardJoin =
@@ -175,7 +186,11 @@ export type ScorecardJoin =
       scope?: PredicateScope;
     }
   | { kind: "predicate"; criterionId: string }
-  | { kind: "judge"; slot: "goalCompletion"; scorerId: string };
+  | {
+      kind: "judge";
+      slot: "goalCompletion" | "rubricChecks";
+      scorerId: string;
+    };
 
 /** What the route question currently answers. */
 export type RouteState =
@@ -282,6 +297,8 @@ export type ScorecardRow = {
   widgetAssertion?: WidgetAssertion;
   route?: RouteState;
   judge?: JudgeFacts;
+  /** Rubric-check rows only: the question's key, and whether it is a criterion. */
+  rubricCheck?: { key: string; criterion: boolean };
   tooltip: string;
   join?: ScorecardJoin;
 };
@@ -997,6 +1014,11 @@ export function expectationOf(row: ScorecardRow): string {
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
   if (row.route) return routeLabel(row.route);
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
+  if (row.provenance === "rubricCheck") {
+    return row.rubricCheck?.criterion
+      ? `Yes: ${row.label}`
+      : `On or above the pass line: ${row.label}`;
+  }
   if (row.provenance === "judge") {
     const goal = row.judge?.goal.trim();
     if (goal) return goal;
