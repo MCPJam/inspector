@@ -207,10 +207,15 @@ web.use(
 //
 // Registered here, after the per-family `bearerAuthMiddleware` lines rather
 // than inside each of them: the middleware reads the `authMethod` label auth
-// sets, so it has to run behind it, and one `*` mount covers the routes added
-// after this one too. On a path with no bearer middleware the label is absent
-// and this is a no-op. Order against the guest limiter is immaterial — the two
-// meter disjoint credential classes.
+// sets, so it has to run behind it. On a path with no bearer middleware the
+// label is absent and this is a no-op. Order against the guest limiter is
+// immaterial — the two meter disjoint credential classes.
+//
+// It covers exactly the families labelled ABOVE. A sub-router that brings its
+// own `bearerAuthMiddleware` sets the label only after this mount has already
+// run, so it is NOT metered from here and has to mount the limiter alongside
+// its own bearer middleware. Labelling at the `web` level instead would double
+// charge every family above — nothing in this chain is idempotent.
 //
 // PER-REPLICA and in memory, like every limiter in this directory: the fleet
 // ceiling is 120/min times the replica count. A spike brake, not a budget; the
