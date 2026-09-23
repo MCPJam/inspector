@@ -295,6 +295,69 @@ describe("surface builders", () => {
     expect(beforeSend(ours)).toBe(ours);
   });
 
+  // Sentry's globalHandlersIntegration invents a frame when the parsed stack
+  // is empty, stamped with the document URL. Counting it as attribution would
+  // invert the rule: the frameless exceptions it spares elsewhere would be the
+  // only ones it dropped here.
+  it("spares an exception whose only frame Sentry synthesised", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "Script error.",
+            stacktrace: {
+              // What _enhanceEventWithInitialFrame pushes: UNKNOWN_FUNCTION,
+              // and the document URL when window.onerror gave no usable one.
+              frames: [
+                { filename: `${origin}/p/v97d1szz/home`, function: "?" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
+  });
+
+  // The same lone document frame, but from a real parsed stack, still drops.
+  it("still drops a lone document frame that Sentry did not synthesise", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    expect(
+      beforeSend({
+        exception: {
+          values: [
+            {
+              type: "RangeError",
+              value: "Maximum call stack size exceeded.",
+              stacktrace: {
+                frames: [
+                  {
+                    filename: `${origin}/p/v97d1szz/playground`,
+                    function: "Tk",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ).toBeNull();
+  });
+
   // Without an origin there is nothing to compare against, so the filter is
   // inert and only the fingerprint pass runs.
   it("drops nothing when no document origin is supplied", () => {

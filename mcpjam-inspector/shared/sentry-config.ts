@@ -214,7 +214,7 @@ export interface FingerprintableEvent {
     values?: {
       type?: string;
       value?: string;
-      stacktrace?: { frames?: { filename?: string }[] };
+      stacktrace?: { frames?: { filename?: string; function?: string }[] };
     }[];
   };
 }
@@ -275,14 +275,38 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
 export function buildBrowserBeforeSend(origin?: string) {
   return <T extends FingerprintableEvent>(event: T): T | null => {
     if (origin !== undefined) {
-      const filenames = (event.exception?.values ?? []).flatMap(
-        (value) =>
-          value.stacktrace?.frames?.map((frame) => frame.filename) ?? [],
-      );
+      const filenames = (event.exception?.values ?? []).flatMap((value) => {
+        const frames = value.stacktrace?.frames ?? [];
+        return isSynthesizedInitialFrame(frames)
+          ? []
+          : frames.map((frame) => frame.filename);
+      });
       if (isInjectedScriptStack(filenames, origin)) return null;
     }
     return groupDomMutationConflicts(event);
   };
+}
+
+/**
+ * Is this stack just the frame Sentry invented because it had none?
+ *
+ * `globalHandlersIntegration` runs `_enhanceEventWithInitialFrame`, which
+ * pushes `{ function: "?", filename: url || getLocationHref() }` — the
+ * document URL — and does so ONLY when the parsed stack came back empty
+ * (@sentry/browser 8.x, integrations/globalhandlers.js).
+ *
+ * A fabricated frame is not attribution. Without this the rule would invert
+ * itself on the Sentry side: the frameless exceptions it promises to spare are
+ * exactly the ones that reach `beforeSend` looking like a lone document frame,
+ * so they would be the only ones it dropped.
+ *
+ * The count is what identifies it, not the `"?"` alone — `stripSentryFrames`
+ * gives any nameless parsed frame the same placeholder. A real one-frame stack
+ * that also lost its name is barely attributable either way, and sparing it is
+ * the direction to err in.
+ */
+function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
+  return frames.length === 1 && frames[0]?.function === "?";
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
