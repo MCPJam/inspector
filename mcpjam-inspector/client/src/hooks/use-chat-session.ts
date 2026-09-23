@@ -2631,7 +2631,21 @@ export function useChatSession(
   const [leadProviderHint, setLeadProviderHint] =
     useState<LeadModelProviderHint | null>(() => loadLeadModelProviderHint());
   useEffect(() => {
-    setLeadProviderHint(loadLeadModelProviderHint());
+    const stored = loadLeadModelProviderHint();
+    // Storage is not the authority when it has nothing for this id. The save
+    // swallows failures (quota exceeded, storage blocked), so after a pick the
+    // in-memory hint can be the only record of it — and replacing it with
+    // storage's null, or with a hint for an older id, would put an OpenRouter
+    // pick straight back on the hosted row (#5472). So: storage wins when it
+    // names this id (another tab picked it), then the state hint when IT names
+    // this id, and storage otherwise.
+    setLeadProviderHint((current) =>
+      stored?.modelId === selectedModelId
+        ? stored
+        : current?.modelId === selectedModelId
+          ? current
+          : stored,
+    );
   }, [selectedModelId]);
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),

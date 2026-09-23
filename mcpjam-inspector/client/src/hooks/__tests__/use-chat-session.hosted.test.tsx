@@ -621,12 +621,27 @@ describe("useChatSession hosted mode", () => {
       hosted: false,
     };
 
-    async function pickAndReresolve(picked: typeof hostedSonnet | typeof openRouterSonnet) {
+    async function pickAndReresolve(
+      picked: typeof hostedSonnet | typeof openRouterSonnet,
+      { storageRefusesHint = false }: { storageRefusesHint?: boolean } = {},
+    ) {
       const original = vi.mocked(buildAvailableModels).getMockImplementation();
       vi.mocked(buildAvailableModels).mockImplementation(
         () => [hostedSonnet, openRouterSonnet] as never,
       );
       localStorage.clear();
+      // On `localStorage` itself, not `Storage.prototype`: the test setup
+      // installs a mock whose `setItem` is an own property, so a prototype
+      // spy intercepts nothing — the write just succeeds.
+      const realSetItem = localStorage.setItem.bind(localStorage);
+      const setItem = storageRefusesHint
+        ? vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => {
+            if (key === "mcp-inspector-selected-model-provider") {
+              throw new DOMException("quota", "QuotaExceededError");
+            }
+            return realSetItem(key, value);
+          })
+        : null;
       try {
         const { result, rerender, unmount } = renderHook(() =>
           useChatSession({ selectedServers: ["server-1"] }),
@@ -656,6 +671,7 @@ describe("useChatSession hosted mode", () => {
         unmount();
         return selected;
       } finally {
+        setItem?.mockRestore();
         if (original) {
           vi.mocked(buildAvailableModels).mockImplementation(original);
         }
@@ -668,6 +684,19 @@ describe("useChatSession hosted mode", () => {
       const selected = await pickAndReresolve(openRouterSonnet);
       expect(selected.provider).toBe("openrouter");
       expect(selected).toMatchObject({ hosted: false });
+    });
+
+    it("keeps an OpenRouter pick when storage refuses to save the hint", async () => {
+      // Quota exceeded or storage blocked: the save swallows the failure, so
+      // the in-memory hint is the only record of the pick. Reloading from
+      // storage when the id changed used to replace it with nothing.
+      const selected = await pickAndReresolve(openRouterSonnet, {
+        storageRefusesHint: true,
+      });
+      // Guard the guard: the write really has to have failed, or this passes
+      // for the wrong reason.
+      expect(localStorage.getItem("mcp-inspector-selected-model-provider")).toBeNull();
+      expect(selected.provider).toBe("openrouter");
     });
 
     it("keeps a hosted pick on the hosted row", async () => {
