@@ -130,6 +130,23 @@ export function requiresServerVerifiedApproval(tool: unknown): boolean {
 let ephemeralKey: Buffer | undefined;
 
 /**
+ * A key derived from `INSPECTOR_SERVICE_TOKEN` for one purpose, named by
+ * `label`, or null when the token is missing or too short to be a secret.
+ * Distinct labels give independent keys, so no two uses can stand in for
+ * each other, and the token itself is never used as a key.
+ */
+export function deriveServiceTokenKey(
+  label: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Buffer | null {
+  const serviceToken = env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (!serviceToken || serviceToken.length < MIN_SERVICE_TOKEN_LENGTH) {
+    return null;
+  }
+  return createHmac("sha256", serviceToken).update(label).digest();
+}
+
+/**
  * The HMAC key, or null when this deployment cannot issue verifiable
  * approvals. Parameters exist for tests; production reads the process env.
  */
@@ -137,12 +154,8 @@ export function resolveToolApprovalSigningKey(
   env: NodeJS.ProcessEnv = process.env,
   hosted: boolean = process.env.VITE_MCPJAM_HOSTED_MODE === "true",
 ): Buffer | null {
-  const serviceToken = env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (serviceToken && serviceToken.length >= MIN_SERVICE_TOKEN_LENGTH) {
-    return createHmac("sha256", serviceToken)
-      .update(KEY_DERIVATION_LABEL)
-      .digest();
-  }
+  const derived = deriveServiceTokenKey(KEY_DERIVATION_LABEL, env);
+  if (derived) return derived;
   if (!hosted) {
     ephemeralKey ??= randomBytes(32);
     return ephemeralKey;

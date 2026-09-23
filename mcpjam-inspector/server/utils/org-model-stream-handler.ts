@@ -45,6 +45,13 @@ import {
 } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { UNVERIFIED_APPROVAL_RESULT } from "./tool-approval-token.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  presentHistoryForModel,
+  toolCallLookupFor,
+  type HistoryPresentation,
+} from "./history-provenance.js";
 import { logger } from "./logger.js";
 import {
   createSystemStreamFailureReporter,
@@ -112,6 +119,8 @@ export interface OrgModelHandlerOptions {
    * handler (see `MCPJamHandlerOptions.clientSuppliedHistory`, MJ-008).
    */
   clientSuppliedHistory?: boolean;
+  /** Forwarded; see `MCPJamHandlerOptions.historyPresentation` (MJ-009). */
+  historyPresentation?: HistoryPresentation;
   /**
    * Persist tap. May return the ingest's outcome so the rail can stream a
    * `data-persist-receipt` before closing. See `PersistChatOutcome`.
@@ -278,6 +287,11 @@ export function formatLocalStreamError(error: unknown): string {
 export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
+  /**
+   * Shape what each step sends to the model (MJ-009); see
+   * `MCPJamHandlerOptions.historyPresentation`.
+   */
+  historyPresentation?: HistoryPresentation;
   projectId: string;
   modelId: string;
   chatSessionId?: string;
@@ -490,6 +504,7 @@ export function handleLocalOrgChatModel(
     onStreamComplete,
     onStreamWriterReady,
     onLiveTextDelta,
+    historyPresentation,
   } = options;
 
   // One typed route.operation.failed per turn across this handler's failure
@@ -498,6 +513,16 @@ export function handleLocalOrgChatModel(
     options.failureReporter ??
       createSystemStreamFailureReporter("org-local-stream")
   );
+
+  // Sign what this turn streams as the server's own (MJ-009); a no-op where
+  // provenance is off.
+  const provenanceContext = historyProvenanceContextFor(options.projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messages),
+      )
+    : undefined;
 
   // Deliberately NOT reported as an operation failure: this is a declared
   // product limitation surfaced to the user, not something that broke.
@@ -640,6 +665,16 @@ export function handleLocalOrgChatModel(
         maxSteps: resolvedMaxSteps,
         shouldPauseAfterStep: options.shouldPauseAfterStep,
         suspendedToolCallId: options.suspendedToolCallId,
+        ...(historyPresentation
+          ? {
+              transformStepMessages: (stepMessages: ModelMessage[]) =>
+                presentHistoryForModel(
+                  stepMessages,
+                  tools,
+                  historyPresentation,
+                ),
+            }
+          : {}),
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).
         traceEvents: buildDirectChatTraceCallbacks(writer),
@@ -735,7 +770,8 @@ export function handleLocalOrgChatModel(
             });
             continue;
           }
-          writer.write(withMcpToolOriginChunkMetadata(chunk, options.tools));
+          const outgoing = withMcpToolOriginChunkMetadata(chunk, options.tools);
+          writer.write(signChunk ? signChunk(outgoing) : outgoing);
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
@@ -966,6 +1002,9 @@ export async function handleHostedOrgChatModel(
       ? { approvalMode: options.approvalMode }
       : {}),
     ...(options.clientSuppliedHistory ? { clientSuppliedHistory: true } : {}),
+    ...(options.historyPresentation
+      ? { historyPresentation: options.historyPresentation }
+      : {}),
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
