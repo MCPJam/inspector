@@ -61,6 +61,7 @@ import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-
 import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
 import { consumeUrlFlag } from "@/lib/url-flag";
 import { track } from "@/lib/analytics";
+import { navigateToSupport } from "@/lib/support-navigation";
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
@@ -154,9 +155,7 @@ function getPlanColumnCta(params: {
       label: "Contact us",
       disabled: false,
       variant: "outline",
-      onClick: () => {
-        window.location.href = "https://www.mcpjam.com/contact";
-      },
+      onClick: navigateToSupport,
     };
   }
 
@@ -175,9 +174,7 @@ function getPlanColumnCta(params: {
       variant: "outline",
       tooltip:
         "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
-      onClick: () => {
-        window.location.href = "https://www.mcpjam.com/contact";
-      },
+      onClick: navigateToSupport,
     };
   }
 

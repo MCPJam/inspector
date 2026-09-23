@@ -21,6 +21,7 @@ const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 const trackMock = vi.hoisted(() => vi.fn());
+const navigateToSupportMock = vi.hoisted(() => vi.fn());
 
 function mockReservedBillingTab() {
   const reservedTab = {
@@ -347,6 +348,9 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
+vi.mock("@/lib/support-navigation", () => ({
+  navigateToSupport: navigateToSupportMock,
+}));
 
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: (...args: unknown[]) =>
@@ -554,24 +558,10 @@ describe("OrganizationsTab billing", () => {
       proColumn.queryByRole("button", { name: "Downgrade" }),
     ).not.toBeInTheDocument();
 
-    const original = window.location;
-    const stubbedLocation = { href: "" };
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: stubbedLocation,
-    });
-    try {
-      fireEvent.click(teamContact);
-      expect(stubbedLocation.href).toBe("https://www.mcpjam.com/contact");
-      stubbedLocation.href = "";
-      fireEvent.click(proContact);
-      expect(stubbedLocation.href).toBe("https://www.mcpjam.com/contact");
-    } finally {
-      Object.defineProperty(window, "location", {
-        configurable: true,
-        value: original,
-      });
-    }
+    fireEvent.click(teamContact);
+    expect(navigateToSupportMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(proContact);
+    expect(navigateToSupportMock).toHaveBeenCalledTimes(2);
   });
 
   it("offers the cadence change rather than calling the other cadence current", () => {
