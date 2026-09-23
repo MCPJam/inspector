@@ -287,6 +287,20 @@ export type RequestEventMap = {
     secretCount: number;
     isScenarioSession: boolean;
   };
+  /**
+   * Built-in tool ids a chat request asked for that the turn did not get
+   * (MJ-008): unknown ids, ids outside the host or project configuration, and
+   * workspace operations the caller's project role does not allow.
+   *
+   * `toolIds` holds catalog names only. An unknown id is free text from the
+   * request body, so it is counted in `unknownCount` and never echoed.
+   */
+  "chat.builtin_tools.withheld": {
+    toolIds: string[];
+    unknownCount: number;
+    reasons: string[];
+    targetKind: "adhoc" | "host" | "environment" | "scenario";
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"
