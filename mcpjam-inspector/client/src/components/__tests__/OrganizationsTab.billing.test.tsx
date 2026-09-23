@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import { toast } from "sonner";
+import { ConvexError } from "convex/values";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
@@ -2863,6 +2864,48 @@ describe("OrganizationsTab billing", () => {
     expect(toast.success).toHaveBeenCalledWith(
       "Plan change scheduled for renewal.",
     );
+  });
+
+  it("shows the refusal sentence, not the Convex payload, when a plan change is refused", async () => {
+    // Convex sets `.message` to the stringified payload and puts the real
+    // object on `.data`, so reading `.message` toasts JSON with the code in it.
+    const refusal = new ConvexError({
+      code: "billing_plan_change_requires_support",
+      message:
+        "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
+      currentCatalogPlanId: "team_v1",
+      requestedCatalogPlanId: "pro",
+    });
+    const startPlanChange = vi.fn().mockRejectedValue(refusal);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    fireEvent.click(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    );
+    fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        errorToastMessage(
+          "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
+        ),
+        { duration: 8000 },
+      ),
+    );
+    const toasted = vi
+      .mocked(toast.error)
+      .mock.calls.map(
+        ([node]) => (node as { props?: { text?: string } })?.props?.text ?? "",
+      )
+      .join(" ");
+    expect(toasted).not.toContain("billing_plan_change_requires_support");
   });
 
   it("auto-checks out billing deep links in the same tab", async () => {

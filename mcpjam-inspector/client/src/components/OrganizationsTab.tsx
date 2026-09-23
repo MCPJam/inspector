@@ -1011,9 +1011,11 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
       });
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Payment was not completed. The member was not added.",
+        getBillingErrorMessage(
+          error,
+          "Payment was not completed. The member was not added.",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1072,9 +1074,11 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
       });
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Payment was not completed. The member was not added.",
+        getBillingErrorMessage(
+          error,
+          "Payment was not completed. The member was not added.",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1171,9 +1175,11 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
       });
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to cancel pending seat payment",
+        getBillingErrorMessage(
+          error,
+          "Failed to cancel pending seat payment",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     } finally {
       if (isInviteRemoval) {
@@ -1391,9 +1397,11 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
       });
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to open billing portal",
+        getBillingErrorMessage(
+          error,
+          "Failed to open billing portal",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1436,9 +1444,11 @@ function OrganizationPage({
         target_interval: targetBillingInterval,
       });
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to open billing interval change",
+        getBillingErrorMessage(
+          error,
+          "Failed to open billing interval change",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1517,9 +1527,11 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
       });
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to cancel scheduled billing change",
+        getBillingErrorMessage(
+          error,
+          "Failed to cancel scheduled billing change",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1570,7 +1582,11 @@ function OrganizationPage({
         target_plan: "free",
       });
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan",
+        getBillingErrorMessage(
+          error,
+          "Failed to change plan",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1661,7 +1677,11 @@ function OrganizationPage({
         target_interval: billingInterval,
       });
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan",
+        getBillingErrorMessage(
+          error,
+          "Failed to change plan",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1773,13 +1793,18 @@ function OrganizationPage({
           error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
         )) {
           toast.error(
-            error instanceof Error ? error.message : "Failed to change plan",
+            getBillingErrorMessage(
+              error,
+              "Failed to change plan",
+              billingStatus?.canManageBilling ?? false,
+            ),
           );
         }
         throw error;
       }
     },
     [
+      billingStatus?.canManageBilling,
       getBillingReturnUrl,
       billingStatus?.plan,
       onCheckoutIntentNavigationStarted,
