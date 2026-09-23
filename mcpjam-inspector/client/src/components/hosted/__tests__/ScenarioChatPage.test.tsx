@@ -386,6 +386,13 @@ describe("ScenarioChatPage", () => {
           headers: { Authorization: "Bearer workos-token" },
         }),
       );
+      const fetchMock = vi.mocked(global.fetch);
+      const revokeIndex = fetchMock.mock.calls.findIndex(
+        ([url]) => url === "/api/web/auth-session/revoke",
+      );
+      expect(fetchMock.mock.invocationCallOrder[revokeIndex]).toBeLessThan(
+        mockSignOut.mock.invocationCallOrder[0],
+      );
       const returnTo = mockSignOut.mock.calls[0][0].returnTo;
       const destination = new URL(returnTo);
       expect(destination.pathname).toBe("/user-testing/scenario/switch-token");
