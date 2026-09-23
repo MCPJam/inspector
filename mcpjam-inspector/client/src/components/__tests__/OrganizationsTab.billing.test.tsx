@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import { toast } from "sonner";
+import { ConvexError } from "convex/values";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
@@ -22,6 +23,7 @@ const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 const trackMock = vi.hoisted(() => vi.fn());
+const navigateToSupportMock = vi.hoisted(() => vi.fn());
 
 function mockReservedBillingTab() {
   const reservedTab = {
@@ -39,8 +41,6 @@ const {
   deleteOrganizationMock,
   changeMemberRoleMock,
   transferOrganizationOwnershipMock,
-  generateLogoUploadUrlMock,
-  updateOrganizationLogoMock,
 } = vi.hoisted(() => ({
   addMemberMock: vi.fn(),
   removeMemberMock: vi.fn(),
@@ -48,8 +48,6 @@ const {
   deleteOrganizationMock: vi.fn(),
   changeMemberRoleMock: vi.fn(),
   transferOrganizationOwnershipMock: vi.fn(),
-  generateLogoUploadUrlMock: vi.fn(),
-  updateOrganizationLogoMock: vi.fn(),
 }));
 
 function createPlanCatalog() {
@@ -177,6 +175,33 @@ function billingStatusFixture(
     decisionRequired: false,
     trialDecision: null,
     ...overrides,
+  };
+}
+
+/** The v2 catalog: flat Pro and Team, both bundles carrying a catalogPlanId. */
+function createV2PlanCatalog() {
+  const legacy = createPlanCatalog();
+  return {
+    ...legacy,
+    plans: {
+      ...legacy.plans,
+      free: { ...legacy.plans.free, catalogPlanId: "free" },
+      pro: {
+        ...legacy.plans.team,
+        plan: "pro",
+        displayName: "Pro",
+        billingModel: "flat",
+        catalogPlanId: "pro",
+        prices: { monthly: 2900, annual: 28800 },
+        checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+      },
+      team: {
+        ...legacy.plans.team,
+        catalogPlanId: "team",
+        billingModel: "flat",
+        prices: { monthly: 24900, annual: 238800 },
+      },
+    },
   };
 }
 
@@ -321,6 +346,9 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
+vi.mock("@/lib/support-navigation", () => ({
+  navigateToSupport: navigateToSupportMock,
+}));
 
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: (...args: unknown[]) =>
@@ -334,8 +362,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
     changeMemberRole: changeMemberRoleMock,
     transferOrganizationOwnership: transferOrganizationOwnershipMock,
     removeMember: removeMemberMock,
-    generateLogoUploadUrl: generateLogoUploadUrlMock,
-    updateOrganizationLogo: updateOrganizationLogoMock,
   }),
   resolveOrganizationRole: (member: { role?: string; isOwner?: boolean }) => {
     if (member.role) return member.role;
@@ -540,6 +566,121 @@ describe("OrganizationsTab billing", () => {
       ).toBeDisabled();
     },
   );
+
+  it("sends a legacy per-seat Team org to support instead of offering plan changes", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          catalogPlanId: "team_v1",
+          priceModel: "per_seat",
+          billingInterval: "monthly",
+          hasCustomer: true,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    // Both columns change the Stripe quantity (N seats -> 1), which the
+    // update-confirm flow refuses with billing_plan_change_requires_support.
+    // The CTA carries an explanatory tooltip; that must not render it inert.
+    const teamColumn = within(getPlanColumn("Team"));
+    const teamContact = teamColumn.getByRole("button", { name: "Contact us" });
+    expect(teamContact).toBeEnabled();
+    expect(teamContact).not.toHaveAttribute("aria-disabled", "true");
+    expect(
+      teamColumn.queryByRole("button", { name: "Change plan" }),
+    ).not.toBeInTheDocument();
+
+    const proColumn = within(getPlanColumn("Pro"));
+    const proContact = proColumn.getByRole("button", { name: "Contact us" });
+    expect(proContact).toBeEnabled();
+    expect(proContact).not.toHaveAttribute("aria-disabled", "true");
+    expect(
+      proColumn.queryByRole("button", { name: "Downgrade" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(teamContact);
+    expect(navigateToSupportMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(proContact);
+    expect(navigateToSupportMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers the cadence change rather than calling the other cadence current", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "pro",
+          effectivePlan: "pro",
+          catalogPlanId: "pro",
+          priceModel: "flat",
+          billingInterval: "monthly",
+          hasCustomer: true,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    // The table opens on the cadence the org holds.
+    expect(
+      within(getPlanColumn("Pro")).getByRole("button", {
+        name: "Current plan",
+      }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+
+    // Pro annual is a different price than the one this org is on, so the
+    // column has to offer it rather than claim the org is already there.
+    expect(
+      within(getPlanColumn("Pro")).getByRole("button", { name: "Change plan" }),
+    ).toBeEnabled();
+  });
+
+  it("does not call a cadence the bundle does not sell the current plan", () => {
+    const base = createV2PlanCatalog();
+    const catalog = {
+      ...base,
+      plans: {
+        ...base.plans,
+        pro: {
+          ...base.plans.pro,
+          prices: { monthly: 2900, annual: null },
+          checkout: { plan: "pro", supportedIntervals: ["monthly"] },
+        },
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "pro",
+          effectivePlan: "pro",
+          catalogPlanId: "pro",
+          priceModel: "flat",
+          billingInterval: "monthly",
+          hasCustomer: true,
+        }),
+        planCatalog: catalog,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+
+    const proColumn = within(getPlanColumn("Pro"));
+    expect(
+      proColumn.getByRole("button", { name: "Unavailable" }),
+    ).toBeDisabled();
+    expect(
+      proColumn.queryByRole("button", { name: "Current plan" }),
+    ).not.toBeInTheDocument();
+  });
 
   it("shows loading feedback on a pending Pro upgrade", () => {
     const catalog = createPlanCatalog();
@@ -2725,6 +2866,48 @@ describe("OrganizationsTab billing", () => {
     );
   });
 
+  it("shows the refusal sentence, not the Convex payload, when a plan change is refused", async () => {
+    // Convex sets `.message` to the stringified payload and puts the real
+    // object on `.data`, so reading `.message` toasts JSON with the code in it.
+    const refusal = new ConvexError({
+      code: "billing_plan_change_requires_support",
+      message:
+        "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
+      currentCatalogPlanId: "team_v1",
+      requestedCatalogPlanId: "pro",
+    });
+    const startPlanChange = vi.fn().mockRejectedValue(refusal);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    fireEvent.click(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    );
+    fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        errorToastMessage(
+          "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
+        ),
+        { duration: 8000 },
+      ),
+    );
+    const toasted = vi
+      .mocked(toast.error)
+      .mock.calls.map(
+        ([node]) => (node as { props?: { text?: string } })?.props?.text ?? "",
+      )
+      .join(" ");
+    expect(toasted).not.toContain("billing_plan_change_requires_support");
+  });
+
   it("auto-checks out billing deep links in the same tab", async () => {
     const startPlanChange = vi.fn().mockResolvedValue({
       kind: "checkout",
@@ -3153,6 +3336,43 @@ describe("OrganizationsTab billing", () => {
       "https://stripe.test/portal/interval",
     );
     openSpy.mockRestore();
+  });
+
+  it("hides the cadence-change link when the bundle has no price for that cadence", () => {
+    const base = createPlanCatalog();
+    const catalog = {
+      ...base,
+      plans: {
+        ...base.plans,
+        team: {
+          ...base.plans.team,
+          prices: { monthly: 3800, annual: null },
+          checkout: { plan: "team", supportedIntervals: ["monthly"] },
+        },
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_123",
+        }),
+        planCatalog: catalog,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    // The detail line still renders, so this asserts the link's absence and
+    // not an empty card.
+    expect(screen.getByText(/per seat\/month/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Change to annual" }),
+    ).not.toBeInTheDocument();
   });
 
   it("attributes the billing portal flow to the Plans route", async () => {

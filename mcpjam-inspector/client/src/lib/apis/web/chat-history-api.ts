@@ -1,5 +1,6 @@
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
+import { registerArtifactUrls } from "@/lib/artifact-urls";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { WebApiError, requestIdOfResponse } from "./base";
 import type {
@@ -290,10 +291,14 @@ export async function getChatHistoryDetail(
   searchParams.set("chatSessionId", params.chatSessionId);
   if (params.projectId) searchParams.set("projectId", params.projectId);
 
-  return webGet<ChatHistoryDetailResponse>(
+  const detail = await webGet<ChatHistoryDetailResponse>(
     `/api/web/chat-history/detail?${searchParams.toString()}`,
     requestOptions
   );
+  // Freshly minted artifact links: record them so anything still holding an
+  // older link to the same object reads through this one.
+  registerArtifactUrls(detail);
+  return detail;
 }
 
 export async function chatHistoryAction(
