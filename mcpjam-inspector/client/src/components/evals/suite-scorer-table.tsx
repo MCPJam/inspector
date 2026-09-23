@@ -58,6 +58,7 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
+import { BUILT_IN_BADGE } from "./runner-checks";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -623,7 +624,7 @@ function hasOnControl(row: ScorerTableRow): boolean {
 }
 
 /**
- * A row Edit evaluators opens. Required runner facts and match rows stay
+ * A row Edit evaluators opens. Built-in runner checks and match rows stay
  * closed: their settings are either absent or live in the stage's own
  * disclosure. An off check still opens — the checkbox and Edit evaluators
  * reveal every check, selected or not. The title itself is not a control.
@@ -762,7 +763,11 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {row.kind === "observed" || row.kind === "match" ? (
+            {row.kind === "observed" ? (
+              // A runner check decides nothing, so it wears no role: it is on
+              // for every iteration and reports the stage analysis.
+              <Badge variant="outline">{BUILT_IN_BADGE}</Badge>
+            ) : row.kind === "match" ? (
               <Badge variant="outline">Required</Badge>
             ) : null}
           </div>
