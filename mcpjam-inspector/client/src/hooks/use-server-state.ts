@@ -3463,6 +3463,7 @@ export function useServerState({
       options?: {
         suppressErrorToast?: boolean;
         suppressSuccessToast?: boolean;
+        requestOAuthAuthorization?: (serverName: string) => Promise<boolean>;
       }
     ) => {
       const showConnectionError = (
@@ -3744,7 +3745,9 @@ export function useServerState({
               showConnectionError(errorMessage);
               return;
             }
-            const proceed = await confirmAutoOAuthEscalation(formData.name);
+            const requestOAuthAuthorization =
+              options?.requestOAuthAuthorization ?? confirmAutoOAuthEscalation;
+            const proceed = await requestOAuthAuthorization(formData.name);
             if (isStaleOp(formData.name, token)) return;
             if (!proceed) {
               failWithoutEscalation(

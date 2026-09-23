@@ -25,6 +25,7 @@ function renderOverlay(
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
+  const onAuthorizeConnection = vi.fn();
   const onCancelConnection = vi.fn();
   const onReturnToChoice = vi.fn();
   const onOpenPlayground = vi.fn();
@@ -37,6 +38,7 @@ function renderOverlay(
       connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
+      onAuthorizeConnection={onAuthorizeConnection}
       onCancelConnection={onCancelConnection}
       onReturnToChoice={onReturnToChoice}
       onOpenPlayground={onOpenPlayground}
@@ -48,6 +50,7 @@ function renderOverlay(
     view,
     onConnectOwnServer,
     onConnectDemo,
+    onAuthorizeConnection,
     onCancelConnection,
     onReturnToChoice,
     onOpenPlayground,
@@ -63,6 +66,7 @@ function renderOverlay(
           connectionState={nextConnectionState}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
+          onAuthorizeConnection={onAuthorizeConnection}
           onCancelConnection={onCancelConnection}
           onReturnToChoice={onReturnToChoice}
           onOpenPlayground={onOpenPlayground}
@@ -387,6 +391,39 @@ describe("FirstRunOnboardingOverlay", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();
+  });
+
+  it("keeps OAuth authorization inside the connection modal", () => {
+    const {
+      onAuthorizeConnection,
+      onCancelConnection,
+      rerenderWithConnectionState,
+    } = renderOverlay();
+
+    rerenderWithConnectionState({
+      status: "authorization-required",
+      serverName: "Multiaccount",
+      serverKind: "personal",
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Authorize Multiaccount" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/requires OAuth.*finish connecting/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Reach server").parentElement?.querySelector("svg"),
+    ).toHaveClass("text-success");
+    expect(
+      screen.getByText("Negotiate MCP compatibility").parentElement,
+    ).toHaveClass("text-left");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize and continue" }),
+    );
+    expect(onAuthorizeConnection).toHaveBeenCalledOnce();
+    expect(onCancelConnection).not.toHaveBeenCalled();
   });
 
   it("keeps demo failures out of the personal-server credential form", () => {

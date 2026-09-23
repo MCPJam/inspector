@@ -3715,6 +3715,41 @@ describe("useServerState auth mode regressions", () => {
     mockConvexQuery.mockResolvedValue(null);
   });
 
+  it("lets an inline surface own Auto's OAuth authorization prompt", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        {
+          suppressErrorToast: true,
+          suppressSuccessToast: true,
+          requestOAuthAuthorization,
+        },
+      );
+    });
+
+    expect(requestOAuthAuthorization).toHaveBeenCalledOnce();
+    expect(requestOAuthAuthorization).toHaveBeenCalledWith("auto-server");
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
   it("dispatches explicit non-OAuth success when updating an OAuth server to direct auth", async () => {
     const { deleteServer } = await import("@/state/mcp-api");
     vi.mocked(deleteServer).mockResolvedValue({ success: true } as any);
