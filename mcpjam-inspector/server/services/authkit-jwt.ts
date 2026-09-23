@@ -2,6 +2,7 @@ import {
   createRemoteJWKSet,
   decodeJwt,
   jwtVerify,
+  type JWTPayload,
   type JWTVerifyGetKey,
   type KeyLike,
 } from "jose";
@@ -124,6 +125,7 @@ const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 /** Test-only: drop cached key sets so a new emulator's JWKS is fetched fresh. */
 export function resetAuthKitJwksCacheForTests(): void {
   jwksCache.clear();
+  keysUnavailableUntil.clear();
 }
 function remoteJwks(url: string): ReturnType<typeof createRemoteJWKSet> {
   let set = jwksCache.get(url);
@@ -222,4 +224,177 @@ export async function verifyAuthKitToken(
   const orgIdClaim = (payload as { org_id?: unknown }).org_id;
   const orgId = typeof orgIdClaim === "string" ? orgIdClaim : undefined;
   return { sub, orgId };
+}
+
+// ---------------------------------------------------------------------------
+// Gateway verification (`bearerAuthMiddleware`)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the gateway concluded about a bearer that is not an `sk_` key, a
+ * service credential or a valid guest token.
+ *
+ * - `verified` — signed by a trusted AuthKit issuer, unexpired, and issued for
+ *   this environment's client id: the same set of tokens `verifyAuthKitToken`
+ *   accepts.
+ * - `invalid` — claims a trusted AuthKit issuer and fails verification: a bad
+ *   signature, an unknown signing key, expired or not yet valid, malformed,
+ *   no `sub`, or (for the `api.workos.com`-style issuers) an audience other
+ *   than our client id. Nothing downstream would accept it either.
+ * - `foreign_audience` — correctly signed and unexpired by the AuthKit OAuth
+ *   issuer, but for a different audience (the MCP worker's resource
+ *   indicator, a Connect OAuth application such as the CLI). The backend
+ *   accepts these on some paths, so the gateway lets them through for
+ *   downstream to judge rather than rejecting a valid credential.
+ * - `keys_unavailable` — the issuer is trusted but its signing keys could not
+ *   be fetched. The gateway cannot decide; downstream still verifies.
+ * - `not_authkit` — not a JWT, or not from an AuthKit issuer (MCPJam-minted
+ *   guest/delegated tokens, which the backend verifies against its own keys),
+ *   or AuthKit is not configured on this deployment.
+ */
+export type AuthKitBearerVerdict =
+  | { kind: "verified"; sub: string; sid?: string; orgId?: string }
+  | { kind: "invalid"; reason: string }
+  | { kind: "foreign_audience" }
+  | { kind: "keys_unavailable"; issuer: string; reason: string }
+  | { kind: "not_authkit" };
+
+export interface AuthKitGatewayDeps extends AuthKitVerifyDeps {
+  /**
+   * Issuers whose tokens the backend accepts for more than one audience: the
+   * AuthKit OAuth issuer. Its access tokens are verified here for signature,
+   * issuer and expiry, and an audience other than the client id is left to
+   * the backend (see {@link AuthKitBearerVerdict}).
+   */
+  anyAudienceIssuers: ReadonlySet<string>;
+}
+
+function defaultGatewayDeps(): AuthKitGatewayDeps {
+  const base = defaultDeps();
+  const oauthIssuer = resolveAuthkitIssuer(base.clientId);
+  return {
+    ...base,
+    anyAudienceIssuers: new Set(oauthIssuer ? [oauthIssuer] : []),
+  };
+}
+
+/**
+ * jose failure codes that are a verdict on the TOKEN. Anything else — a JWKS
+ * timeout, a non-200 or unparseable key set, a network error — is a failure to
+ * reach a verdict, and is treated as {@link AuthKitBearerVerdict}
+ * `keys_unavailable`.
+ */
+const TOKEN_REJECTION_CODES = new Set([
+  "ERR_JWT_EXPIRED",
+  "ERR_JWT_CLAIM_VALIDATION_FAILED",
+  "ERR_JWT_INVALID",
+  "ERR_JWS_INVALID",
+  "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+  "ERR_JOSE_ALG_NOT_ALLOWED",
+  "ERR_JOSE_NOT_SUPPORTED",
+  "ERR_JWKS_NO_MATCHING_KEY",
+  "ERR_JWKS_MULTIPLE_MATCHING_KEYS",
+]);
+
+/**
+ * After an issuer's keys could not be fetched, how long the gateway stops
+ * trying and defers to downstream verification.
+ *
+ * jose does not cache a failed fetch, so without this every request during a
+ * JWKS outage would wait out the fetch timeout before being let through.
+ * Per issuer, so a token naming an issuer whose key set is broken cannot turn
+ * verification off for the others.
+ */
+export const AUTHKIT_KEYS_UNAVAILABLE_BACKOFF_MS = 30_000;
+const keysUnavailableUntil = new Map<string, number>();
+
+function stringClaim(payload: JWTPayload, name: string): string | undefined {
+  const value = (payload as Record<string, unknown>)[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Classify a bearer for `bearerAuthMiddleware`. Never throws for a bad token;
+ * a genuinely unexpected error (a bug here) propagates.
+ */
+export async function classifyAuthKitBearer(
+  token: string,
+  deps?: AuthKitGatewayDeps,
+  now: number = Date.now(),
+): Promise<AuthKitBearerVerdict> {
+  let issuer: string | undefined;
+  try {
+    const iss = decodeJwt(token).iss;
+    issuer = typeof iss === "string" && iss.length > 0 ? iss : undefined;
+  } catch {
+    return { kind: "not_authkit" };
+  }
+  if (!issuer) return { kind: "not_authkit" };
+
+  let resolved: AuthKitGatewayDeps;
+  try {
+    resolved = deps ?? defaultGatewayDeps();
+  } catch (error) {
+    if (error instanceof AuthKitConfigError) return { kind: "not_authkit" };
+    throw error;
+  }
+  const key = resolved.resolveKey(issuer);
+  if (!key) return { kind: "not_authkit" };
+
+  const backoffUntil = keysUnavailableUntil.get(issuer);
+  if (backoffUntil !== undefined) {
+    if (now < backoffUntil) {
+      return {
+        kind: "keys_unavailable",
+        issuer,
+        reason: "signing keys recently unreachable",
+      };
+    }
+    keysUnavailableUntil.delete(issuer);
+  }
+
+  const getKey: JWTVerifyGetKey =
+    typeof key === "function" ? (key as JWTVerifyGetKey) : async () => key;
+  let payload: JWTPayload;
+  try {
+    ({ payload } = await jwtVerify(token, getKey, {
+      issuer,
+      algorithms: ["RS256"],
+      clockTolerance: 5,
+      requiredClaims: ["exp"],
+      currentDate: new Date(now),
+    }));
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && TOKEN_REJECTION_CODES.has(code)) {
+      return { kind: "invalid", reason: code };
+    }
+    keysUnavailableUntil.set(issuer, now + AUTHKIT_KEYS_UNAVAILABLE_BACKOFF_MS);
+    return {
+      kind: "keys_unavailable",
+      issuer,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const sub = stringClaim(payload, "sub");
+  if (!sub) return { kind: "invalid", reason: "missing_sub" };
+
+  const audiences =
+    typeof payload.aud === "string"
+      ? [payload.aud]
+      : Array.isArray(payload.aud)
+        ? payload.aud
+        : [];
+  if (audiences.includes(resolved.clientId)) {
+    return {
+      kind: "verified",
+      sub,
+      sid: stringClaim(payload, "sid"),
+      orgId: stringClaim(payload, "org_id"),
+    };
+  }
+  return resolved.anyAudienceIssuers.has(issuer)
+    ? { kind: "foreign_audience" }
+    : { kind: "invalid", reason: "audience" };
 }

@@ -37,6 +37,7 @@ import score from "./score.js";
 import bench from "./bench.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
+import authSession from "./auth-session.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
@@ -275,6 +276,9 @@ web.route("/shared", sharedResources);
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are
 // explicitly rejected with 403 inside the router).
 web.route("/api-keys", apiKeys);
+// Sign-out's session revocation (MJ-011). Brings its own bearer middleware for
+// the same reason `/api-keys` does.
+web.route("/auth-session", authSession);
 
 // Public guest JWKS compatibility endpoint.
 web.get("/guest-jwks", async (c) => {

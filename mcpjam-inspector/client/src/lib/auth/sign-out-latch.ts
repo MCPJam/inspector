@@ -45,7 +45,9 @@ export const SIGN_OUT_SUPPRESSION_WINDOW_MS = 10_000;
  * How long the Electron sign-out waits for its logout request before it
  * navigates anyway.
  *
- * INVARIANT: must stay BELOW `SIGN_OUT_SUPPRESSION_WINDOW_MS`.
+ * INVARIANT: must stay BELOW `SIGN_OUT_SUPPRESSION_WINDOW_MS` — and so must
+ * this plus `SIGN_OUT_REVOKE_TOKEN_TIMEOUT_MS` (`revoke-session.ts`), because
+ * a sign-out first waits, bounded, for the token it revokes the session with.
  *
  * The Electron path cannot let authkit navigate for it — WorkOS only redirects
  * to a URI its dashboard allowlists — so it calls `signOut({navigate: false})`,

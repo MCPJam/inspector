@@ -52,6 +52,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
+| `auth.session.revoke_incomplete` | `routes/web/auth-session.ts` | `reason` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
 | `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
 

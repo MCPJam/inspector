@@ -5,16 +5,15 @@ import { getClientIp } from "../utils/client-ip.js";
 import { HOSTED_MODE } from "../config.js";
 
 /**
- * A spike brake on the `unverified_passthrough` branch of `bearerAuthMiddleware`.
+ * A spike brake on the JWT branches of `bearerAuthMiddleware`:
+ * `unverified_passthrough` and `authkit_jwt`.
  *
- * That branch is the one credential class the gateway does not check. An `sk_`
- * key is validated against WorkOS and metered per key; a guest token is
- * validated and metered per guest id. An AuthKit JWT is deliberately NOT
- * verified here — every route it fronts forwards the bearer to Convex, which
- * verifies it against AuthKit's JWKS, and verifying twice would add a JWKS
- * round trip to the hot path to reach the same answer. That reasoning is
- * sound, and it left this branch as the only one that reached the handlers
- * with no budget attached to it at all.
+ * An `sk_` key is validated against WorkOS and metered per key; a guest token
+ * is validated and metered per guest id. A signed-in AuthKit JWT — whether the
+ * gateway verified it (`authkit_jwt`) or let it through for Convex to verify
+ * (`unverified_passthrough`) — has no budget of its own anywhere else, so both
+ * labels are metered here. Verification changes whether the caller is who the
+ * token says; it does not change how fast they may call.
  *
  * ## What this is, and what it is not
  *
@@ -194,18 +193,26 @@ function tooMany(c: Context, retryAfterMs: number) {
   );
 }
 
+/** The labels `bearerAuthMiddleware` gives a JWT caller. */
+const METERED_AUTH_METHODS: ReadonlySet<string> = new Set([
+  "unverified_passthrough",
+  "authkit_jwt",
+]);
+
 /**
  * Mounted AFTER `bearerAuthMiddleware`, which is what makes the narrow
- * condition below possible: the label it sets is the only thing that
- * distinguishes an asserted identity from a verified one, and every other
- * branch already carries its own budget.
+ * condition below possible: the label it sets is what distinguishes a JWT
+ * caller from the branches that already carry their own budget.
  */
 export async function passthroughRateLimitMiddleware(
   c: Context,
   next: Next
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
-  if (c.get("authMethod") !== "unverified_passthrough") return next();
+  const authMethod = c.get("authMethod");
+  if (typeof authMethod !== "string" || !METERED_AUTH_METHODS.has(authMethod)) {
+    return next();
+  }
 
   const authorization = c.req.header("authorization");
   // An EMPTY bearer still gets a token key, deliberately. `bearerAuthMiddleware`

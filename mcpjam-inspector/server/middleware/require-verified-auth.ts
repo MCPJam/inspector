@@ -1,12 +1,13 @@
 /**
  * For the v1 routes that DON'T forward the bearer to Convex.
  *
- * `bearerAuthMiddleware` deliberately lets an unrecognized bearer through
- * unverified: almost every v1 route hands the token to Convex, which verifies
- * it against AuthKit's JWKS before doing anything, so verifying here too would
- * add a JWKS round trip to reach the same answer. The fallthrough is labelled
- * `authMethod: "unverified_passthrough"` precisely because it is an assertion,
- * not a fact.
+ * `bearerAuthMiddleware` verifies an AuthKit access token issued for this
+ * environment's client id (`authMethod: "authkit_jwt"`), and refuses one that
+ * claims an AuthKit issuer and fails. Everything it could NOT verify — an
+ * AuthKit token for another audience, any bearer while AuthKit's signing keys
+ * are unreachable, a non-AuthKit JWT — still goes through labelled
+ * `authMethod: "unverified_passthrough"`, because almost every route hands the
+ * token to Convex, which verifies it. That label is an assertion, not a fact.
  *
  * Two v1 routes serve a response WITHOUT ever calling Convex:
  *
@@ -89,8 +90,9 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
         : unauthorized(c);
     }
 
-    // Any other established method. `unverified_passthrough` is excluded
-    // deliberately — see the header: it is an assertion, not a verification.
+    // Any other established method, including a gateway-verified
+    // `authkit_jwt`. `unverified_passthrough` is excluded deliberately — see
+    // the header: it is an assertion, not a verification.
     if (authMethod && authMethod !== "unverified_passthrough") {
       return next();
     }

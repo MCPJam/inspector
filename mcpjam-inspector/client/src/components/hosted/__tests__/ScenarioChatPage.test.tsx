@@ -373,6 +373,17 @@ describe("ScenarioChatPage", () => {
       fireEvent.click(
         await screen.findByRole("button", { name: "Switch accounts" }),
       );
+      // Sign-out first revokes the session it is leaving (MJ-011), with the
+      // token it is about to discard, then hands over to WorkOS.
+      await waitFor(() => expect(mockSignOut).toHaveBeenCalled());
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/web/auth-session/revoke",
+        expect.objectContaining({
+          method: "POST",
+          keepalive: true,
+          headers: { Authorization: "Bearer workos-token" },
+        }),
+      );
       const returnTo = mockSignOut.mock.calls[0][0].returnTo;
       const destination = new URL(returnTo);
       expect(destination.pathname).toBe("/user-testing/scenario/switch-token");

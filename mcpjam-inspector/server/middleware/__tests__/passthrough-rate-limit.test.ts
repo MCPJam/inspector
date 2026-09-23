@@ -28,7 +28,11 @@ const {
  * directly so this file pins the LIMITER rather than re-testing bearer
  * classification.
  */
-type AuthMethod = "unverified_passthrough" | "workos_api_key" | "guest";
+type AuthMethod =
+  | "unverified_passthrough"
+  | "authkit_jwt"
+  | "workos_api_key"
+  | "guest";
 
 function app(authMethod: AuthMethod = "unverified_passthrough") {
   const a = new Hono();
@@ -77,6 +81,17 @@ describe("what it meters", () => {
     const retryAfter = Number(res.headers.get("retry-after"));
     expect(retryAfter).toBeGreaterThanOrEqual(1);
     expect(retryAfter).toBeLessThanOrEqual(60);
+  });
+
+  it("meters a gateway-VERIFIED AuthKit JWT exactly like an unverified one", async () => {
+    // Verification says who the caller is, not how fast they may call: a
+    // verified session token has no budget of its own anywhere else either.
+    const a = app("authkit_jwt");
+    for (let i = 0; i < PASSTHROUGH_TOKEN_LIMIT; i++) {
+      expect((await a.request("/x", req("tok-verified"))).status).toBe(200);
+    }
+
+    expect((await a.request("/x", req("tok-verified"))).status).toBe(429);
   });
 
   it("keys per token, so one caller cannot exhaust another's budget", async () => {
