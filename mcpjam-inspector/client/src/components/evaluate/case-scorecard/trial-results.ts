@@ -39,7 +39,10 @@ import {
   type ScorerRole,
 } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
-import { hostedCriterionId } from "@/shared/hosted-criterion-id";
+import {
+  hostedCriterionId,
+  HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
+} from "@/shared/hosted-criterion-id";
 import {
   assembleStepResults,
   type EvalStepEvidence,
@@ -79,6 +82,19 @@ export type TrialRowResult =
       source: TrialRowResultSource;
       reason?: string;
       value?: number;
+      threshold?: number;
+    }
+  /**
+   * A rubric-check criterion the classifier could not call: P(yes) inside
+   * `RUBRIC_CHECK_UNCERTAIN_BAND`. PRESENTATION only — the stored row still
+   * says `passed = value >= 0.5`, and nothing gates on it — but a coin flip
+   * wearing a pass or a miss glyph reads as a finding it is not.
+   */
+  | {
+      state: "uncertain";
+      source: "scoreRow";
+      reason?: string;
+      value: number;
       threshold?: number;
     }
   | { state: "error"; source: "scoreRow" | "judgeCase"; reason: string }
@@ -471,9 +487,94 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
       evidence: scoreEvidence(scored.score, scored.definition, row),
     };
   }
+  // The goal verdict answers for the goal judge's row ONLY. Any other judge
+  // row borrowing it would show the goal judge's score under its own name.
   const judge = ctx.judgeCase;
-  if (judge) return { ...row, result: judgeResult(judge) };
+  if (judge && join.slot === "goalCompletion") {
+    return { ...row, result: judgeResult(judge) };
+  }
   return { ...row, result: NOT_MEASURED };
+}
+
+/**
+ * The band, on P(yes), where a rubric-check criterion reads Uncertain. A
+ * classifier at 0.51 has not said yes; it has declined to decide.
+ */
+export const RUBRIC_CHECK_UNCERTAIN_BAND = { from: 0.4, below: 0.6 } as const;
+
+const RUBRIC_CHECK_LABEL_PREFIX = "rubric check: ";
+
+/**
+ * The rubric-check rows this trial was ACTUALLY graded with.
+ *
+ * Built from the trial's stored score rows, joined to their definitions the
+ * same way every other row is (recomputed `definitionHash`), rather than from
+ * the suite's current criteria: a criterion edited or removed since the run
+ * would otherwise show a row this trial was never asked, and a deployment
+ * that does not grade rubric checks would show rows that never fill in.
+ * Returned in the order the backend asked them, criteria first.
+ */
+export function rubricCheckTrialRows(
+  iteration: EvalIteration | null,
+): JoinedScorecardRow[] {
+  const metadata = iteration?.metadata;
+  if (!metadata) return [];
+  const scores = indexScores(
+    parseIterationScores(metadata),
+    parseEvaluationConfig(metadata),
+  );
+  const rows: JoinedScorecardRow[] = [];
+  for (const [scorerId, { score, definition }] of scores.byScorerId) {
+    if (!scorerId.startsWith(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX)) continue;
+    const key = scorerId.slice(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX.length);
+    const criterion = key.startsWith("c:");
+    const stored = definition?.label ?? "";
+    const label = stored.startsWith(RUBRIC_CHECK_LABEL_PREFIX)
+      ? stored.slice(RUBRIC_CHECK_LABEL_PREFIX.length)
+      : stored || key.slice(2);
+    const row: ScorecardRow = {
+      key: scorerId,
+      stage: "userValue",
+      provenance: "rubricCheck",
+      label,
+      kindLabel: "Rubric check",
+      role: "advisory",
+      roleLock: "judge",
+      editable: false,
+      rubricCheck: { key, criterion },
+      tooltip: criterion
+        ? "A suite criterion, asked on its own as a yes or no question. Advisory."
+        : "A question the suite added to its rubric checks. Advisory.",
+      join: { kind: "judge", slot: "rubricChecks", scorerId },
+    };
+    const result = resultFromScore(score, definition);
+    const evidence = scoreEvidence(score, definition, row);
+    rows.push({
+      ...row,
+      result: criterion ? uncertainIfUndecided(result) : result,
+      ...(evidence ? { evidence } : {}),
+    });
+  }
+  return rows;
+}
+
+function uncertainIfUndecided(result: TrialRowResult): TrialRowResult {
+  if (
+    (result.state !== "passed" && result.state !== "failed") ||
+    result.source !== "scoreRow" ||
+    typeof result.value !== "number" ||
+    result.value < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
+    result.value >= RUBRIC_CHECK_UNCERTAIN_BAND.below
+  ) {
+    return result;
+  }
+  return {
+    state: "uncertain",
+    source: "scoreRow",
+    value: result.value,
+    ...(result.reason ? { reason: result.reason } : {}),
+    ...(result.threshold !== undefined ? { threshold: result.threshold } : {}),
+  };
 }
 
 function liveResult(status: EvalStepStatus): TrialRowResult {

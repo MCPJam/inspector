@@ -2391,6 +2391,13 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
 type SuiteDoc = Record<string, any>;
 
 /**
+ * Judge slots a suite can store that this API does not write. A PATCH carries
+ * each one forward from the stored suite, so an edit to goal completion never
+ * reads to the platform as a deliberate clear of another judge.
+ */
+const PUBLIC_UNWRITABLE_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
+
+/**
  * Whether the platform will refuse configuration writes to this suite.
  *
  * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
@@ -3221,6 +3228,12 @@ const suiteSettingsShape = {
        * while execution is unwired.
        */
       groundedness: z.unknown().optional(),
+      /**
+       * App-only on day one (see the `judgeRubricChecks` manifest row).
+       * Accepted here for the same reason as `groundedness`: a caller who
+       * sends it gets a 400 naming the field, never a silent strip.
+       */
+      rubricChecks: z.unknown().optional(),
       // The suite's own grading criteria, handed to the judge alongside
       // each case's expected output. `null` CLEARS them; an empty array is
       // refused because a rubric that asks nothing is not the absence of
@@ -3236,6 +3249,14 @@ const suiteSettingsShape = {
           path: ["groundedness"],
           message:
             "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+        });
+      }
+      if (judge.rubricChecks !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rubricChecks"],
+          message:
+            "settings.judge.rubricChecks is authored in the app only; the criteria it grades are settings.judge.rubric.",
         });
       }
     })
@@ -8279,15 +8300,16 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       // editing it retires the suite's calibration. Nested under `judge` on
       // the wire because that is where a caller looks for it.
       if (s.judge.rubric !== undefined) updateArgs.judgeRubric = s.judge.rubric;
-      // Preserve a stored groundedness slot. A goal-completion-only write
-      // must not drop the reserved slot; a groundedness write is refused
-      // by the schema before this merge runs.
-      updateArgs.judgeConfig = {
-        goalCompletion,
-        ...(suite!.judgeConfig?.groundedness
-          ? { groundedness: suite!.judgeConfig.groundedness }
-          : {}),
-      };
+      // Preserve every stored slot this route cannot write. A
+      // goal-completion-only write must not drop a reserved slot, because
+      // `updateTestSuite` replaces `judgeConfig` wholesale; a write to one of
+      // them is refused by the schema before this merge runs.
+      const preserved = Object.fromEntries(
+        PUBLIC_UNWRITABLE_JUDGE_SLOTS.filter(
+          (slot) => suite!.judgeConfig?.[slot],
+        ).map((slot) => [slot, suite!.judgeConfig[slot]]),
+      );
+      updateArgs.judgeConfig = { goalCompletion, ...preserved };
     }
     applyVerdictPolicySettings(
       suite!,
