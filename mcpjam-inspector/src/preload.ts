@@ -147,8 +147,10 @@ const electronAPI: ElectronAPI = {
   oauth: {
     onCallback: (callback: (url: string) => void) => {
       ipcRenderer.on("oauth-callback", (_, url: string) => callback(url));
+      ipcRenderer.send("oauth:listener-ready", true);
     },
     removeCallback: () => {
+      ipcRenderer.send("oauth:listener-ready", false);
       ipcRenderer.removeAllListeners("oauth-callback");
     },
   },
@@ -212,3 +214,8 @@ contextBridge.exposeInMainWorld(
   "isElectronPackaged",
   process.argv.includes("--mcpjam-packaged"),
 );
+
+// Unlike beforeunload, pagehide does not fire for a canceled departure.
+window.addEventListener("pagehide", () => {
+  ipcRenderer.send("oauth:listener-ready", false);
+});
