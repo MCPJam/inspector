@@ -72,17 +72,14 @@ import { cancellableRunIds, getEffectiveSuiteServers } from "../evals/helpers";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../evals/constants";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
-  buildSuiteRunHistoryRows,
+  buildSuiteRunHistoryRowsFromMetrics,
   buildSuiteTestCaseRows,
   suiteRunBlockedReason,
   runTimestamp,
 } from "./suite-detail-model";
-import type {
-  EvalCase,
-  EvalIteration,
-  EvalSuite,
-  EvalSuiteRun,
-} from "../evals/types";
+import type { EvalCase, EvalSuite, EvalSuiteRun } from "../evals/types";
+import type { RunMetricsByRun } from "../evals/run-metrics";
+import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 
@@ -120,7 +117,7 @@ export function SuiteDetailOverview({
   cases,
   runs,
   runsLoading,
-  allIterations,
+  metricsByRun,
   hostNamesById,
   environments,
   onRerun,
@@ -154,7 +151,8 @@ export function SuiteDetailOverview({
   cases: EvalCase[];
   runs: EvalSuiteRun[];
   runsLoading: boolean;
-  allIterations: EvalIteration[];
+  /** One metrics object per run — see `evals/run-metrics.ts`. */
+  metricsByRun: RunMetricsByRun;
   hostNamesById: Map<string, string | null>;
   environments?: SuiteRunReviewProps["environments"];
   onRerun: SuiteRunReviewProps["onStart"];
@@ -240,14 +238,14 @@ export function SuiteDetailOverview({
 
   const historyRows = useMemo(
     () =>
-      buildSuiteRunHistoryRows(
+      buildSuiteRunHistoryRowsFromMetrics(
         runs,
-        allIterations,
+        metricsByRun,
         suite,
         hostNamesById,
         projectEnvironmentsEnabled,
       ),
-    [runs, allIterations, suite, hostNamesById, projectEnvironmentsEnabled],
+    [runs, metricsByRun, suite, hostNamesById, projectEnvironmentsEnabled],
   );
   const filterOptions = useMemo(() => {
     const options = dependentFilterOptions(historyRows, {
@@ -276,14 +274,13 @@ export function SuiteDetailOverview({
     hiddenRunCount,
     filteredRunIds,
   } = useMemo(() => {
-    const details = new Map(
+    const details = new Map<string, ProjectRunHistoryDetail>(
       runs.map((run) => [
         run._id,
         {
           run,
-          iterations: allIterations.filter(
-            (item) => item.suiteRunId === run._id,
-          ),
+          iterations: [],
+          metrics: metricsByRun.get(run._id) ?? null,
         },
       ]),
     );
@@ -347,7 +344,7 @@ export function SuiteDetailOverview({
     };
   }, [
     runs,
-    allIterations,
+    metricsByRun,
     suite,
     historyRows,
     filterOptions,
@@ -668,7 +665,7 @@ export function SuiteDetailOverview({
 
           <SuiteRunHistorySnapshot
             runs={runs.filter((run) => filteredRunIds.has(run._id))}
-            allIterations={allIterations}
+            metricsByRun={metricsByRun}
           />
 
           {filteredRows.length === 0 ? (

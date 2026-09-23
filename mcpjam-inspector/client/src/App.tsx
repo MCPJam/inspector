@@ -680,6 +680,7 @@ function ActiveBillingUpsellGate() {
 
   return (
     <BillingUpsellGate
+      organizationId={billingOrganizationId}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1893,7 +1894,7 @@ function SwarmsRouteContent() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, goals, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }

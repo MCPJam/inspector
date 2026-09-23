@@ -176,6 +176,7 @@ jobs:
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
             VITE_MCPJAM_HOSTED_MODE=true \
+            VITE_ENVIRONMENT=preview \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
@@ -457,6 +458,7 @@ jobs:
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
             VITE_MCPJAM_HOSTED_MODE=true \
+            VITE_ENVIRONMENT=preview \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
@@ -856,6 +858,7 @@ jobs:
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
             VITE_MCPJAM_HOSTED_MODE=true \
+            VITE_ENVIRONMENT=preview \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_CONVEX_URL="${{ steps.backend_target.outputs.vite_convex_url }}" \

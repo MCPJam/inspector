@@ -215,6 +215,26 @@ describe("buildScorerTable groups", () => {
     ).toEqual([]);
   });
 
+  it("keeps an enabled standard check in its catalog slot", () => {
+    const output = STANDARD_ASSERTION_CHECKS.find(
+      (check) => check.id === "response.schema",
+    )!;
+    const discovery = STANDARD_ASSERTION_CHECKS.filter(
+      (check) => check.stage === "discovery",
+    ).map((check) => check.id);
+    const { groups } = buildScorerTable({
+      model: groupGradersByStage({ predicates: [output.preset] }),
+      predicates: [output.preset],
+    });
+    const discoveryGroup = groups.find((group) => group.stage === "discovery")!;
+    expect(
+      discoveryGroup.rows.filter((row) => row.family).map((row) => row.family!.id),
+    ).toEqual(discovery);
+    expect(
+      discoveryGroup.rows.find((row) => row.family?.id === output.id),
+    ).toEqual(expect.objectContaining({ kind: "predicate", enabled: true }));
+  });
+
   it("drops the preset row once any rule of its kind is listed, suppressed or not", () => {
     const latency = STANDARD_ASSERTION_CHECKS.find(
       (check) => check.id === "response.performance",

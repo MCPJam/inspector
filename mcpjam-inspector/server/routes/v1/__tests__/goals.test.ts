@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 /**
- * The v1 journey surface (`server/routes/v1/journeys.ts`).
+ * The v1 goal surface (`server/routes/v1/goals.ts`), both spellings.
  *
  * What these pin, in order of how badly a regression would hurt:
  *
@@ -11,7 +11,7 @@ import { Hono } from "hono";
  *      `journeyRuns:listJourneyRuns` takes a journeyRefId alone and
  *      `getJourneyRun` takes a runId alone — both check membership, neither
  *      checks the project in the path. Without the preflights,
- *      `GET /projects/A/journeys/{a-journey-in-B}/runs` serves project B's
+ *      `GET /projects/A/goals/{a-goal-in-B}/runs` serves project B's
  *      runs to anyone who is a member of both.
  *   2. The `canceled` mapping. The backend records a deliberate stop as
  *      `status: "failed"` plus an `error: "canceled"` marker rather than a new
@@ -57,7 +57,7 @@ vi.mock("../../../services/sessionSimulation/launch-journey-run.js", () => ({
   launchJourneyRun: (...args: unknown[]) => launchMock(...args),
 }));
 
-import journeys from "../journeys.js";
+import goals from "../goals.js";
 import { v1OnError } from "../envelope.js";
 
 const PROJECT = "proj_a";
@@ -71,7 +71,7 @@ function makeApp() {
   // WebRouteError into the canonical `{ code, message }` envelope. Without it
   // every deliberate 404 here would surface as an unhandled 500.
   app.onError(v1OnError);
-  app.route("/api/v1", journeys);
+  app.route("/api/v1", goals);
   return app;
 }
 
@@ -116,11 +116,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("GET /projects/:projectId/journeys", () => {
-  it("returns the project's journeys as a page", async () => {
+describe("GET /projects/:projectId/goals", () => {
+  it("returns the project's goals as a page", async () => {
     queryMock.mockResolvedValue([journeyRow()]);
 
-    const res = await get(`/projects/${PROJECT}/journeys`);
+    const res = await get(`/projects/${PROJECT}/goals`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       items: Array<Record<string, unknown>>;
@@ -131,7 +131,7 @@ describe("GET /projects/:projectId/journeys", () => {
       name: "Checkout flow",
       goal: "Buy something",
       personaId: "persona_1",
-      sessionsPerTarget: 3,
+      iterations: 3,
       maxTurns: 12,
     });
   });
@@ -139,26 +139,26 @@ describe("GET /projects/:projectId/journeys", () => {
   it("404s rather than 502s when Convex rejects for membership", async () => {
     // A 403 here would confirm the project exists to someone who cannot see it.
     queryMock.mockRejectedValue(new Error("Not a member of this project"));
-    expect((await get(`/projects/${PROJECT}/journeys`)).status).toBe(404);
+    expect((await get(`/projects/${PROJECT}/goals`)).status).toBe(404);
   });
 });
 
 describe("cross-project scoping", () => {
-  it("404s a journey that belongs to ANOTHER project the caller can also see", async () => {
+  it("404s a goal that belongs to ANOTHER project the caller can also see", async () => {
     // `journeys:getJourney` takes BOTH ids and asserts the scope itself, so a
-    // journey outside the project reads as `null` — the same answer as one
+    // goal outside the project reads as `null` — the same answer as one
     // that does not exist. This used to list the project and scan, which put
     // the scope rule in the gateway; it lives in Convex now.
     queryMock.mockResolvedValue(null);
 
-    const res = await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs`);
+    const res = await get(`/projects/${PROJECT}/goals/${JOURNEY}/runs`);
     expect(res.status).toBe(404);
     // And it stopped at the preflight — it never asked for the runs.
     expect(queryMock).toHaveBeenCalledTimes(1);
     expect(queryMock.mock.calls[0]?.[0]).toBe("journeys:getJourney");
     // Scoped by BOTH ids. Dropping `projectId` would still return null from
     // this mock and still 404 here, while in production it would resolve a
-    // journey from any project the caller can reach.
+    // goal from any project the caller can reach.
     expect(queryMock.mock.calls[0]?.[1]).toEqual({
       projectId: PROJECT,
       journeyRefId: JOURNEY,
@@ -167,14 +167,14 @@ describe("cross-project scoping", () => {
 
   it("404s a run whose projectId disagrees with the path", async () => {
     queryMock.mockResolvedValue(runRow({ projectId: OTHER_PROJECT }));
-    expect((await get(`/projects/${PROJECT}/journey-runs/${RUN}`)).status).toBe(
+    expect((await get(`/projects/${PROJECT}/goal-runs/${RUN}`)).status).toBe(
       404
     );
   });
 
   it("checks the run's project before listing its sessions", async () => {
     queryMock.mockResolvedValueOnce(runRow({ projectId: OTHER_PROJECT }));
-    const res = await get(`/projects/${PROJECT}/journey-runs/${RUN}/sessions`);
+    const res = await get(`/projects/${PROJECT}/goal-runs/${RUN}/sessions`);
     expect(res.status).toBe(404);
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
@@ -186,7 +186,7 @@ describe("run DTO", () => {
       runRow({ status: "failed", error: "canceled" })
     );
 
-    const res = await get(`/projects/${PROJECT}/journey-runs/${RUN}`);
+    const res = await get(`/projects/${PROJECT}/goal-runs/${RUN}`);
     const body = (await res.json()) as Record<string, unknown>;
     // Both are true, and both matter: the status is honest about the terminal
     // state, the flag is honest about why.
@@ -202,17 +202,17 @@ describe("run DTO", () => {
       runRow({ status: "failed", error: "stale_runner" })
     );
     const body = (await (
-      await get(`/projects/${PROJECT}/journey-runs/${RUN}`)
+      await get(`/projects/${PROJECT}/goal-runs/${RUN}`)
     ).json()) as Record<string, unknown>;
     expect(body).toMatchObject({ canceled: false, stale: true });
   });
 
-  it("renames swarmRunGroupId to waveId and exposes targets", async () => {
+  it("renames swarmRunGroupId to swarmRunId and exposes targets", async () => {
     queryMock.mockResolvedValue(runRow({ swarmRunGroupId: "wave_7" }));
     const body = (await (
-      await get(`/projects/${PROJECT}/journey-runs/${RUN}`)
+      await get(`/projects/${PROJECT}/goal-runs/${RUN}`)
     ).json()) as Record<string, unknown>;
-    expect(body.waveId).toBe("wave_7");
+    expect(body.swarmRunId).toBe("wave_7");
     expect(body).not.toHaveProperty("swarmRunGroupId");
     expect(body.targets).toEqual([
       { hostId: "h1", hostName: "Host 1", targetId: "t1" },
@@ -225,7 +225,7 @@ describe("pagination", () => {
     queryMock
       .mockResolvedValueOnce([journeyRow()])
       .mockResolvedValueOnce({ page: [], isDone: true, continueCursor: "" });
-    await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs`);
+    await get(`/projects/${PROJECT}/goals/${JOURNEY}/runs`);
     // Convex requires an explicit null, not an absent field, for page one.
     expect(queryMock.mock.calls[1]?.[1]).toMatchObject({
       paginationOpts: { cursor: null, numItems: 50 },
@@ -236,7 +236,7 @@ describe("pagination", () => {
       .mockResolvedValueOnce([journeyRow()])
       .mockResolvedValueOnce({ page: [], isDone: true, continueCursor: "" });
     await get(
-      `/projects/${PROJECT}/journeys/${JOURNEY}/runs?cursor=abc&limit=10`
+      `/projects/${PROJECT}/goals/${JOURNEY}/runs?cursor=abc&limit=10`
     );
     expect(queryMock.mock.calls[1]?.[1]).toMatchObject({
       paginationOpts: { cursor: "abc", numItems: 10 },
@@ -247,7 +247,7 @@ describe("pagination", () => {
     queryMock
       .mockResolvedValueOnce([journeyRow()])
       .mockResolvedValueOnce({ page: [], isDone: true, continueCursor: "" });
-    await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs?limit=100000`);
+    await get(`/projects/${PROJECT}/goals/${JOURNEY}/runs?limit=100000`);
     expect(queryMock.mock.calls[1]?.[1]).toMatchObject({
       paginationOpts: { numItems: 200 },
     });
@@ -261,7 +261,7 @@ describe("pagination", () => {
       continueCursor: "cursor-that-would-loop",
     });
     const body = (await (
-      await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs`)
+      await get(`/projects/${PROJECT}/goals/${JOURNEY}/runs`)
     ).json()) as Record<string, unknown>;
     expect(body).not.toHaveProperty("nextCursor");
   });
@@ -273,14 +273,14 @@ describe("pagination", () => {
       continueCursor: "page2",
     });
     const body = (await (
-      await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs`)
+      await get(`/projects/${PROJECT}/goals/${JOURNEY}/runs`)
     ).json()) as Record<string, unknown>;
     expect(body.nextCursor).toBe("page2");
   });
 });
 
-describe("POST .../journey-runs/:runId/cancel", () => {
-  const cancelUrl = `/projects/${PROJECT}/journey-runs/${RUN}/cancel`;
+describe("POST .../goal-runs/:runId/cancel", () => {
+  const cancelUrl = `/projects/${PROJECT}/goal-runs/${RUN}/cancel`;
 
   function cancel() {
     return makeApp().request(`/api/v1${cancelUrl}`, { method: "POST" });
@@ -354,23 +354,23 @@ describe("POST .../journey-runs/:runId/cancel", () => {
 });
 
 /**
- * `POST /projects/:p/journeys/:journeyId/runs`.
+ * `POST /projects/:p/goals/:goalId/runs`.
  *
  * The launch is the one operation here that SPENDS, so the two things worth
- * pinning are that it cannot be aimed at another project's journey, and that
+ * pinning are that it cannot be aimed at another project's goal, and that
  * a retry cannot bill twice.
  */
-describe("POST .../journeys/:journeyId/runs", () => {
+describe("POST .../goals/:goalId/runs", () => {
   beforeEach(() => {
     launchMock.mockResolvedValue({ runId: "run_new" });
     // `journeys:getJourney` returns the ROW or null; the default is "this
-    // journey IS in this project" so each case overrides only the one thing it
+    // goal IS in this project" so each case overrides only the one thing it
     // is about.
     queryMock.mockResolvedValue({ _id: JOURNEY, projectId: PROJECT });
   });
 
   const launch = (init: RequestInit = {}) =>
-    makeApp().request(`/api/v1/projects/${PROJECT}/journeys/${JOURNEY}/runs`, {
+    makeApp().request(`/api/v1/projects/${PROJECT}/goals/${JOURNEY}/runs`, {
       method: "POST",
       ...init,
     });
@@ -382,7 +382,7 @@ describe("POST .../journeys/:journeyId/runs", () => {
     expect(res.status).toBe(202);
     expect((await res.json()) as Record<string, unknown>).toMatchObject({
       id: "run_new",
-      journeyId: JOURNEY,
+      goalId: JOURNEY,
       projectId: PROJECT,
       status: "running",
       deduped: false,
@@ -420,11 +420,11 @@ describe("POST .../journeys/:journeyId/runs", () => {
     });
   });
 
-  it("404s a journey in ANOTHER project — WITHOUT launching", async () => {
-    // The launch resolves the project from the journey itself, so without the
-    // preflight a member of two projects could launch B's journey through A's
+  it("404s a goal in ANOTHER project — WITHOUT launching", async () => {
+    // The launch resolves the project from the goal itself, so without the
+    // preflight a member of two projects could launch B's goal through A's
     // URL and be billed under a project the URL never named.
-    // Convex answers `null` for a journey outside the project — the same
+    // Convex answers `null` for a goal outside the project — the same
     // answer as one that does not exist, which is what keeps this from being
     // an existence oracle.
     queryMock.mockResolvedValue(null);
@@ -455,16 +455,29 @@ describe("POST .../journeys/:journeyId/runs", () => {
   it("forwards the fan-out options — the whole point of accepting a body", async () => {
     const res = await launch({
       body: JSON.stringify({
-        waveId: "wave_9",
+        swarmRunId: "wave_9",
         environmentIds: ["env_1", "env_2"],
       }),
       headers: { "content-type": "application/json" },
     });
     expect(res.status).toBe(202);
+    // The batch id keeps its STORED name below this layer — only the public
+    // spelling moved — so the launch service still receives `waveId`.
     expect(launchMock.mock.calls[0]![1]).toMatchObject({
       waveId: "wave_9",
       environmentIds: ["env_1", "env_2"],
     });
+  });
+
+  it("400s the pre-rename `waveId` rather than launching an ungrouped run", async () => {
+    // A plain object would strip the unknown key and launch the goal with no
+    // batch id — the caller's sibling runs silently ungrouped.
+    const res = await launch({
+      body: JSON.stringify({ waveId: "wave_9" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    expect(launchMock).not.toHaveBeenCalled();
   });
 
   it("400s an EMPTY environmentIds rather than falling back to the authored targets", async () => {
@@ -579,7 +592,7 @@ describe("session DTO outcome join", () => {
         continueCursor: "",
       });
 
-    const res = await get(`/projects/${PROJECT}/journey-runs/${RUN}/sessions`);
+    const res = await get(`/projects/${PROJECT}/goal-runs/${RUN}/sessions`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       items: Array<{
@@ -622,14 +635,14 @@ describe("setupWrites config forwarding", () => {
         }),
       );
       const response = await makeApp().request(
-        `/api/v1/projects/${PROJECT}/journeys`,
+        `/api/v1/projects/${PROJECT}/goals`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             personaId: "persona_1",
             goal: "Test",
-            sessionsPerTarget: 1,
+            iterations: 1,
             maxTurns: 6,
             setupWrites,
           }),
@@ -646,7 +659,7 @@ describe("setupWrites config forwarding", () => {
   );
   it("rejects a setup-only PATCH without the required config pair", async () => {
     const response = await makeApp().request(
-      `/api/v1/projects/${PROJECT}/journeys/${JOURNEY}`,
+      `/api/v1/projects/${PROJECT}/goals/${JOURNEY}`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -655,5 +668,100 @@ describe("setupWrites config forwarding", () => {
     );
     expect(response.status).toBe(400);
     expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The deprecated `/journeys` + `/journey-runs` surface.
+ *
+ * Its whole purpose is that code written before the rename keeps working
+ * UNCHANGED, so what these pin is that the alias did not quietly acquire the
+ * new vocabulary: the ids it answers with, the field it takes, and the header
+ * that tells a caller to move.
+ */
+describe("the deprecated /journeys alias", () => {
+  it("serves the same rows under the OLD field names", async () => {
+    queryMock.mockResolvedValue([journeyRow()]);
+    const res = await get(`/projects/${PROJECT}/journeys`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[0]).toMatchObject({ id: JOURNEY, sessionsPerTarget: 3 });
+    expect(body.items[0]).not.toHaveProperty("iterations");
+  });
+
+  it("marks every alias response deprecated, and the canonical one not", async () => {
+    queryMock.mockResolvedValue([journeyRow()]);
+    const alias = await get(`/projects/${PROJECT}/journeys`);
+    expect(alias.headers.get("Deprecation")).toBe("true");
+    expect(alias.headers.get("Link")).toBe(
+      '</api/v1/projects/{projectId}/goals>; rel="successor-version"',
+    );
+
+    queryMock.mockResolvedValue([journeyRow()]);
+    const canonical = await get(`/projects/${PROJECT}/goals`);
+    expect(canonical.headers.get("Deprecation")).toBeNull();
+  });
+
+  it("keeps journeyId and waveId on a run", async () => {
+    queryMock.mockResolvedValue(runRow({ swarmRunGroupId: "wave_7" }));
+    const body = (await (
+      await get(`/projects/${PROJECT}/journey-runs/${RUN}`)
+    ).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ journeyId: JOURNEY, waveId: "wave_7" });
+    expect(body).not.toHaveProperty("goalId");
+    expect(body).not.toHaveProperty("swarmRunId");
+  });
+
+  it("takes sessionsPerTarget, and REFUSES iterations", async () => {
+    queryMock.mockResolvedValue([{ _id: "persona_1", projectId: PROJECT }]);
+    mutationMock.mockResolvedValue(journeyRow());
+    const create = (body: Record<string, unknown>) =>
+      makeApp().request(`/api/v1/projects/${PROJECT}/journeys`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          personaId: "persona_1",
+          goal: "Test",
+          maxTurns: 6,
+          ...body,
+        }),
+      });
+
+    expect((await create({ sessionsPerTarget: 3 })).status).toBe(201);
+    // Mixing the two vocabularies is a caller half-migrated, which is worse
+    // than either state. `strictObject` refuses it rather than guessing.
+    expect((await create({ iterations: 3 })).status).toBe(400);
+  });
+
+  it("refuses sessionsPerTarget on the CANONICAL surface", async () => {
+    queryMock.mockResolvedValue([{ _id: "persona_1", projectId: PROJECT }]);
+    const res = await makeApp().request(`/api/v1/projects/${PROJECT}/goals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        personaId: "persona_1",
+        goal: "Test",
+        sessionsPerTarget: 3,
+        maxTurns: 6,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("names the noun the caller asked for in a 404", async () => {
+    queryMock.mockResolvedValue(null);
+    const alias = await get(`/projects/${PROJECT}/journeys/${JOURNEY}`);
+    expect((await alias.json()) as { message?: string }).toMatchObject({
+      message: "Journey not found",
+    });
+
+    queryMock.mockResolvedValue(null);
+    const canonical = await get(`/projects/${PROJECT}/goals/${JOURNEY}`);
+    expect((await canonical.json()) as { message?: string }).toMatchObject({
+      message: "Goal not found",
+    });
   });
 });

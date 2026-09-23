@@ -126,41 +126,41 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
   generatePersonasOperation,
-  generateJourneysOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  cancelUserTestingInsightsOperation,
-  requestUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  upsertUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
-  setUserTestingGuestExecutionOperation,
+  generateGoalsOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  cancelStudyInsightsOperation,
+  requestStudyInsightsOperation,
+  updateStudyOperation,
+  upsertStudyMemberOperation,
+  rebindStudyOperation,
+  setStudyGuestExecutionOperation,
   getShareSettingsOperation,
   setShareModeOperation,
   setEvalSuiteScheduleOperation,
@@ -2080,13 +2080,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // the "tier derives from operation.risk" suite in agent-op-registry.test.ts
   // runs the derivation over every risk-classified operation. The only
   // lawful deviations are the ones NAMED in that suite's `TIER_EXCEPTIONS`
-  // map, each with a written reason (`cancel_journey_run` stays gated so
-  // stopping spend is approvable; `publish_scenario` stays excluded because
+  // map, each with a written reason (`cancel_goal_run` stays gated so
+  // stopping spend is approvable; `publish_study` stays excluded because
   // who may talk to your servers is a human call). Re-tiering an entry
   // against its risk fails CI until the exception is written down there.
   //
   // Deriving from shared metadata rather than re-deciding here is the fix for
-  // a real failure: `cancel_journey_run` was once excluded from this surface
+  // a real failure: `cancel_goal_run` was once excluded from this surface
   // citing a reason that only applied to the MCP catalog, because each
   // partition file argued the case independently and one of them got it wrong.
   {
@@ -2120,26 +2120,26 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getSecretOperation, tier: "direct" },
-  { operation: listJourneysOperation, tier: "direct" },
+  { operation: listGoalsOperation, tier: "direct" },
   {
-    operation: getJourneyOperation,
+    operation: getGoalOperation,
     tier: "direct",
     promptNotes: [
-      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
+      "- A goal run produces `targets x iterations` conversations, and that total is what spends. Read `get_goal` before proposing a launch so the number in your proposal is the real one.",
     ],
   },
-  { operation: createJourneyOperation, tier: "direct" },
-  { operation: updateJourneyOperation, tier: "direct" },
+  { operation: createGoalOperation, tier: "direct" },
+  { operation: updateGoalOperation, tier: "direct" },
   { operation: listSwarmsOperation, tier: "direct" },
   { operation: getSwarmOperation, tier: "direct" },
   { operation: createSwarmOperation, tier: "direct" },
   { operation: updateSwarmOperation, tier: "direct" },
-  { operation: listJourneyRunsOperation, tier: "direct" },
+  { operation: listGoalRunsOperation, tier: "direct" },
   {
-    operation: getJourneyRunOperation,
+    operation: getGoalRunOperation,
     tier: "direct",
     promptNotes: [
-      "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
+      "- After a launch is approved, poll `get_goal_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
     ],
   },
   {
@@ -2150,39 +2150,45 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
-    operation: getJourneyRunScorecardOperation,
+    operation: getGoalRunScorecardOperation,
     tier: "direct",
     promptNotes: [
-      "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
+      "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
     ],
   },
   { operation: listSwarmFindingsOperation, tier: "direct" },
   { operation: dismissSwarmFindingOperation, tier: "direct" },
   { operation: undismissSwarmFindingOperation, tier: "direct" },
-  { operation: getWaveInsightsOperation, tier: "direct" },
-  { operation: cancelWaveInsightsOperation, tier: "direct" },
+  { operation: getSwarmRunInsightsOperation, tier: "direct" },
+  { operation: cancelSwarmRunInsightsOperation, tier: "direct" },
 
   // ── GATED — the swarm operations that SPEND.
   {
-    operation: launchJourneyRunOperation,
+    operation: launchGoalRunOperation,
     tier: "gated",
     proposal: {
+      // BOTH selector spellings: `goalId` is canonical and `journey` its
+      // deprecated alias, so reading only the alias renders a valid proposal
+      // as "(unnamed)" with no target metadata. The target TYPE stays
+      // `journey` — it is a stored proposal discriminant, not a public noun.
       describe: (input) =>
-        `Launch journey ${named(input, "journey") ?? "(unnamed)"}`,
+        `Launch goal ${
+          named(input, "goalId") ?? named(input, "journey") ?? "(unnamed)"
+        }`,
       buttonLabel: "Launch it",
       kind: "start",
       confirmSeverity: "spend",
       target: (input) => {
-        const journey = named(input, "journey");
-        return journey ? { type: "journey", selector: journey } : undefined;
+        const selector = named(input, "goalId") ?? named(input, "journey");
+        return selector ? { type: "journey", selector } : undefined;
       },
     },
     promptNotes: [
-      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
+      "- Launching a goal fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
     ],
   },
   {
-    operation: cancelJourneyRunOperation,
+    operation: cancelGoalRunOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2208,7 +2214,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: generateJourneysOperation,
+    operation: generateGoalsOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2228,7 +2234,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: requestWaveInsightsOperation,
+    operation: requestSwarmRunInsightsOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2242,7 +2248,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
       "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
@@ -2256,27 +2262,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // conversations, and the metrics answer "how is this going" without pulling
   // anyone's words into a turn.
   {
-    operation: getUserTestingMetricsOperation,
+    operation: getStudyMetricsOperation,
     tier: "direct",
     promptNotes: [
-      "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+      "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
     ],
   },
   {
-    operation: getUserTestingUsageOperation,
+    operation: getStudyUsageOperation,
     tier: "direct",
     promptNotes: [
-      "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+      "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",
     ],
   },
-  { operation: listUserTestingFindingsOperation, tier: "direct" },
-  { operation: getUserTestingSignalsOperation, tier: "direct" },
-  { operation: getUserTestingInsightsOperation, tier: "direct" },
-  { operation: dismissUserTestingFindingOperation, tier: "direct" },
-  { operation: undismissUserTestingFindingOperation, tier: "direct" },
-  { operation: cancelUserTestingInsightsOperation, tier: "direct" },
+  { operation: listStudyFindingsOperation, tier: "direct" },
+  { operation: getStudySignalsOperation, tier: "direct" },
+  { operation: getStudyInsightsOperation, tier: "direct" },
+  { operation: dismissStudyFindingOperation, tier: "direct" },
+  { operation: undismissStudyFindingOperation, tier: "direct" },
+  { operation: cancelStudyInsightsOperation, tier: "direct" },
   {
-    operation: requestUserTestingInsightsOperation,
+    operation: requestStudyInsightsOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2285,13 +2291,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      // Platform-paid; see `request_wave_insights` above for why it stays
+      // Platform-paid; see `request_swarm_run_insights` above for why it stays
       // gated on a shared quota rather than on money.
       confirmSeverity: "none",
     },
   },
   {
-    operation: updateUserTestingScenarioOperation,
+    operation: updateStudyOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2320,7 +2326,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: upsertUserTestingMemberOperation,
+    operation: upsertStudyMemberOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2336,7 +2342,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: rebindUserTestingScenarioOperation,
+    operation: rebindStudyOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2352,7 +2358,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: setUserTestingGuestExecutionOperation,
+    operation: setStudyGuestExecutionOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2372,7 +2378,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
     },
     promptNotes: [
-      "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+      "- `set_study_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
   // ── Client authoring ──────────────────────────────────────────────────
@@ -2571,7 +2577,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: admin configuration, available on REST/SDK/CLI.",
   list_trace_destination_backfills:
     "Backfill history is operational detail for an admin diagnosing an export. Available on REST/SDK/CLI.",
-  archive_journey:
+  archive_goal:
     "Removes a journey from the roster; the agent proposes authoring, never destruction.",
   archive_swarm:
     "Removes a container from the roster; the agent proposes authoring, never destruction.",
@@ -2580,32 +2586,32 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // can page through them turns an agent turn into a transcript reader.
   // Mirrors the `list_chat_sessions` precedent below. Still available on REST,
   // the CLI and MCP, where the caller is asking for them explicitly.
-  list_journey_run_sessions:
+  list_goal_run_sessions:
     "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
   // User testing: session listings and transcripts. PRIVACY, not risk — real
   // visitors' conversations, and a chat surface that can page them is a
   // transcript reader. Mirrors the `list_chat_sessions` precedent below.
   // Available on REST/CLI/MCP, where the caller asked for them explicitly.
-  list_user_testing_sessions:
+  list_study_sessions:
     "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
-  get_user_testing_session:
+  get_study_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP.",
-  get_user_testing_scenario:
-    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. Available on REST/CLI/MCP.",
+  get_study:
+    "One read now, and the stricter half decides: its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. The settings half that the deprecated get_scenario served is excluded with it rather than split out. Available on REST/CLI/MCP.",
   // Access REMOVAL. The agent proposes authoring, never destruction — and
   // these two take access away from people who currently have it, with no way
   // to hand it back except by re-inviting them individually.
-  rotate_user_testing_link:
+  rotate_study_link:
     "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
   rotate_share_link:
-    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_user_testing_link.",
-  remove_user_testing_member:
+    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_study_link.",
+  remove_study_member:
     "Revokes a named person's access; the agent proposes authoring, never destruction.",
 
   // Scenarios (user testing).
-  publish_scenario:
+  publish_study:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
-  unpublish_scenario:
+  unpublish_study:
     "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
 
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
@@ -2711,8 +2717,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "A widget-bearing variant for MCP Apps hosts; the agent uses list_project_servers.",
 
   // Chat surfaces the agent must not read: another person's conversations.
-  list_scenarios: "Published scenarios are a human sharing surface.",
-  get_scenario: "Published scenarios are a human sharing surface.",
+  list_studies: "Published studies are a human sharing surface.",
   list_chat_sessions:
     "Other people's conversations are not the agent's to read.",
   // Same doctrine, and search does not soften it: a query that returns titles

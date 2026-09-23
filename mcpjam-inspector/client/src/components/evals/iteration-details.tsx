@@ -251,7 +251,6 @@ export function IterationDetails({
   trialChainSlot,
   scorecard,
   trialVerdictWord,
-  requestedTab,
   syncedStepId,
   onSyncStep,
 }: {
@@ -304,7 +303,6 @@ export function IterationDetails({
    * the same screen.
    */
   trialVerdictWord?: string;
-  requestedTab?: { iterationId: string; mode: "steps" | "scorecard" } | null;
   /**
    * Step cursor shared with a host that lists the authored steps beside this
    * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
@@ -402,16 +400,6 @@ export function IterationDetails({
     );
   }, [iteration.testCaseSnapshot]);
   const hasSteps = snapshotSteps.length > 0;
-
-  useEffect(() => {
-    if (requestedTab?.iterationId === iteration._id) {
-      setPreviewTraceMode(
-        requestedTab.mode === "steps" && !hasSteps
-          ? "scorecard"
-          : requestedTab.mode,
-      );
-    }
-  }, [requestedTab, iteration._id, hasSteps]);
 
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
