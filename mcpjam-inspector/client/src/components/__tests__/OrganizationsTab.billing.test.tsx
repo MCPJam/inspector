@@ -588,6 +588,46 @@ describe("OrganizationsTab billing", () => {
     ).toBeEnabled();
   });
 
+  it("does not call a cadence the bundle does not sell the current plan", () => {
+    const base = createV2PlanCatalog();
+    const catalog = {
+      ...base,
+      plans: {
+        ...base.plans,
+        pro: {
+          ...base.plans.pro,
+          prices: { monthly: 2900, annual: null },
+          checkout: { plan: "pro", supportedIntervals: ["monthly"] },
+        },
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "pro",
+          effectivePlan: "pro",
+          catalogPlanId: "pro",
+          priceModel: "flat",
+          billingInterval: "monthly",
+          hasCustomer: true,
+        }),
+        planCatalog: catalog,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+
+    const proColumn = within(getPlanColumn("Pro"));
+    expect(
+      proColumn.getByRole("button", { name: "Unavailable" }),
+    ).toBeDisabled();
+    expect(
+      proColumn.queryByRole("button", { name: "Current plan" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows loading feedback on a pending Pro upgrade", () => {
     const catalog = createPlanCatalog();
     mockUseOrganizationBilling.mockReturnValue(

@@ -130,13 +130,17 @@ function getPlanColumnCta(params: {
     currentPlan === plan && (!isDifferentBundle || plan === "free");
   // The column prices whichever interval the toggle is on, so a Pro monthly org
   // looking at Pro annual is being offered a real change, not shown its own plan.
-  const isIntervalChange =
+  // A cadence the bundle does not sell is not the org's plan either; that
+  // column falls through to "Unavailable".
+  const isOtherInterval =
     isSameBundle &&
     currentBillingInterval != null &&
     currentBillingInterval !== billingInterval &&
-    entry.checkout != null &&
-    entry.checkout.supportedIntervals.includes(billingInterval);
-  const isCurrentPlan = isSameBundle && !isIntervalChange;
+    entry.checkout != null;
+  const isIntervalChange =
+    isOtherInterval &&
+    entry.checkout?.supportedIntervals.includes(billingInterval) === true;
+  const isCurrentPlan = isSameBundle && !isOtherInterval;
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
