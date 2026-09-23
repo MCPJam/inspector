@@ -86,6 +86,7 @@ import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { launchRuns } from "../evaluate/run-results-matrix-model";
 import { runPageRunIds, useRunsIterations } from "./use-runs-iterations";
+import { isDraftTestCaseId } from "./draft-test-case";
 import type { RunMetricsByRun } from "./run-metrics";
 import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
@@ -1016,10 +1017,16 @@ export function SuiteIterationsView({
     [perRunMode, selectedRunDetails, runs, previousCompletedRunForSelectedRun],
   );
   const detailRows = useRunsIterations(detailRunIds, perRunMode);
+  // A draft case has no row yet, so it has no history to read — and its
+  // `draft:` id would fail the query's `v.id("testCase")` check.
+  const historyTestCaseId =
+    perRunMode && selectedTestId && !isDraftTestCaseId(selectedTestId)
+      ? selectedTestId
+      : null;
   const caseRows = useQuery(
     "testSuites:listTestIterations" as any,
-    perRunMode && selectedTestId
-      ? ({ testCaseId: selectedTestId, limit: CASE_HISTORY_LIMIT } as any)
+    historyTestCaseId
+      ? ({ testCaseId: historyTestCaseId, limit: CASE_HISTORY_LIMIT } as any)
       : "skip",
   ) as EvalIteration[] | undefined;
   // Everything below reads these two names. In per-run mode they hold only
@@ -1038,8 +1045,7 @@ export function SuiteIterationsView({
     selectedRunDetails != null &&
     !detailRows.byRun.has(selectedRunDetails._id) &&
     !detailRows.failedRunIds.has(selectedRunDetails._id);
-  const caseRowsPending =
-    perRunMode && Boolean(selectedTestId) && caseRows === undefined;
+  const caseRowsPending = historyTestCaseId !== null && caseRows === undefined;
 
   // chatSessionIds for the currently-selected run (unified-trace iterations
   // only; legacy `blob`-only iterations have no chatSessions row to export).

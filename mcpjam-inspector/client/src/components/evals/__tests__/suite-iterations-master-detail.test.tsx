@@ -1025,6 +1025,23 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     mocks.useQueries.mockImplementation(() => ({}));
   });
 
+  it("does not read history for a draft case", () => {
+    renderOverview({
+      suiteDetailOverview: true,
+      evaluateCaseEditor: true,
+      metricsByRun: new Map(),
+      iterations: undefined,
+      allIterations: undefined,
+      route: { type: "test-edit", suiteId: "suite-1", testId: "draft:record" },
+    });
+
+    expect(mocks.useQuery).not.toHaveBeenCalledWith(
+      "testSuites:listTestIterations",
+      expect.objectContaining({ testCaseId: "draft:record" }),
+    );
+    expect(screen.queryByTestId("suite-rows-loading")).toBeNull();
+  });
+
   it("shows a loader, not an empty run, while the run's rows load", () => {
     mocks.useQueries.mockImplementation(() => ({}));
     renderOverview({
