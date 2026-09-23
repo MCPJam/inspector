@@ -1,4 +1,5 @@
 import type { CaptureResult } from "posthog-js";
+import { isInjectedScriptStack } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
@@ -171,68 +172,38 @@ export function sanitizeAnalyticsProperties(
 }
 
 /**
- * Does this stack frame come from a script file rather than the document?
- *
- * Every line of the client loads from a script URL: `/assets/*.js` in a build,
- * `/src/*.tsx` under Vite dev, `file://.../assets/*.js` in the packaged
- * desktop app. The two inline `<script>` tags the hosted document carries
- * (`__MCP_SESSION_TOKEN__`, `__MCP_RUNTIME_CONFIG__`) are bare assignments
- * that cannot throw.
- *
- * Code the browser injects into the page has no script URL of its own, so the
- * engine stamps its frames with the document URL instead. That is the whole
- * discriminator.
- *
- * A third-party script we genuinely load (Cloudflare's challenge platform) is
- * a `.js` too, so it reads as a script file and its exceptions still report.
- * That is the safe direction to err in: this rule only ever errs toward
- * keeping an event, never toward hiding one.
- */
-function isScriptFileFrame(frame: unknown): boolean {
-  const filename = (frame as { filename?: unknown } | null)?.filename;
-  if (typeof filename !== "string") return false;
-  const [path] = filename.split(/[?#]/);
-  return /\.[cm]?[jt]sx?$/.test(path);
-}
-
-/**
  * Drop exceptions raised entirely by code the browser injected into the page.
  *
- * Chrome iOS's page translation re-walks the DOM a couple of seconds after
- * every SPA route change and, on a tree this size, recurses until it blows the
- * stack. PostHog logs that RangeError against whichever route the user was on,
- * opens a new high-severity issue and pages #mcpjam-alerts — for a crash in a
- * script that is not ours, in a session where the app kept working. It never
- * reaches a React error boundary because it never runs inside React.
+ * The rule, and the evidence behind it, lives in
+ * shared/injected-script-frames.ts. Sentry's client config applies the same
+ * one, so the two reporters cannot disagree about what counts as ours.
  *
- * Every unhandled `Maximum call stack size exceeded` this project has recorded
- * is Chrome iOS on mobile, across two users and five routes, and not one
- * carries a frame from a script we ship.
- *
- * The test is "no frame came from a script file" rather than a message match
- * on purpose: a genuine stack overflow in our own code — the markdown lexer
- * has produced one — still has app frames, and still reports.
- *
- * Frameless exceptions pass through. One with no stack at all cannot be
- * attributed to anybody, and dropping those to catch a variant this rule was
- * not written for would hide real errors.
+ * Matching on frames rather than on the message is the point: a genuine stack
+ * overflow in our own code — the markdown lexer has produced one — still has
+ * app frames, and still reports.
  */
 export function dropInjectedScriptException(
   event: CaptureResult | null,
 ): CaptureResult | null {
   if (event?.event !== "$exception") return event;
+  if (typeof window === "undefined") return event;
 
   const exceptions: unknown = event.properties?.$exception_list;
   if (!Array.isArray(exceptions)) return event;
 
-  const frames = exceptions.flatMap((exception) => {
-    const candidate = (exception as { stacktrace?: { frames?: unknown } })
+  const filenames = exceptions.flatMap((exception) => {
+    const frames = (exception as { stacktrace?: { frames?: unknown } })
       ?.stacktrace?.frames;
-    return Array.isArray(candidate) ? candidate : [];
+    return Array.isArray(frames)
+      ? frames.map(
+          (frame) => (frame as { filename?: unknown } | null)?.filename,
+        )
+      : [];
   });
-  if (frames.length === 0) return event;
 
-  return frames.some(isScriptFileFrame) ? event : null;
+  return isInjectedScriptStack(filenames, window.location.origin)
+    ? null
+    : event;
 }
 
 // Public vanity landings (caniuse.dev host-compare, score.mcpjam.com score

@@ -11,6 +11,8 @@
  * unit-testable without stubbing globals.
  */
 
+import { isInjectedScriptStack } from "./injected-script-frames";
+
 /**
  * Where this install runs. `hosted` is app.mcpjam.com; `self_hosted` covers
  * npx, Docker, and the desktop app. Shipped as a Sentry tag so a quota spike
@@ -209,7 +211,11 @@ export interface FingerprintableEvent {
   environment?: string;
   fingerprint?: string[];
   exception?: {
-    values?: { type?: string; value?: string }[];
+    values?: {
+      type?: string;
+      value?: string;
+      stacktrace?: { frames?: { filename?: string }[] };
+    }[];
   };
 }
 
@@ -246,6 +252,37 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
 
   event.fingerprint = ["dom-mutation-conflict", event.environment ?? "unknown"];
   return event;
+}
+
+/**
+ * The browser `beforeSend`: drop injected-script crashes, then group the DOM
+ * mutation conflicts that survive.
+ *
+ * Sentry keeps its own `window.onerror` handler — `initSentry()` passes an
+ * `integrations` array without `defaultIntegrations: false`, so
+ * `globalHandlersIntegration` stays on — and `BROWSER_IGNORE_ERRORS` carries
+ * no entry for a stack overflow. Filtering only PostHog would leave Sentry
+ * opening issues for the same non-bug, which is how INSPECTOR-CLIENT-2GD
+ * arrived with its culprit set to a document route.
+ *
+ * Both reporters therefore share one rule (shared/injected-script-frames.ts)
+ * rather than each getting a message string to ignore: a real stack overflow
+ * in our own code has app frames and must still report from both.
+ *
+ * `origin` is the app's own origin, supplied by the caller. Omitted on a
+ * surface that has no document, where nothing is dropped.
+ */
+export function buildBrowserBeforeSend(origin?: string) {
+  return <T extends FingerprintableEvent>(event: T): T | null => {
+    if (origin !== undefined) {
+      const filenames = (event.exception?.values ?? []).flatMap(
+        (value) =>
+          value.stacktrace?.frames?.map((frame) => frame.filename) ?? [],
+      );
+      if (isInjectedScriptStack(filenames, origin)) return null;
+    }
+    return groupDomMutationConflicts(event);
+  };
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
@@ -297,6 +334,11 @@ export function buildClientSentryConfig(
      * side. Defaults to false — replay is opt-in, per surface.
      */
     replayEnabled?: boolean;
+    /**
+     * The app's own origin, used to spot frames the browser stamped with the
+     * document. The caller reads it — this module stays globals-free.
+     */
+    documentOrigin?: string;
   },
 ) {
   return {
@@ -305,7 +347,7 @@ export function buildClientSentryConfig(
     // Browser surfaces only. A `NotFoundError` on the server is an upstream
     // or storage failure that has nothing to do with DOM mutation, and
     // collapsing those by message would merge unrelated defects.
-    beforeSend: groupDomMutationConflicts,
+    beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),

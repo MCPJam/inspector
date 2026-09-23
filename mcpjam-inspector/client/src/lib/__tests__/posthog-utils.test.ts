@@ -506,11 +506,16 @@ describe("dropInjectedScriptException", () => {
       },
     }) as unknown as CaptureResult;
 
+  // The frames carry the app's own origin, so the fixtures derive from the
+  // test document rather than hard-coding app.mcpjam.com — otherwise these
+  // would pass for being cross-origin, which is not what is under test.
+  const origin = window.location.origin;
+
   // The shape PostHog recorded on 2026-09-23: the browser stamps injected code
   // with the document URL because it has no script file of its own. Absolute
   // and route-relative both appear in the wild, hence both cases.
   it.each([
-    ["an absolute document URL", "https://app.mcpjam.com/p/v97d1szz"],
+    ["an absolute document URL", `${origin}/p/v97d1szz`],
     ["a route-relative one", "/p/v97d1szz"],
   ])("drops a RangeError whose every frame is %s", (_label, prefix) => {
     const event = exceptionEvent([
@@ -524,15 +529,18 @@ describe("dropInjectedScriptException", () => {
   // The markdown lexer has blown the stack for real. That one must still page.
   it("keeps a stack overflow raised inside our own bundle", () => {
     const event = exceptionEvent([
-      { filename: "https://app.mcpjam.com/assets/index-Ct2CwjTH.js" },
-      { filename: "https://app.mcpjam.com/p/v97d1szz/playground" },
+      { filename: `${origin}/assets/index-Ct2CwjTH.js` },
+      { filename: `${origin}/p/v97d1szz/playground` },
     ]);
     expect(dropInjectedScriptException(event)).toBe(event);
   });
 
   it.each([
     ["a Vite dev module with a cache-busting query", "/src/main.tsx?t=1730"],
-    ["a packaged desktop bundle", "file:///app/assets/index-Ct2CwjTH.js"],
+    // An extension test alone would have swallowed every failure on the
+    // payment path: seat-payment-stripe.ts loads this exact URL.
+    ["extensionless Stripe.js", "https://js.stripe.com/v3/"],
+    ["an engine-synthesised frame", "<anonymous>"],
   ])("keeps an exception from %s", (_label, filename) => {
     const event = exceptionEvent([{ filename }]);
     expect(dropInjectedScriptException(event)).toBe(event);

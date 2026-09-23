@@ -36,7 +36,11 @@ describe("buildSentryConfig", () => {
   });
 
   it("defaults enabled to true and honors an explicit false", () => {
-    const base = { dsn: "dsn", environment: "dev", deployment: "hosted" as const };
+    const base = {
+      dsn: "dsn",
+      environment: "dev",
+      deployment: "hosted" as const,
+    };
     expect(buildSentryConfig(base).enabled).toBe(true);
     expect(buildSentryConfig({ ...base, enabled: false }).enabled).toBe(false);
   });
@@ -148,7 +152,11 @@ describe("buildSentryConfig", () => {
   });
 
   it("defaults tracesSampleRate to 0.1 and honors an override", () => {
-    const base = { dsn: "dsn", environment: "prod", deployment: "hosted" as const };
+    const base = {
+      dsn: "dsn",
+      environment: "prod",
+      deployment: "hosted" as const,
+    };
     expect(buildSentryConfig(base).tracesSampleRate).toBe(0.1);
     expect(
       buildSentryConfig({ ...base, tracesSampleRate: 0 }).tracesSampleRate,
@@ -219,20 +227,95 @@ describe("surface builders", () => {
     expect(BROWSER_IGNORE_ERRORS).toContain("Failed to fetch");
     expect(BROWSER_IGNORE_ERRORS).toContain("Load failed");
     const abort = BROWSER_IGNORE_ERRORS.find((e) => e instanceof RegExp);
-    expect((abort as RegExp).test("AbortError: The user aborted a request")).toBe(
-      true,
-    );
+    expect(
+      (abort as RegExp).test("AbortError: The user aborted a request"),
+    ).toBe(true);
   });
 
   it("groups DOM mutation conflicts on the browser client only", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
-    expect(buildClientSentryConfig(ctx).beforeSend).toBe(
-      groupDomMutationConflicts,
+    const event = {
+      environment: "prod",
+      exception: {
+        values: [
+          {
+            type: "NotFoundError",
+            value: "Failed to execute 'removeChild' on 'Node': oops",
+          },
+        ],
+      },
+    };
+    expect(buildClientSentryConfig(ctx).beforeSend(event)).toEqual(
+      groupDomMutationConflicts({ ...event }),
     );
     // A server-side NotFoundError is an upstream or storage failure, so
     // collapsing those by message would merge unrelated defects.
     expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
     expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
+  });
+
+  // Sentry keeps its own window.onerror handler, so filtering PostHog alone
+  // left it opening issues for the same injected-script crash.
+  it("drops an injected-script crash on the browser client", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const injected = {
+      exception: {
+        values: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [{ filename: `${origin}/p/v97d1szz/playground` }],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(injected)).toBeNull();
+
+    const ours = {
+      exception: {
+        values: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [{ filename: `${origin}/assets/index-Ct2CwjTH.js` }],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(ours)).toBe(ours);
+  });
+
+  // Without an origin there is nothing to compare against, so the filter is
+  // inert and only the fingerprint pass runs.
+  it("drops nothing when no document origin is supplied", () => {
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+    }).beforeSend;
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [{ filename: "https://app.mcpjam.com/p/x/tasks" }],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
   });
 });
 
