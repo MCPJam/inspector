@@ -208,14 +208,30 @@ export function SwarmHostCell({
       <span className={cn("font-semibold", meta.text)}>{executionLabel}</span>
       <SwarmGoalResult verdict={verdict} />
       {verdict ? (
-        <span className="text-[10px] text-muted-foreground">
-          {verdict.counts.gatingPassed}/{verdict.counts.gating} evaluators
-          passed
-        </span>
+        <SessionEvaluatorCount counts={verdict.counts} />
       ) : (
         <SessionCriteriaChip criteria={criteria} />
       )}
     </button>
+  );
+}
+
+/**
+ * Graded counterpart to `SessionCriteriaChip`, under the same rule: a run whose
+ * pinned rubric had no required criteria has no denominator to report, and
+ * `0/0` would claim it was graded against an empty one. Goals decided by the
+ * judge alone are the common case, so this branch printed `0/0` on most cells.
+ */
+function SessionEvaluatorCount({
+  counts,
+}: {
+  counts: SwarmSessionVerdict["counts"];
+}) {
+  if (counts.gating === 0) return null;
+  return (
+    <span className="text-[10px] text-muted-foreground">
+      {counts.gatingPassed}/{counts.gating} evaluators passed
+    </span>
   );
 }
 
