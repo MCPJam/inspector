@@ -7,9 +7,9 @@ import { Hono } from "hono";
  * A turn with no selected servers never reached `/web/authorize-batch`, which
  * is where project membership is checked, so a guest token ran a hosted
  * completion against any `projectId`. The same token and id got
- * `403 Not a member of this project` from `/api/web/tools/list`. A guest's
- * non-scenario turn now asks `/web/authorize-project` first and carries the
- * backend's refusal through unchanged.
+ * `403 Not a member of this project` from `/api/web/tools/list`. Every
+ * non-scenario turn, guest or signed-in, now asks `/web/authorize-project`
+ * first and carries the backend's refusal through unchanged.
  */
 
 const {
@@ -277,7 +277,7 @@ describe("web routes — chat-v2 guest project scope (MJ-013)", () => {
     );
   });
 
-  it("does not add the check to a signed-in member's turn", async () => {
+  it("runs a signed-in member's turn after checking its project", async () => {
     const { app } = createWebTestApp();
 
     const response = await postJson(
@@ -288,9 +288,51 @@ describe("web routes — chat-v2 guest project scope (MJ-013)", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(authorizeProjectCalls()).toHaveLength(0);
+    expect(authorizeProjectCalls()).toEqual([
+      [
+        AUTHORIZE_PROJECT_URL,
+        expect.objectContaining({
+          body: JSON.stringify({ projectId: "project-1" }),
+        }),
+      ],
+    ]);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-1" }),
     );
+  });
+
+  it("refuses a signed-in caller on a project it is not a member of", async () => {
+    authorizeProjectResponse = () =>
+      new Response(
+        JSON.stringify({
+          code: "FORBIDDEN",
+          message: "Not a member of this project",
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    const { app } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      turn(FOREIGN_PROJECT_ID),
+      MEMBER_BEARER,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Not a member of this project",
+    });
+    expect(authorizeProjectCalls()).toEqual([
+      [
+        AUTHORIZE_PROJECT_URL,
+        expect.objectContaining({
+          body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+        }),
+      ],
+    ]);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 });
