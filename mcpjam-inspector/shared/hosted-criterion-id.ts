@@ -55,3 +55,15 @@ export function hostedPredicateScorerId(
 ): string {
   return `predicate:${hostedCriterionId(predicate, scope)}`;
 }
+
+/**
+ * Scorer-id prefix of the rubric-check rows: one advisory row per question,
+ * keyed by the question (`c:<criterionId>` for a suite criterion,
+ * `q:<questionId>` for an authored question) after the prefix.
+ */
+export const HOSTED_RUBRIC_CHECKS_SCORER_PREFIX = "judge:rubricChecks:";
+
+/** `judge:rubricChecks:<key>` — the persisted `scorerId` of a rubric-check row. */
+export function hostedRubricCheckScorerId(key: string): string {
+  return `${HOSTED_RUBRIC_CHECKS_SCORER_PREFIX}${key}`;
+}
