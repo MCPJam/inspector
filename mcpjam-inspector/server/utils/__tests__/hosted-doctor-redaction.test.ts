@@ -426,7 +426,7 @@ describe("hosted doctor transport-detail redaction", () => {
     );
   });
 
-  it("does not let a socket error smuggle the refusal wording past the redactor", () => {
+  it("does not let a socket error smuggle the refusal wording past the redactor", async () => {
     // The allowlist used to be two bare substring tests, so it asked whether
     // the phrase appeared ANYWHERE in the detail rather than whether the detail
     // WAS a refusal. A target that can get text into the transport message —
@@ -436,27 +436,24 @@ describe("hosted doctor transport-detail redaction", () => {
     // refusal's words.
     const smuggled = [
       `${CLOSED_PORT} (not a publicly routable address)`,
-      'certificate subject CN=it is not a publicly routable address, ' +
+      "certificate subject CN=it is not a publicly routable address, " +
         "connect ECONNREFUSED 127.0.0.1:6379",
-      "Refusing to connect to \"a.test\": it is not a publicly routable " +
+      'Refusing to connect to "a.test": it is not a publicly routable ' +
         "address. connect ECONNREFUSED 127.0.0.1:6379",
       "resolves to a private or internal address that the hosted inspector " +
         "will not dial. ssl3_get_record:wrong version number",
     ];
 
-    return Promise.all(
-      smuggled.map(async (detail) => {
-        const loaded = await loadRedactor(true);
-        try {
-          const redacted = loaded.redact(socketFailureEnvelope(detail));
-          const serialized = JSON.stringify(redacted);
-          expect(serialized).not.toMatch(/ECONNREFUSED|6379|127\.0\.0\.1/);
-          expect(serialized).not.toMatch(/ssl3_get_record|wrong version/);
-        } finally {
-          loaded.restore();
-        }
-      })
-    );
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    for (const detail of smuggled) {
+      const serialized = JSON.stringify(
+        loaded.redact(socketFailureEnvelope(detail))
+      );
+      expect(serialized).not.toMatch(/ECONNREFUSED|6379|127\.0\.0\.1/);
+      expect(serialized).not.toMatch(/ssl3_get_record|wrong version/);
+    }
   });
 
   it("still refuses to match a refusal that was reworded", async () => {
