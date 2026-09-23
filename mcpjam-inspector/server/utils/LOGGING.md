@@ -49,9 +49,14 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `tunnel.record_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain?`, `errorCode` |
 | `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
 | `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
+| `chat.builtin_tools.withheld` | `routes/web/chat-v2.ts` | `toolIds`, `unknownCount`, `reasons`, `targetKind` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
+| `apikey.expiry.workos_refused` | `routes/web/api-keys.ts` | `statusCode` |
+| `apikey.inventory.truncated` | `routes/web/api-keys.ts` | `listed` |
+| `apikey.admin_revoke.completed` | `routes/web/api-keys.ts` | `workosKeyId`, `alreadyRevoked`, `bindingCleanupFailed`, `bindingStatus?` |
+| `apikey.admin_revoke.unavailable` | `routes/web/api-keys.ts` | `workosKeyId`, `errorMessage` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
 | `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
 

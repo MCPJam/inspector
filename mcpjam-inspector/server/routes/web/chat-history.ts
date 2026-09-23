@@ -150,11 +150,15 @@ chatHistory.get("/detail", async (c) =>
         "sessionId or chatSessionId is required",
       );
     }
-    return await proxyGet(bearerToken, "/direct-chat/detail", {
+    const detail = await proxyGet(bearerToken, "/direct-chat/detail", {
       sessionId,
       chatSessionId,
       projectId,
     });
+    // The detail carries short-lived artifact links minted for this caller;
+    // nothing between here and the browser may keep a copy.
+    c.header("cache-control", "private, no-store");
+    return detail;
   }),
 );
 

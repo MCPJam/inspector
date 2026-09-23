@@ -1,5 +1,19 @@
 # `@mcpjam/sdk` changelog
 
+## 8.15.0
+
+### Minor Changes
+
+- [#5468](https://github.com/MCPJam/inspector/pull/5468) [`3860e31`](https://github.com/MCPJam/inspector/commit/3860e31683fcd1a940586d6433744afff0c861f7) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add rubric checks, an advisory second judge for eval suites. Each grading criterion is asked on its own as a yes or no question with a probability, and a suite can add up to ten choice or score questions with a pass line each. Answers show on the trial scorecard under User value, and a criterion near even odds reads Uncertain. They never gate a run. Settings are edited in the app; the public API refuses `settings.judge.rubricChecks`. The SDK's run-disclosure types gain the `rubricChecks` touchpoint and the `typed_decision` rail routing, and `EVALUATOR_STAGE` gains `judge:rubricChecks`.
+
+### Patch Changes
+
+- [#5487](https://github.com/MCPJam/inspector/pull/5487) [`9f75d30`](https://github.com/MCPJam/inspector/commit/9f75d307d9e87eba261d962ee25dde6bfa110ea2) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Explain connection-refused and HTTP 404 failures with the MCP endpoint and a suggested next step. Preserve authentication handling and underlying transport errors, and omit credentials and query values from the displayed endpoint.
+
+- [#5484](https://github.com/MCPJam/inspector/pull/5484) [`f5f03e1`](https://github.com/MCPJam/inspector/commit/f5f03e1f06c2b4f4b51ddeaa05fe77bdd36782cf) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
 ## 8.14.0
 
 ### Minor Changes

@@ -282,6 +282,31 @@ export async function bearerAuthMiddleware(
       );
     }
 
+    // Expiry, from MCPJam's own record. WorkOS is given the same `expires_at`
+    // at mint and normally refuses the key itself before we get here; this
+    // makes the guarantee hold even if it did not. A key minted before expiry
+    // existed carries none and is not expired retroactively.
+    if (
+      typeof binding.expiresAt === "number" &&
+      binding.expiresAt <= Date.now()
+    ) {
+      logger.info("Expired WorkOS API key rejected", {
+        workos_key_id: workosKeyId,
+        mcpjam_organization_id: binding.mcpjamOrganizationId,
+      });
+      // Same v1 contract as ORPHANED_KEY above: canonical 401, specific
+      // reason in `details`.
+      return c.json(
+        {
+          code: ErrorCode.UNAUTHORIZED,
+          message:
+            "This API key has expired. Create a new one from Settings → API keys.",
+          details: { reason: "EXPIRED_KEY" },
+        },
+        401
+      );
+    }
+
     c.set("authMethod", "workos_api_key");
     c.set("workosApiKeyId", workosKeyId);
     c.set("workosUserId", workosUserId);

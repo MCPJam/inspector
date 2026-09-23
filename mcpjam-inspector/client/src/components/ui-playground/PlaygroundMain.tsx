@@ -267,6 +267,7 @@ import {
 } from "@/components/chat-v2/thread/thread-helpers";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { artifactStableKey } from "@/lib/artifact-urls";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -298,8 +299,10 @@ function buildHistoryContentSignature(
         snapshot._id,
         snapshot.toolCallId,
         snapshot.resourceUri ?? "",
-        snapshot.widgetHtmlUrl ?? "",
-        snapshot.toolOutputUrl ?? "",
+        // Artifact links are re-minted with new expiries; the object they
+        // point at is what says whether the content changed.
+        artifactStableKey(snapshot.widgetHtmlUrl ?? ""),
+        artifactStableKey(snapshot.toolOutputUrl ?? ""),
       ].join(":"),
     )
     .sort()
@@ -307,7 +310,7 @@ function buildHistoryContentSignature(
   return [
     session._id,
     session.chatSessionId,
-    session.messagesBlobUrl ?? "",
+    artifactStableKey(session.messagesBlobUrl ?? ""),
     snapshotSignature,
   ].join("::");
 }

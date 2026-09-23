@@ -82,15 +82,58 @@ describe("coverageForCase", () => {
     expect(c.selection.required).toBe(0);
   });
 
-  it("marks the links only the runner observes", () => {
+  it("marks the links only a built-in runner check covers", () => {
+    // Read off the rows the scorecard renders: connection and discovery carry
+    // a runner check on every case, call and response only when the case gives
+    // the runner a call to measure.
+    const bare = coverageForCase(card());
+    expect(bare.connection.runner).toBe(true);
+    expect(bare.discovery.runner).toBe(true);
+    expect(bare.call.runner).toBe(false);
+    expect(bare.response.runner).toBe(false);
+    // No runner check at all here, so an empty one is a gap.
+    expect(bare.selection.runner).toBe(false);
+    expect(bare.userValue.runner).toBe(false);
+
+    const routed = coverageForCase(
+      card({
+        steps: [
+          prompt,
+          {
+            id: "t1",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "get_me",
+              args: { args: {} },
+            },
+          },
+        ],
+        toolsChoice: "tools",
+      }),
+    );
+    expect(routed.call.runner).toBe(true);
+    expect(routed.response.runner).toBe(true);
+  });
+
+  it("never counts a runner check as a rule", () => {
+    // It decides nothing, so "1 advisory" on Connection would be invented.
     const c = coverageForCase(card());
-    expect(c.connection.runner).toBe(true);
-    expect(c.discovery.runner).toBe(true);
-    expect(c.call.runner).toBe(true);
-    // These three can be authored, so an empty one is a gap, not runner-observed.
-    expect(c.selection.runner).toBe(false);
-    expect(c.response.runner).toBe(false);
-    expect(c.userValue.runner).toBe(false);
+    for (const stage of ["connection", "discovery"] as const) {
+      expect(c[stage]).toMatchObject({ required: 0, advisory: 0 });
+    }
+  });
+
+  it("lets an authored check, not the runner check, describe a stage", () => {
+    const c = coverageForCase(
+      card({
+        steps: [
+          prompt,
+          { id: "a1", kind: "assert", assertion: { type: "noToolErrors" } },
+        ],
+      }),
+    );
+    expect(c.response).toMatchObject({ required: 1, runner: false });
   });
 
   it("records configured judge coverage while scheduling policy is unknown", () => {
@@ -120,10 +163,18 @@ describe("coverageForCase", () => {
 describe("coverageDetail", () => {
   const empty = { required: 0, advisory: 0, judge: false, runner: false };
 
-  it("says what the runner observes", () => {
+  it("says a built-in runner check covers the link", () => {
     expect(coverageDetail({ ...empty, runner: true }, 0).label).toBe(
-      "Observed by the runner",
+      "Built-in runner check",
     );
+  });
+
+  it("still points at a suggestion where only the runner check looks", () => {
+    // The runner check is not an assertion, so it does not close the gap a
+    // suggestion would fill.
+    const detail = coverageDetail({ ...empty, runner: true }, 2);
+    expect(detail.label).toBe("Built-in runner check · 2 suggested");
+    expect(detail.toneClass).toBe(coverageDetail({ ...empty }, 2).toneClass);
   });
 
   it("prints the configuration line the suite table prints", () => {

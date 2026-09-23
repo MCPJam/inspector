@@ -1,3 +1,4 @@
+import type { DesktopActivity } from "../shared/desktop-diagnostics";
 import { contextBridge, ipcRenderer } from "electron";
 
 import type {
@@ -7,6 +8,7 @@ import type {
 
 // Define the API interface
 interface ElectronAPI {
+  diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
     getVersion: () => Promise<string>;
@@ -102,6 +104,7 @@ interface ElectronAPI {
 
 // Expose protected methods that allow the renderer process to use
 const electronAPI: ElectronAPI = {
+  diagnostics: { record: activity => ipcRenderer.send("desktop:diagnostic", activity) },
   app: {
     getVersion: () => ipcRenderer.invoke("app:version"),
     getPlatform: () => ipcRenderer.invoke("app:platform"),
