@@ -360,7 +360,8 @@ The switch **raises** the bar and never lowers it, so it is not the whole story 
 Some actions pause whether it is on or off:
 
 - local shell commands (`bash`);
-- destructive UI actions.
+- destructive UI actions;
+- workspace operations the platform gates behind a human click (for example, `call_server_tool` and running an eval suite).
 
 Local Browser (`browser_*`) and WebMCP page tools follow the chat’s Tool Approval setting. With it off, calls run without per-call approval. Browser device permission remains a separate prerequisite.
 
