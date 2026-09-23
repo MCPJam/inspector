@@ -4,8 +4,11 @@ import {
   definitionHash,
   finalizeScoreResult,
   resolveScoreDefinition,
+  USER_VALUE_STAGES,
   type ScoreDefinition,
   type ScoreResult,
+  type StageResultRow,
+  type UserValueStage,
 } from "@mcpjam/sdk/contract";
 import { hostedCriterionId } from "@/shared/hosted-criterion-id";
 import type { Predicate } from "@/shared/eval-matching";
@@ -13,6 +16,7 @@ import type { TestStep } from "@/shared/steps";
 import type { EvalIteration } from "@/components/evals/types";
 import {
   buildCaseScorecard,
+  withRunnerChecks,
   type CaseScorecardInput,
 } from "../case-scorecard/case-scorecard-model";
 import {
@@ -376,6 +380,168 @@ describe("joinTrialResults — the route", () => {
   });
 });
 
+describe("joinTrialResults — built-in runner checks", () => {
+  /** A verified chain: every stage passed unless `over` says otherwise. */
+  const chainWith = (
+    over: Partial<Record<UserValueStage, Omit<StageResultRow, "stage">>> = {},
+  ) =>
+    ({
+      status: "verified",
+      analyzerVersion: 12,
+      stages: USER_VALUE_STAGES.map((stage) => ({
+        stage,
+        state: "passed",
+        reason: "observed",
+        ...over[stage],
+      })),
+    } as TrialFacts["chain"]);
+
+  /** The run page's own assembly: the chain's runner checks, then the join. */
+  function joinRun(
+    trial: Partial<TrialFacts> & { iteration: EvalIteration | null },
+  ): JoinedScorecardRow[] {
+    const card = buildCaseScorecard(authored);
+    const stages =
+      trial.chain?.status === "verified"
+        ? trial.chain.stages.map((row) => row.stage)
+        : [];
+    return joinTrialResults(withRunnerChecks(card.groups, stages), {
+      steps: authored.steps,
+      ...trial,
+    }).flatMap((group) => group.rows);
+  }
+
+  it("reports the verified chain's verdict and reason, in its own words", () => {
+    const rows = joinRun({
+      iteration: iteration({}),
+      chain: chainWith({
+        connection: { state: "failed", reason: "connectFailed" },
+      }),
+    });
+    expect(rowByKey(rows, "builtin:connection").result).toEqual({
+      state: "failed",
+      source: "chainStage",
+      reason:
+        "Failed because the configured server was reached and initialize failed there.",
+    });
+    expect(rowByKey(rows, "builtin:discovery").result).toEqual({
+      state: "passed",
+      source: "chainStage",
+      reason: "Passed because the evidence was inspected and the stage held.",
+    });
+  });
+
+  it("says not applicable, never ran and not measured the way the chain does", () => {
+    const rows = joinRun({
+      iteration: iteration({}),
+      chain: chainWith({
+        discovery: { state: "notReached", reason: "earlierStageFailed" },
+        call: { state: "notApplicable", reason: "notAuthored" },
+        response: { state: "notMeasured", reason: "noEvidenceCaptured" },
+      }),
+    });
+    expect(rowByKey(rows, "builtin:discovery").result).toEqual({
+      state: "skipped",
+      source: "chainStage",
+      reason: "Never ran (an earlier stage failed).",
+    });
+    expect(rowByKey(rows, "builtin:call").result).toEqual({
+      state: "notApplicable",
+      source: "chainStage",
+      reason:
+        "Not applicable to this case because the case asserts nothing this stage could decide.",
+    });
+    expect(rowByKey(rows, "builtin:response").result).toEqual({
+      state: "notMeasured",
+      source: "chainStage",
+      reason:
+        "Not measured because nothing eligible for that stage was captured.",
+    });
+  });
+
+  it("reads nothing from a chain the analyzer withheld, or from none", () => {
+    for (const chain of [
+      { status: "unverified" } as TrialFacts["chain"],
+      { status: "absent" } as TrialFacts["chain"],
+      null,
+    ]) {
+      const rows = joinRun({ iteration: iteration({}), chain });
+      const builtins = rows.filter((row) => row.provenance === "builtin");
+      // Only the stages the case itself implies, and none of them measured.
+      expect(builtins.map((row) => row.stage)).toEqual([
+        "connection",
+        "discovery",
+        "response",
+      ]);
+      for (const row of builtins) {
+        expect(row.result).toEqual({ state: "notMeasured" });
+      }
+    }
+  });
+
+  it("calls a setup failure an error, and keeps what the setup signals measured", () => {
+    const setupFailed = { ...iteration({}), status: "setup_failed" };
+    const aborted = joinRun({
+      iteration: setupFailed as EvalIteration,
+      chain: chainWith({
+        connection: { state: "failed", reason: "connectFailed" },
+        discovery: { state: "notReached", reason: "earlierStageFailed" },
+        response: { state: "notReached", reason: "earlierStageFailed" },
+      }),
+    });
+    // A stage the setup signals measured keeps its measured verdict…
+    expect(rowByKey(aborted, "builtin:connection").result.state).toBe("failed");
+    // …and one nothing measured could not be evaluated.
+    expect(rowByKey(aborted, "builtin:discovery").result).toEqual({
+      state: "error",
+      source: "chainStage",
+      reason: "The environment was never prepared, so the test never began.",
+    });
+    // With no chain at all the status alone still says so.
+    const bare = joinRun({ iteration: setupFailed as EvalIteration });
+    for (const row of bare.filter((r) => r.provenance === "builtin")) {
+      expect(row.result.state).toBe("error");
+    }
+  });
+
+  it("quotes the sentence the failing tool returned, as evidence under the verdict", () => {
+    const rows = joinRun({
+      iteration: iteration({}),
+      chain: chainWith({ response: { state: "failed", reason: "toolError" } }),
+      trace: {
+        messages: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "create_journey",
+                result: {
+                  isError: true,
+                  content: [
+                    { type: "text", text: "VALIDATION_ERROR: no host" },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const response = rowByKey(rows, "builtin:response");
+    expect(response.result).toMatchObject({
+      state: "failed",
+      reason: "Failed because the server reported a tool error.",
+    });
+    expect(response.evidence?.floor).toBe(
+      "`create_journey` returned an error: VALIDATION_ERROR: no host",
+    );
+    // A stage that held has no failure to quote.
+    expect(rowByKey(rows, "builtin:connection").evidence).toBeUndefined();
+  });
+});
+
 describe("joinTrialResults — the judge", () => {
   it("shows the verdict and the score it was measured against", () => {
     const rows = join(authored, {
@@ -486,6 +652,34 @@ describe("summarizeTrialScorecard", () => {
     );
     expect(summary.required).toEqual({ passed: 1, counted: 1 });
     expect(summary.notMeasured).toBe(1);
+  });
+
+  it("never counts a runner check, which decides nothing", () => {
+    const summary = summarizeTrialScorecard([
+      {
+        rows: [
+          {
+            key: "builtin:connection",
+            provenance: "builtin",
+            role: "advisory",
+            result: { state: "failed", source: "chainStage" },
+          },
+          {
+            key: "builtin:discovery",
+            provenance: "builtin",
+            role: "advisory",
+            result: { state: "error", source: "chainStage", reason: "x" },
+          },
+        ] as unknown as JoinedScorecardRow[],
+      },
+    ]);
+    expect(summary).toEqual({
+      required: { passed: 0, counted: 0 },
+      advisory: 0,
+      errors: 0,
+      notMeasured: 0,
+      pending: 0,
+    });
   });
 
   it("counts a required scorer that errored as counted but not passed", () => {

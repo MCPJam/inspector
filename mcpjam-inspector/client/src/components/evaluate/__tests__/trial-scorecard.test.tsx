@@ -129,11 +129,14 @@ describe("TrialScorecard", () => {
       ],
     } as never;
     renderCard({ chain });
-    // Chain order; a stage the chain measured but nothing grades still gets a
-    // cell, and the authored stages keep theirs.
+    // Chain order. Every stage the runner measures has its runner check, so
+    // each gets a cell and a row, whether or not anything authored grades it;
+    // `toolCalledAtLeastOnce` expects a call, which brings Tool call in.
     expect(railStages()).toEqual([
       "connection",
+      "discovery",
       "selection",
+      "call",
       "response",
       "userValue",
     ]);
@@ -154,9 +157,17 @@ describe("TrialScorecard", () => {
     openStage("connection");
     const connection = sectionFor("connection")!;
     expect(stateWordIn(connection)).toBe("passed");
-    expect(
-      within(connection).queryAllByTestId("trial-scorecard-row"),
-    ).toHaveLength(0);
+    // Nothing authored grades Connection; its runner check says what the
+    // chain decided there, instead of a bare heading.
+    const connectionRows = within(connection).queryAllByTestId(
+      "trial-scorecard-row",
+    );
+    expect(connectionRows).toHaveLength(1);
+    expect(connectionRows[0]).toHaveAttribute("data-state", "passed");
+    expect(connectionRows[0]).toHaveTextContent("Successful connection");
+    expect(connectionRows[0]).toHaveTextContent(
+      "Passed because a later stage's success implies it.",
+    );
     expect(sectionFor("selection")).toBeNull();
   });
 
@@ -594,6 +605,88 @@ describe("blind review keeps the chain and masks one card", () => {
     openStage("userValue");
     expect(stateWordIn(sectionFor("userValue")!)).toBe("failed");
     expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+  });
+});
+
+describe("built-in runner checks on the run page", () => {
+  const builtinRows = () =>
+    screen
+      .getAllByTestId("trial-scorecard-row")
+      .filter((row) =>
+        row.getAttribute("data-row-key")?.startsWith("builtin:"),
+      );
+
+  it("renders an old run with no chain: each runner check is not measured", () => {
+    renderCard({ chain: { status: "absent" } as never });
+    // No rail without a verified chain, so every section stacks.
+    const rows = builtinRows();
+    expect(rows.map((row) => row.getAttribute("data-row-key"))).toEqual([
+      "builtin:connection",
+      "builtin:discovery",
+      "builtin:call",
+      "builtin:response",
+    ]);
+    for (const row of rows) {
+      expect(row).toHaveAttribute("data-state", "notMeasured");
+      expect(row).toHaveTextContent("Not measured");
+    }
+  });
+
+  it("renders a setup_failed run: nothing measured reads as an error", () => {
+    renderCard({
+      iteration: { ...iteration(), status: "setup_failed" } as EvalIteration,
+      chain: {
+        status: "verified",
+        failureCategory: "setup",
+        analyzerVersion: 12,
+        stages: [
+          "connection",
+          "discovery",
+          "selection",
+          "call",
+          "response",
+          "userValue",
+        ].map((stage) => ({
+          stage,
+          state: "notMeasured",
+          reason: "setupAborted",
+        })),
+      } as never,
+    });
+    for (const stage of ["connection", "discovery", "call", "response"]) {
+      openStage(stage);
+      const row = within(sectionFor(stage)!).getAllByTestId(
+        "trial-scorecard-row",
+      )[0]!;
+      expect(row).toHaveAttribute("data-row-key", `builtin:${stage}`);
+      expect(row).toHaveAttribute("data-state", "error");
+      expect(row).toHaveTextContent("Could not be evaluated");
+      expect(row).toHaveTextContent(
+        "The environment was never prepared, so the test never began.",
+      );
+    }
+  });
+
+  it("badges a runner check Built-in and gives it no role", () => {
+    renderCard({
+      chain: {
+        status: "verified",
+        analyzerVersion: 12,
+        stages: [{ stage: "connection", state: "passed", reason: "observed" }],
+      } as never,
+    });
+    openStage("connection");
+    const row = within(sectionFor("connection")!).getByTestId(
+      "trial-scorecard-row",
+    );
+    expect(within(row).getByTestId("runner-check-badge")).toHaveTextContent(
+      "Built-in",
+    );
+    expect(row).toHaveTextContent("The run connects to its servers");
+    expect(row).toHaveTextContent(
+      "Passed because the evidence was inspected and the stage held.",
+    );
+    expect(row.textContent).not.toMatch(/required|advisory|assertion/i);
   });
 });
 

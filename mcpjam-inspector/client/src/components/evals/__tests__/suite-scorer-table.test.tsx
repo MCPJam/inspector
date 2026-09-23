@@ -94,7 +94,12 @@ describe("SuiteScorerTable", () => {
       const group = container.querySelector(
         `[data-stage-group="${stage}"]`,
       ) as HTMLElement;
-      expect(group.textContent).toContain("Required");
+      const observed = group.querySelector(
+        '[data-scorer-row="observed"]',
+      ) as HTMLElement;
+      // A runner check decides nothing: Built-in, never Required.
+      expect(observed.textContent).toContain("Built-in");
+      expect(observed.textContent).not.toContain("Required");
       const details = group.querySelector("details");
       expect(details).toBeTruthy();
       expect(
