@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mocks.useQuery(...args),
+  // Per-run metrics and live-run rows; idle unless `perRunMetrics` is on.
+  useQueries: () => ({}),
+  useConvex: () => ({ query: async () => null }),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -90,6 +93,47 @@ describe("useEvalQueries", () => {
       "testSuites:listTestSuiteRuns",
       { suiteId: "suite-1", limit: 100 }
     );
+  });
+
+  it("reads cases only, never the whole suite's iterations, in per-run mode", () => {
+    const { result } = renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: "suite-1",
+        deletingSuiteId: null,
+        projectId: "ws-1",
+        organizationId: null,
+        perRunMetrics: true,
+      }),
+    );
+
+    expect(mocks.useQuery).toHaveBeenCalledWith("testSuites:listTestCases", {
+      suiteId: "suite-1",
+    });
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getAllTestCasesAndIterationsBySuite",
+      "skip"
+    );
+    expect(mocks.useQuery).not.toHaveBeenCalledWith(
+      "testSuites:getAllTestCasesAndIterationsBySuite",
+      { suiteId: "suite-1" }
+    );
+    expect(result.current.sortedIterations).toEqual([]);
+    expect(result.current.metricsByRun.size).toBe(0);
+  });
+
+  it("keeps the whole-suite read for the legacy surfaces", () => {
+    renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: "suite-1",
+        deletingSuiteId: null,
+        projectId: "ws-1",
+        organizationId: null,
+      }),
+    );
+
+    expect(mocks.useQuery).toHaveBeenCalledWith("testSuites:listTestCases", "skip");
   });
 
   it("uses empty overview args when ready with no project or organization", () => {
