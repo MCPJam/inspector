@@ -151,6 +151,7 @@ export function resolveSwarmCellOutcome(args: {
  */
 export function SwarmHostCell({
   hostLabel,
+  showHostLabel = true,
   sessionIndex,
   outcome,
   verdict,
@@ -159,6 +160,12 @@ export function SwarmHostCell({
   onSelect,
 }: {
   hostLabel: string;
+  /**
+   * Off when the matrix is already filtered to one target: the column header
+   * above these chips names it, so repeating it per chip only competes for
+   * width. The name stays in `aria-label` either way.
+   */
+  showHostLabel?: boolean;
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
@@ -193,20 +200,37 @@ export function SwarmHostCell({
         sessionIndex + 1
       } on ${hostLabel} (${executionLabel})`}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
+        // These chips sit in a narrow target column and their parts can exceed
+        // it: an execution target's name is free text, and a generated
+        // environment can run to a full sentence. Wrapping BETWEEN parts keeps
+        // each one intact and inside the border — laid out without it, the name
+        // broke one word per line and stretched the chip to the height of the
+        // sentence. The name is also the only part that can lose characters and
+        // still read, so it truncates while the status parts hold their size.
+        "inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary bg-primary/5"
           : "border-border/50 bg-background/60",
       )}
     >
-      <span className="font-medium text-foreground/80">{hostLabel}</span>
-      <span className="font-mono text-[10px] text-muted-foreground">
+      {showHostLabel ? (
+        <span className="min-w-0 truncate font-medium text-foreground/80">
+          {hostLabel}
+        </span>
+      ) : null}
+      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
         #{sessionIndex + 1}
       </span>
-      <span className={cn("size-1.5 rounded-full", meta.dot)} />
-      <span className={cn("font-semibold", meta.text)}>{executionLabel}</span>
-      <SwarmGoalResult verdict={verdict} />
+      <span className={cn("size-1.5 shrink-0 rounded-full", meta.dot)} />
+      <span
+        className={cn("shrink-0 whitespace-nowrap font-semibold", meta.text)}
+      >
+        {executionLabel}
+      </span>
+      <span className="shrink-0 whitespace-nowrap">
+        <SwarmGoalResult verdict={verdict} />
+      </span>
       {verdict ? (
         <SessionEvaluatorCount counts={verdict.counts} />
       ) : (
@@ -229,7 +253,7 @@ function SessionEvaluatorCount({
 }) {
   if (counts.gating === 0) return null;
   return (
-    <span className="text-[10px] text-muted-foreground">
+    <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
       {counts.gatingPassed}/{counts.gating} evaluators passed
     </span>
   );
@@ -256,7 +280,7 @@ function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
       <span
         title={`${passed} of ${results.length} evaluators passed`}
         className={cn(
-          "rounded px-1 font-mono text-[10px] tabular-nums",
+          "shrink-0 rounded px-1 font-mono text-[10px] tabular-nums",
           allPassed
             ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
             : "bg-destructive/10 text-destructive",
@@ -278,7 +302,7 @@ function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
           ? "Evaluators still being graded"
           : "Evaluators could not be graded"
       }
-      className="rounded px-1 font-mono text-[10px] text-muted-foreground"
+      className="shrink-0 rounded px-1 font-mono text-[10px] text-muted-foreground"
     >
       {pending ? "…" : "—"}
     </span>
@@ -391,6 +415,7 @@ export function SwarmSessionsMatrix({
               <SwarmHostCell
                 key={`${target.key}:${sessionIndex}`}
                 hostLabel={target.label}
+                showHostLabel={!targetKeyFilter}
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
