@@ -1864,7 +1864,7 @@ function OrganizationPage({
 
       {children ??
         (activeSection === "api-keys" ? (
-          <ApiKeysRoute organizationId={organization._id} />
+          <ApiKeysRoute organizationId={organization._id} isAdmin={canEdit} />
         ) : activeSection === "models" ? (
           <OrganizationModelsSection
             organizationId={organization._id}
