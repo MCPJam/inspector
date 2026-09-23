@@ -797,15 +797,6 @@ function ScorerRow({
   );
 }
 
-/** Keys every predicate carries; anything else is a field its editor shows. */
-const PREDICATE_ENVELOPE_KEYS = new Set(["type", "role", "severity"]);
-
-function predicateHasFields(predicate: Predicate): boolean {
-  return Object.keys(predicate).some(
-    (key) => !PREDICATE_ENVELOPE_KEYS.has(key),
-  );
-}
-
 /**
  * The judge's threshold. Every other number an evaluator turns on is edited in
  * its own `CheckRow` body, opened from the row's title.
