@@ -28,6 +28,8 @@ vi.mock("convex/react", () => ({
       : mocks.updateTestSuite,
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
@@ -77,6 +79,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
