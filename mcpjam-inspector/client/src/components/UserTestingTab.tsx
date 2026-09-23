@@ -305,7 +305,7 @@ export function UserTestingTab({
         if (!environmentsEnabled) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "Publishing a scenario needs Environments, which isn't enabled for this project. Create the scenario from the New scenario screen instead.",
+            "Publishing a study needs Environments, which isn't enabled for this project. Create the study from the New study screen instead.",
           );
         }
         const target = resolveAgentTarget(payload?.environment, {
@@ -337,13 +337,13 @@ export function UserTestingTab({
             // lie the model then repeats to the user.
             created: result.created,
             note: result.created
-              ? "The scenario is published and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists."
-              : "That environment was already published; its existing scenario is open, with the name and access it already had.",
+              ? "The study is published and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists."
+              : "That environment was already published; its existing study is open, with the name and access it already had.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            e instanceof Error ? e.message : "Failed to publish the scenario.",
+            e instanceof Error ? e.message : "Failed to publish the study.",
           );
         }
       },
@@ -371,7 +371,7 @@ export function UserTestingTab({
           // the agent it removed something it did not.
           if (result?.deleted === false) {
             throw new Error(
-              "The scenario was not deleted — it may already be gone.",
+              "The study was not deleted — it may already be gone.",
             );
           }
           return {
@@ -393,7 +393,7 @@ export function UserTestingTab({
         } catch (e) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            e instanceof Error ? e.message : "Failed to delete the scenario.",
+            e instanceof Error ? e.message : "Failed to delete the study.",
           );
         }
       },
@@ -496,7 +496,7 @@ export function UserTestingTab({
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
           title="Select a project first"
-          body="Scenarios belong to a project. Pick one, then create a scenario in it."
+          body="Studies belong to a project. Pick one, then create a study in it."
           onBack={goOverview}
         />
       );
@@ -563,8 +563,8 @@ export function UserTestingTab({
       return (
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
-          title="Sign in to open this scenario"
-          body="Scenarios live in a project. Sign in and select the project this link belongs to."
+          title="Sign in to open this study"
+          body="Studies live in a project. Sign in and select the project this link belongs to."
           onBack={goOverview}
         />
       );
@@ -573,12 +573,12 @@ export function UserTestingTab({
     // The list is what validates the param, so nothing can be decided until
     // it lands. The host list only gates the Swarms dead-end below.
     if (listLoading || (!scenarioRow && !legacyHostRow && hostsLoading)) {
-      return <ScenarioSpinner label="Loading scenario…" />;
+      return <ScenarioSpinner label="Loading study…" />;
     }
 
     // The redirect effect is already in flight; rendering "not found" for a
     // frame would flash a lie at someone following a working old link.
-    if (legacyHostRow) return <ScenarioSpinner label="Loading scenario…" />;
+    if (legacyHostRow) return <ScenarioSpinner label="Loading study…" />;
 
     if (!scenarioRow) {
       if (isJourneysHost) {
@@ -586,7 +586,7 @@ export function UserTestingTab({
           <ScenarioNotice
             icon={<Boxes className="size-8 text-muted-foreground/70" />}
             title="Managed by Swarms"
-            body="This client belongs to the Swarms surface and has no share surface. Manage its journeys and runs there."
+            body="This client belongs to the Swarms surface and has no share surface. Manage its goals and runs there."
             onBack={goOverview}
             extraAction={
               <Button
@@ -603,14 +603,14 @@ export function UserTestingTab({
       return (
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
-          title="Scenario not found"
-          body="This scenario no longer exists, was never published, or isn't visible to you."
+          title="Study not found"
+          body="This study no longer exists, was never published, or isn't visible to you."
           onBack={goOverview}
         />
       );
     }
 
-    if (scenarioLoading) return <ScenarioSpinner label="Loading scenario…" />;
+    if (scenarioLoading) return <ScenarioSpinner label="Loading study…" />;
 
     if (!scenario) {
       // The row is in the list but the detail query returns nothing — the
@@ -619,7 +619,7 @@ export function UserTestingTab({
       // degraded read failed.
       return (
         <ScenarioLoadFailure
-          title="Couldn't load this scenario"
+          title="Couldn't load this study"
           body="It may have just been deleted. Go back to User Testing to see the current list."
         />
       );

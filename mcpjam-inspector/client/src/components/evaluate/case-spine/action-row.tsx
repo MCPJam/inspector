@@ -181,7 +181,7 @@ export function ActionRow({
             aria-label={promptAriaLabel}
             readOnly={readOnly}
             className={cn(
-              "resize-none bg-background font-mono text-sm leading-relaxed hover:border-foreground/30 focus-visible:border-foreground/50 focus-visible:ring-foreground/15",
+              "resize-none bg-background text-foreground",
               !step.prompt.trim() && evalValidationBorderClass,
             )}
           />

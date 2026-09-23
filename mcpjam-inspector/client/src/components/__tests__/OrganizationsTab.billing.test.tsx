@@ -20,6 +20,17 @@ const mockUseOrganizationQueries = vi.fn();
 const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
+const trackMock = vi.hoisted(() => vi.fn());
+
+function mockReservedBillingTab() {
+  const reservedTab = {
+    close: vi.fn(),
+    location: { href: "" },
+    opener: window,
+  } as unknown as Window;
+  const openSpy = vi.spyOn(window, "open").mockReturnValue(reservedTab);
+  return { openSpy, reservedTab };
+}
 const {
   addMemberMock,
   removeMemberMock,
@@ -302,10 +313,13 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
+    info: vi.fn(),
     error: vi.fn(),
     warning: vi.fn(),
   },
 }));
+
+vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: (...args: unknown[]) =>
@@ -508,6 +522,7 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("renders Pro only from a v2 catalog and checks out the selected annual plan", async () => {
+    const { openSpy } = mockReservedBillingTab();
     const legacy = createPlanCatalog();
     const pro = {
       ...legacy.plans.team,
@@ -593,6 +608,14 @@ describe("OrganizationsTab billing", () => {
         { confirmPaidPlanChange: true },
       ),
     );
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "plans_page",
+      }),
+    );
+    openSpy.mockRestore();
   });
 
   it("does not auto-checkout a Pro deep link for a legacy catalog", async () => {
@@ -645,6 +668,142 @@ describe("OrganizationsTab billing", () => {
     expect(
       panel.queryByText("No credit card required"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reports one privacy-safe billing view impression", async () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "free",
+        }),
+      }),
+    );
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+    view.rerender(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+
+    await waitFor(() => {
+      const impressions = trackMock.mock.calls.filter(
+        ([event]) => event === "billing_plans_viewed",
+      );
+      expect(impressions).toHaveLength(1);
+      expect(impressions[0]?.[1]).toEqual(
+        expect.objectContaining({
+          location: "organization_billing",
+          organization_id: "org-1",
+          source: "billing_page",
+          current_plan: "free",
+          can_manage_billing: true,
+        }),
+      );
+      expect(impressions[0]?.[1]).not.toHaveProperty("price_cents");
+    });
+  });
+
+  it("reports one plan-comparison impression from the Plans route", async () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "free",
+        }),
+      }),
+    );
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="plans" />,
+    );
+    view.rerender(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    await waitFor(() => {
+      const impressions = trackMock.mock.calls.filter(
+        ([event]) => event === "billing_plans_viewed",
+      );
+      expect(impressions).toHaveLength(1);
+      expect(impressions[0]?.[1]).toEqual(
+        expect.objectContaining({
+          location: "organization_billing",
+          source: "plans_page",
+          current_plan: "free",
+        }),
+      );
+    });
+  });
+
+  it("does not report a plan impression while plan billing is disabled", async () => {
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "billing-entitlements-ui" ? false : true,
+    );
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({ plan: "free" }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    await waitFor(() =>
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "billing_plans_viewed",
+        ),
+      ).toHaveLength(0),
+    );
+  });
+
+  it("reports a fresh impression when the organization changes", async () => {
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [
+        {
+          _id: "org-1",
+          name: "Org One",
+          createdBy: "user_1",
+          createdAt: 1,
+          updatedAt: 1,
+          myRole: "owner",
+        },
+        {
+          _id: "org-2",
+          name: "Org Two",
+          createdBy: "user_2",
+          createdAt: 2,
+          updatedAt: 2,
+          myRole: "owner",
+        },
+      ],
+      isLoading: false,
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({ plan: "free" }),
+      }),
+    );
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+    await waitFor(() =>
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "billing_plans_viewed",
+        ),
+      ).toHaveLength(1),
+    );
+
+    view.rerender(
+      <OrganizationsTab organizationId="org-2" section="billing" />,
+    );
+    await waitFor(() =>
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "billing_plans_viewed",
+        ),
+      ).toHaveLength(2),
+    );
   });
 
   it.each(["v1", "v2"])(
@@ -750,6 +909,43 @@ describe("OrganizationsTab billing", () => {
     );
   });
 
+  it("does not report a canceled seat-payment finish as success", async () => {
+    const finishSeatPayment = vi.fn().mockResolvedValue({
+      status: "noop",
+      reason: "seat_payment_canceled",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+        }),
+        activeSeatPaymentIntent: pendingSeatPaymentIntentFixture(),
+        finishSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
+
+    await waitFor(() => expect(finishSeatPayment).toHaveBeenCalled());
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_action_succeeded",
+      expect.objectContaining({ flow: "seat_payment" }),
+    );
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment",
+        failure_kind: "canceled",
+      }),
+    );
+  });
+
   const failedSeatPaymentIntentFixture = () => ({
     _id: "seat-payment-failed",
     organizationId: "org-1",
@@ -812,6 +1008,58 @@ describe("OrganizationsTab billing", () => {
       ),
     );
     expect(toast.success).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_cancel",
+        failure_kind: "deferred",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_action_succeeded",
+      expect.objectContaining({ flow: "seat_payment_cancel" }),
+    );
+  });
+
+  it("records a failed cancellation when the seat payment wins the race", async () => {
+    const cancelSeatPayment = vi.fn().mockResolvedValue({
+      voided: false,
+      outcome: "paid",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: pendingSeatPaymentIntentFixture(),
+        cancelSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(cancelSeatPayment).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_cancel",
+        failure_kind: "already_paid",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_action_succeeded",
+      expect.objectContaining({ flow: "seat_payment_cancel" }),
+    );
+    expect(toast.info).toHaveBeenCalledWith(
+      "Payment completed before cancellation; the member was added.",
+    );
   });
 
   // A charge raised automatically when an invitee signs up fails with nobody
@@ -931,6 +1179,101 @@ describe("OrganizationsTab billing", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
+  it("reports a retry canceled by the competing cancellation without a generic retry error", async () => {
+    const retrySeatPayment = vi.fn().mockResolvedValue({
+      status: "noop",
+      reason: "seat_payment_canceled",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        retrySeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+    await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_retry",
+        failure_kind: "canceled",
+      }),
+    );
+    expect(toast.error).toHaveBeenCalledWith(
+      errorToastMessage(
+        "This seat payment was canceled. Add the member again to restart payment.",
+      ),
+      { duration: 8000 },
+    );
+    expect(toast.error).not.toHaveBeenCalledWith(
+      errorToastMessage(
+        "This seat payment can no longer be retried. Try adding the member again.",
+      ),
+      { duration: 8000 },
+    );
+  });
+
+  it.each([
+    ["plans", "plans_page", "organization_billing"],
+    ["members", "members_page", "organization_members"],
+  ] as const)(
+    "attributes seat-payment retries from the %s surface",
+    async (section, source, location) => {
+      const retrySeatPayment = vi
+        .fn()
+        .mockResolvedValue({ status: "paid", seatQuantity: 4 });
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            effectivePlan: "team",
+            source: "subscription",
+            billingInterval: "monthly",
+            subscriptionStatus: "active",
+            hasCustomer: true,
+            stripePriceId: "price_team_monthly",
+          }),
+          activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+          retrySeatPayment,
+        }),
+      );
+
+      render(<OrganizationsTab organizationId="org-1" section={section} />);
+      fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+      await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_flow_started",
+        expect.objectContaining({
+          flow: "seat_payment_retry",
+          source,
+          location,
+        }),
+      );
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_action_succeeded",
+        expect.objectContaining({
+          flow: "seat_payment_retry",
+          source,
+          location,
+          outcome: "paid",
+        }),
+      );
+    },
+  );
+
   it("shows an error when the charge can no longer be retried", async () => {
     // retrySeatPayment resolves undefined when the cancel-version guard trips
     // or the backend has nothing retryable left. Silence here would leave the
@@ -957,6 +1300,23 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      errorToastMessage(
+        "This seat payment can no longer be retried. Try adding the member again.",
+      ),
+      { duration: 8000 },
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_action_succeeded",
+      expect.objectContaining({ flow: "seat_payment_retry" }),
+    );
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_retry",
+        failure_kind: "no_payment_pending",
+      }),
+    );
   });
 
   it("keeps Remove invite available while a retry is in flight", () => {
@@ -1847,7 +2207,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
@@ -1864,10 +2224,193 @@ describe("OrganizationsTab billing", () => {
       );
     });
     expect(screen.queryByText("Upgrade to Team?")).not.toBeInTheDocument();
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
-      "_blank",
-      "noopener,noreferrer",
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/checkout");
+    openSpy.mockRestore();
+  });
+
+  it("opens Stripe in the system browser from Electron without reserving a blank popup", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+    const previousIsElectron = window.isElectron;
+    const previousElectronAPI = window.electronAPI;
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(window, "open");
+    Object.defineProperty(window, "isElectron", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { app: { openExternal } },
+    });
+
+    try {
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]!);
+      fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
+
+      await waitFor(() =>
+        expect(openExternal).toHaveBeenCalledWith(
+          "https://stripe.test/checkout",
+        ),
+      );
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_handoff_succeeded",
+        expect.objectContaining({
+          flow: "plan_change",
+          outcome: "checkout_handoff",
+        }),
+      );
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "billing_flow_failed",
+        expect.objectContaining({ flow: "plan_change" }),
+      );
+    } finally {
+      openSpy.mockRestore();
+      Object.defineProperty(window, "isElectron", {
+        configurable: true,
+        value: previousIsElectron,
+      });
+      Object.defineProperty(window, "electronAPI", {
+        configurable: true,
+        value: previousElectronAPI,
+      });
+    }
+  });
+
+  it("records failure instead of success when the checkout popup is blocked", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]!);
+    fireEvent.click(await screen.findByTestId("plan-confirm-cta"));
+
+    await waitFor(() => expect(startPlanChange).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "plan_change",
+        failure_kind: "popup_blocked",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_handoff_succeeded",
+      expect.objectContaining({
+        flow: "plan_change",
+        outcome: "checkout_handoff",
+      }),
+    );
+    openSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      name: "billing portal",
+      buttonName: "Manage plan",
+      flow: "manage_billing",
+      openBilling: "portal" as const,
+    },
+    {
+      name: "interval-change portal",
+      buttonName: "Change to annual",
+      flow: "change_interval",
+      openBilling: "interval" as const,
+    },
+  ])(
+    "classifies a blocked $name as popup_blocked",
+    async ({ buttonName, flow, openBilling }) => {
+      const openPortal = vi
+        .fn()
+        .mockResolvedValue("https://stripe.test/portal");
+      const openIntervalChangePortal = vi
+        .fn()
+        .mockResolvedValue("https://stripe.test/portal/interval");
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            effectivePlan: "team",
+            billingInterval: "monthly",
+            subscriptionStatus: "active",
+            hasCustomer: true,
+            stripePriceId: "price_team_monthly",
+          }),
+          openPortal,
+          openIntervalChangePortal,
+        }),
+      );
+      const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+      fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+      const expectedCall =
+        openBilling === "portal" ? openPortal : openIntervalChangePortal;
+      await waitFor(() => expect(expectedCall).toHaveBeenCalled());
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_flow_failed",
+        expect.objectContaining({ flow, failure_kind: "popup_blocked" }),
+      );
+      openSpy.mockRestore();
+    },
+  );
+
+  it("classifies a blocked cancellation portal as popup_blocked", async () => {
+    const openCancellationPortal = vi
+      .fn()
+      .mockResolvedValue("https://stripe.test/portal/cancel");
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "annual",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_annual",
+        }),
+        openCancellationPortal,
+      }),
+    );
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    fireEvent.click(
+      within(getPlanColumn("Free")).getByRole("button", {
+        name: "Downgrade",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open cancellation flow" }),
+    );
+
+    await waitFor(() => expect(openCancellationPortal).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "cancel_subscription",
+        failure_kind: "popup_blocked",
+      }),
     );
     openSpy.mockRestore();
   });
@@ -1948,7 +2491,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
@@ -1983,11 +2526,8 @@ describe("OrganizationsTab billing", () => {
     });
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(openPortal).not.toHaveBeenCalled();
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://stripe.test/portal/cancel",
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/portal/cancel");
 
     openSpy.mockRestore();
   });
@@ -2078,7 +2618,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy } = mockReservedBillingTab();
     const navigateBillingInSameTab = vi.fn();
     const onCheckoutIntentConsumed = vi.fn();
     const onCheckoutIntentNavigationStarted = vi.fn();
@@ -2109,6 +2649,21 @@ describe("OrganizationsTab billing", () => {
       "https://stripe.test/checkout",
     );
     expect(openSpy).not.toHaveBeenCalled();
+    expect(
+      trackMock.mock.calls.filter(
+        ([event, props]) =>
+          event === "billing_handoff_succeeded" &&
+          props.flow === "plan_change" &&
+          props.source === "pricing_deep_link",
+      ),
+    ).toHaveLength(1);
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "pricing_deep_link",
+      }),
+    );
     await waitFor(() => {
       expect(
         screen.queryByTestId("billing-deep-link-redirect"),
@@ -2417,9 +2972,24 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(navigateBillingInSameTab).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "pricing_deep_link",
+        failure_kind: "request_failed",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_handoff_succeeded",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "pricing_deep_link",
+      }),
+    );
   });
 
-  it("opens the cadence-change portal flow from the billing current plan card", async () => {
+  it("attributes the cadence-change portal flow to the Plans route", async () => {
     const openIntervalChangePortal = vi
       .fn()
       .mockResolvedValue("https://stripe.test/portal/interval");
@@ -2439,9 +3009,9 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Change to annual" }));
 
@@ -2452,15 +3022,21 @@ describe("OrganizationsTab billing", () => {
       );
     });
     expect(openPortal).not.toHaveBeenCalled();
-    expect(openSpy).toHaveBeenCalledWith(
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        flow: "change_interval",
+        source: "plans_page",
+      }),
+    );
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe(
       "https://stripe.test/portal/interval",
-      "_blank",
-      "noopener,noreferrer",
     );
     openSpy.mockRestore();
   });
 
-  it("opens the billing portal from the billing current plan card for paid owners", async () => {
+  it("attributes the billing portal flow to the Plans route", async () => {
     const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -2476,9 +3052,9 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Manage plan" }));
 
@@ -2487,11 +3063,15 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
       );
     });
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://stripe.test/portal",
-      "_blank",
-      "noopener,noreferrer",
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        flow: "manage_billing",
+        source: "plans_page",
+      }),
     );
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/portal");
     openSpy.mockRestore();
   });
 

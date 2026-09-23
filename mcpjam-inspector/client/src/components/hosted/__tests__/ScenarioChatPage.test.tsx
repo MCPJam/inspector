@@ -306,7 +306,7 @@ describe("ScenarioChatPage", () => {
     render(<ScenarioChatPage pathToken="private-token" />);
     expect(
       await screen.findByRole("heading", {
-        name: "Sign in to preview this scenario",
+        name: "Sign in to preview this study",
       }),
     ).toBeInTheDocument();
     expect(mockAuthFetch).toHaveBeenCalledOnce();
@@ -334,7 +334,7 @@ describe("ScenarioChatPage", () => {
     render(<ScenarioChatPage pathToken="private-token" />);
     expect(
       await screen.findByRole("heading", {
-        name: "Sign in to preview this scenario",
+        name: "Sign in to preview this study",
       }),
     ).toBeInTheDocument();
     expect(
@@ -462,7 +462,7 @@ describe("ScenarioChatPage", () => {
       );
       expect(
         screen.queryByRole("heading", {
-          name: "Sign in to preview this scenario",
+          name: "Sign in to preview this study",
         }),
       ).not.toBeInTheDocument();
     },
@@ -590,7 +590,7 @@ describe("ScenarioChatPage", () => {
     view.rerender(<ScenarioChatPage pathToken="account-token" />);
     expect(
       await screen.findByRole("heading", {
-        name: "Sign in to preview this scenario",
+        name: "Sign in to preview this study",
       }),
     ).toBeInTheDocument();
     expect(readScenarioSession()).toBeNull();
@@ -611,7 +611,7 @@ describe("ScenarioChatPage", () => {
     render(<ScenarioChatPage pathToken="expired-account" />);
     expect(
       await screen.findByRole("heading", {
-        name: "Sign in to preview this scenario",
+        name: "Sign in to preview this study",
       }),
     ).toBeInTheDocument();
     expect(mockAuthFetch).not.toHaveBeenCalled();
@@ -676,7 +676,7 @@ describe("ScenarioChatPage", () => {
     // The visible placeholder is decorative, so the heading has to carry the
     // shell's name for a screen reader in the meantime.
     expect(
-      screen.getByRole("heading", { name: "Loading scenario" }),
+      screen.getByRole("heading", { name: "Loading study" }),
     ).toBeInTheDocument();
   });
 
@@ -1132,7 +1132,7 @@ describe("ScenarioChatPage", () => {
 
       expect(
         await screen.findByRole("heading", {
-          name: "Sign in to preview this scenario",
+          name: "Sign in to preview this study",
         }),
       ).toBeInTheDocument();
       expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
@@ -1167,7 +1167,7 @@ describe("ScenarioChatPage", () => {
       expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
       expect(
         screen.queryByRole("heading", {
-          name: "Sign in to preview this scenario",
+          name: "Sign in to preview this study",
         }),
       ).not.toBeInTheDocument();
     });
