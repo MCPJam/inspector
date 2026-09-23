@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { Command, CommanderError } from "commander";
-import { registerScenariosCommands } from "../src/commands/scenarios.js";
+import { Command } from "commander";
+import { registerStudiesCommands } from "../src/commands/studies.js";
 import { addPlatformOptions } from "../src/lib/platform-command.js";
 
 /**
- * `mcpjam cloud scenarios publish` — the create-time override flags.
+ * `mcpjam cloud studies publish` — the create-time override flags.
  *
  * What these pin: `--mode` is validated against the enum LOCALLY, so a typo is
  * a usage error and not a server round trip; and the accepted flags reach the
- * PUT body verbatim, in the one call that both creates the scenario and sets
+ * PUT body verbatim, in the one call that both creates the study and sets
  * who may open it.
  */
 
@@ -20,7 +20,7 @@ function buildProgram(): Command {
     .configureOutput({ writeErr: () => {}, writeOut: () => {} });
   const cloud = program.command("cloud");
   addPlatformOptions(cloud);
-  registerScenariosCommands(cloud);
+  registerStudiesCommands(cloud);
   return program;
 }
 
@@ -42,7 +42,7 @@ test("publish rejects a mode outside the enum without any request", async () => 
     buildProgram().parseAsync(
       [
         "cloud",
-        "scenarios",
+        "studies",
         "publish",
         "--environment",
         "env-1",
@@ -54,9 +54,8 @@ test("publish rejects a mode outside the enum without any request", async () => 
       { from: "user" }
     ),
     (error: unknown) => {
-      assert.ok(error instanceof CommanderError);
       assert.match(
-        error.message,
+        String((error as Error).message),
         /project_members, invited_only, anyone_with_link/
       );
       return true;
@@ -86,10 +85,10 @@ test("publish forwards --name, --description and --mode in the PUT body", async 
         ],
       });
     }
-    if (url.includes("/scenario")) {
+    if (url.includes("/study")) {
       return Response.json(
         {
-          id: "scenario-1",
+          id: "study-1",
           environmentId: "env-1",
           name: "Beta run",
           mode: "invited_only",
@@ -111,7 +110,7 @@ test("publish forwards --name, --description and --mode in the PUT body", async 
   await buildProgram().parseAsync(
     [
       "cloud",
-      "scenarios",
+      "studies",
       "publish",
       "--environment",
       "env-1",
@@ -127,16 +126,61 @@ test("publish forwards --name, --description and --mode in the PUT body", async 
     { from: "user" }
   );
 
-  const put = requests.find((request) => request.url.includes("/scenario"));
-  assert.ok(put, "expected a PUT to the scenario route");
+  const put = requests.find((request) => request.url.includes("/study"));
+  assert.ok(put, "expected a PUT to the study route");
   assert.equal(put.init?.method, "PUT");
   assert.match(
     put.url,
-    /\/projects\/project-1\/environments\/env-1\/scenario$/
+    /\/projects\/project-1\/environments\/env-1\/study$/
   );
   assert.deepEqual(JSON.parse(String(put.init?.body)), {
     name: "Beta run",
     description: "Invited testers only",
     mode: "invited_only",
   });
+});
+
+test("the deprecated `scenarios` and `user-testing` aliases still resolve", async () => {
+  for (const alias of ["scenarios", "user-testing"]) {
+    const program = buildProgram();
+    const cloud = program.commands.find((c) => c.name() === "cloud");
+    const resolved = cloud?.commands.find(
+      (c) => c.name() === alias || c.aliases().includes(alias)
+    );
+    assert.ok(resolved, `expected ${alias} to resolve`);
+    assert.equal(resolved.name(), "studies");
+  }
+});
+
+test("get refuses --study and --scenario together", async () => {
+  const calls: unknown[] = [];
+  globalThis.fetch = (async (...args: unknown[]) => {
+    calls.push(args);
+    throw new Error("unreachable");
+  }) as typeof fetch;
+
+  await assert.rejects(
+    buildProgram().parseAsync(
+      [
+        "cloud",
+        "studies",
+        "get",
+        "--study",
+        "cb_1",
+        "--scenario",
+        "cb_2",
+        "--api-key",
+        "sk_test",
+      ],
+      { from: "user" }
+    ),
+    (error: unknown) => {
+      assert.match(
+        String((error as Error).message),
+        /--study or its deprecated --scenario alias, not both/
+      );
+      return true;
+    }
+  );
+  assert.equal(calls.length, 0);
 });

@@ -31,6 +31,7 @@ import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
+import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
@@ -185,14 +186,13 @@ export function SuiteScorerTable({
       capabilities?.judges?.goalCompletion.policy,
     ],
   );
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [editMode, setEditMode] = useState(false);
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
+  const [judgeEditorOpen, setJudgeEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
   );
-  const suppressionSupported =
-    capabilities?.scorers?.suppressedSuiteStandardCheckIds === true;
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
@@ -227,7 +227,6 @@ export function SuiteScorerTable({
     } else {
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
-    setExpanded(new Set());
   };
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
@@ -260,7 +259,7 @@ export function SuiteScorerTable({
       if (!row.family) {
         return "Only standard assertions can be turned off per case. Edit this one in suite settings.";
       }
-      return suppressionSupported ? undefined : BACKEND_SUPPORT_HINT;
+      return undefined;
     }
     if (
       row.kind === "judge" &&
@@ -326,6 +325,32 @@ export function SuiteScorerTable({
   // furniture. A case page has its own title and reads as a plain
   // checklist: stage name on the left, boxes on the right.
   const suiteChrome = scope.kind === "suite";
+  const hasMatchEditor = suiteChrome && onMatchOptionsChange !== undefined;
+  const hasJudgeEditor = suiteChrome && onJudgeConfigChange !== undefined;
+  const editableRowIds = table.groups.flatMap((group) =>
+    group.rows.filter(rowOpensEditor).map((row) => row.id),
+  );
+  const showEditEvaluators =
+    editableRowIds.length > 0 || hasMatchEditor || hasJudgeEditor;
+  const allEditorsOpen =
+    showEditEvaluators &&
+    editMode &&
+    (!hasMatchEditor || matchEditorOpen) &&
+    (!hasJudgeEditor || judgeEditorOpen);
+  const openAllEditors = () => {
+    setEditMode(true);
+    if (hasMatchEditor) setMatchEditorOpen(true);
+    if (hasJudgeEditor) setJudgeEditorOpen(true);
+  };
+  const toggleAllEditors = () => {
+    if (allEditorsOpen) {
+      setEditMode(false);
+      setMatchEditorOpen(false);
+      setJudgeEditorOpen(false);
+      return;
+    }
+    openAllEditors();
+  };
 
   return (
     <div>
@@ -380,7 +405,21 @@ export function SuiteScorerTable({
         <div>
           <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
             <span>Stage of user value chain</span>
-            <span className="hidden sm:block">Evaluators</span>
+            <div className="flex min-w-0 items-center justify-between gap-3">
+              <span className="hidden sm:block">Evaluators</span>
+              {showEditEvaluators ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="ml-auto shrink-0"
+                  aria-expanded={allEditorsOpen}
+                  onClick={toggleAllEditors}
+                >
+                  {allEditorsOpen ? "Close evaluators" : "Edit evaluators"}
+                </Button>
+              ) : null}
+            </div>
           </div>
           {table.groups.map((group) => (
             <section
@@ -412,21 +451,14 @@ export function SuiteScorerTable({
                         }
                         scope={scope.kind}
                         onDisabledReason={onDisabledReason(row)}
-                        onEnabledChange={(enabled) =>
-                          setRowEnabled(row, enabled)
-                        }
+                        onEnabledChange={(enabled) => {
+                          setRowEnabled(row, enabled);
+                          openAllEditors();
+                        }}
                         checkPolicy={checkPolicy}
                         judgeDisabledReason={judgeDisabledReason}
                         judgeConfig={judgeConfig}
-                        expanded={expanded.has(row.id)}
-                        onToggleExpand={() =>
-                          setExpanded((current) => {
-                            const next = new Set(current);
-                            if (next.has(row.id)) next.delete(row.id);
-                            else next.add(row.id);
-                            return next;
-                          })
-                        }
+                        expanded={editMode}
                         editable={
                           row.predicateIndex !== undefined &&
                           editable(rules[row.predicateIndex])
@@ -496,6 +528,12 @@ export function SuiteScorerTable({
                     className="space-y-5 pt-2"
                     data-setting-key="judge"
                     data-subsection-id="judge"
+                    open={judgeEditorOpen}
+                    onToggle={(event) =>
+                      setJudgeEditorOpen(
+                        (event.currentTarget as HTMLDetailsElement).open,
+                      )
+                    }
                   >
                     <summary className="cursor-pointer text-xs font-medium">
                       Judge — model, criteria and gate
@@ -539,6 +577,16 @@ function hasOnControl(row: ScorerTableRow): boolean {
   return row.kind === "judge" && row.judgeSlot === "goalCompletion";
 }
 
+/**
+ * A row Edit evaluators opens. Required runner facts and match rows stay
+ * closed: their settings are either absent or live in the stage's own
+ * disclosure. An off check still opens — the checkbox and Edit evaluators
+ * reveal every check, selected or not. The title itself is not a control.
+ */
+function rowOpensEditor(row: ScorerTableRow): boolean {
+  return row.kind !== "observed" && row.kind !== "match";
+}
+
 function ScorerRow({
   row,
   rule,
@@ -550,7 +598,6 @@ function ScorerRow({
   judgeConfig,
   expanded,
   editable,
-  onToggleExpand,
   onPredicateChange,
   onPredicateRemove,
   onJudgeRoleChange,
@@ -568,7 +615,6 @@ function ScorerRow({
   expanded: boolean;
   /** This page may change the row's threshold, role and body in place. */
   editable: boolean;
-  onToggleExpand: () => void;
   onPredicateChange: (index: number, next: Predicate) => void;
   onPredicateRemove: (index: number) => void;
   onJudgeRoleChange: (role: ScorerUiRole) => void;
@@ -581,44 +627,53 @@ function ScorerRow({
   const onLabel = row.family?.name ?? row.name;
   const title = onLabel;
   const inherited = scope === "case" && rule?.source === "suite";
-  // A row that is off says only its name. Everything else — the number it
-  // turns on, its role, its editor — appears once the box is ticked.
+  // A row that is off says only its name until its settings are opened.
+  // Edit evaluators opens every check, including ones that are still off.
   const on = hasOnControl(row) ? row.enabled : true;
+  // Muted text is for a row the reader cannot toggle (a required runner
+  // fact, or a check this deployment will not accept). An off check they
+  // can still tick stays in foreground text, so an empty box does not read
+  // as disabled.
+  const canToggle = hasOnControl(row) && onDisabledReason === undefined;
   // The suite page opens the judge's threshold and role; a case reads them.
   const judgeEditable =
     row.kind === "judge" &&
     row.judgeSlot === "goalCompletion" &&
     scope === "suite";
-  const opensEditor = on && row.kind !== "observed" && row.kind !== "match";
+  const opensEditor = rowOpensEditor(row);
+  // An off preset previews the catalog rule. A check this page owns can be
+  // edited in place; everything else is shown read-only.
+  const editorPredicate = row.kind === "preset" ? row.preset : predicate;
+  const editorWritable =
+    row.kind === "predicate" &&
+    editable &&
+    row.predicateIndex !== undefined;
+  // Owned checks edit in place. A check that is off previews its fields
+  // here, because Edit evaluators opens it before the box is ticked. An
+  // inherited check that is already on keeps its number on the title line.
+  const showEditorFields = Boolean(editorPredicate) && (editorWritable || !on);
+  // Inherited suite checks stay unlabeled for now. A case-authored check
+  // still says so, because that is the only row the case itself wrote.
   const sourceLine =
-    scope === "case" && row.kind === "predicate"
-      ? row.suppressed
-        ? "From suite · off for this case"
-        : inherited
-          ? "From suite"
-          : "This case"
+    scope === "case" &&
+    row.kind === "predicate" &&
+    !inherited &&
+    !row.suppressed
+      ? "This case"
       : null;
   const familyLine =
     inherited && row.family && row.family.suiteRules > 1
       ? `Turns off all ${row.family.suiteRules} suite assertions of this kind for this case.`
       : null;
 
-  // One line under the title, holding only what the title does not already
-  // say: the number an assertion turns on. Match and judge titles name their
-  // own kind; a family title names its assertion, so its criterion is repeated
-  // only when it carries a threshold ("under 5,000 ms"). A bare assertion's title is
-  // its criterion, so no extra detail is needed.
+  // The family description is the one line under the name, on or off. The
+  // configured number lives in the field, so it is not repeated here. A
+  // judge has no family description; its threshold is that one line.
   let detail: string | null = null;
-  if (row.kind === "judge") {
-    if (row.thresholdKind === "judge") {
-      detail = `Threshold ${
-        judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD
-      }`;
-    }
-  } else if (row.kind === "predicate") {
-    if (row.thresholdKind === "budget" && row.name !== title) {
-      detail = row.name;
-    }
+  if (row.kind === "judge" && row.thresholdKind === "judge") {
+    detail = `Threshold ${
+      judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD
+    }`;
   }
 
   return (
@@ -628,7 +683,10 @@ function ScorerRow({
       data-scorer-source={rule?.source}
       data-scorer-enabled={hasOnControl(row) ? String(row.enabled) : undefined}
       data-stage-empty={row.kind === "observed" ? row.observedStage : undefined}
-      className={cn("text-sm", row.muted && "text-muted-foreground")}
+      className={cn(
+        "text-sm",
+        canToggle ? "text-foreground" : row.muted && "text-muted-foreground",
+      )}
     >
       <div className="flex items-start gap-2">
         {hasOnControl(row) ? (
@@ -647,18 +705,12 @@ function ScorerRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
             <div className="min-w-0 flex-1">
-              {opensEditor ? (
-                <button
-                  type="button"
-                  className="group inline-flex items-center gap-1 text-left hover:underline"
-                  onClick={onToggleExpand}
-                  aria-expanded={expanded}
-                >
-                  {title}
-                </button>
-              ) : (
-                <span>{title}</span>
-              )}
+              <span>{title}</span>
+              {row.family && row.family.label !== title ? (
+                <span className="block text-xs text-muted-foreground">
+                  {row.family.label}
+                </span>
+              ) : null}
               {on && detail ? (
                 <span className="block text-xs text-muted-foreground">
                   {detail}
@@ -702,9 +754,6 @@ function ScorerRow({
           className="ml-6 mt-2 space-y-3 rounded-md border border-border/50 bg-muted/10 p-3"
           data-scorer-editor={row.id}
         >
-          {row.family ? (
-            <p className="text-xs text-muted-foreground">{row.family.label}</p>
-          ) : null}
           <RoleCell
             row={row}
             predicate={predicate}
@@ -724,31 +773,27 @@ function ScorerRow({
               />
             </label>
           ) : null}
-          {row.kind === "predicate" &&
-          editable &&
-          predicate &&
-          predicateHasFields(predicate) &&
-          row.predicateIndex !== undefined ? (
+          {showEditorFields && editorPredicate ? (
             <CheckRow
               noun="assertion"
               embedded
-              predicate={predicate}
-              onChange={(next) => onPredicateChange(row.predicateIndex!, next)}
-              onRemove={() => onPredicateRemove(row.predicateIndex!)}
+              readOnly={!editorWritable}
+              predicate={editorPredicate}
+              onChange={(next) => {
+                if (editorWritable && row.predicateIndex !== undefined) {
+                  onPredicateChange(row.predicateIndex, next);
+                }
+              }}
+              onRemove={
+                editorWritable && row.predicateIndex !== undefined
+                  ? () => onPredicateRemove(row.predicateIndex!)
+                  : undefined
+              }
             />
           ) : null}
         </div>
       ) : null}
     </li>
-  );
-}
-
-/** Keys every predicate carries; anything else is a field its editor shows. */
-const PREDICATE_ENVELOPE_KEYS = new Set(["type", "role", "severity"]);
-
-function predicateHasFields(predicate: Predicate): boolean {
-  return Object.keys(predicate).some(
-    (key) => !PREDICATE_ENVELOPE_KEYS.has(key),
   );
 }
 

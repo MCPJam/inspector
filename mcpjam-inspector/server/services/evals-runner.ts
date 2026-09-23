@@ -1442,7 +1442,7 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
             trimmedServerRef.toLowerCase(),
@@ -1470,7 +1470,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef;
+        trimmedServerRef);
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -1748,8 +1748,10 @@ async function createIterationDirectly(
   },
 ): Promise<string | undefined> {
   try {
-    const result = await convexClient.mutation(
-      "testSuites:recordIterationStartWithoutRun" as any,
+    // ACTION, not the mutation — same starter-pool contention as the suite
+    // path above, retried server-side.
+    const result = await convexClient.action(
+      "testSuites:startQuickRunIteration" as any,
       {
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
@@ -1881,15 +1883,14 @@ async function persistRunSetupFailure(args: {
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-            ? row.iterationId
-            : undefined;
+              ? row.iterationId
+              : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          | { query?: string; expectedToolCalls?: unknown[] }
-          | undefined;
+          { query?: string; expectedToolCalls?: unknown[] } | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
@@ -3052,7 +3053,8 @@ const executeTestCase = async (params: {
           result: "failed",
           actualToolCalls: [],
           tokensUsed: 0,
-          error: "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          error:
+            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
         });
       }
       continue;
@@ -3339,12 +3341,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : providedRecorder ??
+      : (providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        });
+        }));
 
   const summary = {
     total: 0,
@@ -3565,10 +3567,7 @@ export const runEvalSuiteWithAiSdk = async ({
         caseCount: tests.length,
         // Cases may configure different repeat counts. This is the total
         // number of iteration rows expected for the whole attempt.
-        repetitionCount: tests.reduce(
-          (sum, test) => sum + (test.runs || 1),
-          0,
-        ),
+        repetitionCount: tests.reduce((sum, test) => sum + (test.runs || 1), 0),
         renderConcurrencyLimit: MAX_CONCURRENT_RENDER_CHECKS,
         modelIdentifiers,
       });
@@ -3826,7 +3825,10 @@ export const runEvalSuiteWithAiSdk = async ({
       await recorder.finalize({
         status: creditStop.exhausted ? "failed" : "completed",
         ...(creditStop.exhausted
-          ? { notes: "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews." }
+          ? {
+              notes:
+                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+            }
           : {}),
         summary: {
           total: summary.total,
@@ -4012,7 +4014,7 @@ const runLocalIteration = async ({
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...(testCaseId ?? test.testCaseId
+    ...((testCaseId ?? test.testCaseId)
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -4828,11 +4830,6 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
-
     const usageFinal: UsageTotals = {
       inputTokens: acc.accumulatedUsage.inputTokens,
       outputTokens: acc.accumulatedUsage.outputTokens,
@@ -4951,8 +4948,8 @@ const runLocalIteration = async ({
     //
     // At `enforce` the iteration's result is the conjunction of the boolean
     // pipeline and the gating score rows, computed inside
-    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
-    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the
+    // matcher's answer, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
     // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
     // against — so a strictness catch would persist `failed` on the iteration
     // while the run counted it a pass, and the pass rate would be inflated by
@@ -5326,7 +5323,7 @@ const runHostedIterationWithBrowser = async (
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...(testCaseId ?? test.testCaseId
+    ...((testCaseId ?? test.testCaseId)
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -5576,7 +5573,9 @@ const runHostedIterationWithBrowser = async (
           ...(builtInTarget && "projectId" in builtInTarget
             ? { projectId: builtInTarget.projectId }
             : {}),
-          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+          ...(projectEnvironmentId
+            ? { environmentId: projectEnvironmentId }
+            : {}),
         })
       : [];
     return resolveHostTools(
@@ -5812,7 +5811,7 @@ const runHostedIterationWithBrowser = async (
     builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
-        connectionsByServerId: {},
+      connectionsByServerId: {},
       mcpClientManager,
       selectedServers,
       modelDefinition,
@@ -6409,10 +6408,10 @@ const runHostedIterationWithBrowser = async (
       toolSurface: {
         mcpTools: Object.keys(prepared?.allTools ?? {}).length,
         browserTools:
-        parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
-          source: "agent-activity",
-          quiet: true,
-        }) !== undefined,
+          parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+            source: "agent-activity",
+            quiet: true,
+          }) !== undefined,
       },
       toolCalls: toolsCalledByPromptWithWidgets.flat().length,
       modelInvocations: countModelInvocations({
@@ -6425,10 +6424,6 @@ const runHostedIterationWithBrowser = async (
     evaluation,
     turnCheckResults,
   );
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,
@@ -6552,8 +6547,8 @@ const runHostedIterationWithBrowser = async (
   //
   // At `enforce` the iteration's result is the conjunction of the boolean
   // pipeline and the gating score rows, computed inside
-  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
-  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the
+  // matcher's answer, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
   // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
   // against — so a strictness catch would persist `failed` on the iteration
   // while the run counted it a pass, and the pass rate would be inflated by

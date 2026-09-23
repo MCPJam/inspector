@@ -128,11 +128,6 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.judge.rubric",
   },
   {
-    key: "assertionBacktest",
-    label: "Assertion preview",
-    op: "backtest_eval_run",
-  },
-  {
     key: "judgeGroundedness",
     label: "Groundedness",
     // Read-only run evidence until R2-C1 wires execution. A writable sample

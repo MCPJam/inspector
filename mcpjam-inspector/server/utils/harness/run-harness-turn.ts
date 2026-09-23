@@ -1,4 +1,5 @@
 import { getManagerConnections } from "../mcp-connections.js";
+import { toModelMessageToolOutput } from "../normalize-model-messages-for-convex.js";
 import {
   mergeMcpToolConnectionMetadata,
   toolConnectionAttribution,
@@ -404,14 +405,6 @@ function coerceToolInput(raw: unknown): unknown {
   }
 }
 
-/** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
-const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
-  "json",
-  "text",
-  "error-text",
-  "content",
-]);
-
 /** Build the persisted `tool-result` `output` for a harness tool result, matching
  *  the emulated engine's canonical single-wrap shape (shared/http-tool-calls.ts).
  *
@@ -420,29 +413,29 @@ const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
  *  hand back an already-typed `{type, value}` output. Blindly wrapping that as
  *  `{type:"json", value: rawOutput}` produced the double-nested
  *  `{type:json,value:{type:json,value:…}}` seen in persisted transcripts. So:
- *  errors → `error-text`; an already-typed output passes through unchanged;
- *  anything else is wrapped once as `{type:"json", value}`. */
+ *  errors → `error-text`; a typed output whose value fits its tag passes
+ *  through unchanged; anything else is wrapped once as `{type:"json", value}`. */
 export function toToolResultOutput(
   rawOutput: unknown,
   isError: boolean,
-): { type: string; value: unknown } {
+): { type: string; value?: unknown } {
   if (isError) {
+    // `JSON.stringify(undefined)` is `undefined`, not `"undefined"`, so a
+    // failed tool with no payload would produce a value that serializes away
+    // and fails `modelMessageSchema` — an invalid message describing an error.
+    const text =
+      typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
     return {
       type: "error-text",
-      value:
-        typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput),
+      value: text ?? "The tool reported an error with no payload.",
     };
   }
-  if (
-    rawOutput !== null &&
-    typeof rawOutput === "object" &&
-    typeof (rawOutput as { type?: unknown }).type === "string" &&
-    TYPED_TOOL_OUTPUT_TYPES.has((rawOutput as { type: string }).type) &&
-    "value" in (rawOutput as object)
-  ) {
-    return rawOutput as { type: string; value: unknown };
-  }
-  return { type: "json", value: rawOutput };
+  // Delegated rather than re-decided here: the local copy of this rule
+  // recognized four output types where the schema has five (it dropped
+  // `error-json`, so a genuine one was re-wrapped as `json` and lost its
+  // error signal), and it trusted the type tag without checking the value
+  // against it.
+  return toModelMessageToolOutput(rawOutput) ?? { type: "json", value: null };
 }
 
 /** Per-process id for lease attribution (logs/debugging). */
