@@ -8,6 +8,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -196,6 +197,25 @@ web.use(
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
+
+// MJ-012. The one credential class this family never metered.
+//
+// `guestRateLimitMiddleware` returns early when there is no `guestId`, and a
+// signed-in AuthKit JWT has none — so every route above reached its handler
+// with no budget attached to that caller at all. `/api/v1/*` has metered the
+// same class since it was mounted; this is the twin that was missed.
+//
+// Registered here, after the per-family `bearerAuthMiddleware` lines rather
+// than inside each of them: the middleware reads the `authMethod` label auth
+// sets, so it has to run behind it, and one `*` mount covers the routes added
+// after this one too. On a path with no bearer middleware the label is absent
+// and this is a no-op. Order against the guest limiter is immaterial — the two
+// meter disjoint credential classes.
+//
+// PER-REPLICA and in memory, like every limiter in this directory: the fleet
+// ceiling is 120/min times the replica count. A spike brake, not a budget; the
+// real cap stays the backend's org-keyed limits.
+web.use("*", passthroughRateLimitMiddleware);
 
 web.route("/servers", servers);
 web.route("/tools", tools);
