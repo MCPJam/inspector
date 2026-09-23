@@ -427,6 +427,7 @@ export function useEvalHandlers({
 
       const tests: any[] = [];
       const providersNeeded = new Set<string>();
+      const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Resolve the fallback model definition for cases with no per-case models.
       // Disambiguate by provider when stored, so OpenRouter gpt-4o doesn't
@@ -483,20 +484,28 @@ export function useEvalHandlers({
           continue;
         }
         const hasModels = testCase.models && testCase.models.length > 0;
-        if (!hasModels && !suiteDefaultModelDef) {
+        const usesEnvironmentModel = !hasModels && isEnvironmentSuite;
+        if (!hasModels && !usesEnvironmentModel && !suiteDefaultModelDef) {
           continue;
         }
 
         // Use per-case models when present; fall back to suite default model.
+        // An environment suite never needs the suite default: the server runs
+        // every prompt case on the environment's model (backend
+        // `projectTestCasesForEnvironment`), so a model-less case goes out once
+        // with a placeholder the server ignores. Resolving the suite default
+        // here would block that run whenever it is missing from the picker.
         const modelConfigs: Array<{ model: string; provider: string }> =
           hasModels
             ? testCase.models
-            : [
-                {
-                  model: suiteDefaultModelDef!.id as string,
-                  provider: suiteDefaultModelDef!.provider,
-                },
-              ];
+            : usesEnvironmentModel
+              ? [{ model: "environment-model", provider: "none" }]
+              : [
+                  {
+                    model: suiteDefaultModelDef!.id as string,
+                    provider: suiteDefaultModelDef!.provider,
+                  },
+                ];
 
         for (const modelConfig of modelConfigs) {
           tests.push({
@@ -515,7 +524,10 @@ export function useEvalHandlers({
             testCaseId: testCase._id,
           });
 
-          if (!isMCPJamProvidedModel(modelConfig.model, modelConfig.provider)) {
+          if (
+            !usesEnvironmentModel &&
+            !isMCPJamProvidedModel(modelConfig.model, modelConfig.provider)
+          ) {
             providersNeeded.add(modelConfig.provider);
           }
         }

@@ -30,6 +30,7 @@ const WHEN: Record<string, string> = {
   suite: "Graded once, over the finished transcript",
   snapshot: "Graded once, over the finished transcript",
   judge: "Runs last, after every assertion",
+  rubricCheck: "Runs with the judge, after every assertion",
 };
 
 export function whenLabel(
@@ -61,12 +62,10 @@ export function RowMarker({ row }: { row: ScorecardRow }) {
       </span>
     );
   }
+  const judged =
+    row.provenance === "judge" || row.provenance === "rubricCheck";
   const Icon =
-    row.provenance === "route"
-      ? RouteIcon
-      : row.provenance === "judge"
-        ? Gavel
-        : ListChecks;
+    row.provenance === "route" ? RouteIcon : judged ? Gavel : ListChecks;
   return (
     <span
       title={title}
@@ -76,7 +75,7 @@ export function RowMarker({ row }: { row: ScorecardRow }) {
       <Icon
         className={cn(
           "h-3.5 w-3.5",
-          row.provenance === "judge"
+          judged
             ? "text-violet-600 dark:text-violet-400"
             : row.provenance === "route"
               ? "text-sky-600 dark:text-sky-400"

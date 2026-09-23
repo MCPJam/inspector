@@ -57,7 +57,8 @@ import type { CaseScorecardInput } from "./case-scorecard-model";
 import { buildCaseScorecard } from "./case-scorecard-model";
 import {
   joinTrialResults,
-  summarizeTrialScorecard,
+  rubricCheckTrialRows,
+  type JoinedScorecardGroup,
   type JoinedScorecardRow,
 } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
@@ -67,40 +68,8 @@ import {
   judgeDecidedStage,
 } from "../stage-trial-model";
 import { TrialScorecardRow } from "./trial-scorecard-row";
-import { reportAvailability } from "./report-availability";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
 import { FindingText } from "@/components/shared/actionable-insights/finding-text";
-
-/**
- * The tally line.
- *
- * Gates only, and no verdict word: the trial header already says PASSED, from
- * `trialVerdict`. A second word here is the bug the Steps tab shipped with —
- * it derived its own from a different field, free to disagree on one screen.
- */
-export function summaryLine(
-  summary: ReturnType<typeof summarizeTrialScorecard>,
-): string {
-  const parts: string[] = [];
-  if (summary.required.counted > 0) {
-    parts.push(
-      `${summary.required.passed} of ${summary.required.counted} required passed`,
-    );
-  } else if (summary.advisory + summary.errors > 0) {
-    // Something was measured, but nothing that could fail the trial.
-    parts.push("No required assertions ran");
-  } else {
-    // Nothing was measured at all. "0 of 0 required passed" would read like a
-    // result; this says there is no result to read.
-    parts.push("No evaluators ran");
-  }
-  if (summary.advisory > 0) parts.push(`${summary.advisory} advisory`);
-  if (summary.errors > 0) {
-    parts.push(`${summary.errors} could not be evaluated`);
-  }
-  if (summary.pending > 0) parts.push(`${summary.pending} running`);
-  return parts.join(" · ");
-}
 
 /**
  * The chain's own account of a failed stage, as a sentence.
@@ -113,6 +82,35 @@ function chainReasonSentence(row: StageResultRow | undefined): string | null {
   if (!row || row.state !== "failed" || !row.reason) return null;
   const reason = STAGE_REASON_LABELS[row.reason];
   return reason ? `Failed because ${reason}.` : null;
+}
+
+/**
+ * The trial's rubric-check rows, filed under User value after the judge.
+ *
+ * Kept out of `joinTrialResults`: those rows are the trial's own facts, not a
+ * join against authored ones, and the case spine keys that join by authored
+ * row, where a row with no authored twin has nowhere to go.
+ */
+export function withRubricCheckRows(
+  groups: JoinedScorecardGroup[],
+  rows: JoinedScorecardRow[],
+): JoinedScorecardGroup[] {
+  if (rows.length === 0) return groups;
+  const existing = groups.find((group) => group.stage === "userValue");
+  if (existing) {
+    return groups.map((group) =>
+      group === existing ? { ...group, rows: [...group.rows, ...rows] } : group,
+    );
+  }
+  return [
+    ...groups,
+    {
+      stage: "userValue",
+      label: USER_VALUE_STAGE_LABELS.userValue,
+      question: USER_VALUE_STAGE_QUESTIONS.userValue,
+      rows,
+    },
+  ];
 }
 
 /**
@@ -166,7 +164,6 @@ export function TrialScorecard({
   liveStepStatusById,
   judgeSlot,
   scoresSection,
-  nextQuestionSlot,
   judgeHidden: judgeHiddenRequested = false,
   isRunning = false,
   syncedStepId,
@@ -189,7 +186,6 @@ export function TrialScorecard({
   liveStepStatusById?: Map<string, EvalStepStatus>;
   judgeSlot?: ReactNode;
   scoresSection?: ReactNode | null;
-  nextQuestionSlot?: ReactNode;
   /**
    * True while a reviewer is labelling this trial and has not revealed the
    * judge. The judge row then withholds its score, glyph and rationale — a
@@ -202,15 +198,18 @@ export function TrialScorecard({
 }) {
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
-    return joinTrialResults(card.groups, {
-      report,
-      iteration,
-      steps,
-      chain,
-      judgeCase,
-      envelope,
-      liveStepStatusById,
-    });
+    return withRubricCheckRows(
+      joinTrialResults(card.groups, {
+        report,
+        iteration,
+        steps,
+        chain,
+        judgeCase,
+        envelope,
+        liveStepStatusById,
+      }),
+      rubricCheckTrialRows(iteration),
+    );
     // Keyed on the FIELDS, not the input object: callers build that object in
     // render, so an identity dep would rebuild — and re-digest every criterion
     // id — on each keystroke in the prompt box.
@@ -256,8 +255,6 @@ export function TrialScorecard({
             row.provenance === "judge" && row.result.state !== "notMeasured",
         ),
       ));
-
-  const summary = summarizeTrialScorecard(groups);
 
   /**
    * The stage the reader picked off the rail, or `null` for "has not picked" —
@@ -325,8 +322,12 @@ export function TrialScorecard({
     if (note) return { text: note.actual, source: "ai" };
     const floor = judgeHidden ? null : stageFloor(stage, chain, trace);
     if (floor) return { text: floor.actual, source: "recorded" };
+    // Advisory rubric checks describe the trial; they never explain why a
+    // stage failed, so they must not displace the chain's own sentence.
     const explained = rows.some(
-      (row) => row.result.state === "failed" || row.result.state === "error",
+      (row) =>
+        row.provenance !== "rubricCheck" &&
+        (row.result.state === "failed" || row.result.state === "error"),
     );
     if (explained) return null;
     const reason = chainReasonSentence(chainRows.get(stage));
@@ -337,7 +338,10 @@ export function TrialScorecard({
   const userValuePassRows = groups
     .flatMap((group) => group.rows)
     .filter(
-      (row) => row.stage === "userValue" && row.result.state === "passed",
+      (row) =>
+        row.stage === "userValue" &&
+        row.provenance !== "rubricCheck" &&
+        row.result.state === "passed",
     );
   const userValueEvidence = [
     ...new Set(
@@ -434,15 +438,6 @@ export function TrialScorecard({
     );
   }
 
-  // Blind review withholds every narrative, so it must not advertise one
-  // either: a reviewer told "reading iterations 4 of 40" knows an explanation is
-  // coming for the row they are labelling.
-  const availability = judgeHidden
-    ? { kind: "ready" as const }
-    : reportAvailability(report, {
-        runSettled: iteration?.status === "completed",
-      });
-
   function renderSection(section: (typeof sections)[number]) {
     const sentence = stageSentence(section.stage, section.rows);
     return (
@@ -471,14 +466,14 @@ export function TrialScorecard({
           ) : undefined
         }
         footer={
-          section.stage === "userValue" && showUserValueEvidence ? (
+          section.stage === "userValue" &&
+          showUserValueEvidence &&
+          userValueEvidence.length > 0 ? (
             <p
               className="text-xs text-muted-foreground"
               data-testid="user-value-pass-evidence"
             >
-              {userValueEvidence.length
-                ? userValueEvidence.join(" ")
-                : "This run recorded a pass without supporting evidence."}
+              {userValueEvidence.join(" ")}
             </p>
           ) : undefined
         }
@@ -501,31 +496,6 @@ export function TrialScorecard({
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
       <section className="space-y-6" aria-label="User value chain">
-        {/*
-          The tally counts required rows only, and is withheld during blind
-          review: a gating judge is one of those rows, and "1 of 1 required
-          passed" beside the label control would say the verdict outright.
-        */}
-        {!judgeHidden && (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="trial-scorecard-summary"
-          >
-            {summaryLine(summary)}
-          </p>
-        )}
-        {availability.kind !== "ready" && (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="report-availability"
-            data-availability={availability.kind}
-            {...(availability.kind === "pending"
-              ? { role: "status", "aria-live": "polite" }
-              : {})}
-          >
-            {availability.line}
-          </p>
-        )}
         {railed ? (
           <div className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]">
             <StageRail
@@ -544,7 +514,6 @@ export function TrialScorecard({
         ) : (
           visibleSections.map(renderSection)
         )}
-        {!judgeHidden ? nextQuestionSlot : null}
       </section>
 
       {scoresSection ? (

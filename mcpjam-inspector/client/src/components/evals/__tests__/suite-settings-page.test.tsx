@@ -39,6 +39,8 @@ vi.mock("convex/react", () => ({
       : mocks.updateTestSuite,
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 // S3 — the settings sheet reads per-suite capabilities. `unavailable` is the
@@ -118,6 +120,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));

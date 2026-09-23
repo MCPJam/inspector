@@ -124,6 +124,20 @@ export const ANALYTICS_EVENTS = {
 
   // --- Billing / revenue funnel (migrated) ---
   billing_upsell_gate_viewed: { source: "client" },
+  // Organization billing funnel. Properties are deliberately categorical:
+  // flow/source/plan/interval/outcome/failure_kind only. Never attach prices,
+  // Stripe ids, organization ids, invoice ids, or raw error strings as event
+  // properties. Organization attribution belongs only in PostHog's native
+  // `organization` group.
+  billing_plans_viewed: { source: "client" },
+  billing_flow_started: { source: "client" },
+  // A handoff means Checkout or the Stripe portal opened; it does not mean
+  // Stripe collected payment. Trusted payment outcomes come from the backend.
+  billing_handoff_succeeded: { source: "client" },
+  // An action means the app received a terminal result itself (for example a
+  // paid seat, scheduled plan change, or confirmed cancellation).
+  billing_action_succeeded: { source: "client" },
+  billing_flow_failed: { source: "client" },
   credit_topup_checkout_started: { source: "client" },
   credit_topup_checkout_failed: { source: "client" },
   credit_topup_return_cancelled: { source: "client" },
@@ -538,6 +552,9 @@ export const ANALYTICS_EVENTS = {
   project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // A signed-in tab's WorkOS session was rejected on refresh (usually the
+  // max session length running out); the user is sent back to sign in.
+  workos_session_expired: { source: "client" },
   // `browser_pane_session_summary`   props: engine, transport, tier, fps,
   //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
   //   on unmount — a per-frame event would be tens of thousands of captures an

@@ -1083,6 +1083,7 @@ describe.each(["swarm", "credits"] as const)(
           ).toBeInTheDocument();
         }
         expect(impressions()).toHaveLength(1);
+        expect(impressions()[0][1].organization_id).toBe("org-1");
         expect(impressions()[0][1].primary_action).toBe(
           plan === "free" ? "explore_plans" : "buy_credits",
         );

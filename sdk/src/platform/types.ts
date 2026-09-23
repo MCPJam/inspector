@@ -731,16 +731,31 @@ export interface PlatformWidgetRender {
 /**
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
+ *
+ * `"scenario"` and `"study"` are the SAME surface under two vocabularies: a
+ * client built with `apiVocabulary: 2` reads `"study"`, one without the option
+ * reads `"scenario"`. The union carries both because one client's calls may
+ * cross the boundary — a value read from a cache or a stored filter predates
+ * the option it was read under.
  */
 export type PlatformSessionSourceType =
   | "direct"
   | "scenario"
+  | "study"
   | "eval"
   | "swarm";
 
-/** The session's parent run, discriminated on `kind`. Also open-ended. */
+/**
+ * The session's parent run, discriminated on `kind`. Also open-ended.
+ *
+ * Under `apiVocabulary: 2` the discriminant reads `"study"` or `"goalRun"`
+ * and the noun-bearing ids are re-keyed to match (`studyId`, `goalRunId`,
+ * `goalRefId`). Both spellings are declared because both are reachable; which
+ * one a given response carries is decided by the client's option, so a caller
+ * that set it reads only the canonical half.
+ */
 export interface PlatformSessionParentRef {
-  kind: "evalRun" | "journeyRun" | "scenario";
+  kind: "evalRun" | "journeyRun" | "goalRun" | "scenario" | "study";
   /** Human-readable parent name; null when the parent row is gone. */
   label: string | null;
   iterationId?: string;
@@ -748,6 +763,12 @@ export interface PlatformSessionParentRef {
   suiteRunId?: string | null;
   suiteId?: string | null;
   journeyRunId?: string;
+  /** swarm only, vocabulary 2. */
+  goalRunId?: string;
+  /** swarm only, vocabulary 2. */
+  goalRefId?: string | null;
+  /** study only, vocabulary 2. */
+  studyId?: string;
   journeyRefId?: string | null;
   scenarioId?: string;
 }
@@ -1315,6 +1336,7 @@ export interface PlatformExecutionDisclosure {
 export type PlatformEvalLlmTouchpointId =
   | "goalCompletion"
   | "groundedness"
+  | "rubricChecks"
   | "serverQuality"
   | "runInsights"
   | "runGroupQuality"
@@ -1332,7 +1354,12 @@ export interface PlatformAnalysisTouchpointDisclosure {
   rail: {
     fixed: "openrouter" | null;
     because: string;
-    routing?: "gateway_preferred";
+    /**
+     * `gateway_preferred`: Gateway when configured and priced there, else
+     * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
+     * with a fallback model only when the classifier cannot be reached.
+     */
+    routing?: "gateway_preferred" | "typed_decision";
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];
@@ -3449,6 +3476,7 @@ export type PlatformEvalStepsPage = PlatformPage<PlatformEvalStepResult> & {
  * Share link for a scenario. The URL embeds the access token; it is visible
  * to any caller who can read the scenario (same audience as the hosted UI).
  */
+/** @deprecated Use {@link PlatformStudyLink}. Returned by the deprecated scenario reads. */
 export interface PlatformScenarioLink {
   /** App-relative share path. */
   path: string;
@@ -3456,7 +3484,11 @@ export interface PlatformScenarioLink {
   url: string;
 }
 
-/** A server attached to a scenario (HTTP servers only). */
+/**
+ * A server attached to a scenario (HTTP servers only).
+ *
+ * @deprecated Use {@link PlatformStudyServer}.
+ */
 export interface PlatformScenarioServer {
   id: string;
   name: string;
@@ -3464,7 +3496,207 @@ export interface PlatformScenarioServer {
   useOAuth: boolean;
 }
 
-/** Summary of a published scenario, as returned by the list endpoint. */
+// ── Studies ─────────────────────────────────────────────────────────────────
+//
+// The public shape of a published environment. Storage still calls the row a
+// `scenario` and always will; these types are the projection the API serves.
+//
+// Declared as their own interfaces rather than aliases of the `PlatformScenario*`
+// family they replace. Three of them genuinely differ — `PlatformStudyDetail`
+// merges what were two reads, and the session/insight receipts spell `studyId`
+// where the old ones spell `scenarioId` — and an alias for the rest would make
+// this family half type-alias and half declaration for no reader's benefit.
+
+/** A study's share link. */
+export interface PlatformStudyLink {
+  /** App-relative share path. */
+  path: string;
+  /** Absolute share URL. */
+  url: string;
+}
+
+/** A server attached to a study (HTTP servers only). */
+export interface PlatformStudyServer {
+  id: string;
+  name: string;
+  url: string | null;
+  useOAuth: boolean;
+}
+
+/** Summary of a published study, as returned by the list endpoint. */
+export interface PlatformStudySummary {
+  id: string;
+  projectId: string | null;
+  name: string;
+  description: string | null;
+  /** Who can use it: "project_members" | "invited_only" | "anyone_with_link". */
+  mode: string | null;
+  /** Chat surface style the study renders (e.g. "claude", "chatgpt"). */
+  hostStyle: string | null;
+  hostId: string | null;
+  hostName: string | null;
+  serverCount: number;
+  serverNames: string[];
+  link: PlatformStudyLink | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+/**
+ * One study's full read.
+ *
+ * The UNION of what used to be two operations: `get_scenario` served the
+ * execution settings, `get_user_testing_scenario` served the environment id and
+ * the insights envelope. Two generations of one read, and `get_study` is the
+ * one that survives.
+ *
+ * The two widened fields are optional because they depend on the caller, not on
+ * the study. A share-link guest may read a study's settings and may not read
+ * either of them, so they are ABSENT rather than null for such a caller —
+ * `null` would claim the study has no environment, which is never true.
+ */
+export interface PlatformStudyDetail extends PlatformStudySummary {
+  /** Model the study chats with. */
+  modelId: string | null;
+  systemPrompt: string | null;
+  temperature: number | null;
+  requireToolApproval: boolean;
+  servers: PlatformStudyServer[];
+  /** The environment this study publishes. Absent when the caller may not see it. */
+  environmentId?: string | null;
+  /**
+   * Findings aggregated over the latest analyzed window of real visitor
+   * sessions. Absent when the caller may not have it, and on a server that
+   * predates the envelope — the two degrade identically on purpose.
+   */
+  insights?: PlatformInsightsEnvelope;
+}
+
+/** Receipt for publishing an environment as a study. */
+export interface PlatformStudy {
+  id: string;
+  environmentId: string;
+  name: string;
+  /**
+   * Who may open the share link. `anyone_with_link` is the widest — anyone
+   * holding the URL, signed in or not.
+   */
+  mode: "project_members" | "invited_only" | "anyone_with_link";
+  /**
+   * Bumped whenever access NARROWS (mode change, member removal, link
+   * rotation). Sessions minted under an older version stop working, which is
+   * what makes those changes take effect at once rather than at expiry.
+   */
+  accessVersion: number;
+  /** The share link. Null when the study has no link token. */
+  link: string | null;
+  /** False when the environment was already published and this returned it. */
+  created?: boolean;
+  /**
+   * True when `publish_study`'s create-time overrides (`name`, `description`,
+   * `mode`) were NOT applied because the environment was already published.
+   * Paired with `created: false`.
+   */
+  overridesIgnored?: boolean;
+}
+
+/** Receipt for unpublishing a study. */
+export interface PlatformStudyDeleted {
+  environmentId: string;
+  /** False when the environment had no study — not an error. */
+  deleted: boolean;
+  id?: string;
+}
+
+/**
+ * Study metadata after an update.
+ *
+ * NO `accessVersion`, deliberately: a mode change bumps it upstream, but the
+ * envelope the route re-reads does not carry the new value, so the field was
+ * null on every response while documenting itself as the revocation signal.
+ * The publish response ({@link PlatformStudy}) carries the real one.
+ */
+export interface PlatformStudyUpdated {
+  id: string;
+  projectId: string;
+  name: string | null;
+  description: string | null;
+  mode: string | null;
+}
+
+/** One visitor session on a study, as the list endpoint returns it. */
+export interface PlatformStudySession {
+  /** The address for the transcript route. */
+  id: string;
+  chatSessionId: string;
+  messageCount: number;
+  /** First message only. The transcript is a separate, explicit read. */
+  preview: string;
+  modelId?: string;
+  toolCallCount?: number;
+  /** The visitor abandoned mid-flow because a server demanded auth. */
+  authInterrupted?: boolean;
+  visitor: {
+    displayName?: string;
+    segment?: string;
+    authType?: "signedIn" | "guest";
+    recency?: "new" | "returning";
+    deviceKind?: string;
+    language?: string;
+  };
+  feedback: {
+    rating: number | null;
+    comment: string | null;
+    count: number;
+  };
+  theme?: { id: string; label: string | null; keywords: string[] };
+  startedAt: number;
+  lastActivityAt: number;
+}
+
+/**
+ * A study session's transcript, paged.
+ *
+ * The stored blob URL is never returned: it is a direct handle with no further
+ * authorization, so handing it out would turn one authorized read into an
+ * unbounded, unrevocable one.
+ */
+export interface PlatformStudySessionDetail {
+  id: string;
+  studyId: string;
+  chatSessionId: string | null;
+  modelId: string | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+  /**
+   * `null` — never 0 — when the transcript could not be read, which is why
+   * this is nullable and the list DTO's is not. Zero would be a claim the
+   * visitor said nothing, the opposite of what an unreadable blob means, and a
+   * caller that only checked `messageCount` would act on it.
+   */
+  messageCount: number | null;
+  /**
+   * True when the stored conversation could not be read. Distinct from an
+   * empty `messages`, which means the visitor genuinely said nothing.
+   */
+  transcriptUnavailable?: boolean;
+  messages: PlatformTranscriptMessage[];
+  nextCursor?: string;
+}
+
+/** Receipt for a study insights request. 202: scheduled, not done. */
+export interface PlatformStudyInsightsRequested {
+  studyId: string;
+  projectId: string;
+  windowId: string;
+  status: "pending";
+}
+
+/**
+ * Summary of a published scenario, as returned by the deprecated list endpoint.
+ *
+ * @deprecated Use {@link PlatformStudySummary}.
+ */
 export interface PlatformScenarioSummary {
   id: string;
   projectId: string | null;
@@ -3483,7 +3715,15 @@ export interface PlatformScenarioSummary {
   updatedAt: number | null;
 }
 
-/** A scenario's full read-only settings: summary plus host execution config. */
+/**
+ * A scenario's full read-only settings: summary plus host execution config.
+ *
+ * @deprecated Use {@link PlatformStudyDetail}, which also carries the
+ * environment id and the insights envelope this shape never had. NOT an alias
+ * of it: the deprecated `/scenarios/{scenarioId}` route this describes still
+ * returns exactly these fields and none of the widened ones, so aliasing would
+ * be a compile-time claim about a runtime shape that is not made.
+ */
 export interface PlatformScenarioDetail extends PlatformScenarioSummary {
   /** Model the scenario chats with. */
   modelId: string | null;
@@ -3546,6 +3786,198 @@ export interface PlatformTunnelClosed {
 // per organization, so an unflagged caller gets a structured
 // FEATURE_UNAVAILABLE error from those.
 
+// ── Goals ───────────────────────────────────────────────────────────────────
+//
+// The public shape of what a swarm executes. Storage still calls the row a
+// `journey` and always will; these types are the projection the API serves.
+//
+// Three fields are spelled differently here than in the `PlatformJourney*`
+// family they replace, and each is a rename the product already made: the
+// owning id is `goalId`, the batch is `swarmRunId`, and the per-target
+// execution count is `iterations` — what the UI's Iterations stepper has
+// always written.
+
+export interface PlatformGoal {
+  id: string;
+  projectId: string;
+  name: string;
+  /** What the persona is trying to accomplish. Drives the whole run. */
+  goal: string;
+  personaId: string;
+  /** The swarm container this goal was authored under, if any. Opaque. */
+  swarmId: string | null;
+  /** Environments this goal fans out across. Empty on a host-pinned goal. */
+  environmentIds: string[];
+  serverAttachmentId?: string;
+  /** Sessions run against EACH target. Total sessions = targets x this. */
+  iterations: number | null;
+  maxTurns: number | null;
+  setupWrites?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformGoalRunTarget {
+  hostId: string;
+  hostName?: string;
+  /** Execution identity. Two targets can share a `hostId`. */
+  targetId?: string;
+  modelId?: string;
+}
+
+export interface PlatformGoalRunAttempt {
+  chatSessionId: string | null;
+  hostId: string;
+  targetId: string | null;
+  sessionIndex: number;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface PlatformGoalRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
+  id: string;
+  projectId: string;
+  goalId: string;
+  /**
+   * The batch this run was launched with. Sibling runs of one co-launched
+   * wave share it; a solo relaunch is a wave of one.
+   */
+  swarmRunId?: string;
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited";
+  /**
+   * True when someone STOPPED this run. It reports `status: "failed"` because
+   * the backend records cancellation as a marker rather than a status literal
+   * — so check this before showing a run as a failure.
+   */
+  canceled: boolean;
+  /** True when the runner went silent and the watchdog settled the run. */
+  stale: boolean;
+  /** Raw marker behind `canceled` / `stale`, when present. */
+  error?: string;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  targets: PlatformGoalRunTarget[];
+  persona?: {
+    personaId: string | null;
+    name: string | null;
+    role: string | null;
+  };
+  /** Per-session execution records. Present on the single-run read. */
+  attempts?: PlatformGoalRunAttempt[];
+  targetSummaries?: Array<{
+    hostId: string;
+    targetId?: string;
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  }>;
+  createdAt: number;
+  lastHeartbeatAt?: number;
+  /** Common insights envelope (detail response only; lists stay compact).
+   * Absent on servers deployed before the envelope existed. */
+  insights?: PlatformInsightsEnvelope;
+}
+
+export interface PlatformGoalRunSession {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
+  /**
+   * The session's document id — the same value `listChatSessions` returns as
+   * `id`, so a session found here can be looked up there.
+   */
+  id: string;
+  /**
+   * The RUNTIME key for the same session, which the chat transport and the
+   * app's deep links use. Distinct from `id` and not interchangeable with it.
+   */
+  chatSessionId: string;
+  projectId: string;
+  hostId?: string;
+  runId?: string;
+  goalId?: string;
+  personaId?: string;
+  personaLabel?: string;
+  /**
+   * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
+   * forever unless archived, so this says nothing about how it went. Read
+   * `verdict` for goal grading and execution lifecycle. `outcome` is legacy execution only.
+   */
+  status: string | null;
+  /**
+   * How this session's run attempt ended: `succeeded` | `failed` |
+   * `rate_limited` | `running` | `pending`, or null when the attempt cannot
+   * be matched (historical runs). Absent on servers that predate the field.
+   */
+  outcome?: string | null;
+  readiness: unknown;
+  goalScore: unknown;
+  messageCount: number;
+  preview?: string;
+  modelId?: string;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+}
+
+export interface PlatformGoalRunLaunched {
+  /** The run id. Poll `getGoalRun` with it, or stop it with `cancel`. */
+  id: string;
+  goalId: string;
+  projectId: string;
+  /**
+   * Always `"running"` — the run row exists and its fan-out has been started.
+   * The response is a 202: nothing here says the goal has finished, only
+   * that it is under way.
+   */
+  status: string;
+  /**
+   * True when an idempotency key replayed onto a run that ALREADY existed, so
+   * nothing new was started. A retry of a dropped response lands here, which
+   * is how you tell "I launched it" from "it was already going".
+   */
+  deduped: boolean;
+}
+
+export interface PlatformGoalRunCanceled {
+  id: string;
+  /** The run's terminal status after the cancel settled it. */
+  status: PlatformGoalRun["status"];
+  canceled: true;
+  /** True when the run was ALREADY canceled and this call did nothing. */
+  alreadyCanceled: boolean;
+  /** Attempts this call moved to terminal. Zero on an idempotent replay. */
+  finalized: number;
+}
+
+export interface PlatformGoalArchived {
+  id: string;
+  projectId: string;
+  archived: true;
+}
+
+/** @deprecated Use {@link PlatformGoal}. */
 export interface PlatformJourney {
   id: string;
   projectId: string;
@@ -3566,6 +3998,7 @@ export interface PlatformJourney {
   updatedAt: number;
 }
 
+/** @deprecated Use {@link PlatformGoalRunTarget}. */
 export interface PlatformJourneyRunTarget {
   hostId: string;
   hostName?: string;
@@ -3574,6 +4007,7 @@ export interface PlatformJourneyRunTarget {
   modelId?: string;
 }
 
+/** @deprecated Use {@link PlatformGoalRunAttempt}. */
 export interface PlatformJourneyRunAttempt {
   chatSessionId: string | null;
   hostId: string;
@@ -3584,6 +4018,11 @@ export interface PlatformJourneyRunAttempt {
   errorMessage: string | null;
 }
 
+/**
+ * @deprecated Use {@link PlatformGoalRun}, which spells the owning id `goalId`
+ * and the batch `swarmRunId`. NOT an alias: this shape is what the deprecated
+ * `/journey-runs` routes still send.
+ */
 export interface PlatformJourneyRun {
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
@@ -3635,6 +4074,7 @@ export interface PlatformJourneyRun {
   insights?: PlatformInsightsEnvelope;
 }
 
+/** @deprecated Use {@link PlatformGoalRunSession}. */
 export interface PlatformJourneyRunSession {
   criteria?: {
     status: "pending" | "completed" | "failed";
@@ -3702,6 +4142,7 @@ export interface PlatformJourneyRunSession {
 // named for the old table, and kept the `Summary` suffix rather than colliding
 // with this one.
 
+/** @deprecated Use {@link PlatformStudy}. */
 export interface PlatformScenario {
   id: string;
   environmentId: string;
@@ -3736,6 +4177,7 @@ export interface PlatformScenario {
   overridesIgnored?: boolean;
 }
 
+/** @deprecated Use {@link PlatformStudyDeleted}. */
 export interface PlatformScenarioDeleted {
   environmentId: string;
   /** False when the environment had no scenario — not an error. */
@@ -3744,6 +4186,7 @@ export interface PlatformScenarioDeleted {
 }
 
 /** Result of `POST /projects/{p}/journeys/{journeyId}/runs`. */
+/** @deprecated Use {@link PlatformGoalRunLaunched}. */
 export interface PlatformJourneyRunLaunched {
   /** The run id. Poll `getJourneyRun` with it, or stop it with `cancel`. */
   id: string;
@@ -3764,6 +4207,7 @@ export interface PlatformJourneyRunLaunched {
 }
 
 /** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
+/** @deprecated Use {@link PlatformGoalRunCanceled}. */
 export interface PlatformJourneyRunCanceled {
   id: string;
   /** The run's terminal status after the cancel settled it. */
@@ -3940,7 +4384,7 @@ export interface PlatformTraceDestination {
    * only sessions SHARED to the workspace are ever sent — a private Playground
    * session is excluded server-side and cannot be opted in.
    */
-  sourceTypes: Array<"eval" | "scenario" | "swarm" | "direct">;
+  sourceTypes: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
   /**
    * False (the default) redacts prompts, outputs, tool arguments and
    * screenshots. The message envelopes still ship, so a vendor's GenAI views
@@ -4047,20 +4491,28 @@ export interface PlatformPersonaDeleted {
 }
 
 /** Result of archiving a journey. Its runs and transcripts stay readable. */
+/** @deprecated Use {@link PlatformGoalArchived}. */
 export interface PlatformJourneyArchived {
   id: string;
   projectId: string;
   archived: true;
 }
 
-/** A swarm CONTAINER: shared execution config for the journeys authored in it. */
+/** A swarm CONTAINER: shared execution config for the goals authored in it. */
 export interface PlatformSwarm {
   id: string;
   projectId: string;
   name: string;
   description: string | null;
-  /** Default fan-out for journeys authored under this container. */
+  /** Default fan-out for goals authored under this container. */
   environmentIds: string[];
+  /** Sessions run against EACH target. Total sessions = targets x this. */
+  iterations: number | null;
+  /**
+   * @deprecated Use {@link PlatformSwarm.iterations}. Emitted alongside it
+   * until GA because `create_swarm`/`update_swarm` kept their names through
+   * the goal rename and so have no renamed twin to carry the new spelling.
+   */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
   setupWrites?: boolean;
@@ -4121,11 +4573,26 @@ export interface PlatformSwarmOverviewFinding {
 
 export interface PlatformSwarmOverviewRun {
   runId: string;
+  /**
+   * The goal this run executed, and its name and archived state.
+   *
+   * `get_swarms_overview` kept its name through the goal rename, so this shape
+   * has no renamed twin to carry the new spellings. It emits both until GA.
+   */
+  goalId: string;
+  goalName: string;
+  goalArchived: boolean;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.goalId}. */
   journeyId: string;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.goalName}. */
   journeyName: string;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.goalArchived}. */
   journeyArchived: boolean;
   personaName: string;
   status: string;
+  /** The batch this run was launched with. */
+  swarmRunId?: string;
+  /** @deprecated Use {@link PlatformSwarmOverviewRun.swarmRunId}. */
   waveId?: string;
   summary: {
     total: number;
@@ -4646,6 +5113,47 @@ export interface PlatformEvalRunJudgeRequested {
 }
 
 /** LLM analysis over a whole wave. Requested explicitly; produced async. */
+// ── Swarm run insights ──────────────────────────────────────────────────────
+//
+// A SWARM RUN is the batch of sibling goal runs launched together — what the
+// product has called it since the Swarms surface shipped, and what the UI's
+// `/swarms/:id` route already addresses. The API called it a `wave`, and the
+// stored column is `swarmRunGroupId`. Only the public name moves; the column
+// does not.
+
+export interface PlatformSwarmRunInsights {
+  swarmRunId: string;
+  /** pending | completed | failed. Poll rather than re-requesting. */
+  status: "pending" | "completed" | "failed";
+  /** Directed lane. Null until generation completes. */
+  insights: unknown | null;
+  /**
+   * Discovery lane — what the model noticed unprompted. Null while only the
+   * directed lane has finished, which is a normal intermediate state.
+   */
+  discovery: unknown | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: number;
+}
+
+/** Receipt for a swarm-run-insights request. 202: scheduled, not done. */
+export interface PlatformSwarmRunInsightsRequested {
+  swarmRunId: string;
+  projectId: string;
+  status: "pending";
+}
+
+export interface PlatformSwarmRunInsightsCanceled {
+  swarmRunId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/**
+ * @deprecated Use {@link PlatformSwarmRunInsights}. Returned by the deprecated
+ * `get_wave_insights` operation, which calls the deprecated `/waves` route.
+ */
 export interface PlatformWaveInsights {
   waveId: string;
   /** pending | completed | failed. Poll rather than re-requesting. */
@@ -4662,13 +5170,14 @@ export interface PlatformWaveInsights {
   updatedAt: number;
 }
 
-/** Receipt for a wave-insights request. 202: scheduled, not done. */
+/** @deprecated Use {@link PlatformSwarmRunInsightsRequested}. */
 export interface PlatformWaveInsightsRequested {
   waveId: string;
   projectId: string;
   status: "pending";
 }
 
+/** @deprecated Use {@link PlatformSwarmRunInsightsCanceled}. */
 export interface PlatformWaveInsightsCanceled {
   waveId: string;
   projectId: string;
@@ -4725,8 +5234,33 @@ export interface PlatformCapabilities {
     fields: Record<string, string[]>;
   };
   /**
+   * The resource-noun VALUE vocabulary this deployment understands: what a
+   * request sending `x-mcpjam-api-vocabulary: 2` reads back. Absent on a
+   * deployment that predates the negotiation, which then speaks only
+   * vocabulary 1.
+   *
+   * SEPARATE from `vocabulary` above, which is eval-scoped by name and moves
+   * on its own schedule. A deployment may advertise one without the other.
+   */
+  apiVocabulary?: {
+    version: number;
+    /**
+     * Value family → (stored spelling → canonical spelling). A family with no
+     * renamed member is absent rather than empty, so a client can read
+     * "nothing moves here" from the shape.
+     */
+    values: Record<string, Record<string, string>>;
+    /**
+     * Permalink resource type → the pre-rename keys that resolve to the same
+     * route. Listed apart from `values` because these are table KEYS, not a
+     * per-request projection: both spellings resolve at all times, and which
+     * one a response carries follows the OPERATION rather than the header.
+     */
+    resourceTypes: Record<string, string[]>;
+  };
+  /**
    * The booleans to branch on. Note that the exposure-REDUCING ones
-   * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
+   * (`cancelGoalRun`, `unpublishStudy`) stay true for an org
    * that has lost the beta — losing the feature is exactly when stopping it
    * matters most.
    */
@@ -4734,9 +5268,21 @@ export interface PlatformCapabilities {
     readSwarms: boolean;
     readUserTesting: boolean;
     writeSwarms: boolean;
+    /** Launching a goal run. Spends hosted model credits. */
+    launchGoalRun: boolean;
+    /** Stopping a goal run. Ungated by design — see above. */
+    cancelGoalRun: boolean;
+    /** @deprecated Use {@link launchGoalRun}. Emitted alongside it until GA. */
     launchJourneyRun: boolean;
+    /** @deprecated Use {@link cancelGoalRun}. Emitted alongside it until GA. */
     cancelJourneyRun: boolean;
+    /** Publishing an environment as a study. Admin-only, and beta-gated. */
+    publishStudy: boolean;
+    /** Taking a live study down. Ungated by design — see above. */
+    unpublishStudy: boolean;
+    /** @deprecated Use {@link publishStudy}. Emitted alongside it until GA. */
     publishUserTestingScenario: boolean;
+    /** @deprecated Use {@link unpublishStudy}. Emitted alongside it until GA. */
     unpublishUserTestingScenario: boolean;
     /**
      * Mode changes, member invites/removals, link rotation, renames — the
@@ -4786,6 +5332,7 @@ export interface PlatformGenerationDrafts {
 // ── User testing ────────────────────────────────────────────────────────────
 
 /** One session a visitor had with a published scenario. SUMMARY, not transcript. */
+/** @deprecated Use {@link PlatformStudySession}. */
 export interface PlatformUserTestingSession {
   /** The address for the transcript route. */
   id: string;
@@ -4830,6 +5377,11 @@ export interface PlatformTranscriptMessage {
  * authorization, so handing it out would turn one authorized read into an
  * unbounded, unrevocable one.
  */
+/**
+ * @deprecated Use {@link PlatformStudySessionDetail}, which spells the owning
+ * id `studyId`. NOT an alias: this shape's `scenarioId` is what the deprecated
+ * route still sends.
+ */
 export interface PlatformUserTestingSessionDetail {
   id: string;
   scenarioId: string;
@@ -4861,6 +5413,7 @@ export interface PlatformUserTestingSessionDetail {
  * null on every response while documenting itself as the revocation signal.
  * The publish response (`PlatformScenario`) carries the real one.
  */
+/** @deprecated Use {@link PlatformStudyUpdated}. */
 export interface PlatformUserTestingScenario {
   id: string;
   projectId: string;
@@ -4873,6 +5426,7 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
+/** @deprecated Use {@link PlatformStudyDetail}. */
 export interface PlatformUserTestingScenarioDetail
   extends PlatformUserTestingScenario {
   environmentId: string | null;
@@ -4899,6 +5453,10 @@ export interface PlatformGuestExecution {
   maxConcurrentHarnessRuns?: number;
 }
 
+/**
+ * @deprecated Use {@link PlatformStudyInsightsRequested}, which spells the
+ * owning id `studyId`. NOT an alias, for the same reason.
+ */
 export interface PlatformUserTestingInsightsRequested {
   scenarioId: string;
   projectId: string;

@@ -63,6 +63,7 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 
 import { ProjectRunsTable, type ProjectRunRow } from "../project-runs-table";
 import { SuiteDetailOverview } from "../../evaluate/suite-detail-overview";
+import { metricsByRunFromIterations } from "../run-metrics";
 import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
@@ -481,7 +482,7 @@ function historyElement(
       cases={CASES}
       runs={runs}
       runsLoading={false}
-      allIterations={iterations}
+      metricsByRun={metricsByRunFromIterations(iterations)}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}

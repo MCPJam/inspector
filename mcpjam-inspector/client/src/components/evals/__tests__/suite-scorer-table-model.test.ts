@@ -149,6 +149,38 @@ describe("buildScorerTable groups", () => {
     ).toBe("none");
   });
 
+  it("adds the rubric-checks row after the other judges when graded", () => {
+    const table = (
+      judgeConfig?: Parameters<typeof buildScorerTable>[0]["judgeConfig"],
+    ) =>
+      buildScorerTable({
+        model: groupGradersByStage({
+          predicates: [],
+          judgeConfig,
+          rubricChecks: true,
+        }),
+        predicates: [],
+        judgeConfig,
+      }).groups.find((group) => group.stage === "userValue");
+    const userValue = table();
+    expect(
+      userValue?.rows
+        .filter((row) => row.kind === "judge")
+        .map((row) => row.judgeSlot),
+    ).toEqual(["goalCompletion", "groundedness", "rubricChecks"]);
+    const row = userValue?.rows.find((r) => r.judgeSlot === "rubricChecks");
+    expect(row).toMatchObject({
+      enabled: true,
+      role: "advisory",
+      thresholdKind: "none",
+    });
+    expect(
+      table({ rubricChecks: { enabled: false } })?.rows.find(
+        (r) => r.judgeSlot === "rubricChecks",
+      )?.enabled,
+    ).toBe(false);
+  });
+
   it("emits a group for every user-value stage", () => {
     const { groups } = buildScorerTable({
       model: groupGradersByStage({ predicates: [] }),
@@ -213,6 +245,26 @@ describe("buildScorerTable groups", () => {
         group.rows.filter((row) => row.kind === "preset"),
       ),
     ).toEqual([]);
+  });
+
+  it("keeps an enabled standard check in its catalog slot", () => {
+    const output = STANDARD_ASSERTION_CHECKS.find(
+      (check) => check.id === "response.schema",
+    )!;
+    const discovery = STANDARD_ASSERTION_CHECKS.filter(
+      (check) => check.stage === "discovery",
+    ).map((check) => check.id);
+    const { groups } = buildScorerTable({
+      model: groupGradersByStage({ predicates: [output.preset] }),
+      predicates: [output.preset],
+    });
+    const discoveryGroup = groups.find((group) => group.stage === "discovery")!;
+    expect(
+      discoveryGroup.rows.filter((row) => row.family).map((row) => row.family!.id),
+    ).toEqual(discovery);
+    expect(
+      discoveryGroup.rows.find((row) => row.family?.id === output.id),
+    ).toEqual(expect.objectContaining({ kind: "predicate", enabled: true }));
   });
 
   it("drops the preset row once any rule of its kind is listed, suppressed or not", () => {
@@ -353,6 +405,12 @@ describe("roleOfJudgeSlot", () => {
   it("never lets groundedness gate", () => {
     expect(
       roleOfJudgeSlot("groundedness", { goalCompletion: { role: "gating" } }),
+    ).toBe("advisory");
+  });
+
+  it("never lets rubric checks gate", () => {
+    expect(
+      roleOfJudgeSlot("rubricChecks", { goalCompletion: { role: "gating" } }),
     ).toBe("advisory");
   });
 

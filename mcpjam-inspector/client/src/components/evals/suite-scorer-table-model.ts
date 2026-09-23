@@ -157,14 +157,17 @@ export function withPredicateRole(
   return { ...(rest as Predicate), role: "advisory" };
 }
 
-export type JudgeSlot = "goalCompletion" | "groundedness";
+export type JudgeSlot = "goalCompletion" | "groundedness" | "rubricChecks";
 
-/** Groundedness cannot gate. Goal completion follows the stored role. */
+/**
+ * Groundedness and rubric checks cannot gate. Goal completion follows the
+ * stored role.
+ */
 export function roleOfJudgeSlot(
   slot: JudgeSlot,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
-  if (slot === "groundedness") return "advisory";
+  if (slot === "groundedness" || slot === "rubricChecks") return "advisory";
   // Either spelling: a suite configured before the rename stores `"gating"`
   // and one configured after stores `"required"`, and this table renders both.
   return isRequiredRole(judgeConfig?.goalCompletion?.role)
@@ -560,6 +563,23 @@ function judgeTableRow(
   judgeEnabled: boolean,
 ): ScorerTableRow {
   const slot: JudgeSlot = row.judgeSlot ?? "goalCompletion";
+  if (slot === "rubricChecks") {
+    // The row's own switch. Rubric checks ride the goal-completion judge, so
+    // with that judge off they do not run whatever this says; the table
+    // disables the box and says why rather than rewriting the stored value.
+    return {
+      id: row.id,
+      kind: "judge",
+      enabled: judgeConfig?.rubricChecks?.enabled !== false,
+      name: row.label,
+      kindLabel: "Judge",
+      threshold: "",
+      thresholdKind: "none",
+      role: roleOfJudgeSlot("rubricChecks", judgeConfig),
+      muted: false,
+      judgeSlot: "rubricChecks",
+    };
+  }
   if (slot === "groundedness") {
     return {
       id: row.id,
@@ -590,22 +610,48 @@ function judgeTableRow(
 }
 
 /**
- * The standard checks of this stage nothing lists yet, as off rows.
+ * This stage's standard checks, in catalog order, whether or not they are on.
  *
- * A suppressed suite rule is still a listed row of its kind, so its family
- * gets no second, preset row: the person sees the rule they turned off, not
- * a fresh copy of the catalog entry beside it.
+ * An enabled check used to leave the catalog and sit above every check still
+ * off, so ticking one moved it to the top of the stage. It stays in its slot
+ * instead. A family that already has a rule — including one the case
+ * suppressed — fills that slot, so the person sees the rule they turned off
+ * and not a second, fresh copy of the catalog entry beside it.
  */
-function presetRowsForStage(
+function catalogRowsForStage(
   stage: UserValueStage,
-  listed: ScorerTableRow[],
+  familyRows: ReadonlyMap<string, readonly ScorerTableRow[]>,
+  listPresets: boolean,
 ): ScorerTableRow[] {
-  const listedFamilies = new Set(
-    listed.flatMap((row) => (row.family ? [row.family.id] : [])),
-  );
-  return STANDARD_ASSERTION_CHECKS.filter(
-    (check) => check.stage === stage && !listedFamilies.has(check.id),
-  ).map(presetTableRow);
+  const rows: ScorerTableRow[] = [];
+  for (const check of STANDARD_ASSERTION_CHECKS) {
+    if (check.stage !== stage) continue;
+    const listed = familyRows.get(check.id);
+    if (listed && listed.length > 0) {
+      rows.push(...listed);
+      continue;
+    }
+    if (listPresets) rows.push(presetTableRow(check));
+  }
+  return rows;
+}
+
+function placePredicateRow(
+  row: GraderRow,
+  rules: EffectiveRule[],
+  familyRows: Map<string, ScorerTableRow[]>,
+  loose: ScorerTableRow[],
+) {
+  const next = predicateTableRow(row, rules);
+  if (!next) return;
+  const familyId = next.family?.id;
+  if (!familyId) {
+    loose.push(next);
+    return;
+  }
+  const bucket = familyRows.get(familyId) ?? [];
+  bucket.push(next);
+  familyRows.set(familyId, bucket);
 }
 
 function rowsForStage(
@@ -618,6 +664,8 @@ function rowsForStage(
 ): ScorerTableRow[] {
   const authored = model.byStage[stage];
   const rows: ScorerTableRow[] = [];
+  const familyRows = new Map<string, ScorerTableRow[]>();
+  const loosePredicates: ScorerTableRow[] = [];
 
   if (stage === "connection" || stage === "discovery") {
     rows.push(observedRow(stage));
@@ -632,29 +680,36 @@ function rowsForStage(
     else rows.push(observedRow(stage));
     for (const row of authored) {
       if (row.kind === "predicate") {
-        const next = predicateTableRow(row, rules);
-        if (next) rows.push(next);
+        placePredicateRow(row, rules, familyRows, loosePredicates);
       }
     }
-    return listPresets ? [...rows, ...presetRowsForStage(stage, rows)] : rows;
+    return [
+      ...rows,
+      ...loosePredicates,
+      ...catalogRowsForStage(stage, familyRows, listPresets),
+    ];
   }
 
   for (const row of authored) {
     if (row.kind === "match") rows.push(matchTableRow(row));
     else if (row.kind === "predicate") {
-      const next = predicateTableRow(row, rules);
-      if (next) rows.push(next);
+      placePredicateRow(row, rules, familyRows, loosePredicates);
     } else if (row.kind === "judge") {
       rows.push(judgeTableRow(row, judgeConfig, judgeEnabled));
     }
   }
 
-  const presets = listPresets ? presetRowsForStage(stage, rows) : [];
-  if (rows.length === 0 && presets.length === 0 && !stageEmptyIsGap(stage)) {
+  const catalog = catalogRowsForStage(stage, familyRows, listPresets);
+  if (
+    rows.length === 0 &&
+    loosePredicates.length === 0 &&
+    catalog.length === 0 &&
+    !stageEmptyIsGap(stage)
+  ) {
     rows.push(observedRow(stage));
   }
 
-  return [...rows, ...presets];
+  return [...rows, ...loosePredicates, ...catalog];
 }
 
 function configCard(state: StageConfigState, index: number): StageCardView {
