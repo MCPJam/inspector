@@ -40,8 +40,6 @@ const {
   deleteOrganizationMock,
   changeMemberRoleMock,
   transferOrganizationOwnershipMock,
-  generateLogoUploadUrlMock,
-  updateOrganizationLogoMock,
 } = vi.hoisted(() => ({
   addMemberMock: vi.fn(),
   removeMemberMock: vi.fn(),
@@ -49,8 +47,6 @@ const {
   deleteOrganizationMock: vi.fn(),
   changeMemberRoleMock: vi.fn(),
   transferOrganizationOwnershipMock: vi.fn(),
-  generateLogoUploadUrlMock: vi.fn(),
-  updateOrganizationLogoMock: vi.fn(),
 }));
 
 function createPlanCatalog() {
@@ -365,8 +361,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
     changeMemberRole: changeMemberRoleMock,
     transferOrganizationOwnership: transferOrganizationOwnershipMock,
     removeMember: removeMemberMock,
-    generateLogoUploadUrl: generateLogoUploadUrlMock,
-    updateOrganizationLogo: updateOrganizationLogoMock,
   }),
   resolveOrganizationRole: (member: { role?: string; isOwner?: boolean }) => {
     if (member.role) return member.role;
