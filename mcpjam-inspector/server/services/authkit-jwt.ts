@@ -320,7 +320,7 @@ function stringClaim(payload: JWTPayload, name: string): string | undefined {
 export async function classifyAuthKitBearer(
   token: string,
   deps?: AuthKitGatewayDeps,
-  now: number = Date.now(),
+  nowOverride?: number,
 ): Promise<AuthKitBearerVerdict> {
   let issuer: string | undefined;
   try {
@@ -341,6 +341,9 @@ export async function classifyAuthKitBearer(
   const key = resolved.resolveKey(issuer);
   if (!key) return { kind: "not_authkit" };
 
+  // Read the clock only once the bearer is known to be an AuthKit JWT: every
+  // other credential passes through here, and it should cost them nothing.
+  const now = nowOverride ?? Date.now();
   const backoffUntil = keysUnavailableUntil.get(issuer);
   if (backoffUntil !== undefined) {
     if (now < backoffUntil) {
