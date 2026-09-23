@@ -607,9 +607,6 @@ function createMainWindow(serverUrl: string): BrowserWindow {
 
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
-  window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) mcpCallbackDelivery.setReady(false);
-  });
   window.on("closed", () => mcpCallbackDelivery.setReady(false));
   window.loadURL(rendererDevServerUrl ?? serverUrl);
 

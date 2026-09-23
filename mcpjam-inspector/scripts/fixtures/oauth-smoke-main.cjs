@@ -25,9 +25,7 @@ app
     });
     let loads = 0;
     win.webContents.on("did-finish-load", () => loads++);
-    win.webContents.on("did-start-navigation", (_, url, inPlace, main) => {
-      if (main && !inPlace) delivery.setReady(false);
-    });
+    win.on("closed", () => delivery.setReady(false));
     delivery.enqueue("cold");
     await win.loadURL("data:text/html,<title>OAuth smoke</title>");
     await win.webContents.executeJavaScript(
@@ -56,18 +54,34 @@ app
       "original",
     );
     assert.equal(loads, 1);
+    // A canceled unload must leave the current listener ready.
     await win.webContents.executeJavaScript(
-      "window.electronAPI.oauth.removeCallback()",
+      `window.dispatchEvent(new Event('beforeunload', {cancelable: true}));`,
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    delivery.enqueue("after-canceled-unload");
+    await waitCount(3);
+    // Actual page departure clears readiness until a new listener registers.
+    await win.webContents.executeJavaScript(
+      "window.dispatchEvent(new Event('pagehide'))",
     );
     await new Promise((r) => setTimeout(r, 30));
     delivery.enqueue("queued");
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(
+      await win.webContents.executeJavaScript("window.results.length"),
+      3,
+    );
+    await win.webContents.executeJavaScript(
+      "window.electronAPI.oauth.removeCallback()",
+    );
     await win.webContents.executeJavaScript(
       "window.electronAPI.oauth.onCallback(url=>window.results.push(url))",
     );
-    await waitCount(3);
+    await waitCount(4);
     assert.equal(loads, 1);
     process.stdout.write(
-      "PASS: cold queue, warm IPC, listener re-registration, identity preserved, no reload\n",
+      "PASS: cold queue, warm IPC, canceled unload, pagehide queue, listener re-registration, identity preserved, no reload\n",
     );
     win.destroy();
     app.exit(0);

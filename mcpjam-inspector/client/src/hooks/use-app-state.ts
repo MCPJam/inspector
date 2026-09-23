@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -523,6 +523,13 @@ export function useAppState({
   });
 
   const oauthMemberships = useProjectQueries({ isAuthenticated });
+  const oauthProjectIds = useMemo(
+    () =>
+      oauthMemberships.allProjects === undefined
+        ? undefined
+        : new Set(oauthMemberships.allProjects.map((project) => project._id)),
+    [oauthMemberships.allProjects],
+  );
   const serverState = useServerState({
     appState,
     dispatch,
@@ -530,9 +537,7 @@ export function useAppState({
     isAuthenticated,
     hasSignedInUser: currentUserId != null,
     currentUserId,
-    oauthProjectIds: oauthMemberships.allProjects === undefined
-      ? undefined
-      : new Set(oauthMemberships.allProjects.map((project) => project._id)),
+    oauthProjectIds,
     isAuthLoading: isAuthLoading || isWorkOsLoading,
     isLoadingProjects: projectState.isLoadingProjects,
     useLocalFallback: projectState.useLocalFallback,

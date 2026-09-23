@@ -215,4 +215,7 @@ contextBridge.exposeInMainWorld(
   process.argv.includes("--mcpjam-packaged"),
 );
 
-window.addEventListener("beforeunload", () => ipcRenderer.send("oauth:listener-ready", false));
+// Unlike beforeunload, pagehide does not fire for a canceled departure.
+window.addEventListener("pagehide", () => {
+  ipcRenderer.send("oauth:listener-ready", false);
+});

@@ -257,6 +257,17 @@ function expectNoFrontendBearerShortcut(record: ConnectRequestRecord) {
 }
 
 test.describe("OAuth Debugger e2e", () => {
+  test("recovers from a failed app bootstrap chunk", async ({ page }) => {
+    await page.route("**/src/app-bootstrap.tsx*", (route) => route.abort(), {
+      times: 1,
+    });
+    await page.goto("/__e2e/oauth-debugger");
+    await expect(page.getByRole("alert")).toContainText("MCPJam couldn't load");
+    await page.getByRole("button", { name: "Reload MCPJam" }).click();
+    await waitForHarnessReady(page);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
   test("covers first connect and reconnect for plain and OAuth MCP servers", async ({
     page,
   }) => {
