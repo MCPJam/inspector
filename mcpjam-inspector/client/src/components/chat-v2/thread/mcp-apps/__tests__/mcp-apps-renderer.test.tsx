@@ -2380,6 +2380,47 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("keeps the widget's declared display modes when its artifact link is re-minted", async () => {
+    resetArtifactUrlsForTests();
+    // The app declares inline only, so the advertised set is the host's
+    // modes narrowed to inline. The iframe stays mounted across a re-minted
+    // link and never re-initializes, so nothing would narrow it again.
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline"],
+    });
+    try {
+      const first = signedArtifactUrl("kg-widget", 1_800_000_000);
+      const reminted = signedArtifactUrl("kg-widget", 1_800_003_600);
+      const { rerender } = render(
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={first} />,
+      );
+      await vi.waitFor(() => {
+        expect(mockBridge.connect).toHaveBeenCalled();
+      });
+      await act(async () => {
+        triggerReady();
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+          expect.objectContaining({ availableDisplayModes: ["inline"] }),
+        );
+      });
+
+      rerender(
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl={reminted} />,
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({ availableDisplayModes: ["inline"] }),
+      );
+    } finally {
+      mockBridge.getAppCapabilities.mockReturnValue(undefined);
+    }
+  });
+
   it("first-render cspMode derives from WidgetSurfaceProvider, not isPlaygroundActive", async () => {
     // Regression for the "draw a cat, then it vanishes" iframe re-mount
     // bug. Previously `cspMode` came from `isPlaygroundActive`, which was

@@ -20,7 +20,7 @@ import { modelDefinitionForId } from "@/lib/model-definition-for-id";
 import { useHostSnapshotForSession } from "@/hooks/use-host-snapshot";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { hydrateMessageTimestamps } from "@mcpjam/chat-ui";
-import { fetchArtifact } from "@/lib/artifact-urls";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -370,7 +370,13 @@ export function ShareUsageThreadDetail({
    */
   const [spanError, setSpanError] = useState<string | null>(null);
 
-  // Fetch messages from blob URL
+  // Fetch messages from blob URL. Keyed on the transcript the link points at,
+  // not the link: a re-minted link to the same transcript (links expire and
+  // are renewed) must not refetch it or swap the viewer for a spinner.
+  // `fetchArtifact` reads the freshest link for it either way.
+  const messagesBlobKey = thread?.messagesBlobUrl
+    ? artifactStableKey(thread.messagesBlobUrl)
+    : null;
   useEffect(() => {
     if (!thread?.messagesBlobUrl) {
       setMessages(null);
@@ -413,7 +419,8 @@ export function ShareUsageThreadDetail({
       isActive = false;
       controller.abort();
     };
-  }, [thread?.messagesBlobUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesBlobKey]);
 
   /**
    * Eval blobs are anchored at the RUN start by `drive-local-eval-turn`, while

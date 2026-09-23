@@ -27,6 +27,12 @@
  * Nothing here renews a link on its own: a fresh link only ever comes from a
  * query or action that re-authorized the reader.
  *
+ * Registration scans whole results, and the client cannot check a link's
+ * signature, so a registered link is only trusted as far as its ORIGIN: it can
+ * stand in for a link on the same origin and nothing else. A string that
+ * merely looks like an artifact link (a title, a preview, a message someone
+ * else wrote) cannot redirect a fetch or an image to another host.
+ *
  * Anything that is not a signed artifact link passes through untouched, so
  * every helper is safe on mixed input.
  */
@@ -54,6 +60,7 @@ export function isSignedArtifactUrl(
   try {
     const parsed = new URL(url);
     return (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
       parsed.pathname.endsWith(ARTIFACT_PATH_SUFFIX) &&
       parsed.searchParams.has("t")
     );
@@ -89,13 +96,22 @@ function readClaims(url: string): ArtifactClaims | null {
 }
 
 /**
+ * The registry key for a link: the object it points at, on the origin that
+ * served it. The origin is part of the key because the client cannot verify
+ * the claims — only a link from the same origin may replace another.
+ */
+function registryKey(url: string, claims: ArtifactClaims): string {
+  return `artifact:${new URL(url).origin}:${claims.k}:${claims.s}`;
+}
+
+/**
  * What a link points at, independent of when it expires: two links minted
  * an hour apart for the same object share a key. Anything that is not a
  * signed artifact link is its own key.
  */
 export function artifactStableKey(url: string): string {
   const claims = readClaims(url);
-  return claims ? `artifact:${claims.k}:${claims.s}` : url;
+  return claims ? registryKey(url, claims) : url;
 }
 
 // ── Registry: the freshest link seen for each object ───────────────────────
@@ -114,7 +130,7 @@ function sweepExpired(now: number): void {
 function registerOne(url: string): boolean {
   const claims = readClaims(url);
   if (!claims) return false;
-  const key = `artifact:${claims.k}:${claims.s}`;
+  const key = registryKey(url, claims);
   const expiresAt = claims.e * 1000;
   const known = freshest.get(key);
   if (known && known.expiresAt >= expiresAt) return false;
@@ -153,7 +169,7 @@ export function registerArtifactUrls(value: unknown): void {
 export function freshestArtifactUrl(url: string): string {
   const claims = readClaims(url);
   if (!claims) return url;
-  const known = freshest.get(`artifact:${claims.k}:${claims.s}`);
+  const known = freshest.get(registryKey(url, claims));
   return known && known.expiresAt > claims.e * 1000 ? known.url : url;
 }
 

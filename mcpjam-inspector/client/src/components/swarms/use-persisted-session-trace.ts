@@ -20,7 +20,7 @@ import {
   turnTraceWallClockRange,
 } from "@/components/evals/turn-trace-spans";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { fetchArtifact } from "@/lib/artifact-urls";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 
 /** One pinned plugin version recorded on a synthetic session's resume config. */
 export type SessionPluginVersion = {
@@ -115,6 +115,14 @@ export function usePersistedSessionTrace(threadId: string | null): {
     setLoadingSpans(Boolean(threadId));
   }
 
+  // Keyed on the transcript the link points at, not the link or the row: a
+  // re-minted link to the same transcript (links expire and are renewed) must
+  // not refetch it, and neither must an unrelated change to the session row.
+  // `fetchArtifact` reads the freshest link for it either way.
+  const messagesBlobKey = thread?.messagesBlobUrl
+    ? artifactStableKey(thread.messagesBlobUrl)
+    : null;
+  const threadLoaded = thread !== undefined;
   useEffect(() => {
     if (!threadId || !thread?.messagesBlobUrl) {
       setMessages(null);
@@ -161,7 +169,8 @@ export function usePersistedSessionTrace(threadId: string | null): {
       active = false;
       controller.abort();
     };
-  }, [threadId, thread?.messagesBlobUrl, thread]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId, messagesBlobKey, threadLoaded]);
 
   useEffect(() => {
     if (!threadId) {

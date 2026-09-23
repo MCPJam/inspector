@@ -896,8 +896,11 @@ export function MCPAppsRendererSurface({
   // identity on the object (not the URL) keeps that from reloading the widget.
   // The URL itself still drives the fetch, so a fresh link is what gets read.
   const artifactCacheKey = host.services.artifactCacheKey;
-  const cachedReplayWidgetHtmlKey = cachedReplayWidgetHtmlUrl
-    ? artifactCacheKey?.(cachedReplayWidgetHtmlUrl) ?? cachedReplayWidgetHtmlUrl
+  const cachedWidgetHtmlKey = cachedWidgetHtmlUrl
+    ? artifactCacheKey?.(cachedWidgetHtmlUrl) ?? cachedWidgetHtmlUrl
+    : undefined;
+  const cachedReplayWidgetHtmlKey = isCachedReplay
+    ? cachedWidgetHtmlKey
     : undefined;
   const fetchArtifactRef = useRef(host.services.fetchArtifact);
   fetchArtifactRef.current = host.services.fetchArtifact;
@@ -1582,6 +1585,9 @@ export function MCPAppsRendererSurface({
   // current `widgetDisplayModeRequests` policy so flipping the Apps tab
   // tri-state on an already-mounted renderer takes effect on the next
   // identity change instead of waiting for an unmount.
+  // Keyed on the cached widget's identity, not its link: a re-minted link to
+  // the same widget keeps the iframe mounted, and nothing would restore the
+  // modes it declared or the user's inline dismissal.
   useEffect(() => {
     setAppSupportedDisplayModes(undefined);
     userPreferInlineRef.current =
@@ -1589,7 +1595,7 @@ export function MCPAppsRendererSurface({
       "user-initiated-only";
   }, [
     resourceUri,
-    cachedWidgetHtmlUrl,
+    cachedWidgetHtmlKey,
     earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests,
   ]);
 

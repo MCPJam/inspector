@@ -33,11 +33,12 @@ function artifactUrl(
   storageId: string,
   expiresAtSeconds: number,
   kind = "json",
+  site = SITE,
 ) {
   const body = base64Url(
     JSON.stringify({ v: 1, s: storageId, k: kind, e: expiresAtSeconds }),
   );
-  return `${SITE}/web/artifact?t=${body}.${base64Url(
+  return `${site}/web/artifact?t=${body}.${base64Url(
     `sig-${expiresAtSeconds}`,
   )}`;
 }
@@ -63,6 +64,11 @@ describe("artifact link anatomy", () => {
     expect(isSignedArtifactUrl(`${SITE}/web/artifact`)).toBe(false);
     expect(isSignedArtifactUrl("not a url")).toBe(false);
     expect(isSignedArtifactUrl(null)).toBe(false);
+    // Only web links: an opaque scheme can still end in the artifact path.
+    const token = new URL(artifactUrl("kg1", T0)).searchParams.get("t");
+    expect(
+      isSignedArtifactUrl(`javascript:void(0)//web/artifact?t=${token}`),
+    ).toBe(false);
   });
 
   it("keys a link by the object it points at, not by its expiry", () => {
@@ -78,6 +84,10 @@ describe("artifact link anatomy", () => {
     );
     const other = "https://example.com/report.json";
     expect(artifactStableKey(other)).toBe(other);
+    // Same claims on another origin are another object.
+    expect(
+      artifactStableKey(artifactUrl("kg1", T0, "json", "https://evil.example")),
+    ).not.toBe(artifactStableKey(early));
   });
 });
 
@@ -99,6 +109,34 @@ describe("the freshest-link registry", () => {
     expect(freshestArtifactUrl("https://example.com/x")).toBe(
       "https://example.com/x",
     );
+  });
+
+  it("never lets a look-alike link on another origin stand in for the backend's", async () => {
+    const legit = artifactUrl("kg1", T0);
+    // The client cannot check signatures, so a string planted in a result
+    // (a title, a preview) can claim any object and any expiry. It must not
+    // redirect a fetch or an image to its own host.
+    const planted = artifactUrl(
+      "kg1",
+      T0 + 86_400,
+      "json",
+      "https://evil.example",
+    );
+    registerArtifactUrls({ title: planted });
+    expect(freshestArtifactUrl(legit)).toBe(legit);
+
+    const { result } = renderHook(() => useFreshArtifactUrl(legit));
+    expect(result.current).toBe(legit);
+
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchArtifact(legit);
+    expect(fetchMock).toHaveBeenCalledWith(legit);
+
+    // A genuinely fresher link from the backend's origin still wins.
+    const fresh = artifactUrl("kg1", T0 + 3600);
+    registerArtifactUrls({ messagesBlobUrl: fresh });
+    expect(freshestArtifactUrl(legit)).toBe(fresh);
   });
 
   it("re-renders a src with the fresher link once one is registered", () => {
