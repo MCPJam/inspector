@@ -183,7 +183,7 @@ function maybePromoteRawMessage(
   // The backend's sentence carries the two numbers that make this refusal
   // make sense; the catalog copy cannot know them.
   if (slug === "provider/mcpjam_limit_insufficient") {
-    const sentence = MCPJAM_INSUFFICIENT_CREDITS_PATTERN.exec(rawMessage)?.[0];
+    const sentence = mcpjamShortfallSentence(rawMessage);
     return sentence ? { ...entry, oneLine: sentence } : entry;
   }
   if (slug !== "internal/unknown") return entry;
@@ -583,7 +583,7 @@ function resolveSlug(error: unknown): {
 
   // Composed copy can put "Out of MCPJam credits" beside the backend's
   // shortfall sentence; the balance is not empty, so the shortfall wins.
-  if (MCPJAM_INSUFFICIENT_CREDITS_PATTERN.test(message)) {
+  if (mcpjamShortfallSentence(message)) {
     return { slug: "provider/mcpjam_limit_insufficient" };
   }
   if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
@@ -975,7 +975,25 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
  * is not used up, so "daily credits are used up" would be false.
  */
 const MCPJAM_INSUFFICIENT_CREDITS_PATTERN =
-  /\bThis request needs about \d+ MCPJam credits; your organization has \d+ left[^.]{0,40}\./i;
+  /\bThis request needs about (\d+) MCPJam credits; your organization has (\d+) left[^.]{0,40}\./i;
+
+/**
+ * The shortfall sentence, but only when its numbers describe one: an empty
+ * balance is exhaustion, and a request that fits was not refused for size.
+ * Same check the client applies to the structured fields.
+ */
+function mcpjamShortfallSentence(message: string): string | undefined {
+  const match = MCPJAM_INSUFFICIENT_CREDITS_PATTERN.exec(message);
+  if (!match) return undefined;
+  const required = Number(match[1]);
+  const remaining = Number(match[2]);
+  return Number.isSafeInteger(required) &&
+    Number.isSafeInteger(remaining) &&
+    remaining > 0 &&
+    required > remaining
+    ? match[0]
+    : undefined;
+}
 
 export function mcpjamLimitSlugForMessage(
   message: string
@@ -985,7 +1003,7 @@ export function mcpjamLimitSlugForMessage(
   | "provider/mcpjam_limit_monthly"
   | "provider/mcpjam_limit_insufficient"
   | undefined {
-  if (MCPJAM_INSUFFICIENT_CREDITS_PATTERN.test(message)) {
+  if (mcpjamShortfallSentence(message)) {
     return "provider/mcpjam_limit_insufficient";
   }
   const limitPeriod =

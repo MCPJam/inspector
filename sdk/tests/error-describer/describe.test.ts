@@ -936,6 +936,14 @@ it.each([
     "This request needs about 30 MCPJam credits; your organization has 23 left today.",
     "provider/mcpjam_limit_insufficient",
   ],
+  [
+    "This request needs about 30 MCPJam credits; your organization has 0 left today.",
+    undefined,
+  ],
+  [
+    "This request needs about 20 MCPJam credits; your organization has 23 left today.",
+    undefined,
+  ],
   ["Provider rate limit", undefined],
 ])("classifies MCPJam limit markers: %s", (message, slug) => {
   expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
