@@ -12,7 +12,9 @@ const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
  * has to finish an authorization. The pending marker, the resume record and the
  * guest cookie are all per-origin, so a callback that lands on a different host
  * cannot see any of them: the flow dead-ends and the visitor loses their work.
- * `score.mcpjam.com` runs authorizations, so it keeps its own callback.
+ * `score.mcpjam.com` and Inspector PR previews run authorizations, so they keep
+ * their own callbacks. A preview must use the exact `mcp-inspector-pr-<number>`
+ * hostname; unrelated Railway tenants continue to fall back to production.
  *
  * Adding a host here mints a new `redirect_uri`. Dynamic registration sends it
  * per-flow and needs nothing else, but Client ID Metadata Document flows only
@@ -25,6 +27,8 @@ const HOSTED_REDIRECT_HOSTNAMES = new Set([
   "score.mcpjam.com",
   "www.score.mcpjam.com",
 ]);
+const RAILWAY_INSPECTOR_PREVIEW_HOSTNAME =
+  /^mcp-inspector-pr-\d+\.up\.railway\.app$/i;
 
 /**
  * Static Client ID Metadata Document URL for MCPJam Inspector
@@ -51,7 +55,8 @@ export function resolveBrowserOAuthRedirectOrigin(
 
   if (
     HOSTED_REDIRECT_HOSTNAMES.has(locationLike.hostname) ||
-    locationLike.hostname.endsWith(".app.mcpjam.com")
+    locationLike.hostname.endsWith(".app.mcpjam.com") ||
+    RAILWAY_INSPECTOR_PREVIEW_HOSTNAME.test(locationLike.hostname)
   ) {
     return locationLike.origin;
   }
