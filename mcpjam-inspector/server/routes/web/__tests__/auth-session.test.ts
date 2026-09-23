@@ -28,7 +28,18 @@ vi.mock("../../../utils/request-logger.js", () => ({
   getRequestLogger: () => ({ event: eventMock }),
 }));
 
+// The passthrough limiter only meters in hosted mode, which is where this
+// route serves the AuthKit callers it charges.
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../config.js")>()),
+  HOSTED_MODE: true,
+}));
+
 import authSession from "../auth-session.js";
+import {
+  PASSTHROUGH_TOKEN_LIMIT,
+  resetPassthroughRateLimitForTests,
+} from "../../../middleware/passthrough-rate-limit.js";
 
 function post(authMethod: string | null, token = "access-token-1") {
   const app = new Hono();
@@ -45,6 +56,7 @@ function post(authMethod: string | null, token = "access-token-1") {
 beforeEach(() => {
   revokeAuthKitSessionMock.mockReset();
   eventMock.mockReset();
+  resetPassthroughRateLimitForTests();
 });
 
 describe("POST /api/web/auth-session/revoke", () => {
@@ -99,5 +111,21 @@ describe("POST /api/web/auth-session/revoke", () => {
     await post("authkit_jwt");
 
     expect(eventMock).not.toHaveBeenCalled();
+  });
+
+  it("meters a signed-in bearer with the per-credential passthrough budget", async () => {
+    revokeAuthKitSessionMock.mockResolvedValue({ revoked: true });
+    for (let i = 0; i < PASSTHROUGH_TOKEN_LIMIT; i++) {
+      expect((await post("unverified_passthrough", "tok-burst")).status).toBe(
+        200,
+      );
+    }
+
+    const res = await post("unverified_passthrough", "tok-burst");
+
+    expect(res.status).toBe(429);
+    expect(revokeAuthKitSessionMock).toHaveBeenCalledTimes(
+      PASSTHROUGH_TOKEN_LIMIT,
+    );
   });
 });

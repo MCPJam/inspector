@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { revokeAuthKitSession } from "../../services/auth-session-revocation.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 
@@ -23,7 +24,10 @@ import { getRequestLogger } from "../../utils/request-logger.js";
 const authSession = new Hono();
 
 // `sessionAuthMiddleware` bypasses `/api/web/*`, so this router brings its own.
-authSession.use("*", bearerAuthMiddleware);
+// The limiter runs after the bearer label is set: every accepted request here
+// costs a Convex round trip, so the AuthKit callers this route serves get the
+// same per-credential budget as `/api/v1`.
+authSession.use("*", bearerAuthMiddleware, passthroughRateLimitMiddleware);
 
 /** The labels under which a signed-in AuthKit bearer reaches a handler. */
 const AUTHKIT_BEARER_METHODS: ReadonlySet<string> = new Set([
