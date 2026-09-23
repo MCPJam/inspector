@@ -1,4 +1,5 @@
 import pkceChallenge from "pkce-challenge";
+import { RESOURCE_METADATA_NOT_IMPLEMENTED } from "./state-machines/shared/resource-metadata-error.js";
 import type {
   AuthResult,
   AuthorizationServerMetadata,
@@ -786,9 +787,7 @@ export async function discoverOAuthProtectedResourceMetadata(
 
   if (!response || response.status === 404) {
     await response?.text?.().catch(() => {});
-    throw new Error(
-      "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
-    );
+    throw new Error(RESOURCE_METADATA_NOT_IMPLEMENTED);
   }
 
   if (!response.ok) {
