@@ -27,6 +27,7 @@ import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
+import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -1246,6 +1247,19 @@ export async function streamWebChatTurn(
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
     if (orgRuntime.runtimeLocation === "local") {
+      // The local runtime cannot resume a server-executed approval, and it
+      // refuses a WHOLE turn that advertises one. The always-ask workspace
+      // operations (MJ-008) would therefore take every other tool down with
+      // them; they are withheld here instead — refused, not run unasked.
+      const localTools = withoutServerVerifiedApprovalTools(
+        allTools as ToolSet,
+      );
+      if (localTools.removed.length > 0) {
+        logger.warn(
+          "[web-chat-turn] local-runtime org provider cannot serve always-ask workspace tools; withholding them",
+          { toolNames: localTools.removed },
+        );
+      }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         failureReporter,
@@ -1256,7 +1270,7 @@ export async function streamWebChatTurn(
         messages: scrubbedMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: localTools.tools,
         progressivePlan,
         discoveryState,
         authHeader: runtime.authHeader,
@@ -1309,6 +1323,9 @@ export async function streamWebChatTurn(
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // The browser sent this history (MJ-008): its unresolved calls run only
+      // under a verified approval.
+      clientSuppliedHistory: true,
       // The hosted loop is the ONE engine that can grow its tool set between
       // steps, so it is the one that gets this.
       ...(refreshTools ? { refreshTools } : {}),
@@ -1396,6 +1413,9 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    // The browser sent this history (MJ-008): its unresolved calls run only
+    // under a verified approval.
+    clientSuppliedHistory: true,
     ...(refreshTools ? { refreshTools } : {}),
     // Harness engine only: it builds its own MCP tool set (host-executed
     // delivery) rather than consuming `allTools`, so the host's

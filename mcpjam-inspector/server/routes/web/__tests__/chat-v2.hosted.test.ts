@@ -258,6 +258,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds = Array.isArray(payload?.serverIds)
@@ -766,7 +769,13 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(
+      vi
+        .mocked(global.fetch)
+        .mock.calls.filter(([input]) =>
+          String(input).endsWith("/web/authorize-batch")
+        )
+    ).toHaveLength(1);
     // Membership chat (no share/scenario token) sends no accessScope — the
     // backend authorizes via project ownership for both guest and authed
     // users uniformly. accessScope is only set when a token is in play.
@@ -1186,6 +1195,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     const { app, token } = createWebTestApp();
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-project")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds = Array.isArray(payload?.serverIds)

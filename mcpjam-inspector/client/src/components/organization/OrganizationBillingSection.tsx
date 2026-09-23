@@ -51,6 +51,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import type {
   BillingInterval,
+  BillingModel,
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
@@ -60,6 +61,7 @@ import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-
 import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
 import { consumeUrlFlag } from "@/lib/url-flag";
 import { track } from "@/lib/analytics";
+import { navigateToSupport } from "@/lib/support-navigation";
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
@@ -100,6 +102,8 @@ function getPlanColumnCta(params: {
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
   currentCatalogPlanId?: string;
+  currentPriceModel?: BillingModel;
+  currentBillingInterval: BillingInterval | null;
   entry: NonNullable<PlanCatalog["plans"][OrganizationPlan]>;
   billingConfigured: boolean;
   canManageBilling: boolean;
@@ -127,6 +131,8 @@ function getPlanColumnCta(params: {
     plan,
     currentPlan,
     currentCatalogPlanId,
+    currentPriceModel,
+    currentBillingInterval,
     entry,
     billingConfigured,
     canManageBilling,
@@ -138,8 +144,21 @@ function getPlanColumnCta(params: {
   } = params;
 
   const isDifferentBundle = currentCatalogPlanId !== entry.catalogPlanId;
-  const isCurrentPlan =
+  const isSameBundle =
     currentPlan === plan && (!isDifferentBundle || plan === "free");
+  // The column prices whichever interval the toggle is on, so a Pro monthly org
+  // looking at Pro annual is being offered a real change, not shown its own plan.
+  // A cadence the bundle does not sell is not the org's plan either; that
+  // column falls through to "Unavailable".
+  const isOtherInterval =
+    isSameBundle &&
+    currentBillingInterval != null &&
+    currentBillingInterval !== billingInterval &&
+    entry.checkout != null;
+  const isIntervalChange =
+    isOtherInterval &&
+    entry.checkout?.supportedIntervals.includes(billingInterval) === true;
+  const isCurrentPlan = isSameBundle && !isOtherInterval;
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
@@ -153,9 +172,26 @@ function getPlanColumnCta(params: {
       label: "Contact us",
       disabled: false,
       variant: "outline",
-      onClick: () => {
-        window.location.href = "https://www.mcpjam.com/contact";
-      },
+      onClick: navigateToSupport,
+    };
+  }
+
+  // Stripe's update-confirm flow swaps the price but refuses a quantity change,
+  // and per-seat -> flat means N seats -> 1. The server turns these away with
+  // `billing_plan_change_requires_support`, so offering the button only buys a
+  // refusal. Legacy per-seat Team orgs see every v2 column through this branch.
+  if (
+    isDifferentBundle &&
+    currentPriceModel != null &&
+    currentPriceModel !== entry.billingModel
+  ) {
+    return {
+      label: "Contact us",
+      disabled: false,
+      variant: "outline",
+      tooltip:
+        "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
+      onClick: navigateToSupport,
     };
   }
 
@@ -192,7 +228,8 @@ function getPlanColumnCta(params: {
   }
 
   if (
-    (isHigherTier || (currentPlan === plan && isDifferentBundle)) &&
+    (isHigherTier ||
+      (currentPlan === plan && (isDifferentBundle || isIntervalChange))) &&
     entry.isSelfServe
   ) {
     if (
@@ -701,6 +738,7 @@ function FreePlanTeamUpsell({
   const cta = getPlanColumnCta({
     plan: "team",
     currentPlan,
+    currentBillingInterval: null,
     entry,
     billingConfigured,
     canManageBilling,
@@ -784,10 +822,10 @@ function FreePlanTeamUpsell({
               className="w-full shrink-0 rounded-lg"
               size="sm"
               variant={cta.variant}
-              aria-disabled={true}
+              aria-disabled={cta.disabled}
               aria-label={cta.ariaLabel}
               tabIndex={0}
-              onClick={undefined}
+              onClick={cta.disabled ? undefined : cta.onClick}
             >
               <PlanCtaContent showSpinner={showCtaSpinner} label={cta.label} />
             </Button>
@@ -1421,6 +1459,9 @@ export function OrganizationBillingSection({
                               currentPlan,
                               currentCatalogPlanId:
                                 billingStatus?.catalogPlanId,
+                              currentPriceModel: billingStatus?.priceModel,
+                              currentBillingInterval:
+                                billingStatus?.billingInterval ?? null,
                               entry,
                               billingConfigured,
                               canManageBilling,
@@ -1521,10 +1562,14 @@ export function OrganizationBillingSection({
                                           className="w-full shrink-0 rounded-lg"
                                           size="sm"
                                           variant={cta.variant}
-                                          aria-disabled={true}
+                                          aria-disabled={cta.disabled}
                                           aria-label={cta.ariaLabel}
                                           tabIndex={0}
-                                          onClick={undefined}
+                                          onClick={
+                                            cta.disabled
+                                              ? undefined
+                                              : cta.onClick
+                                          }
                                         >
                                           <PlanCtaContent
                                             showSpinner={showCtaSpinner}

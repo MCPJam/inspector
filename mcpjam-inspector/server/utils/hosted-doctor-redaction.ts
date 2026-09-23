@@ -18,7 +18,7 @@ import { HOSTED_MODE } from "../config.js";
  * two different facts to someone walking a port range, which is what made them
  * the finding's Scenario B port scanner.
  */
-const HOSTED_TRANSPORT_FAILURE_DETAIL =
+export const HOSTED_TRANSPORT_FAILURE_DETAIL =
   "The inspector could not establish a connection to this server.";
 
 /**
