@@ -9654,7 +9654,15 @@
             "in": "query",
             "required": false,
             "schema": { "type": "string" },
-            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them. The pre-rename `scenarioId` is still read here, so a caller holding that spelling does not need a lookup to migrate."
+            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them."
+          },
+          {
+            "name": "scenarioId",
+            "in": "query",
+            "required": false,
+            "deprecated": true,
+            "schema": { "type": "string" },
+            "description": "Pre-rename spelling of `studyId`, still read here so a caller holding that id does not need a lookup to migrate. Sending both is not an error — `studyId` wins, and the two cannot disagree about which row they name."
           }
         ],
         "responses": {

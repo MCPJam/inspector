@@ -4,9 +4,9 @@ import { isLoginRequiredError } from "@/lib/auth/login-required-error";
 import { reportCaught } from "@/lib/error-reporting";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
-  forceRefreshGuestSession,
+  forceRefreshGuestSessionOrThrow,
   getCachedGuestSession,
-  getOrCreateGuestSession,
+  getOrCreateGuestSessionOrThrow,
   markGuestActivated,
   getGuestSessionRefusal,
 } from "@/lib/guest-session";
@@ -107,16 +107,31 @@ async function fetchTokenWithRetry(
     await delay(AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS[attempt]);
   }
 
+  // Failures throw their real cause, so the generic message fires only when
+  // every attempt returned no token without an error — for a guest, the
+  // server answering a create request with a 204 "no guest".
+  const status = httpStatusOf(lastError);
   reportCaught(lastError ?? new Error(`${opts.source} returned no token`), {
     source: opts.source,
     level: "warning",
-    extra: { attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1 },
+    extra: {
+      attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1,
+      ...(status !== undefined ? { httpStatus: status } : {}),
+    },
   });
   // Convex is about to clearAuth() on this null. Surface a banner offering an
   // in-place retry, rather than letting the page crash into an error boundary
   // whose "Try again" cannot work while Convex sits in `noAuth`.
   useSessionRefreshStore.getState().notifyFailure("transient");
   return null;
+}
+
+// The HTTP status a failed guest-session request carries, if the server
+// answered at all. Read by shape so this module does not depend on the error
+// class.
+function httpStatusOf(error: unknown): number | undefined {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  return typeof status === "number" ? status : undefined;
 }
 
 // Persist the "this browser used Convex as a guest" marker for the currently
@@ -175,16 +190,21 @@ export function useUnifiedConvexAuth() {
     }
 
     const resolveGuestSession = async () => {
+      let lastError: unknown;
       for (
         let attempt = 0;
         attempt <= GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length;
         attempt += 1
       ) {
-        let session: Awaited<ReturnType<typeof getOrCreateGuestSession>> = null;
+        let session: Awaited<
+          ReturnType<typeof getOrCreateGuestSessionOrThrow>
+        > = null;
         try {
-          session = await getOrCreateGuestSession();
-        } catch {
+          session = await getOrCreateGuestSessionOrThrow();
+          lastError = undefined;
+        } catch (error) {
           session = null;
+          lastError = error;
         }
 
         if (cancelled) return;
@@ -204,13 +224,16 @@ export function useUnifiedConvexAuth() {
         }
 
         if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
+          const status = httpStatusOf(lastError);
           reportCaught(
-            new Error("Guest session bootstrap exhausted without a token"),
+            lastError ??
+              new Error("Guest session bootstrap exhausted without a token"),
             {
               source: "guest_session_bootstrap",
               level: "error",
               extra: {
                 attempts: GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length + 1,
+                ...(status !== undefined ? { httpStatus: status } : {}),
               },
             },
           );
@@ -274,7 +297,7 @@ export function useUnifiedConvexAuth() {
 
         if (opts?.forceRefreshToken) {
           const refreshed = await fetchTokenWithRetry(
-            () => forceRefreshGuestSession(),
+            () => forceRefreshGuestSessionOrThrow(),
             {
               source: "guest_token_refresh",
               isTerminalNull: () => getGuestSessionRefusal() !== null,
@@ -297,7 +320,7 @@ export function useUnifiedConvexAuth() {
         // `@convex-dev/workos` adapter calls `getAccessToken()` with no
         // arguments and so never sets `forceRefreshToken`.
         const minted = await fetchTokenWithRetry(
-          () => getOrCreateGuestSession().then((s) => s?.token ?? null),
+          () => getOrCreateGuestSessionOrThrow().then((s) => s?.token ?? null),
           {
             source: "guest_token_refresh",
             isTerminalNull: () => getGuestSessionRefusal() !== null,
