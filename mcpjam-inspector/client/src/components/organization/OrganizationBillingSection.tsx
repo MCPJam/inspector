@@ -168,7 +168,7 @@ function getPlanColumnCta(params: {
     }
     if (scheduledCancellationDate !== null) {
       return {
-        label: "Downgrade scheduled",
+        label: "Scheduled",
         disabled: true,
         variant: "outline",
         tooltip: scheduledCancellationDate
@@ -296,7 +296,7 @@ function PlanCtaContent({
     );
   }
 
-  return <span className="min-w-0 truncate">{label}</span>;
+  return <span>{label}</span>;
 }
 
 const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<

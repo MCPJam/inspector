@@ -1159,6 +1159,35 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("labels the Free column CTA 'Scheduled' once a return to Free is scheduled", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripeCancelAtPeriodEnd: true,
+          stripeCancelAt: Date.parse("2026-05-01T12:00:00.000Z"),
+          stripeCurrentPeriodEnd: Date.parse("2026-05-01T12:00:00.000Z"),
+          stripePriceId: "price_team",
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    expect(
+      within(getPlanColumn("Free")).getByRole("button", { name: "Scheduled" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(getPlanColumn("Free")).queryByRole("button", {
+        name: "Downgrade",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows 'First charge' copy while the subscription is trialing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
