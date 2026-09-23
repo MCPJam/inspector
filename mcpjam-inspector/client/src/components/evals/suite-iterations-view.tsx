@@ -1,7 +1,5 @@
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
-import { AssertionBacktestPanel } from "./assertion-backtest-panel";
-import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
 import {
@@ -2791,31 +2789,6 @@ export function SuiteIterationsView({
                     ) : null
                   }
                 />
-                <details className="space-y-4">
-                  <summary className="cursor-pointer text-sm text-muted-foreground">
-                    Preview against the latest run
-                  </summary>
-                  <AssertionBacktestPanel
-                    projectId={projectId ?? undefined}
-                    runId={
-                      sortRunsNewestFirst(runs).find((run) =>
-                        TERMINAL_RUN_STATUSES.has(run.status ?? ""),
-                      )?._id
-                    }
-                    assertions={draftDefaultPredicates}
-                  />
-                  {pickBacktestableRun(runs) && draft.current.judgeRubric ? (
-                    <JudgeBacktestPanel
-                      key={`${suite._id}:${JSON.stringify(
-                        draft.current.judgeRubric,
-                      )}`}
-                      suiteId={suite._id}
-                      runId={pickBacktestableRun(runs)!._id}
-                      runNumber={pickBacktestableRun(runs)!.runNumber}
-                      draftRubric={draft.current.judgeRubric}
-                    />
-                  ) : null}
-                </details>
               </div>
             </fieldset>
           </div>
