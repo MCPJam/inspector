@@ -157,14 +157,17 @@ export function withPredicateRole(
   return { ...(rest as Predicate), role: "advisory" };
 }
 
-export type JudgeSlot = "goalCompletion" | "groundedness";
+export type JudgeSlot = "goalCompletion" | "groundedness" | "rubricChecks";
 
-/** Groundedness cannot gate. Goal completion follows the stored role. */
+/**
+ * Groundedness and rubric checks cannot gate. Goal completion follows the
+ * stored role.
+ */
 export function roleOfJudgeSlot(
   slot: JudgeSlot,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
-  if (slot === "groundedness") return "advisory";
+  if (slot === "groundedness" || slot === "rubricChecks") return "advisory";
   // Either spelling: a suite configured before the rename stores `"gating"`
   // and one configured after stores `"required"`, and this table renders both.
   return isRequiredRole(judgeConfig?.goalCompletion?.role)
@@ -560,6 +563,23 @@ function judgeTableRow(
   judgeEnabled: boolean,
 ): ScorerTableRow {
   const slot: JudgeSlot = row.judgeSlot ?? "goalCompletion";
+  if (slot === "rubricChecks") {
+    // The row's own switch. Rubric checks ride the goal-completion judge, so
+    // with that judge off they do not run whatever this says; the table
+    // disables the box and says why rather than rewriting the stored value.
+    return {
+      id: row.id,
+      kind: "judge",
+      enabled: judgeConfig?.rubricChecks?.enabled !== false,
+      name: row.label,
+      kindLabel: "Judge",
+      threshold: "",
+      thresholdKind: "none",
+      role: roleOfJudgeSlot("rubricChecks", judgeConfig),
+      muted: false,
+      judgeSlot: "rubricChecks",
+    };
+  }
   if (slot === "groundedness") {
     return {
       id: row.id,

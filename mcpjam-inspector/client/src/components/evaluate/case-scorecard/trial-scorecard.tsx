@@ -57,6 +57,8 @@ import type { CaseScorecardInput } from "./case-scorecard-model";
 import { buildCaseScorecard } from "./case-scorecard-model";
 import {
   joinTrialResults,
+  rubricCheckTrialRows,
+  type JoinedScorecardGroup,
   type JoinedScorecardRow,
 } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
@@ -80,6 +82,35 @@ function chainReasonSentence(row: StageResultRow | undefined): string | null {
   if (!row || row.state !== "failed" || !row.reason) return null;
   const reason = STAGE_REASON_LABELS[row.reason];
   return reason ? `Failed because ${reason}.` : null;
+}
+
+/**
+ * The trial's rubric-check rows, filed under User value after the judge.
+ *
+ * Kept out of `joinTrialResults`: those rows are the trial's own facts, not a
+ * join against authored ones, and the case spine keys that join by authored
+ * row, where a row with no authored twin has nowhere to go.
+ */
+export function withRubricCheckRows(
+  groups: JoinedScorecardGroup[],
+  rows: JoinedScorecardRow[],
+): JoinedScorecardGroup[] {
+  if (rows.length === 0) return groups;
+  const existing = groups.find((group) => group.stage === "userValue");
+  if (existing) {
+    return groups.map((group) =>
+      group === existing ? { ...group, rows: [...group.rows, ...rows] } : group,
+    );
+  }
+  return [
+    ...groups,
+    {
+      stage: "userValue",
+      label: USER_VALUE_STAGE_LABELS.userValue,
+      question: USER_VALUE_STAGE_QUESTIONS.userValue,
+      rows,
+    },
+  ];
 }
 
 /**
@@ -167,15 +198,18 @@ export function TrialScorecard({
 }) {
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
-    return joinTrialResults(card.groups, {
-      report,
-      iteration,
-      steps,
-      chain,
-      judgeCase,
-      envelope,
-      liveStepStatusById,
-    });
+    return withRubricCheckRows(
+      joinTrialResults(card.groups, {
+        report,
+        iteration,
+        steps,
+        chain,
+        judgeCase,
+        envelope,
+        liveStepStatusById,
+      }),
+      rubricCheckTrialRows(iteration),
+    );
     // Keyed on the FIELDS, not the input object: callers build that object in
     // render, so an identity dep would rebuild — and re-digest every criterion
     // id — on each keystroke in the prompt box.
@@ -288,8 +322,12 @@ export function TrialScorecard({
     if (note) return { text: note.actual, source: "ai" };
     const floor = judgeHidden ? null : stageFloor(stage, chain, trace);
     if (floor) return { text: floor.actual, source: "recorded" };
+    // Advisory rubric checks describe the trial; they never explain why a
+    // stage failed, so they must not displace the chain's own sentence.
     const explained = rows.some(
-      (row) => row.result.state === "failed" || row.result.state === "error",
+      (row) =>
+        row.provenance !== "rubricCheck" &&
+        (row.result.state === "failed" || row.result.state === "error"),
     );
     if (explained) return null;
     const reason = chainReasonSentence(chainRows.get(stage));
@@ -300,7 +338,10 @@ export function TrialScorecard({
   const userValuePassRows = groups
     .flatMap((group) => group.rows)
     .filter(
-      (row) => row.stage === "userValue" && row.result.state === "passed",
+      (row) =>
+        row.stage === "userValue" &&
+        row.provenance !== "rubricCheck" &&
+        row.result.state === "passed",
     );
   const userValueEvidence = [
     ...new Set(

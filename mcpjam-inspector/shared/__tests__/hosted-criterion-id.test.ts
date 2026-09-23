@@ -18,6 +18,8 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
   hostedCriterionId,
   hostedPredicateScorerId,
+  hostedRubricCheckScorerId,
+  HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
   HOSTED_JUDGE_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "../hosted-criterion-id";
@@ -88,5 +90,17 @@ describe("hostedCriterionId", () => {
   it("names the two platform scorers the same way the server does", () => {
     expect(HOSTED_TOOL_MATCH_SCORER_ID).toBe("toolCalls:match");
     expect(HOSTED_JUDGE_SCORER_ID).toBe("judge:goalCompletion");
+  });
+
+  it("keys a rubric-check row by its question, under one prefix", () => {
+    // Mirrored by the backend (`convex/lib/hostedCriterionId.ts`), which
+    // keeps these rows out of the narrative facts by this prefix.
+    expect(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX).toBe("judge:rubricChecks:");
+    expect(hostedRubricCheckScorerId("c:cites")).toBe(
+      "judge:rubricChecks:c:cites",
+    );
+    expect(hostedRubricCheckScorerId("q:tone")).toBe(
+      "judge:rubricChecks:q:tone",
+    );
   });
 });
