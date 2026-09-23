@@ -66,6 +66,10 @@ import {
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { EvalIteration } from "@/components/evals/types";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
+import {
+  RUNNER_OWNED_FAILURE,
+  type RunnerCheckStage,
+} from "@/components/evals/runner-checks";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
@@ -655,6 +659,16 @@ const SETUP_ABORTED_SENTENCE = `${STAGE_REASON_LABELS.setupAborted
   .toUpperCase()}${STAGE_REASON_LABELS.setupAborted.slice(1)}.`;
 
 /**
+ * "Decided by an evaluator: an assertion on the result did not hold." — what a
+ * runner check says when its stage failed for an evaluator's reason.
+ */
+function evaluatorDecidedSentence(row: StageResultRow): string {
+  return row.reason
+    ? `Decided by an evaluator: ${STAGE_REASON_LABELS[row.reason]}.`
+    : "Decided by an evaluator.";
+}
+
+/**
  * What a built-in runner check reports: the stage's own row from the verified
  * chain, restated, and nothing else.
  *
@@ -663,6 +677,13 @@ const SETUP_ABORTED_SENTENCE = `${STAGE_REASON_LABELS.setupAborted
  * failing tool actually returned). A chain that is absent or withheld leaves
  * the row not measured, like any other row with no fact.
  *
+ * With one exception: a failure is the runner check's only when the stage
+ * failed for the reason the runner owns (`RUNNER_OWNED_FAILURE`). A stage its
+ * evaluators failed — a required assertion, a rejected argument, a widget that
+ * did not render — reads as not decided here, never as passed: the analysis
+ * stops at the first failing reason, so the runner's own check behind it may
+ * never have been read.
+ *
  * The one fact it takes from outside the chain is the iteration's own
  * `setup_failed` status: nothing was measured because the environment was
  * never prepared, and that is an error to show, not a silence. A stage the
@@ -670,7 +691,7 @@ const SETUP_ABORTED_SENTENCE = `${STAGE_REASON_LABELS.setupAborted
  * keeps its measured verdict.
  */
 function runnerCheckResult(
-  stage: UserValueStage,
+  stage: RunnerCheckStage,
   ctx: JoinContext,
 ): TrialRowResult {
   const row = ctx.chainStages.get(stage);
@@ -688,7 +709,13 @@ function runnerCheckResult(
     case "passed":
       return { state: "passed", source: "chainStage", reason: sentence };
     case "failed":
-      return { state: "failed", source: "chainStage", reason: sentence };
+      return row.reason === RUNNER_OWNED_FAILURE[stage]
+        ? { state: "failed", source: "chainStage", reason: sentence }
+        : {
+            state: "notMeasured",
+            source: "chainStage",
+            reason: evaluatorDecidedSentence(row),
+          };
     case "notApplicable":
       return { state: "notApplicable", source: "chainStage", reason: sentence };
     case "notReached":

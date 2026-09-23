@@ -688,6 +688,68 @@ describe("built-in runner checks on the run page", () => {
     );
     expect(row.textContent).not.toMatch(/required|advisory|assertion/i);
   });
+
+  /** A verified chain: every stage passed unless `over` says otherwise. */
+  const chainWith = (over: Record<string, { state: string; reason: string }>) =>
+    ({
+      status: "verified",
+      analyzerVersion: 12,
+      stages: [
+        "connection",
+        "discovery",
+        "selection",
+        "call",
+        "response",
+        "userValue",
+      ].map((stage) => ({
+        stage,
+        state: "passed",
+        reason: "observed",
+        ...over[stage],
+      })),
+    }) as never;
+
+  const builtinRow = (stage: string) =>
+    document.querySelector(
+      `[data-testid="trial-scorecard-row"][data-row-key="builtin:${stage}"]`,
+    ) as HTMLElement | null;
+
+  it("leaves Tool call's runner check undecided when an evaluator failed the stage", () => {
+    renderCard({
+      chain: chainWith({
+        call: { state: "failed", reason: "argumentMismatch" },
+      }),
+    });
+    openStage("call");
+    const row = builtinRow("call")!;
+    // The call completed; the arguments are the evaluator's to fail, on its
+    // own row. Two red rows for one failure would read as two failures.
+    expect(row).toHaveAttribute("data-state", "notMeasured");
+    expect(row).toHaveTextContent(
+      "Decided by an evaluator: the call arguments did not match what the case expects.",
+    );
+    expect(row.textContent).not.toMatch(/Failed because/);
+  });
+
+  it("gives no runner check to a stage the chain calls not applicable", () => {
+    renderCard({
+      chain: chainWith({
+        call: { state: "notApplicable", reason: "notAuthored" },
+        response: { state: "notApplicable", reason: "notAuthored" },
+      }),
+    });
+    for (const stage of ["call", "response"]) {
+      // The rail keeps the link, and its heading says not applicable…
+      expect(railStages()).toContain(stage);
+      openStage(stage);
+      expect(stateWordIn(sectionFor(stage)!)).toBe("not applicable to this case");
+      // …so a runner check saying it again would be noise.
+      expect(builtinRow(stage)).toBeNull();
+    }
+    // A stage the chain measured keeps its runner check.
+    openStage("discovery");
+    expect(builtinRow("discovery")).toHaveAttribute("data-state", "passed");
+  });
 });
 
 describe("what the scorecard says about its AI explanations", () => {

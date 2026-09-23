@@ -15,6 +15,7 @@
 
 import {
   STANDARD_CHECKS,
+  type StageReason,
   type StandardCheck,
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
@@ -64,4 +65,22 @@ export const RUNNER_CHECK_EXPECTED: Record<RunnerCheckStage, string> = {
   discovery: "Each server lists its tools",
   call: "Each tool call returns a result",
   response: "Tool results come back without an error",
+};
+
+/**
+ * The one failure each runner check owns: the reason the stage analysis gives
+ * when the RUNNER's own measurement broke at that stage.
+ *
+ * A stage also fails for its evaluators — a required assertion that did not
+ * hold (`predicateFailed`), arguments the matcher or a call assertion rejected
+ * (`argumentMismatch`), a widget that did not render (`renderFailed`). Those
+ * failures belong to the evaluator's row. Copied onto the runner check they
+ * would say the call did not complete when it did, and put the same failure on
+ * the stage twice.
+ */
+export const RUNNER_OWNED_FAILURE: Record<RunnerCheckStage, StageReason> = {
+  connection: "connectFailed",
+  discovery: "toolsListFailed",
+  call: "protocolError",
+  response: "toolError",
 };

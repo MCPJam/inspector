@@ -292,7 +292,7 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
   discovery:
     "Built-in runner check; add assertions to check the advertised catalog",
   selection: "No evaluator",
-  call: "Built-in runner check — nothing to configure",
+  call: "Built-in runner check; add assertions to check how the tools were called",
   response:
     "Built-in runner check; add assertions to check what the server returned",
   userValue: "No evaluator",

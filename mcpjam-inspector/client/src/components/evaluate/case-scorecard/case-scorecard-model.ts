@@ -850,10 +850,10 @@ function runnerCheckStages(
  * Add the runner check for each of `stages` that the groups do not carry yet,
  * first in its stage, creating the stage's group in chain order when needed.
  *
- * Pure. The run page passes the stages its verified chain reports, so a stage
- * the run measured always has a row to say what happened there — including
- * one the configuration could not foresee, and one the chain calls not
- * applicable.
+ * Pure. The run page passes the stages its verified chain measured, so a
+ * stage the run measured always has a row to say what happened there —
+ * including one the configuration could not foresee. It leaves out the stages
+ * the chain calls not applicable: their heading already says so.
  */
 export function withRunnerChecks(
   groups: readonly ScorecardGroup[],

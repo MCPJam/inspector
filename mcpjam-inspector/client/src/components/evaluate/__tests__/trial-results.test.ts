@@ -396,7 +396,11 @@ describe("joinTrialResults — built-in runner checks", () => {
       })),
     } as TrialFacts["chain"]);
 
-  /** The run page's own assembly: the chain's runner checks, then the join. */
+  /**
+   * The run page's assembly: the chain's runner checks, then the join. (The
+   * page then drops the ones the chain calls not applicable; this keeps them,
+   * to test what the join says about them.)
+   */
   function joinRun(
     trial: Partial<TrialFacts> & { iteration: EvalIteration | null },
   ): JoinedScorecardRow[] {
@@ -540,6 +544,103 @@ describe("joinTrialResults — built-in runner checks", () => {
     // A stage that held has no failure to quote.
     expect(rowByKey(rows, "builtin:connection").evidence).toBeUndefined();
   });
+
+  /** A trace whose one tool call came back an error: a floor to quote. */
+  const erroredTrace = {
+    messages: [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "create_journey",
+            result: {
+              isError: true,
+              content: [{ type: "text", text: "VALIDATION_ERROR: no host" }],
+            },
+          },
+        ],
+      },
+    ],
+  } as TrialFacts["trace"];
+
+  it.each([
+    [
+      "connection",
+      "connectFailed",
+      "Failed because the configured server was reached and initialize failed there.",
+    ],
+    [
+      "discovery",
+      "toolsListFailed",
+      "Failed because initialize succeeded and listing tools failed.",
+    ],
+    ["call", "protocolError", "Failed because the call never produced a result."],
+    ["response", "toolError", "Failed because the server reported a tool error."],
+  ] as const)(
+    "fails %s on the reason the runner owns there (%s)",
+    (stage, reason, sentence) => {
+      const rows = joinRun({
+        iteration: iteration({}),
+        chain: chainWith({ [stage]: { state: "failed", reason } }),
+      });
+      expect(rowByKey(rows, `builtin:${stage}`).result).toEqual({
+        state: "failed",
+        source: "chainStage",
+        reason: sentence,
+      });
+    },
+  );
+
+  // Each failure an evaluator owns at a runner-checked stage. The runner check
+  // says so and stays undecided: not failed (the runner's own measurement did
+  // not break, and the failure already has its evaluator's row), and not
+  // passed (the analysis stops at the first failing reason, so the runner's
+  // check behind it may never have been read).
+  it.each([
+    [
+      "discovery",
+      "predicateFailed",
+      "a required discovery assertion",
+      "Decided by an evaluator: an assertion on the result did not hold.",
+    ],
+    [
+      "call",
+      "argumentMismatch",
+      "the matcher, or a failed call-kind assertion",
+      "Decided by an evaluator: the call arguments did not match what the case expects.",
+    ],
+    [
+      "response",
+      "predicateFailed",
+      "a required response assertion",
+      "Decided by an evaluator: an assertion on the result did not hold.",
+    ],
+    [
+      "response",
+      "renderFailed",
+      "a widget assertion",
+      "Decided by an evaluator: the widget did not render.",
+    ],
+  ] as const)(
+    "leaves %s undecided when %s came from %s",
+    (stage, reason, _source, sentence) => {
+      const rows = joinRun({
+        iteration: iteration({}),
+        chain: chainWith({ [stage]: { state: "failed", reason } }),
+        trace: erroredTrace,
+      });
+      const row = rowByKey(rows, `builtin:${stage}`);
+      expect(row.result).toEqual({
+        state: "notMeasured",
+        source: "chainStage",
+        reason: sentence,
+      });
+      // …and quotes no floor: that belongs to the stage, not to this row.
+      expect(row.evidence).toBeUndefined();
+    },
+  );
 });
 
 describe("joinTrialResults — the judge", () => {

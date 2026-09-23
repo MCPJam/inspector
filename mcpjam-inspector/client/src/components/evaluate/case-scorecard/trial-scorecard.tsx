@@ -100,6 +100,27 @@ function withoutFloor(row: JoinedScorecardRow): JoinedScorecardRow {
 }
 
 /**
+ * The groups without the runner checks the chain called not applicable, and
+ * without a group those were all it held.
+ *
+ * The case can foresee a runner check the run's chain then rules out (a call
+ * the case expected on a stage the analysis found nothing to decide at); the
+ * rail says "not applicable" for that stage already.
+ */
+export function withoutInapplicableRunnerChecks(
+  groups: JoinedScorecardGroup[],
+): JoinedScorecardGroup[] {
+  return groups.flatMap((group) => {
+    const rows = group.rows.filter(
+      (row) =>
+        !(row.provenance === "builtin" && row.result.state === "notApplicable"),
+    );
+    if (rows.length === group.rows.length) return [group];
+    return rows.length > 0 ? [{ ...group, rows }] : [];
+  });
+}
+
+/**
  * The trial's rubric-check rows, filed under User value after the judge.
  *
  * Kept out of `joinTrialResults`: those rows are the trial's own facts, not a
@@ -213,22 +234,29 @@ export function TrialScorecard({
 }) {
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
-    // Every stage the verified chain reports gets its runner check, including
+    // Every stage the verified chain measured gets its runner check, including
     // one the configuration could not foresee (an observed tool error turns
-    // `response` on) and one the chain calls not applicable.
+    // `response` on). A stage the chain calls not applicable gets none: the
+    // rail already says so, and a row saying it again is noise.
     const chainStages =
-      chain?.status === "verified" ? chain.stages.map((row) => row.stage) : [];
+      chain?.status === "verified"
+        ? chain.stages
+            .filter((row) => row.state !== "notApplicable")
+            .map((row) => row.stage)
+        : [];
     return withRubricCheckRows(
-      joinTrialResults(withRunnerChecks(card.groups, chainStages), {
-        report,
-        iteration,
-        steps,
-        chain,
-        judgeCase,
-        envelope,
-        liveStepStatusById,
-        trace,
-      }),
+      withoutInapplicableRunnerChecks(
+        joinTrialResults(withRunnerChecks(card.groups, chainStages), {
+          report,
+          iteration,
+          steps,
+          chain,
+          judgeCase,
+          envelope,
+          liveStepStatusById,
+          trace,
+        }),
+      ),
       rubricCheckTrialRows(iteration),
     );
     // Keyed on the FIELDS, not the input object: callers build that object in
@@ -342,9 +370,12 @@ export function TrialScorecard({
         ? report.stageNotes?.find((note) => note.stage === stage)
         : undefined;
     if (note) return { text: note.actual, source: "ai" };
-    // A runner check already quotes the floor as its ACTUAL; saying it again
-    // here would read as a second failure.
-    const quotedByRow = rows.some((row) => row.provenance === "builtin");
+    // A failed runner check already quotes the floor as its ACTUAL; saying it
+    // again here would read as a second failure. One its stage's evaluators
+    // decided quotes nothing, so the stage keeps the floor.
+    const quotedByRow = rows.some(
+      (row) => row.provenance === "builtin" && row.evidence?.floor,
+    );
     const floor =
       judgeHidden || quotedByRow ? null : stageFloor(stage, chain, trace);
     if (floor) return { text: floor.actual, source: "recorded" };
@@ -390,10 +421,24 @@ export function TrialScorecard({
     !judgeHidden &&
     (userValueStage?.state === "passed" || userValuePassRows.length > 0);
 
-  // One section per stage with rows, in chain order. Every stage the chain
-  // reports has one (see the note on runner checks above), so a failure there
-  // always has a row to be read on.
-  const sections = groups;
+  // One section per stage that has rows or a chain row, in chain order. A
+  // stage the chain reports but nothing on the card covers (Selection or User
+  // value with nothing graded, a stage the chain calls not applicable) still
+  // gets its heading, so the rail keeps every link and a failure there has
+  // somewhere to be read.
+  const sections = USER_VALUE_STAGES.flatMap((stage) => {
+    const group = groups.find((candidate) => candidate.stage === stage);
+    const chainRow = chainRows.get(stage);
+    if (!group && !chainRow) return [];
+    return [
+      {
+        stage,
+        label: group?.label ?? USER_VALUE_STAGE_LABELS[stage],
+        question: group?.question ?? USER_VALUE_STAGE_QUESTIONS[stage],
+        rows: group?.rows ?? [],
+      },
+    ];
+  });
 
   /**
    * A rail needs a verified chain behind it: six links whose states came from
