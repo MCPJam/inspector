@@ -1,3 +1,4 @@
+import { launchEngagementSchema } from "../../shared/launch-engagement.js";
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
@@ -260,6 +261,19 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 const relayRoutes = new Hono();
+
+// Anonymous by design, like PostHog capture. Bounded and validated separately
+// from the opaque PostHog proxy; never forwards this payload upstream twice.
+relayRoutes.post("/launch-engagement", makeBodyLimit(2048), async (c) => {
+  const limited = relayRateLimit(c);
+  if (limited) return limited;
+  const parsed = launchEngagementSchema.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return c.json({ error: "invalid_launch_event" }, 400);
+  getSystemLogger("platform-launch").event("launch.engagement", parsed.data);
+  return c.body(null, 204);
+});
 
 relayRoutes.all("*", async (c) => {
   const limited = relayRateLimit(c);

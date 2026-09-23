@@ -93,9 +93,15 @@ export type RebuildResult = {
 // drill-down hook reasonably expect the type alongside it.
 export type { SessionOutcome, SessionSentiment };
 
-export type SankeyStage = "goal" | "behavior" | "outcome" | "sentiment";
+export type SankeyStage =
+  | "goal"
+  | "behavior"
+  | "outcome"
+  | "sentiment"
+  | `question:${string}`;
 
 export type InsightsSankeyNode<S extends string = SankeyStage> = {
+  questionVersion?: number;
   /** `${stage}:${key}` — unique across stages, whose keys can collide. */
   id: string;
   stage: S;
@@ -122,6 +128,12 @@ export type InsightsSankeyLink = {
 };
 
 export type InsightsSankey<S extends string = SankeyStage> = {
+  stages?: Array<{
+    id: S;
+    label: string;
+    questionId?: string;
+    version?: number;
+  }>;
   nodes: InsightsSankeyNode<S>[];
   links: InsightsSankeyLink[];
   foldedGoalCount: number;
@@ -210,6 +222,14 @@ export type UsageBreakdown = {
    * still renders the rest of the panel instead of throwing.
    */
   sankey?: InsightsSankey;
+  questionBreakdown?: Array<{
+    questionId: string;
+    label: string;
+    version: number;
+    yes: number;
+    no: number;
+    unanswered: number;
+  }>;
   labeledOutcomeCount: number;
   outcomeFeedbackCalibration: OutcomeFeedbackCalibration[];
   /**
@@ -249,6 +269,13 @@ export function toServerFilters(state: UsageFilterState) {
           ...(chip.dimension ? { dimension: chip.dimension } : {}),
         };
       }
+      if (chip.kind === "question")
+        return {
+          kind: "question",
+          questionId: chip.questionId,
+          version: chip.version,
+          value: chip.value,
+        };
       return { kind: "dimension", key: chip.key, value: chip.value };
     }),
   };

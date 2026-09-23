@@ -1,3 +1,4 @@
+import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   useState,
   useEffect,
@@ -20,15 +21,9 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-import {
   MoreVertical,
   Link2Off,
   RefreshCw,
-  Power,
   Loader2,
   Copy,
   Download,
@@ -103,12 +98,12 @@ function isContextMenuExemptTarget(target: EventTarget | null): boolean {
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
-  needsReconnect?: boolean;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
     options?: {
       forceOAuthFlow?: boolean;
+      connectionIntent?: ConnectionIntent;
       allowInteractiveOAuthFlow?: boolean;
     }
   ) => Promise<void>;
@@ -147,7 +142,6 @@ interface ServerConnectionCardProps {
 
 export function ServerConnectionCard({
   server,
-  needsReconnect = false,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -383,6 +377,7 @@ export function ServerConnectionCard({
 
   const handleReconnect = async (options?: {
     forceOAuthFlow?: boolean;
+    connectionIntent?: ConnectionIntent;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setIsReconnecting(true);
@@ -659,26 +654,6 @@ export function ServerConnectionCard({
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
-                  {needsReconnect ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        type="button"
-                        aria-label="Connection settings changed"
-                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-600 outline-none transition-colors hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-amber-300 dark:hover:text-amber-200"
-                      >
-                        <Power className="h-3 w-3" />
-                      </TooltipTrigger>
-                      <TooltipContent
-                        side="top"
-                        sideOffset={4}
-                        variant="muted"
-                        className="max-w-48 px-2.5 text-left [text-wrap:normal]"
-                      >
-                        Turn the connection off and on to apply the new
-                        connection settings.
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
                 </span>
 
                 <Switch
@@ -690,7 +665,7 @@ export function ServerConnectionCard({
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode"
+                        "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."
                       );
                       return;
                     }
@@ -722,7 +697,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode"
+                            "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."
                           );
                           return;
                         }
@@ -922,6 +897,7 @@ export function ServerConnectionCard({
             </button>
           </div>
 
+
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
               {isConnected && (
@@ -1073,6 +1049,10 @@ export function ServerConnectionCard({
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
+                // Same height as the support pill. The diagnostic rows
+                // sit behind the info glyph so a failed card does not
+                // grow a second status report under Failed.
+                density="row"
                 // Controlled — the status row above toggles
                 // `isErrorExpanded`; the card must reflect that on every
                 // change, not just at mount.

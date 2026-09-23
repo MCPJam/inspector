@@ -188,7 +188,7 @@ export function useWidgetHost(): WidgetHostImpl {
       listResourceTemplates: async (serverId: string) => {
         if (HOSTED_MODE || webManagedServersRef.current) {
           throw new Error(
-            "Resource templates are not supported in hosted mode",
+            "Browsing resource templates isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
           );
         }
         return listResourceTemplates(serverId);

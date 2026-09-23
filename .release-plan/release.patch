@@ -1,93 +1,39 @@
-diff --git a/.changeset/swarm-shared-findings.md b/.changeset/swarm-shared-findings.md
+diff --git a/.changeset/session-flow-column-reordering.md b/.changeset/session-flow-column-reordering.md
 deleted file mode 100644
-index 50807f04a..000000000
---- a/.changeset/swarm-shared-findings.md
+index 69ca3654c..000000000
+--- a/.changeset/session-flow-column-reordering.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,7 +0,0 @@
 ----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
+-"@mcpjam/inspector": patch
 ----
 -
--Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.
+-Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.
+-
+-One limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 5f1246326..03558faf5 100644
+index 0b5bc648e..187ac6464 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.7.2",
-+  "version": "3.8.0",
+-  "version": "3.9.1",
++  "version": "3.9.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -147,7 +147,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.10.1",
-+    "@mcpjam/sdk": "^8.11.0",
-     "@modelcontextprotocol/client": "2.0.0",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 16faa817b..00ae09596 100644
+index ce9bfb857..75ab657b5 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -426,7 +426,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.7.2",
-+      "version": "3.8.0",
+-      "version": "3.9.1",
++      "version": "3.9.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -461,7 +461,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.10.1",
-+        "@mcpjam/sdk": "^8.11.0",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "@novnc/novnc": "^1.7.0",
-@@ -39230,7 +39230,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "8.10.1",
-+      "version": "8.11.0",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/amazon-bedrock": "^3.0.101",
-diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
-index d5acbf326..5a57500a2 100644
---- a/sdk/CHANGELOG.md
-+++ b/sdk/CHANGELOG.md
-@@ -1,5 +1,11 @@
- # `@mcpjam/sdk` changelog
- 
-+## 8.11.0
-+
-+### Minor Changes
-+
-+- [#5281](https://github.com/MCPJam/inspector/pull/5281) [`4311e1f`](https://github.com/MCPJam/inspector/commit/4311e1f0b008b28bb02405e9bc87ac5accd5cb6e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.
-+
- ## 8.10.1
- 
- ### Patch Changes
-diff --git a/sdk/package.json b/sdk/package.json
-index e01972603..f99083fc9 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "8.10.1",
-+  "version": "8.11.0",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",

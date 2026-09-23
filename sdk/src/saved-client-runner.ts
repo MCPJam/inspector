@@ -7,8 +7,13 @@ import type { HostConfigInputV2 } from "./host-config/types.js";
 import type { SelectedEvalClient } from "./eval-reporting-types.js";
 
 export interface EvalSuiteClientOptions {
-  /** Saved client name or ID. The latest version is read once per run. */
-  client: string;
+  /**
+   * Saved client name or ID. The latest version is read once per run.
+   *
+   * Pass several to run the suite against each of them in parallel. Each
+   * client uploads its own run, and the runs share one run group in MCPJam.
+   */
+  client: string | readonly string[];
   projectId: string;
   apiKey: string;
   /** Servers and their connections are owned by the test code. */
@@ -35,8 +40,14 @@ export async function abortableSetup<T>(
   }
 }
 
+/** One saved client — what a single run resolves. */
+export type EvalSuiteSingleClientOptions = Omit<
+  EvalSuiteClientOptions,
+  "client"
+> & { client: string };
+
 export async function createSavedClientRunner(
-  input: EvalSuiteClientOptions,
+  input: EvalSuiteSingleClientOptions,
   signal: AbortSignal
 ): Promise<{ executor: HostRunner; selectedClient: SelectedEvalClient }> {
   const api = new PlatformApiClient({

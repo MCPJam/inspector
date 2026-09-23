@@ -3,50 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.",
-      "id": "swarm-shared-findings"
+      "summary": "Let the Session flow columns be reordered. Every column in the Sankey can now be dragged into a new position, hidden, and restored from the header, and the order is remembered per surface. The headers moved out of the chart into a sticky row, so the diagram scrolls under them instead of the page scrolling through it, and the canvas widens with the column count rather than squeezing the columns it has. Adding a yes/no question opens a modal instead of an inline form, and each question column gets its own hue. An unanswered question now takes its label from the stages the server sent.\n\nOne limit to know about: the server stores counts for neighbouring stages only, so putting two columns next to each other that were never neighbours draws a link reconstructed from session paths rather than one the server measured.",
+      "id": "session-flow-column-reordering"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.10.1",
-      "changesets": [
-        "swarm-shared-findings"
-      ],
-      "newVersion": "8.11.0"
-    },
-    {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.7.2",
+      "type": "patch",
+      "oldVersion": "3.9.1",
       "changesets": [
-        "swarm-shared-findings"
+        "session-flow-column-reordering"
       ],
-      "newVersion": "3.8.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/slack-app",
-      "type": "none",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.0"
+      "newVersion": "3.9.2"
     }
   ]
 }

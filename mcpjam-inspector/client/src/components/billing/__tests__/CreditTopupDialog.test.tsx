@@ -84,6 +84,7 @@ describe("CreditTopupDialog", () => {
     pricingState.isLoading = false;
     pricingState.error = null;
     startCheckoutMock.mockReset();
+    startCheckoutMock.mockResolvedValue({ handedOffToBrowser: false });
     trackMock.mockReset();
     presetsState = DEFAULT_PRESETS;
     presetsLoadingState = false;
@@ -161,13 +162,15 @@ describe("CreditTopupDialog", () => {
       expect(impressions).toHaveLength(1);
       expect(impressions[0]?.[1]).toEqual(
         expect.objectContaining({
-          organization_id: "org-1",
           source: "chat_banner",
+          organization_id: "org-1",
           package_count: 3,
-          default_package_id: "credits_500",
+          organization_resolved: true,
+          packages_available: true,
           has_resume_context: true,
         }),
       );
+      expect(impressions[0]?.[1]).not.toHaveProperty("default_package_id");
     });
   });
 
@@ -191,18 +194,21 @@ describe("CreditTopupDialog", () => {
     expect(trackMock).toHaveBeenCalledWith(
       "credit_topup_package_selected",
       expect.objectContaining({
-        package_id: "credits_1000",
-        price_cents: 1000,
         package_index: 1,
+        package_count: 3,
       }),
     );
     expect(trackMock).toHaveBeenCalledWith(
       "credit_topup_dialog_dismissed",
       expect.objectContaining({
         dismissal_method: "cancel",
-        selected_package_id: "credits_1000",
+        had_selection: true,
       }),
     );
+    for (const [, properties] of trackMock.mock.calls) {
+      expect(properties).not.toHaveProperty("package_id");
+      expect(properties).not.toHaveProperty("price_cents");
+    }
     expect(
       trackMock.mock.calls.filter(
         ([event]) => event === "credit_topup_dialog_dismissed",
@@ -226,9 +232,9 @@ describe("CreditTopupDialog", () => {
       screen.getByRole("radio", { name: /500\s*credits/ }),
     ).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByText(/Credits cover usage across our product/),
+      screen.getByText(/Add shared credits to/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/user testing, and CI\/CD/)).toBeInTheDocument();
+    expect(screen.getByText(/user tests, and CI\/CD/)).toBeInTheDocument();
     // The processing-fee disclaimer was removed so users can't back-compute
     // the take rate.
     expect(
@@ -257,7 +263,7 @@ describe("CreditTopupDialog", () => {
 
     await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
     await user.click(
-      screen.getByRole("button", { name: /Continue with \$10/ }),
+      screen.getByRole("button", { name: /Continue with 1,000 credits for \$10/ }),
     );
 
     expect(startCheckoutMock).toHaveBeenCalledTimes(1);
@@ -265,11 +271,13 @@ describe("CreditTopupDialog", () => {
       expect.objectContaining({
         organizationId: "org-1",
         packageId: "credits_1000",
-        priceCents: 1000,
         chatSessionId: "chat-1",
         lastUserMessage: "please continue",
         source: "chat_banner",
       }),
+    );
+    expect(startCheckoutMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "priceCents",
     );
   });
 
@@ -288,7 +296,7 @@ describe("CreditTopupDialog", () => {
 
     await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
     await user.click(
-      screen.getByRole("button", { name: /Continue with \$10/ }),
+      screen.getByRole("button", { name: /Continue with 1,000 credits for \$10/ }),
     );
 
     expect(startCheckoutMock).toHaveBeenCalledWith(
@@ -384,7 +392,7 @@ describe("CreditTopupDialog", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Continue with \$5/ }),
+      screen.getByRole("button", { name: /Continue with 500 credits for \$5/ }),
     ).toBeDisabled();
   });
 });
@@ -430,13 +438,13 @@ it("routes Free organizations to Plans instead of checkout", async () => {
     />,
   );
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Upgrade to Pro or Team to buy credits.",
+    "Only an organization owner can upgrade the plan.",
   );
   expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /Continue/ }),
   ).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Explore plan" }));
+  await userEvent.click(screen.getByRole("button", { name: "Compare plans" }));
   expect(onOpenChange).toHaveBeenCalledWith(false);
   expect(navigateMock).toHaveBeenCalledWith("/organizations/org-1/plans");
   expect(startCheckoutMock).not.toHaveBeenCalled();
@@ -465,7 +473,18 @@ it("waits for organization pricing before showing Free plan credit options", () 
   pricingState.requiresUpgrade = true;
   rerender(<CreditTopupDialog {...props} />);
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Upgrade to Pro or Team to buy credits.",
+    "Only an organization owner can upgrade the plan.",
   );
   expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+});
+
+it("names the billed organization and selected credit quantity with its price", () => {
+  pricingState.requiresUpgrade = false;
+  pricingState.isLoading = false;
+  pricingState.canPurchase = true;
+  pricingState.error = null;
+  presetsState = DEFAULT_PRESETS;
+  render(<CreditTopupDialog open onOpenChange={vi.fn()} chatSessionId="" lastUserMessage="" organizationId="billed-org" organizationName="Acme Robotics" source="billing_page" />);
+  expect(screen.getByText(/Add shared credits to Acme Robotics/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Continue with 500 credits for $5" })).toBeEnabled();
 });

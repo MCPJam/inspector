@@ -60,9 +60,11 @@ import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
 import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
 import { consumeUrlFlag } from "@/lib/url-flag";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
+import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -94,10 +96,11 @@ function getPlanColumnCta(params: {
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
   ) => void;
+  /** Opens the confirmation step; checkout starts only once it is confirmed. */
   onStartPlanChange: (
     plan: "pro" | "team",
     billingInterval: BillingInterval,
-  ) => Promise<void>;
+  ) => void;
   billingInterval: BillingInterval;
 }): {
   label: string;
@@ -644,7 +647,7 @@ function FreePlanTeamUpsell({
   onStartPlanChange: (
     plan: "pro" | "team",
     billingInterval: BillingInterval,
-  ) => Promise<void>;
+  ) => void;
 }) {
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("annual");
@@ -825,7 +828,10 @@ export function OrganizationBillingSection({
   onCheckoutIntentConsumed,
   currentPlanPanel,
 }: OrganizationBillingSectionProps) {
-  useCreditTopupReturnFlowBilling({ enabled: showCredits });
+  useCreditTopupReturnFlowBilling({
+    enabled: showCredits,
+    organizationId,
+  });
 
   // Plans sit below credits and payment history, so a deep link that lands at
   // the top of the page hides the one thing the user clicked for.
@@ -838,6 +844,12 @@ export function OrganizationBillingSection({
     reason: "already_on" | "already_higher";
     currentDisplayName: string;
     requestedDisplayName: string;
+  } | null>(null);
+  // Set by the plan-card CTAs. Checkout only starts once this is confirmed,
+  // so the interval chosen here is the one that reaches Stripe.
+  const [pendingPlanChange, setPendingPlanChange] = useState<{
+    plan: "pro" | "team";
+    interval: BillingInterval;
   } | null>(null);
 
   // One-shot: consume the flag so a reload doesn't scroll the page again.
@@ -1012,6 +1024,44 @@ export function OrganizationBillingSection({
     planCatalog.plans.team != null &&
     !planCatalog.plans.pro;
 
+  const pendingPlanEntry = pendingPlanChange
+    ? planCatalog?.plans[pendingPlanChange.plan]
+    : undefined;
+
+  const requestPlanChange = (
+    plan: "pro" | "team",
+    targetBillingInterval: BillingInterval,
+  ) => {
+    setPendingPlanChange({ plan, interval: targetBillingInterval });
+    track("plans_upgrade_confirm_shown", {
+      location: "org_plans",
+      organization_id: organizationId,
+      target_plan: plan,
+      billing_interval: targetBillingInterval,
+      current_plan: currentPlan,
+    });
+  };
+
+  const handleConfirmPlanChange = async () => {
+    if (!pendingPlanChange) return;
+    const { plan, interval } = pendingPlanChange;
+    track("plans_upgrade_confirm_submitted", {
+      location: "org_plans",
+      organization_id: organizationId,
+      target_plan: plan,
+      billing_interval: interval,
+      price_cents: planCatalog?.plans[plan]?.prices[interval] ?? null,
+      current_plan: currentPlan,
+    });
+    try {
+      await onStartPlanChange(plan, interval);
+    } finally {
+      // The checkout redirect leaves this page, but a failure or an in-place
+      // plan update does not: either way the confirmation is spent.
+      setPendingPlanChange(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <Dialog
@@ -1091,6 +1141,55 @@ export function OrganizationBillingSection({
         ) : null}
       </Dialog>
 
+      {pendingPlanChange && pendingPlanEntry && planCatalog ? (
+        <PlanChangeConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (open || isStartingPlanChange) return;
+            track("plans_upgrade_confirm_dismissed", {
+              location: "org_plans",
+              organization_id: organizationId,
+              target_plan: pendingPlanChange.plan,
+              billing_interval: pendingPlanChange.interval,
+              current_plan: currentPlan,
+            });
+            setPendingPlanChange(null);
+          }}
+          plan={pendingPlanChange.plan}
+          entry={pendingPlanEntry}
+          currency={planCatalog.currency}
+          interval={pendingPlanChange.interval}
+          onIntervalChange={(nextInterval) => {
+            setPendingPlanChange({
+              plan: pendingPlanChange.plan,
+              interval: nextInterval,
+            });
+            // Keep the comparison table showing the interval that is about to
+            // be bought, so the page still matches after the dialog closes.
+            setBillingInterval(nextInterval);
+            track("plans_upgrade_confirm_interval_selected", {
+              location: "org_plans",
+              organization_id: organizationId,
+              target_plan: pendingPlanChange.plan,
+              billing_interval: nextInterval,
+              price_cents: pendingPlanEntry.prices[nextInterval] ?? null,
+              current_plan: currentPlan,
+            });
+          }}
+          annualDiscountPct={getAnnualDiscountPercent(
+            planCatalog,
+            pendingPlanChange.plan,
+          )}
+          currentPlanName={
+            planCatalog.plans[currentPlan]?.displayName ?? currentPlan
+          }
+          seatQuantity={billingStatus?.stripeSeatQuantity ?? null}
+          isNewSubscription={currentPlan === "free"}
+          isStarting={isStartingPlanChange}
+          onConfirm={() => void handleConfirmPlanChange()}
+        />
+      ) : null}
+
       {showCredits ? (
         <ErrorBoundary
           name="org_billing_credit_balance"
@@ -1099,6 +1198,7 @@ export function OrganizationBillingSection({
           )}
         >
           <CreditBalanceCard
+            organizationName={organizationName}
             pricingVersion={billingStatus?.pricingVersion}
             organizationId={organizationId}
             canManageCredits={canManageCredits}
@@ -1120,7 +1220,7 @@ export function OrganizationBillingSection({
             onDowngradePlan={(plan, interval) =>
               void onDowngradePlan(plan, interval)
             }
-            onStartPlanChange={onStartPlanChange}
+            onStartPlanChange={requestPlanChange}
           />
         </div>
       ) : (
@@ -1177,8 +1277,7 @@ export function OrganizationBillingSection({
             <>
               {!billingConfigured ? (
                 <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                  Billing is not configured in this environment. Plans are
-                  visible, but purchase actions are unavailable.
+                  Purchases are unavailable here. You can still view the plans.
                 </div>
               ) : null}
               {!canManageBilling ? (
@@ -1307,7 +1406,7 @@ export function OrganizationBillingSection({
                                   targetPlan,
                                   targetBillingInterval,
                                 ),
-                              onStartPlanChange,
+                              onStartPlanChange: requestPlanChange,
                               billingInterval,
                             });
                             const showPlanChangeSpinner =

@@ -22,6 +22,15 @@ export class WebApiError extends Error {
    * tagged 401s). Optional; omitted when the route sends none.
    */
   details?: Record<string, unknown>;
+  /**
+   * The failing response's `x-request-id` — the join key to its Axiom row.
+   *
+   * Read from the response HEADER rather than the body: the server sets it on
+   * every `/api/*` response in `requestLogContextMiddleware`, including the
+   * 5xx it never got far enough to build a JSON envelope for. A body-only
+   * field would be missing exactly when it is most needed.
+   */
+  requestId?: string;
 
   constructor(
     status: number,
@@ -29,6 +38,7 @@ export class WebApiError extends Error {
     message: string,
     normalized?: NormalizedError,
     details?: Record<string, unknown>,
+    requestId?: string,
   ) {
     super(message);
     this.name = "WebApiError";
@@ -36,6 +46,25 @@ export class WebApiError extends Error {
     this.code = code;
     this.normalized = normalized;
     this.details = details;
+    this.requestId = requestId;
+  }
+}
+
+/**
+ * The response's `x-request-id`, or nothing.
+ *
+ * Guarded because this runs on the ERROR path: a custom fetch wrapper or a test
+ * double can hand back a response object without `headers`, and an unguarded
+ * read there throws a TypeError that REPLACES the real failure. A missing
+ * request id costs a diagnostic; a throw costs the error itself.
+ */
+export function requestIdOfResponse(response: {
+  headers?: { get?: (name: string) => string | null };
+}): string | undefined {
+  try {
+    return response.headers?.get?.("x-request-id") ?? undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -86,7 +115,15 @@ export async function webPost<TRequest, TResponse>(
       errBody && typeof errBody.details === "object" && errBody.details
         ? (errBody.details as Record<string, unknown>)
         : undefined;
-    throw new WebApiError(response.status, code, message, normalized, details);
+    const requestId = requestIdOfResponse(response);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      normalized,
+      details,
+      requestId,
+    );
   }
 
   return sanitizedPayload as TResponse;

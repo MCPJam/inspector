@@ -6,8 +6,17 @@
  * forwarded explicitly.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
+import {
+  UNKNOWN_API_VOCABULARY_MESSAGE,
+  apiVocabularyOf,
+  hasUnknownApiVocabulary,
+  projectNounValue,
+  storageNounValue,
+  type ApiVocabulary,
+} from "./api-vocabulary.js";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -29,6 +38,13 @@ type ShareEnvelope = {
   members?: Array<{ id: string; email: string }>;
 };
 
+/**
+ * The stored resource types. `scenario` is spelled `study` on the wire under
+ * `x-mcpjam-api-vocabulary: 2` — here that value is a PATH SEGMENT as well as
+ * a response field, so both directions are projected: the segment folds back
+ * onto the stored spelling before anything reads it, and the echo goes out in
+ * whichever spelling the caller negotiated.
+ */
 const RESOURCE_TYPES = new Set(["scenario", "conformanceRun", "evalRun"]);
 
 function translateReadError(error: unknown): WebRouteError {
@@ -75,16 +91,26 @@ async function parseBody<T>(
   return parsed.data;
 }
 
-function requireResourceType(value: string): "scenario" | "conformanceRun" | "evalRun" {
-  if (!RESOURCE_TYPES.has(value)) {
+function requireResourceType(
+  value: string,
+  vocabulary: ApiVocabulary,
+): "scenario" | "conformanceRun" | "evalRun" {
+  // Folded to the stored spelling FIRST: a vocabulary-2 caller addressing
+  // `/shares/study/...` is asking for the same rows as `/shares/scenario/...`,
+  // and everything below this line — the preflight, the Convex args, the
+  // 404 — speaks storage. A vocabulary-1 caller sending `study` folds to
+  // nothing and 404s, which is today's answer for an unknown segment.
+  const stored = storageNounValue(value, vocabulary);
+  if (!RESOURCE_TYPES.has(stored)) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Share not found");
   }
-  return value as "scenario" | "conformanceRun" | "evalRun";
+  return stored as "scenario" | "conformanceRun" | "evalRun";
 }
 
 function projectEnvelope(
   envelope: ShareEnvelope,
   projectId: string,
+  vocabulary: ApiVocabulary,
 ): {
   resourceType: string;
   resourceId: string;
@@ -96,7 +122,9 @@ function projectEnvelope(
   members: Array<{ id: string; email: string }>;
 } {
   return {
-    resourceType: envelope.resourceType ?? "",
+    resourceType: envelope.resourceType
+      ? projectNounValue(envelope.resourceType, vocabulary)
+      : "",
     resourceId: envelope.resourceId,
     projectId,
     mode: envelope.mode ?? null,
@@ -128,26 +156,39 @@ async function requireShareInProject(
   return row;
 }
 
-async function scopedShare(c: {
-  req: { param: (k: string) => string };
-}): Promise<{
+async function scopedShare(c: Context): Promise<{
   client: ConvexHttpClient;
   projectId: string;
   resourceType: "scenario" | "conformanceRun" | "evalRun";
   resourceId: string;
+  vocabulary: ApiVocabulary;
 }> {
+  if (hasUnknownApiVocabulary(c)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      UNKNOWN_API_VOCABULARY_MESSAGE,
+    );
+  }
+  // Reads the header AND appends `Vary` — the resource type is echoed on
+  // every response here, so every response varies on it.
+  const vocabulary = apiVocabularyOf(c);
   const projectId = c.req.param("projectId");
-  const resourceType = requireResourceType(c.req.param("resourceType"));
+  const resourceType = requireResourceType(
+    c.req.param("resourceType"),
+    vocabulary,
+  );
   const resourceId = c.req.param("resourceId");
   const client = createConvexClient(
     await getConvexBearerForRequest(c as never),
   );
   await requireShareInProject(client, projectId, resourceType, resourceId);
-  return { client, projectId, resourceType, resourceId };
+  return { client, projectId, resourceType, resourceId, vocabulary };
 }
 
 shares.get(BASE, async (c) => {
-  const { client, projectId, resourceType, resourceId } = await scopedShare(c);
+  const { client, projectId, resourceType, resourceId, vocabulary } =
+    await scopedShare(c);
   let row: ShareEnvelope | null;
   try {
     row = (await client.query(
@@ -160,7 +201,7 @@ shares.get(BASE, async (c) => {
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Share not found");
   }
-  return v1Resource(c, projectEnvelope(row, projectId));
+  return v1Resource(c, projectEnvelope(row, projectId, vocabulary));
 });
 
 const patchSchema = z.strictObject({
@@ -170,7 +211,8 @@ const patchSchema = z.strictObject({
 
 shares.patch(BASE, async (c) => {
   const body = await parseBody(c, patchSchema);
-  const { client, projectId, resourceType, resourceId } = await scopedShare(c);
+  const { client, projectId, resourceType, resourceId, vocabulary } =
+    await scopedShare(c);
   let result: ShareEnvelope;
   try {
     result = (await client.mutation(
@@ -187,11 +229,12 @@ shares.patch(BASE, async (c) => {
   } catch (error) {
     throw translateWriteError(error);
   }
-  return v1Resource(c, projectEnvelope(result, projectId));
+  return v1Resource(c, projectEnvelope(result, projectId, vocabulary));
 });
 
 shares.post(`${BASE}/rotate-link`, async (c) => {
-  const { client, projectId, resourceType, resourceId } = await scopedShare(c);
+  const { client, projectId, resourceType, resourceId, vocabulary } =
+    await scopedShare(c);
   let result: ShareEnvelope;
   try {
     result = (await client.mutation(
@@ -202,7 +245,7 @@ shares.post(`${BASE}/rotate-link`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    resourceType,
+    resourceType: projectNounValue(resourceType, vocabulary),
     resourceId,
     projectId,
     rotated: true,
@@ -218,7 +261,8 @@ const upsertMemberSchema = z.strictObject({
 
 shares.put(`${BASE}/members`, async (c) => {
   const body = await parseBody(c, upsertMemberSchema);
-  const { client, projectId, resourceType, resourceId } = await scopedShare(c);
+  const { client, projectId, resourceType, resourceId, vocabulary } =
+    await scopedShare(c);
   let result: ShareEnvelope;
   try {
     result = (await client.mutation(
@@ -234,7 +278,7 @@ shares.put(`${BASE}/members`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    resourceType,
+    resourceType: projectNounValue(resourceType, vocabulary),
     resourceId,
     projectId,
     email: body.email,
@@ -244,7 +288,8 @@ shares.put(`${BASE}/members`, async (c) => {
 });
 
 shares.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
-  const { client, projectId, resourceType, resourceId } = await scopedShare(c);
+  const { client, projectId, resourceType, resourceId, vocabulary } =
+    await scopedShare(c);
   const memberIdOrEmail = c.req.param("memberIdOrEmail");
   let result: ShareEnvelope;
   try {
@@ -256,7 +301,7 @@ shares.delete(`${BASE}/members/:memberIdOrEmail`, async (c) => {
     throw translateWriteError(error);
   }
   return v1Resource(c, {
-    resourceType,
+    resourceType: projectNounValue(resourceType, vocabulary),
     resourceId,
     projectId,
     removed: memberIdOrEmail,
