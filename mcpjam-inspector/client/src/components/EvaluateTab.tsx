@@ -51,11 +51,7 @@ import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
-import {
-  aggregateSuite,
-  formatRunId,
-  getEffectiveSuiteServers,
-} from "./evals/helpers";
+import { formatRunId, getEffectiveSuiteServers } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
 import {
@@ -359,22 +355,13 @@ function EvaluateTabContent({
     projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
+    perRunMetrics: true,
   });
 
   const selectedSuite = queries.selectedSuite;
   const suiteDetails = queries.suiteDetails;
-  const activeIterations = queries.activeIterations;
-  const sortedIterations = queries.sortedIterations;
   const runsForSelectedSuite = queries.runsForSelectedSuite;
-
-  const suiteAggregate = useMemo(() => {
-    if (!selectedSuite || !suiteDetails) return null;
-    return aggregateSuite(
-      selectedSuite,
-      suiteDetails.testCases,
-      activeIterations,
-    );
-  }, [selectedSuite, suiteDetails, activeIterations]);
+  const metricsByRun = queries.metricsByRun;
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
     [],
@@ -681,7 +668,16 @@ function EvaluateTabContent({
             selectedSuite,
             suiteDetails?.testCases ?? [],
             runsForSelectedSuite,
-            suiteDetails?.iterations ?? [],
+            // Iterations are not loaded suite-wide here; count the listed
+            // runs' from their metrics (or summaries, while those load).
+            runsForSelectedSuite.reduce(
+              (sum, run) =>
+                sum +
+                (metricsByRun.get(run._id)?.iterationCount ??
+                  run.summary?.total ??
+                  0),
+              0,
+            ),
           ),
         run: async () => {
           if (evalRunsDisabledReason) throw new Error(evalRunsDisabledReason);
@@ -715,6 +711,7 @@ function EvaluateTabContent({
     isAuthenticated,
     isDirectGuest,
     runsForSelectedSuite,
+    metricsByRun,
     evalRunsDisabledReason,
     handleRerunWithQuota,
   ]);
@@ -1445,11 +1442,13 @@ function EvaluateTabContent({
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
-          iterations={activeIterations}
-          allIterations={sortedIterations}
+          metricsByRun={metricsByRun}
+          metricsLoading={queries.isRunMetricsLoading}
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
-          aggregate={suiteAggregate}
+          // A suite-wide aggregate needs every iteration; Evaluate reads
+          // per-run metrics instead, and nothing it mounts reads this.
+          aggregate={null}
           /*
            * The suite's configuration lives in a repository (a committed suite
            * file, or SDK ingest), so this surface offers no edits for it.
