@@ -1,3 +1,4 @@
+import type { CaptureResult } from "posthog-js";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
@@ -169,6 +170,71 @@ export function sanitizeAnalyticsProperties(
   return properties;
 }
 
+/**
+ * Does this stack frame come from a script file rather than the document?
+ *
+ * Every line of the client loads from a script URL: `/assets/*.js` in a build,
+ * `/src/*.tsx` under Vite dev, `file://.../assets/*.js` in the packaged
+ * desktop app. The two inline `<script>` tags the hosted document carries
+ * (`__MCP_SESSION_TOKEN__`, `__MCP_RUNTIME_CONFIG__`) are bare assignments
+ * that cannot throw.
+ *
+ * Code the browser injects into the page has no script URL of its own, so the
+ * engine stamps its frames with the document URL instead. That is the whole
+ * discriminator.
+ *
+ * A third-party script we genuinely load (Cloudflare's challenge platform) is
+ * a `.js` too, so it reads as a script file and its exceptions still report.
+ * That is the safe direction to err in: this rule only ever errs toward
+ * keeping an event, never toward hiding one.
+ */
+function isScriptFileFrame(frame: unknown): boolean {
+  const filename = (frame as { filename?: unknown } | null)?.filename;
+  if (typeof filename !== "string") return false;
+  const [path] = filename.split(/[?#]/);
+  return /\.[cm]?[jt]sx?$/.test(path);
+}
+
+/**
+ * Drop exceptions raised entirely by code the browser injected into the page.
+ *
+ * Chrome iOS's page translation re-walks the DOM a couple of seconds after
+ * every SPA route change and, on a tree this size, recurses until it blows the
+ * stack. PostHog logs that RangeError against whichever route the user was on,
+ * opens a new high-severity issue and pages #mcpjam-alerts — for a crash in a
+ * script that is not ours, in a session where the app kept working. It never
+ * reaches a React error boundary because it never runs inside React.
+ *
+ * Every unhandled `Maximum call stack size exceeded` this project has recorded
+ * is Chrome iOS on mobile, across two users and five routes, and not one
+ * carries a frame from a script we ship.
+ *
+ * The test is "no frame came from a script file" rather than a message match
+ * on purpose: a genuine stack overflow in our own code — the markdown lexer
+ * has produced one — still has app frames, and still reports.
+ *
+ * Frameless exceptions pass through. One with no stack at all cannot be
+ * attributed to anybody, and dropping those to catch a variant this rule was
+ * not written for would hide real errors.
+ */
+export function dropInjectedScriptException(
+  event: CaptureResult | null,
+): CaptureResult | null {
+  if (event?.event !== "$exception") return event;
+
+  const exceptions: unknown = event.properties?.$exception_list;
+  if (!Array.isArray(exceptions)) return event;
+
+  const frames = exceptions.flatMap((exception) => {
+    const candidate = (exception as { stacktrace?: { frames?: unknown } })
+      ?.stacktrace?.frames;
+    return Array.isArray(candidate) ? candidate : [];
+  });
+  if (frames.length === 0) return event;
+
+  return frames.some(isScriptFileFrame) ? event : null;
+}
+
 // Public vanity landings (caniuse.dev host-compare, score.mcpjam.com score
 // runner) get real Web Analytics: $pageview on SPA route changes plus
 // $pageleave, which is what makes bounce rate and session duration exist in
@@ -334,6 +400,7 @@ export const options = {
   ...getPageviewCaptureOptions(),
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
+  before_send: dropInjectedScriptException,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
