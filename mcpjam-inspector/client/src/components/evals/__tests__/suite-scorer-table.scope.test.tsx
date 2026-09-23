@@ -173,7 +173,7 @@ describe("case scope", () => {
     });
     const inherited = row(container, "predicate:0");
     expect(inherited).toHaveAttribute("data-scorer-source", "suite");
-    expect(within(inherited).getByText("From suite")).toBeInTheDocument();
+    expect(within(inherited).queryByText("From suite")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(within(inherited).queryByRole("spinbutton")).toBeNull();
     expect(within(inherited).getByText(latency.label)).toBeInTheDocument();
@@ -227,20 +227,20 @@ describe("case scope", () => {
     ).toBeInTheDocument();
   });
 
-  it("holds inherited boxes until the deployment stores suppression", () => {
-    const { container } = renderCase(
-      [latency.preset],
-      {},
-      {
-        capabilities: {
-          scorers: { predicateKinds: [latency.preset.type] },
-        } as SuiteCapabilities,
-      },
-    );
-    expect(screen.getByRole("checkbox", { name: latency.name })).toBeDisabled();
-    expect(
-      within(row(container, "predicate:0")).getByText(BACKEND_SUPPORT_HINT),
-    ).toBeInTheDocument();
+  it("turns off an inherited family even when capabilities omit the flag", async () => {
+    const user = userEvent.setup();
+    const { onDraftChange } = renderCase([latency.preset], {}, {
+      capabilities: {
+        scorers: { predicateKinds: [latency.preset.type] },
+      } as SuiteCapabilities,
+    });
+    const box = screen.getByRole("checkbox", { name: latency.name });
+    expect(box).toBeEnabled();
+    await user.click(box);
+    expect(onDraftChange).toHaveBeenCalledWith({
+      predicates: undefined,
+      suppressedSuiteStandardCheckIds: [latency.id],
+    });
   });
 
   it("removes and edits the case's own rules, and adds through the library", async () => {

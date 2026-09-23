@@ -46,7 +46,7 @@ it("saves a family override, reloads it off, and restores the customized inherit
     "checked",
   );
   expect(screen.getByText(check.label)).toBeTruthy();
-  expect(screen.getByText("From suite")).toBeTruthy();
+  expect(screen.queryByText("From suite")).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: check.name }));
   expect(save).toHaveBeenCalledWith({
     predicates: undefined,
@@ -58,7 +58,7 @@ it("saves a family override, reloads it off, and restores the customized inherit
     "data-state",
     "unchecked",
   );
-  expect(screen.getByText("From suite · off for this case")).toBeTruthy();
+  expect(screen.queryByText("From suite · off for this case")).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: check.name }));
   expect(stored).toEqual({
     predicates: undefined,
@@ -66,12 +66,13 @@ it("saves a family override, reloads it off, and restores the customized inherit
   });
   expect(screen.getByText(check.label)).toBeTruthy();
 });
-it("keeps inherited toggles disabled until suppression is supported", () => {
+it("turns off an inherited family without a capabilities flag", () => {
+  const onChecksChange = vi.fn();
   render(
     <CaseChecksPage
       title="Catalog"
       suitePredicates={[check.preset]}
-      onChecksChange={() => {}}
+      onChecksChange={onChecksChange}
       capabilities={
         {
           scorers: { predicateKinds: [check.preset.type] },
@@ -81,5 +82,11 @@ it("keeps inherited toggles disabled until suppression is supported", () => {
       onJudgeSkippedChange={() => {}}
     />,
   );
-  expect(screen.getByRole("checkbox", { name: check.name })).toBeDisabled();
+  const box = screen.getByRole("checkbox", { name: check.name });
+  expect(box).toBeEnabled();
+  fireEvent.click(box);
+  expect(onChecksChange).toHaveBeenCalledWith({
+    predicates: undefined,
+    suppressedSuiteStandardCheckIds: [check.id],
+  });
 });

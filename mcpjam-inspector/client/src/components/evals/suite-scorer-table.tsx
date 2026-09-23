@@ -193,8 +193,6 @@ export function SuiteScorerTable({
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
   );
-  const suppressionSupported =
-    capabilities?.scorers?.suppressedSuiteStandardCheckIds === true;
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
@@ -261,7 +259,7 @@ export function SuiteScorerTable({
       if (!row.family) {
         return "Only standard assertions can be turned off per case. Edit this one in suite settings.";
       }
-      return suppressionSupported ? undefined : BACKEND_SUPPORT_HINT;
+      return undefined;
     }
     if (
       row.kind === "judge" &&
@@ -654,13 +652,14 @@ function ScorerRow({
   // here, because Edit evaluators opens it before the box is ticked. An
   // inherited check that is already on keeps its number on the title line.
   const showEditorFields = Boolean(editorPredicate) && (editorWritable || !on);
+  // Inherited suite checks stay unlabeled for now. A case-authored check
+  // still says so, because that is the only row the case itself wrote.
   const sourceLine =
-    scope === "case" && row.kind === "predicate"
-      ? row.suppressed
-        ? "From suite · off for this case"
-        : inherited
-          ? "From suite"
-          : "This case"
+    scope === "case" &&
+    row.kind === "predicate" &&
+    !inherited &&
+    !row.suppressed
+      ? "This case"
       : null;
   const familyLine =
     inherited && row.family && row.family.suiteRules > 1
@@ -795,15 +794,6 @@ function ScorerRow({
         </div>
       ) : null}
     </li>
-  );
-}
-
-/** Keys every predicate carries; anything else is a field its editor shows. */
-const PREDICATE_ENVELOPE_KEYS = new Set(["type", "role", "severity"]);
-
-function predicateHasFields(predicate: Predicate): boolean {
-  return Object.keys(predicate).some(
-    (key) => !PREDICATE_ENVELOPE_KEYS.has(key),
   );
 }
 
