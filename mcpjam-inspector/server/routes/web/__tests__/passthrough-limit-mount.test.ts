@@ -139,6 +139,22 @@ describe("MJ-012 — /api/web/* meters the unverified passthrough class", () => 
     }
   });
 
+  // `/export` had no bearer middleware at all, so nothing set the label the
+  // limiter reads and every call went through unmetered.
+  it("429s a signed-in burst on /export", async () => {
+    const { app, limit, reset } = await loadApp();
+    reset();
+
+    const path = "/api/web/export/__mount_probe";
+    for (let i = 0; i < limit; i++) {
+      const res = await callProbe(app, path, "workos-jwt", "203.0.113.24");
+      expect(res.status).not.toBe(429);
+    }
+
+    const refused = await callProbe(app, path, "workos-jwt", "203.0.113.24");
+    expect(refused.status).toBe(429);
+  });
+
   // These sub-routers run their own `bearerAuthMiddleware`, so the label is
   // set after the `/api/web` `*` limiter has already passed and each one has
   // to mount the limiter itself.

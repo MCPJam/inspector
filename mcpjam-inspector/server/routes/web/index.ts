@@ -66,6 +66,9 @@ web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // route fronts; client exposure is gated by the `project-environments-enabled`
 // flag. Read-only and narrowly projected (never the full runtime spec).
 web.use("/environments/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Export opens an ephemeral MCP connection per call. It had no bearer
+// middleware of its own, so no limiter below could see who was calling.
+web.use("/export/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
