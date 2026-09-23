@@ -13,7 +13,10 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { reportCaught } from "./lib/error-reporting";
-import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
+import {
+  handleWorkosRefreshFailure,
+  markWorkosSessionSeen,
+} from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
@@ -352,6 +355,8 @@ if (isInIframe) {
       refreshBufferInterval={90}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
+        // Lets the failure handler tell a dead session from a guest.
+        markWorkosSessionSeen();
       }}
       // Redirect a genuinely dead session to sign-in rather than leaving
       // signed-in chrome over a de-authed connection. See the handler.

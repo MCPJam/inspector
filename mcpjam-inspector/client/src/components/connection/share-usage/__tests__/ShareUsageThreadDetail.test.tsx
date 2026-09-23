@@ -30,6 +30,7 @@ const {
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
     runAttemptStatus: undefined as unknown,
+    analysisPhase: undefined as string | undefined,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -62,7 +63,13 @@ const {
 // the panel's own suite cannot check, since it is handed the id directly.
 vi.mock("convex/react", () => ({
   useAction: () => mockRequestJudge,
+  useMutation: () => vi.fn().mockResolvedValue({ queued: true }),
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
+}));
+
+// Analyze now is offered to members only; the check is a Convex query.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -78,6 +85,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
       runAttemptStatus: mockThreadState.runAttemptStatus,
+      analysisPhase: mockThreadState.analysisPhase,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
       recordedContext: {
@@ -240,6 +248,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     mockHostConfigState.config = { hostStyle: "claude" };
     global.fetch = vi.fn().mockResolvedValue({
@@ -290,6 +299,24 @@ describe("ShareUsageThreadDetail", () => {
     expect(mockTraceViewer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+  });
+
+  it("offers Analyze now in the header of a User Testing session still waiting on its pass", async () => {
+    mockThreadState.analysisPhase = "owed";
+    const { rerender } = render(
+      <ShareUsageThreadDetail threadId="thread-1" />,
+    );
+    expect(
+      await screen.findByTestId("share-usage-analyze-now"),
+    ).toHaveTextContent("Analyze now");
+    // Final: nothing Analyze now could change, so no button.
+    mockThreadState.analysisPhase = "final";
+    rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("share-usage-analyze-now"),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("links a direct session to its Playground conversation", async () => {
@@ -826,6 +853,7 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     // The transcript must load: the Trace tab only exists once the detail is
     // past its loader.
@@ -951,6 +979,7 @@ describe("ShareUsageThreadDetail — session identity header", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     mockHostConfigState.config = null;
     mockCopyToClipboard.mockResolvedValue(true);

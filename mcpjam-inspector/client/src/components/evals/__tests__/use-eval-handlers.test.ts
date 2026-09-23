@@ -237,6 +237,40 @@ describe("useEvalHandlers", () => {
       expect(body.serverIds ?? []).toEqual([]);
     });
 
+    it("runs a model-less case on an environment suite even when the suite default model is not in the picker", async () => {
+      mockConvexQuery.mockResolvedValue([
+        { _id: "case-1", title: "Case 1", query: "Q", runs: 1, models: [], expectedToolCalls: [] },
+      ]);
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-env", name: "Suite", environment: { servers: [] },
+          environmentIds: ["env-1"], defaultConfig: { modelId: "claude-sonnet-4-5" },
+        } as any);
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+      const request = mockAuthFetch.mock.calls.find(([url]) => url === "/api/mcp/evals/run");
+      const body = JSON.parse(request![1]!.body as string);
+      expect(body.environmentId).toBe("env-1");
+      expect(body.tests).toHaveLength(1);
+      expect(body.tests[0]).toMatchObject({ testCaseId: "case-1", model: "environment-model", provider: "none" });
+    });
+
+    it("still refuses a model-less case on a non-environment suite whose default model is not in the picker", async () => {
+      mockConvexQuery.mockResolvedValue([
+        { _id: "case-1", title: "Case 1", query: "Q", runs: 1, models: [], expectedToolCalls: [] },
+      ]);
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-flat", name: "Suite", environment: { servers: ["server-1"] },
+          defaultConfig: { modelId: "claude-sonnet-4-5" },
+        } as any);
+      });
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Suite default model claude-sonnet-4-5 is not available"));
+      expect(mockAuthFetch.mock.calls.some(([url]) => url === "/api/mcp/evals/run")).toBe(false);
+    });
+
     it("returns scoped run ids without navigating away from the editor", async () => {
       mockAuthFetch.mockResolvedValue(createFetchResponse({ success: true, runId: "run-scoped" }));
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
