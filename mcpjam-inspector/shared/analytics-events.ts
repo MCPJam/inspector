@@ -552,6 +552,9 @@ export const ANALYTICS_EVENTS = {
   project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // A signed-in tab's WorkOS session was rejected on refresh (usually the
+  // max session length running out); the user is sent back to sign in.
+  workos_session_expired: { source: "client" },
   // `browser_pane_session_summary`   props: engine, transport, tier, fps,
   //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
   //   on unmount — a per-frame event would be tens of thousands of captures an
