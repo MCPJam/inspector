@@ -462,6 +462,17 @@ describe("OrganizationsTab billing", () => {
       }),
     ).toBeEnabled();
     expect(screen.getByRole("table")).toHaveClass("table-fixed");
+    const [labelHead, ...planHeads] = within(
+      screen.getAllByRole("row")[0],
+    ).getAllByRole("columnheader");
+    expect(planHeads).toHaveLength(offeredPlans(catalog).length);
+    expect(new Set(planHeads.map((head) => head.style.width)).size).toBe(1);
+    expect(
+      [labelHead, ...planHeads].reduce(
+        (total, head) => total + parseFloat(head.style.width),
+        0,
+      ),
+    ).toBeCloseTo(100);
     const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
     expect(within(ssoRow).getAllByRole("cell")[2]).toHaveClass(
       "border-x",
