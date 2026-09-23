@@ -1400,40 +1400,6 @@ chatV2.post("/", async (c) => {
     // has no backend reserve gate (unlike the cloud path), so the request-level
     // guest check IS the boundary (see isGuestChatRequest).
     const requestIsGuest = isGuestChatRequest(requestAuthHeader);
-    /**
-     * A guest has no project membership, so a `projectId` it supplies is not
-     * its own and nothing downstream may treat it as authorization (MJ-013).
-     *
-     * The MCP routes already answer `403 Not a member of this project` for the
-     * same token and the same id. Chat took any string, never checked it, and
-     * still ran the hosted model call — so an anonymous session could bill
-     * credits against a stranger's project. Two authorization paths over one
-     * resource disagreed, and the weaker one is the one that gets used.
-     *
-     * Cleared for EVERY guest, with no exception for the local-browser path.
-     * An earlier cut here exempted that path because `guestBrowserProject`
-     * hashes the id into a guest-scoped namespace — but that only covers the
-     * page-tool lookup. The raw value still reached the stream handler and the
-     * session persistence callback, which is the same leak in a narrower
-     * doorway. The submitted value survives only in `guestSubmittedProjectId`,
-     * which feeds the hash and nothing else.
-     *
-     * Dropped rather than refused: guest chat carrying a `projectId` is an
-     * established shape here — the turn is meant to run and simply not reach
-     * project-scoped state (`chat-v2.guest-skills.test.ts`) — so a 403 would
-     * be a product change rather than a security fix.
-     */
-    const guestSubmittedProjectId =
-      requestIsGuest && typeof body.projectId === "string" && body.projectId
-        ? body.projectId
-        : undefined;
-    if (guestSubmittedProjectId) {
-      logger.warn(
-        "[mcp/chat-v2] guest supplied a projectId; ignoring it for this turn",
-        { hasChatSession: Boolean(body.chatSessionId) },
-      );
-      body.projectId = undefined;
-    }
     const localPrefEligible =
       enginePref === "local" && !requestIsGuest && !isScenarioSession;
     if (enginePref === "local" && !localPrefEligible) {
@@ -1572,12 +1538,11 @@ chatV2.post("/", async (c) => {
       isHarnessTurn: Boolean(resolvedExecution.harness),
       hasV1PageTools: validatedPageTools.length > 0,
       engine: browserEngine === "local" ? "local" : "hosted",
-      projectId: localBrowserGuestId
-        ? guestSubmittedProjectId
-          ? guestBrowserProject(guestSubmittedProjectId, localBrowserGuestId)
-          : undefined
-        : typeof body.projectId === "string"
-          ? body.projectId
+      projectId:
+        typeof body.projectId === "string"
+          ? localBrowserGuestId
+            ? guestBrowserProject(body.projectId, localBrowserGuestId)
+            : body.projectId
           : undefined,
       ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
     });
@@ -1633,21 +1598,10 @@ chatV2.post("/", async (c) => {
           ? (hostRuntimeConfig as { computer?: unknown }).computer
           : undefined,
       },
-      builtInAuthHeader && (body.projectId || guestSubmittedProjectId)
+      builtInAuthHeader && typeof body.projectId === "string" && body.projectId
         ? {
             authHeader: builtInAuthHeader,
-            // The ONE place a guest's submitted id is still read, and it is
-            // not authorization: it is the billing tag on `web_search`, whose
-            // route refuses guests outright (`rejects guests with 403 without
-            // calling Exa`, mcpjam-backend `exaSearch.test.ts`). Dropping it
-            // here stopped advertising built-in tools to guests altogether,
-            // which is a product regression rather than a fix — the tools are
-            // deliberately offered and then refused at execution.
-            //
-            // It does mean this line leans on that backend 403. If the Exa
-            // route ever starts honouring guests, this becomes a real billing
-            // leak and must change with it.
-            projectId: (body.projectId ?? guestSubmittedProjectId) as string,
+            projectId: body.projectId,
             // A request with no user-supplied Authorization is an anonymous
             // guest (the route mints a production guest bearer for it), so the
             // resolver withholds bash on the personal-project path — matching
