@@ -1,3 +1,4 @@
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useRef, useState } from "react";
@@ -367,6 +368,7 @@ export function useOrganizationBilling(
   const seatPaymentCancelVersionRef = useRef(0);
   const seatPaymentCompletionInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const canManageBilling = billingStatus?.canManageBilling ?? false;
 
   const startPlanChange = useCallback(
     async (
@@ -393,8 +395,11 @@ export function useOrganizationBilling(
         });
         return result as OrganizationPlanChangeResult;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to change plan";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to change plan",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
@@ -402,7 +407,7 @@ export function useOrganizationBilling(
         setPendingPlanChangeTarget(null);
       }
     },
-    [organizationId, startPlanChangeAction, planCatalog],
+    [organizationId, startPlanChangeAction, planCatalog, canManageBilling],
   );
 
   const openPortal = useCallback(
@@ -417,15 +422,18 @@ export function useOrganizationBilling(
         });
         return result.portalUrl as string;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to open billing portal";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to open billing portal",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
         setIsOpeningPortal(false);
       }
     },
-    [createPortal, organizationId],
+    [createPortal, organizationId, canManageBilling],
   );
 
   const openIntervalChangePortal = useCallback(
@@ -441,17 +449,18 @@ export function useOrganizationBilling(
         });
         return result.portalUrl as string;
       } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to open billing interval change";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to open billing interval change",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
         setIsOpeningPortal(false);
       }
     },
-    [createIntervalChangePortal, organizationId],
+    [createIntervalChangePortal, organizationId, canManageBilling],
   );
 
   const openCancellationPortal = useCallback(
@@ -466,17 +475,18 @@ export function useOrganizationBilling(
         });
         return result.portalUrl as string;
       } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to open cancellation flow";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to open cancellation flow",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
         setIsOpeningPortal(false);
       }
     },
-    [createCancellationPortal, organizationId],
+    [createCancellationPortal, organizationId, canManageBilling],
   );
 
   const cancelScheduledBillingChange = useCallback(async () => {
@@ -489,16 +499,17 @@ export function useOrganizationBilling(
       });
       return result.subscription as OrganizationPlanChangeSnapshot;
     } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to cancel scheduled billing change";
+      const message = getBillingErrorMessage(
+        err,
+        "Failed to cancel scheduled billing change",
+        canManageBilling,
+      );
       setError(message);
       throw err;
     } finally {
       setIsCancelingScheduledBillingChange(false);
     }
-  }, [cancelScheduledBillingChangeAction, organizationId]);
+  }, [cancelScheduledBillingChangeAction, organizationId, canManageBilling]);
 
   const selectFreeAfterTrial = useCallback(async () => {
     if (!organizationId) throw new Error("Organization is required");
@@ -507,14 +518,17 @@ export function useOrganizationBilling(
     try {
       await selectFreeAfterTrialMutation({ organizationId } as any);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to choose free plan";
+      const message = getBillingErrorMessage(
+        err,
+        "Failed to choose free plan",
+        canManageBilling,
+      );
       setError(message);
       throw err;
     } finally {
       setIsSelectingFreeAfterTrial(false);
     }
-  }, [organizationId, selectFreeAfterTrialMutation]);
+  }, [organizationId, selectFreeAfterTrialMutation, canManageBilling]);
 
   const finishSeatPayment = useCallback(
     async (seatPaymentIntentId?: string): Promise<SeatPaymentResult> => {
@@ -600,8 +614,11 @@ export function useOrganizationBilling(
 
         return startResult as SeatPaymentResult;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to finish seat payment";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to finish seat payment",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
@@ -611,6 +628,7 @@ export function useOrganizationBilling(
     [
       activeSeatPaymentIntent?._id,
       cancelSeatPaymentAction,
+      canManageBilling,
       completeSeatPaymentAction,
       organizationId,
       startSeatPaymentAction,
@@ -654,14 +672,22 @@ export function useOrganizationBilling(
       }
       return await finishSeatPayment(result.seatPaymentIntentId);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to retry seat payment";
+      const message = getBillingErrorMessage(
+        err,
+        "Failed to retry seat payment",
+        canManageBilling,
+      );
       setError(message);
       throw err;
     } finally {
       setIsFinishingSeatPayment(false);
     }
-  }, [finishSeatPayment, organizationId, retrySeatPaymentMutation]);
+  }, [
+    finishSeatPayment,
+    organizationId,
+    retrySeatPaymentMutation,
+    canManageBilling,
+  ]);
 
   const cancelSeatPayment = useCallback(
     async (seatPaymentIntentId?: string): Promise<SeatPaymentCancelResult> => {
@@ -686,8 +712,11 @@ export function useOrganizationBilling(
             activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
         } as any)) as SeatPaymentCancelResult;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to cancel seat payment";
+        const message = getBillingErrorMessage(
+          err,
+          "Failed to cancel seat payment",
+          canManageBilling,
+        );
         setError(message);
         throw err;
       } finally {
@@ -698,6 +727,7 @@ export function useOrganizationBilling(
       activeSeatPaymentIntent?._id,
       activeSeatPaymentIntent?.stripeInvoiceId,
       cancelSeatPaymentAction,
+      canManageBilling,
       organizationId,
     ],
   );

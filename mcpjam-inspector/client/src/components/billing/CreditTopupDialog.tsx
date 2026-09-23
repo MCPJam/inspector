@@ -1,5 +1,6 @@
 import { JamIllustration } from "./JamIllustration";
 import { useCreditTopupPricing } from "@/hooks/useCreditTopupPricing";
+import { useOrganizationBillingStatus } from "@/hooks/useOrganizationBilling";
 import { useEffect, useRef, useState } from "react";
 import { CreditAmountOption } from "./CreditAmountOption";
 import { toast } from "@/lib/toast";
@@ -45,6 +46,9 @@ export function CreditTopupDialog({
   const { presets, presetsLoading, startCheckout, isStartingCheckout } =
     useCreditTopup();
   const quotePreset = useCreditTopupPricing(organizationId, open);
+  const billingStatus = useOrganizationBillingStatus(organizationId ?? null, {
+    enabled: open,
+  });
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
     null,
   );
@@ -150,6 +154,7 @@ export function CreditTopupDialog({
         getBillingErrorMessage(
           err,
           "Could not start checkout. Please try again.",
+          billingStatus?.canManageBilling ?? false,
         ),
       );
     }
