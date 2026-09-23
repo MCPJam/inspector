@@ -199,7 +199,7 @@ export function InsightsWorkbench({
 
   const { rebuildBusy, handleRebuild } = useInsightsRebuild(rebuild, cohortKey);
 
-  // Analyze now settles a User Testing study's quiet sessions. Only there:
+  // Analyze now settles a User Testing study's sessions. Only there:
   // swarm sessions settle when their run ends, and a benchmark's flow is the
   // paid opt-in. The status panel shows it to members only.
   const handleAnalyzeNow = useCallback(

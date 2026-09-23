@@ -131,6 +131,32 @@ describe("SessionAnalyzeNowButton", () => {
   });
 });
 
+describe("SessionAnalyzeNowButton, across a session switch", () => {
+  it("keeps a session disabled while its request is in flight, even after the reader comes back", async () => {
+    const user = userEvent.setup();
+    let resolve: (value: unknown) => void = () => undefined;
+    mockRequest.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const a = thread();
+    const b = thread({ _id: "session-2", analysisPhase: "provisional" });
+    const { rerender } = render(<SessionAnalyzeNowButton thread={a} />);
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    rerender(<SessionAnalyzeNowButton thread={b} />);
+    expect(screen.getByRole("button", { name: /Analyze now/ })).toBeEnabled();
+    rerender(<SessionAnalyzeNowButton thread={a} />);
+    // Still in flight: no second request for the same session.
+    expect(screen.getByRole("button", { name: /Analyzing…/ })).toBeDisabled();
+    resolve({ queued: true });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Analyze now/ })).toBeEnabled(),
+    );
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("analyzeNowErrorMessage", () => {
   it("prefers the backend's copy, and says something useful otherwise", () => {
     expect(

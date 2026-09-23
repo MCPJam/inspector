@@ -21,6 +21,7 @@ const ICONS: Record<AnalysisStatusKind, LucideIcon> = {
   analyzing: RefreshCw,
   waiting: Clock,
   failed: AlertTriangle,
+  provisional: Clock,
   grouping: RefreshCw,
 };
 
@@ -70,10 +71,11 @@ export function AnalysisStatusPanel({
 }
 
 /**
- * Mounted only when the button would show, so the member check (a Convex
- * query) runs only where it can change what renders.
+ * Analyze now, for members only. Mount it only where the button would show,
+ * so the member check (a Convex query) runs only where it can change what
+ * renders.
  */
-function AnalyzeNowForMembers({
+export function AnalyzeNowForMembers({
   onAnalyzeNow,
   busy,
 }: {

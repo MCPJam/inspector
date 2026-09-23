@@ -426,9 +426,9 @@ const BREAKDOWN_QUERIES: Record<InsightsScope["kind"], string> = {
 export type RebuildOptions = {
   force?: boolean;
   /**
-   * Analyze now: treat the scope's quiet sessions as finished, so their
-   * outcome is asserted without waiting out the idle window. Scenario scope
-   * only; the swarm rebuild does not take it.
+   * Analyze now: treat the scope's sessions as finished, so their outcome is
+   * asserted without waiting out the idle window. Scenario scope only; the
+   * swarm rebuild does not take it.
    */
   settled?: boolean;
 };

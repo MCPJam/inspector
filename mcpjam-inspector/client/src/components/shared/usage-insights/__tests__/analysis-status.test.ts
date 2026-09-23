@@ -4,6 +4,14 @@ import { analysisStatus, themesNote } from "../analysis-status";
 
 const NOW = 1_000_000;
 const clock = (ms: number) => `T+${(ms - NOW) / 60_000}m`;
+const catalog = (version: number) => ({
+  dimension: "goal",
+  version,
+  status: "idle",
+  assigned: 1,
+  unassigned: 0,
+  sampleSize: 1,
+});
 
 function summary(
   overrides: Partial<InsightsAnalysisSummary> = {},
@@ -43,8 +51,10 @@ describe("analysisStatus", () => {
       "a guest-owned study",
       { skipped: 1, skips: { guest_owned: 1 }, owed: 1, pending: 1 },
       "guest",
-      "Sign in to analyze sessions",
-      false,
+      "Not analyzed automatically",
+      // A signed-in member's Analyze now works on a guest study; the panel
+      // shows the button to members only.
+      true,
     ],
     [
       "the daily limit",
@@ -79,6 +89,25 @@ describe("analysisStatus", () => {
       { failed: 1, failures: { spend_cap_exceeded: 1 } },
       "failed",
       "Analysis failed",
+      false,
+    ],
+    [
+      "outcomes pending behind a published catalog",
+      {
+        analyzed: 1,
+        provisional: 1,
+        nextAnalysisAt: NOW + 27 * 60_000,
+        taxonomies: [catalog(1)],
+      },
+      "provisional",
+      "Outcomes are still coming",
+      true,
+    ],
+    [
+      "outcomes pending, but no catalog yet: the themes are the bigger story",
+      { analyzed: 1, provisional: 1, taxonomies: [catalog(0)] },
+      "grouping",
+      "Grouping sessions into themes",
       false,
     ],
     [
@@ -117,6 +146,18 @@ describe("analysisStatus", () => {
         { formatTime: clock },
       )?.body,
     ).toBe("Analysis resumes at T+60m.");
+    expect(
+      analysisStatus(
+        summary({
+          analyzed: 1,
+          provisional: 1,
+          nextAnalysisAt: NOW + 27 * 60_000,
+          taxonomies: [catalog(1)],
+        }),
+        NOW,
+        { formatTime: clock },
+      )?.body,
+    ).toBe("Outcomes fill in around T+27m, 30 minutes after the last message.");
   });
 
   it("reads an older backend's pending sessions as in flight, as before", () => {

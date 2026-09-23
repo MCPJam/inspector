@@ -18,13 +18,14 @@ export type AnalysisStatusKind =
   | "analyzing"
   | "waiting"
   | "failed"
+  | "provisional"
   | "grouping";
 
 export type AnalysisStatus = {
   kind: AnalysisStatusKind;
   title: string;
   body: string;
-  /** Analyze now: treat the quiet sessions as finished and analyze them. */
+  /** Analyze now: treat the sessions as finished and analyze them. */
   action?: "analyze_now";
 };
 
@@ -65,11 +66,14 @@ export function analysisStatus(
       body: "New sessions are analyzed shortly after their last message.",
     };
 
+  // Worded for both readers: a guest owner learns why nothing ran, and a
+  // signed-in member gets Analyze now, which works on a guest study.
   if ((summary.skips.guest_owned ?? 0) > 0 && summary.analyzed === 0)
     return {
       kind: "guest",
-      title: "Sign in to analyze sessions",
-      body: "Sessions in a guest study are not analyzed automatically.",
+      title: "Not analyzed automatically",
+      body: "Sessions in a guest study are analyzed only when a signed-in member asks.",
+      action: "analyze_now",
     };
 
   if (summary.deferred > 0)
@@ -120,13 +124,32 @@ export function analysisStatus(
     };
   }
 
+  // Analyzed before the outcome could be asserted: the flow is drawn, and
+  // its outcome column reads "Analyzing" until the final pass. Only once a
+  // catalog exists; before that the missing themes are the bigger story.
+  if (
+    (summary.provisional ?? 0) > 0 &&
+    summary.taxonomies.some((t) => t.version > 0)
+  ) {
+    const due = summary.nextAnalysisAt;
+    return {
+      kind: "provisional",
+      title: "Outcomes are still coming",
+      body:
+        due && due > now
+          ? `Outcomes fill in around ${clock(due)}, 30 minutes after the last message.`
+          : "Outcomes fill in shortly.",
+      action: "analyze_now",
+    };
+  }
+
   if (summary.analyzed > 0)
     return {
       kind: "grouping",
       title: "Grouping sessions into themes",
       body: summary.taxonomies.some((t) => t.errorCode)
         ? "Theme discovery ran into a problem. The sessions are analyzed, and their themes appear once it succeeds."
-        : "Themes appear a minute or two after the first session is analyzed.",
+        : "Themes appear as sessions are grouped.",
     };
 
   return null;

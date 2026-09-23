@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { ConvexError } from "convex/values";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -22,13 +22,14 @@ export function analyzeNowErrorMessage(error: unknown): string {
   return "Could not start the analysis. Try again in a minute.";
 }
 
-const HINT: Partial<Record<NonNullable<SharedChatThread["analysisPhase"]>, string>> =
-  {
-    owed: "Analyze this session now instead of waiting for it to go quiet.",
-    provisional:
-      "The outcome fills in 30 minutes after the last message. Analyze now to treat this session as finished.",
-    failed: "The last analysis failed. Try it again.",
-  };
+const HINT: Partial<
+  Record<NonNullable<SharedChatThread["analysisPhase"]>, string>
+> = {
+  owed: "Analyze this session now instead of waiting for it to go quiet.",
+  provisional:
+    "The outcome fills in 30 minutes after the last message. Analyze now to treat this session as finished.",
+  failed: "The last analysis failed. Try it again.",
+};
 
 /**
  * Analyze now, for one User Testing session (B5).
@@ -69,23 +70,23 @@ function AnalyzeNowForMembers({
   const request = useMutation(
     "chatSessions:requestSessionAnalysis" as never,
   ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
-  const [requesting, setRequesting] = useState(false);
+  // In-flight requests, by session. Keyed rather than a single flag so a
+  // reader who leaves a session and comes back before its request settles
+  // finds it still disabled, instead of a button that sends it again.
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const activeThreadRef = useRef(thread._id);
   activeThreadRef.current = thread._id;
   const requestSerialRef = useRef(0);
 
-  useEffect(() => {
-    // A request for the previous session is abandoned, not awaited.
-    setRequesting(false);
-  }, [thread._id]);
-
   const analyzeNow = useCallback(async () => {
     const requestedFor = thread._id;
     const serial = ++requestSerialRef.current;
+    // Only the toast is stale-guarded: the reader who moved on is told
+    // nothing, but the pending mark always clears when its request settles.
     const isStale = () =>
       activeThreadRef.current !== requestedFor ||
       requestSerialRef.current !== serial;
-    setRequesting(true);
+    setPending((current) => new Set(current).add(requestedFor));
     try {
       await request({ sessionId: requestedFor });
       if (isStale()) return;
@@ -94,13 +95,17 @@ function AnalyzeNowForMembers({
       if (isStale()) return;
       toast.error(analyzeNowErrorMessage(error));
     } finally {
-      if (!isStale()) setRequesting(false);
+      setPending((current) => {
+        const next = new Set(current);
+        next.delete(requestedFor);
+        return next;
+      });
     }
   }, [request, thread._id]);
 
   if (isMember !== true) return null;
   const phase = thread.analysisPhase;
-  const analyzing = requesting || phase === "analyzing";
+  const analyzing = pending.has(thread._id) || phase === "analyzing";
   const hint = phase ? HINT[phase] : undefined;
 
   return (

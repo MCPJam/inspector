@@ -539,23 +539,58 @@ describe("SessionFlowSankey", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("names a guest-owned study's reason and offers nothing", () => {
+  it("names a guest-owned study's reason, and offers Analyze now to members only", () => {
+    const guestStudy = () =>
+      renderSankey({
+        breakdown: breakdown({
+          sankey: PLACEHOLDERS,
+          analysis: analysis({
+            total: 1,
+            analyzed: 0,
+            skipped: 1,
+            skips: { guest_owned: 1 },
+          }),
+        }),
+        onAnalyzeNow: vi.fn(),
+      });
+    guestStudy();
+    expect(screen.getByTestId("session-flow-status")).toHaveTextContent(
+      "Not analyzed automatically",
+    );
+    // A member's request is allowed on a guest study.
+    expect(
+      screen.getByRole("button", { name: /Analyze now/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a pending outcome column on a drawn flow, with Analyze now", async () => {
+    // The first half hour of every study after B5: goal, behavior and
+    // sentiment are drawn, and the outcome column reads "Analyzing".
+    const user = userEvent.setup();
+    const onAnalyzeNow = vi.fn();
     renderSankey({
       breakdown: breakdown({
-        sankey: PLACEHOLDERS,
         analysis: analysis({
-          total: 1,
-          analyzed: 0,
-          skipped: 1,
-          skips: { guest_owned: 1 },
+          provisional: 4,
+          nextAnalysisAt: Date.now() + 20 * 60_000,
+          taxonomies: [
+            {
+              dimension: "goal",
+              version: 1,
+              status: "idle",
+              assigned: 4,
+              unassigned: 0,
+              sampleSize: 4,
+            },
+          ],
         }),
       }),
-      onAnalyzeNow: vi.fn(),
+      onAnalyzeNow,
     });
-    expect(screen.getByTestId("session-flow-status")).toHaveTextContent(
-      "Sign in to analyze sessions",
-    );
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByTestId("scenario-insights-sankey")).toBeInTheDocument();
+    expect(screen.getByText("Outcomes are still coming")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    expect(onAnalyzeNow.mock.calls).toEqual([[]]);
   });
 
   it("says a drawn flow is still waiting on a session, in one line", () => {

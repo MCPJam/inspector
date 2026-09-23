@@ -30,7 +30,10 @@ import {
   themesNote,
   type AnalysisStatus,
 } from "@/components/shared/usage-insights/analysis-status";
-import { AnalysisStatusPanel } from "@/components/shared/usage-insights/analysis-status-panel";
+import {
+  AnalysisStatusPanel,
+  AnalyzeNowForMembers,
+} from "@/components/shared/usage-insights/analysis-status-panel";
 import { cn } from "@/lib/utils";
 
 export interface SessionFlowSankeyProps {
@@ -46,8 +49,8 @@ export interface SessionFlowSankeyProps {
   onRebuild: () => void;
   rebuildBusy: boolean;
   /**
-   * Analyze now: treat the scope's quiet sessions as finished instead of
-   * waiting out the idle window. Offered only where the empty state's reason
+   * Analyze now: treat the scope's sessions as finished instead of waiting
+   * out the idle window. Offered only where the empty state's reason
    * is one it can change (sessions still waiting, a failed pass). Omitted on
    * scopes that cannot settle sessions by hand, which then show the reason
    * alone.
@@ -415,13 +418,16 @@ export function SessionFlowSankey({
     );
   }
 
-  // Drawn, but not finished: say what is still coming, in one line.
+  // Drawn, but not finished: say what is still coming, in one line. The
+  // provisional state is the common one for the first half hour of a study:
+  // goal, behavior and sentiment are in, and the outcome column waits.
   const liveStatus = analysisStatus(breakdown.analysis, Date.now());
   const liveBanner =
     liveStatus &&
     (liveStatus.kind === "analyzing" ||
       liveStatus.kind === "waiting" ||
-      liveStatus.kind === "deferred")
+      liveStatus.kind === "deferred" ||
+      liveStatus.kind === "provisional")
       ? liveStatus
       : null;
   const note = themesNote(breakdown.analysis);
@@ -478,7 +484,15 @@ export function SessionFlowSankey({
           ) : (
             <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           )}
-          <span>{liveBanner.title}</span>
+          <span className="min-w-0 flex-1">
+            <span className="font-medium text-foreground">
+              {liveBanner.title}
+            </span>{" "}
+            {liveBanner.body}
+          </span>
+          {liveBanner.action === "analyze_now" && onAnalyzeNow ? (
+            <AnalyzeNowForMembers onAnalyzeNow={onAnalyzeNow} busy={rebuildBusy} />
+          ) : null}
         </div>
       ) : !breakdown?.analysis ? (
         <div
