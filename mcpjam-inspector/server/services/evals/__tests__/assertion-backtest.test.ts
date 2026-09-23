@@ -338,3 +338,72 @@ it("previews both halves of a hosted tool-call verdict, and removes neither", as
   });
   expect(stricter.map((item) => item.change)).not.toContain("removed");
 });
+
+it("does not compare a tool match graded before the split with the draft's", async () => {
+  const { buildHostedScoreContract } = await import("../score-rows");
+  const { definitionHash } = await import("@mcpjam/sdk/contract");
+  const expectedToolCalls = [{ toolName: "search", arguments: { q: "cats" } }];
+  const actualToolCalls = [{ toolName: "search", arguments: { q: "dogs" } }];
+  const matchOptions = {
+    toolCallOrder: "ignore",
+    maxExtraToolCalls: null,
+    argumentMatching: "partial",
+  };
+  // The right tool, the wrong argument.
+  const today = buildHostedScoreContract({
+    evaluation: {
+      passed: false,
+      expectedToolCalls,
+      missing: [],
+      unexpected: [],
+      argumentMismatches: [
+        {
+          toolName: "search",
+          expectedArgs: { q: "cats" },
+          actualArgs: { q: "dogs" },
+        },
+      ],
+    },
+    matchOptions,
+  });
+  // What a run graded before the split stored: one `toolCalls:match` row, at
+  // v2, which was the matcher's whole verdict and so FAILED on the argument.
+  const v3 = today.evaluationConfig.definitions.find(
+    (item) => item.scorerId === "toolCalls:match",
+  )!;
+  const v2 = { ...v3, scorerVersion: "2", implementationHash: "tool-match-v2" };
+  const v2Score = {
+    ...today.scores.find((item) => item.scorerId === "toolCalls:match")!,
+    definitionHash: definitionHash(v2),
+    passed: false,
+    value: 0,
+  };
+  const differences = backtestIteration(
+    {
+      ...row,
+      expectedToolCalls,
+      actualToolCalls,
+      isNegativeTest: false,
+      evaluationConfig: { definitions: [v2] },
+      results: [v2Score],
+    },
+    // The draft changes nothing about tool calls.
+    { assertions: { mode: "replace", list: [] }, matchOptions },
+  );
+  const match = differences.find(
+    (item) => item.evaluatorId === "toolCalls:match",
+  );
+  // v3 is selection only, so it passes where v2 failed. That is the evaluator
+  // changing, not the draft: not a flip.
+  expect(match).toMatchObject({
+    comparable: false,
+    reason: "Graded by an earlier version of this evaluator",
+    stored: { status: "scored", passed: false },
+    draft: { status: "scored", passed: true },
+  });
+  expect(match).not.toHaveProperty("flipped");
+  // The arguments half has no stored twin to compare with.
+  expect(
+    differences.find((item) => item.evaluatorId === "toolCalls:arguments"),
+  ).toMatchObject({ change: "added", comparable: false });
+});

@@ -295,7 +295,14 @@ function toolCallDifference(
     };
   }
   const draftResult = toEvaluatorResult(next.result);
-  const comparable = old?.status === "scored";
+  // A stored row graded by an earlier version of the evaluator answered a
+  // different question: `toolCalls:match` v2 is the matcher's whole verdict,
+  // arguments included, where v3 is selection only. Compared, every iteration
+  // that failed only on arguments would read as a fail → pass flip the draft
+  // did not cause, on every run graded before the split.
+  const earlierVersion =
+    !!old && !!prior && prior.scorerVersion !== next.definition.scorerVersion;
+  const comparable = old?.status === "scored" && !earlierVersion;
   return {
     iterationId: row.iterationId,
     caseId: row.caseId,
@@ -310,17 +317,26 @@ function toolCallDifference(
     ...(old ? { stored: toEvaluatorResult(old) } : {}),
     ...(comparable
       ? { flipped: toEvaluatorResult(old!).passed !== draftResult.passed }
-      : { reason: "Original matcher observation is unavailable" }),
+      : {
+          reason: earlierVersion
+            ? "Graded by an earlier version of this evaluator"
+            : "Original matcher observation is unavailable",
+        }),
   };
 }
 
 /**
  * A hosted run grades tool calls with TWO scorers since the split: which tools
  * (`toolCalls:match`) and how (`toolCalls:arguments`). Both are rebuilt here
- * through the runner's own projection (`buildHostedScoreContract`), so the
- * preview agrees with what a real run under the draft would store — and a
- * stored arguments definition is never reported as removed by a draft that
- * changes the match options it depends on.
+ * through the runner's projection (`buildHostedScoreContract`), so a stored
+ * arguments definition is never reported as removed by a draft that changes
+ * the match options it depends on.
+ *
+ * The projection is the runner's; its INPUT is not quite. The evidence page
+ * carries the frozen expectations and the actual calls flattened across turns,
+ * with no turn boundaries, so the extras cap (`maxExtraToolCalls`) applies to
+ * the whole run here where the runner applies it per turn. On a multi-turn
+ * case with a cap the two can disagree about selection.
  */
 function hostedToolCallDifferences(
   row: EvidenceRow,
