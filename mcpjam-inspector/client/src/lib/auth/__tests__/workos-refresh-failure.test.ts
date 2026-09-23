@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleWorkosRefreshFailure } from "../workos-refresh-failure";
+import {
+  handleWorkosRefreshFailure,
+  markWorkosSessionSeen,
+  resetWorkosSessionSeenForTests,
+} from "../workos-refresh-failure";
 import {
   markSignOutInProgress,
   resetSignOutLatchForTests,
@@ -9,12 +13,17 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const mockState = vi.hoisted(() => ({
   reportCaught: vi.fn(),
+  track: vi.fn(),
   captureAppSignInReturnPath: vi.fn(),
   permalinkSignInOptions: vi.fn(() => ({ state: { permalink: "nonce-1" } })),
 }));
 
 vi.mock("@/lib/error-reporting", () => ({
   reportCaught: mockState.reportCaught,
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: mockState.track,
 }));
 
 vi.mock("@/lib/app-signin-return-path", () => ({
@@ -29,6 +38,9 @@ describe("handleWorkosRefreshFailure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetSignOutLatchForTests();
+    resetWorkosSessionSeenForTests();
+    // Most cases model a tab that held a session; the guest case resets this.
+    markWorkosSessionSeen();
     useSessionRefreshStore.setState({
       status: "idle",
       kind: null,
@@ -56,18 +68,40 @@ describe("handleWorkosRefreshFailure", () => {
     expect(signIn).toHaveBeenCalledWith({ state: { permalink: "nonce-1" } });
   });
 
-  it("reports one warning and sends the user to sign in", () => {
+  it("tracks the expiry as an event, not an error, and sends the user to sign in", () => {
+    // An expired session is expected (WorkOS's max session length), so it
+    // must not land in error tracking.
     const signIn = vi.fn();
 
     handleWorkosRefreshFailure({ signIn });
 
     expect(signIn).toHaveBeenCalledTimes(1);
+    expect(mockState.track).toHaveBeenCalledTimes(1);
+    expect(mockState.track).toHaveBeenCalledWith(
+      "workos_session_expired",
+      expect.any(Object),
+    );
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("leaves a tab that never signed in as a guest and reports it", () => {
+    // authkit fires this for a signed-out visitor whose first refresh failed
+    // on the network. There is no session to sign back into, so redirecting
+    // would push a guest onto the login page.
+    resetWorkosSessionSeenForTests();
+    const signIn = vi.fn();
+
+    handleWorkosRefreshFailure({ signIn });
+
+    expect(signIn).not.toHaveBeenCalled();
+    expect(mockState.captureAppSignInReturnPath).not.toHaveBeenCalled();
+    expect(mockState.track).not.toHaveBeenCalled();
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
     expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
     expect(mockState.reportCaught).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
-        source: "workos_refresh_failure",
-        level: "warning",
+        source: "workos_refresh_failure_no_session",
       }),
     );
   });
@@ -95,6 +129,7 @@ describe("handleWorkosRefreshFailure", () => {
     expect(signIn).not.toHaveBeenCalled();
     expect(mockState.captureAppSignInReturnPath).not.toHaveBeenCalled();
     expect(mockState.reportCaught).not.toHaveBeenCalled();
+    expect(mockState.track).not.toHaveBeenCalled();
     expect(useSessionRefreshStore.getState().status).toBe("idle");
   });
 
