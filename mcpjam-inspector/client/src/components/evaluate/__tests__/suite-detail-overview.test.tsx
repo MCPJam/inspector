@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { fireEvent, within } from "@testing-library/react";
 import {
   SuiteRunReviewContent,
@@ -982,6 +983,57 @@ it("gives imported drafts their own surface with a way back to the suite", async
   expect(onGeneratingChange).toHaveBeenCalledWith(
     expect.objectContaining({ label: "Import test cases" }),
   );
+});
+
+it("survives a parent that keeps the breadcrumb in state and passes inline callbacks", () => {
+  // The real page stores what `onGeneratingChange` reports in its own state
+  // and passes `onClearImportJob` as an inline arrow. With that callback in
+  // the exit's dependencies, every parent render re-ran the effect, which set
+  // the parent's state again: React stopped it with "Maximum update depth
+  // exceeded" and the page showed "Could not load Testing" as soon as an
+  // import started. A `vi.fn()` parent never re-renders, so it cannot see it.
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "running",
+        authoringSource: "import",
+        drafts: [],
+      } as never,
+    },
+  });
+  const seen: Array<{ label: string } | null> = [];
+  function Page() {
+    const [breadcrumb, setBreadcrumb] = useState<{
+      exit: () => void;
+      label: string;
+    } | null>(null);
+    seen.push(breadcrumb);
+    return (
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[]}
+        runs={[]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations([])}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        onGeneratingChange={setBreadcrumb}
+        onClearImportJob={() => {}}
+        rerunningSuiteId={null}
+      />
+    );
+  }
+  renderWithProviders(<Page />);
+  expect(screen.getByTestId("suite-import-review")).toBeVisible();
+  expect(seen.at(-1)).toEqual(
+    expect.objectContaining({ label: "Import test cases" }),
+  );
+  // A handful of renders, not React's 50-update ceiling.
+  expect(seen.length).toBeLessThan(10);
 });
 
 it("lands on the drafts an import just staged", () => {

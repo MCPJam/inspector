@@ -32,7 +32,7 @@ import {
   markImportReviewSeen,
   reopenImportReview,
 } from "@/lib/mcpjam-agent/eval-workspace";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Code2,
   FileUp,
@@ -493,12 +493,22 @@ export function SuiteDetailOverview({
     );
     return () => window.clearTimeout(timer);
   }, [nextDraftId]);
+  // Read through a ref, never listed as a dependency. The parent passes an
+  // inline arrow, so its identity changes every render; as a dependency it
+  // re-created `exitImportReview`, which re-ran the effect below, which sets
+  // the parent's state, which re-rendered the parent: an update loop that
+  // React stops with "Maximum update depth exceeded", shown as "Could not
+  // load Testing" the moment an import started.
+  const onClearImportJobRef = useRef(onClearImportJob);
+  useEffect(() => {
+    onClearImportJobRef.current = onClearImportJob;
+  }, [onClearImportJob]);
   const exitImportReview = useCallback(() => {
     if (projectId) markImportReviewSeen({ projectId, suiteId: suite._id });
     // Both, or the reader does not leave: `reviewingImport` is true whenever
     // the param is set, whatever the store says about drafts being seen.
-    onClearImportJob?.();
-  }, [projectId, suite._id, onClearImportJob]);
+    onClearImportJobRef.current?.();
+  }, [projectId, suite._id]);
   useEffect(() => {
     if (!reviewingImport) return;
     onGeneratingChange?.({
