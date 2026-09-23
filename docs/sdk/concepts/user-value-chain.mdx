@@ -69,9 +69,9 @@ A **gating** `toolCalledWith` is promoted into the matcher's expectations and gr
 
 Coverage is the question the six links exist to answer, and it is easy to write a plausible-looking suite that leaves most of the chain untouched.
 
-A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection still reports runner evidence.
+A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection, Discovery, Tool call, and Response each show their built-in runner check, but a runner check is not an authored assertion: it reports what the stage analysis decided and never closes the gap a predicate would fill.
 
-To cover Tool call, add `argumentsMatchToolSchema`. Read Connection in the run’s chain. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner’s discovery measurement.
+To cover Tool call, add `argumentsMatchToolSchema`. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner check.
 
 Two habits keep coverage honest:
 
