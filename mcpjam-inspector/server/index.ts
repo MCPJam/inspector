@@ -210,7 +210,7 @@ import {
 } from "./services/bench-worker";
 import {
   SERVER_PORT,
-  CORS_ORIGINS,
+  CORS_OPTIONS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
@@ -496,13 +496,7 @@ if (enableHttpLogs) {
     }),
   );
 }
-app.use(
-  "*",
-  cors({
-    origin: CORS_ORIGINS,
-    credentials: true,
-  }),
-);
+app.use("*", cors(CORS_OPTIONS));
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
 // route (multipart blobs; it applies its own higher bodyLimit at the mount

@@ -1,10 +1,12 @@
+import { toast } from "sonner";
+import { SessionQuestionFlow } from "./SessionQuestionFlow";
 import { useCallback, useEffect, useMemo, type ReactNode } from "react";
 import {
   chipKey,
   isSameSelection,
   removeChipsByKeys,
   type InsightsSelection,
-  type ThemeRef,
+  type SelectionRef,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
@@ -15,11 +17,12 @@ import {
 } from "@/hooks/useInsightsFlowController";
 import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
+import { stageOrderStorageKey } from "@/components/shared/usage-insights/sankey-stage-order";
 import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
-import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -31,13 +34,9 @@ interface InsightsWorkbenchProps {
   /** Force-applied filter transform (e.g. User Testing's hide-synthetic). */
   augmentFilter?: (filter: UsageFilterState) => UsageFilterState;
   /** Selection restored from the `sel` URL parameter. */
-  urlSelection?: ReadonlyArray<
-    Pick<ThemeRef, "dimension" | "clusterId">
-  > | null;
+  urlSelection?: ReadonlyArray<SelectionRef> | null;
   /** Persist flow selection changes in the owning route. */
-  onSelectionChange?: (
-    themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
-  ) => void;
+  onSelectionChange?: (themes: ReadonlyArray<SelectionRef> | null) => void;
   initialView?: InsightsView;
   onViewChange?: (view: InsightsView) => void;
   /** Open a session in the Sessions browser (the parent owns the tab flip). */
@@ -75,11 +74,10 @@ interface InsightsWorkbenchProps {
    * the pane and scroll internally. User Testing mounts the workbench inside an
    * `absolute inset-0` box and relies on this.
    *
-   * `"scroll"` lets the body grow to its natural height and the OWNING
-   * container scroll — the Sankey renders at full content height (no internal
-   * scroll), so on a swarm with many themes the whole diagram is reachable by
-   * scrolling the page instead of dragging a cramped inner window. The owner
-   * must make its container scrollable (`overflow-y-auto`).
+   * `"scroll"` lets findings use a fixed rail (`max-h-[26rem]`) while the
+   * Sankey fills the leftover parent and scrolls its own columns. The page
+   * must not grow with the SVG. The owner still uses `overflow-y-auto` so
+   * a tall findings rail can scroll past.
    */
   bodyLayout?: "fill" | "scroll";
   /**
@@ -151,10 +149,11 @@ function InsightsFindings({
  * shell against the same hooks. Where the two disagreed, the reconciliations
  * are deliberate:
  *
- *  - The drill-down is ALWAYS MOUNTED and hidden when closed (the User Testing
- *    contract, pinned by its flow-selection suite): closing toggles the
- *    query's `enabled` rather than unmounting the component, so reopening does
- *    not refetch from scratch. Swarm adopts it.
+ *  - The drill-down is ALWAYS MOUNTED (the User Testing contract, pinned by
+ *    its flow-selection suite): closing toggles the query's `enabled` rather
+ *    than unmounting the component, so reopening does not refetch from
+ *    scratch. It is a right-side sheet, not an in-flow panel, so the Sankey
+ *    keeps its width.
  *  - The drill-down receives `flow.effectiveFilter`, not `flow.filter`, so a
  *    force-applied chip (hide-synthetic) narrows the drill-down too. Swarm's
  *    version passed the raw filter, which on a surface with an augment would
@@ -210,20 +209,35 @@ export function InsightsWorkbench({
   );
 
   const urlSelectionKey = urlSelection
-    ?.map((theme) => `${theme.dimension}:${theme.clusterId}`)
+    ?.map((ref) => JSON.stringify(ref))
     .join("\0");
   const resolvedUrlSelection = useMemo<InsightsSelection | null>(() => {
     if (!urlSelection || urlSelection.length === 0) return null;
     const nodes = breakdown?.sankey?.nodes ?? [];
+    const questionLabels = breakdown?.sankey?.stages ?? [];
     return {
-      themes: urlSelection.map((theme) => {
-        const node = nodes.find(
-          (candidate) =>
-            candidate.stage === theme.dimension &&
-            candidate.key === theme.clusterId,
-        );
-        return { ...theme, ...(node ? { label: node.label } : {}) };
-      }),
+      // A shared link carries ids, not names. The chip's text comes from the
+      // catalog this reader just loaded, so a link cannot put words of its own
+      // into a chip that claims to be a question, and a question renamed since
+      // the link was saved reads under its current name.
+      questions: urlSelection
+        .filter((ref) => "questionId" in ref)
+        .map(({ label: _fromUrl, ...ref }) => {
+          const stage = questionLabels.find(
+            (candidate) => candidate.questionId === ref.questionId,
+          );
+          return { ...ref, ...(stage ? { label: stage.label } : {}) };
+        }),
+      themes: urlSelection
+        .filter((ref) => "dimension" in ref)
+        .map((theme) => {
+          const node = nodes.find(
+            (candidate) =>
+              candidate.stage === theme.dimension &&
+              candidate.key === theme.clusterId,
+          );
+          return { ...theme, ...(node ? { label: node.label } : {}) };
+        }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- identity via key
   }, [urlSelectionKey, breakdown?.sankey]);
@@ -252,6 +266,42 @@ export function InsightsWorkbench({
     flow.commitSelection,
     flow.setFlowSelection,
     flow.flowSelectionRef,
+  ]);
+
+  // Metadata is authoritative only after the subscription resolves. Never
+  // reinterpret a selection saved against an earlier question wording.
+  useEffect(() => {
+    const questions = breakdown?.questionBreakdown;
+    if (!questions) return;
+    const obsolete = flow.filter.chips.filter(
+      (chip) =>
+        chip.kind === "question" &&
+        !questions.some(
+          (q) => q.questionId === chip.questionId && q.version === chip.version,
+        ),
+    );
+    if (!obsolete.length) return;
+    for (const chip of obsolete) flow.handleClearChip(chipKey(chip));
+    if (
+      flow.flowSelection?.questions?.some(
+        (q) =>
+          !questions.some(
+            (current) =>
+              current.questionId === q.questionId &&
+              current.version === q.version,
+          ),
+      )
+    )
+      flow.commitSelection(null);
+    toast.info(
+      "A question changed or was removed. Its old selection was cleared.",
+    );
+  }, [
+    breakdown?.questionBreakdown,
+    flow.filter.chips,
+    flow.handleClearChip,
+    flow.flowSelection,
+    flow.commitSelection,
   ]);
 
   // Topic-map dot click → open that session. Clear the filter first so an
@@ -303,30 +353,16 @@ export function InsightsWorkbench({
   // body wired to a cohort that does not exist.
   if (!scope) return null;
 
+  const orderKey = stageOrderStorageKey(scope);
+
   const journeyRunIds =
     scope.kind === "swarm" && scope.journeyRunIds?.length
       ? scope.journeyRunIds
       : undefined;
 
-  // Freshness + Session flow | Clusters sit in the chart header (next to the
-  // Sankey / topic-map toolbar), not in Findings.
+  // Session flow | Clusters sit in the chart header, not in Findings.
   const viewChrome = (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {/* The chip reads `getWindowSignals` for its staleness watermark, and
-          that query ships with the backend PR — `useQuery` against an
-          undeployed function THROWS, which without this boundary would take
-          the whole Insights tab down rather than one chip. Keyed on the
-          cohort so a boundary tripped against the undeployed backend re-arms
-          on the next scenario the user opens. */}
-      <ErrorBoundary key={cohortKey} fallback={null}>
-        <InsightsFreshnessChip
-          scope={scope}
-          analysis={breakdown?.analysis}
-          onRebuild={handleRebuild}
-          rebuildBusy={rebuildBusy}
-          testId={`${testIdPrefix}-freshness-chip`}
-        />
-      </ErrorBoundary>
       <InsightsViewToggle
         view={flow.view}
         onChange={handleViewChange}
@@ -343,6 +379,8 @@ export function InsightsWorkbench({
           const label =
             chip.kind === "cluster"
               ? chip.label ?? "Cluster"
+              : chip.kind === "question"
+              ? chip.label ?? `Question: ${chip.value ? "Yes" : "No"}`
               : chip.label ?? `${chip.key}: ${chip.value}`;
           return (
             <button
@@ -360,25 +398,57 @@ export function InsightsWorkbench({
     ) : null;
 
   const sankeyBlock = (
-    <div
-      className={cn(
-        "flex flex-col",
-        fillBody && "h-full min-h-0 overflow-hidden",
-      )}
-    >
-      <div className={fillBody ? "min-h-0 flex-1 overflow-hidden" : undefined}>
-        <SessionFlowSankey
-          goalGroupsByJourney={scope.kind === "swarm"}
-          breakdown={breakdown}
-          selection={flow.flowSelection}
-          onSelectNode={flow.handleSelectFlow}
-          onSelectLink={flow.handleSelectFlow}
-          onRebuild={handleRebuild}
-          rebuildBusy={rebuildBusy}
-          fillHeight={fillBody}
-          scrollLayout={!fillBody}
-          headerActions={viewChrome}
-        />
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ErrorBoundary
+          key={cohortKey}
+          fallback={
+            <SessionFlowSankey
+              goalGroupsByJourney={scope.kind === "swarm"}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+              stageOrderKey={orderKey}
+            />
+          }
+        >
+          {scope.kind === "benchmark" ? (
+            <SessionFlowSankey
+              goalGroupsByJourney={false}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+              stageOrderKey={orderKey}
+            />
+          ) : (
+            <SessionQuestionFlow
+              scope={scope}
+              testId={`${testIdPrefix}-questions`}
+              goalGroupsByJourney={scope.kind === "swarm"}
+              breakdown={breakdown}
+              selection={flow.flowSelection}
+              onSelectNode={flow.handleSelectFlow}
+              onSelectLink={flow.handleSelectFlow}
+              onRebuild={handleRebuild}
+              rebuildBusy={rebuildBusy}
+              fillHeight={fillBody}
+              scrollLayout={!fillBody}
+              headerActions={viewChrome}
+            />
+          )}
+        </ErrorBoundary>
       </div>
       {chipRow}
     </div>
@@ -421,28 +491,21 @@ export function InsightsWorkbench({
   const hasFindings = Boolean(recommendationsSlot);
 
   /**
-   * Whether the body takes the pane it is given instead of growing past it.
-   *
-   * Always true in the fill layout. In the scroll layout it is true for the
-   * CLUSTERS VIEW ONLY: that view has nothing of its own to scroll — the map
-   * pans and the cluster rail scrolls itself — so a body taller than the
-   * window would only push the map's own zoom controls below the fold and
-   * leave the viewer scrolling a page to reach a canvas. The scroll layout
-   * exists for the Sankey, whose many themes really do need the page.
+   * The body takes the pane it is given instead of growing past it. Clusters
+   * need that so the map's zoom controls stay on screen. Session flow needs
+   * it so a tall SVG cannot become a page-scroll through mid-ribbon — the
+   * chart fills this leftover column and scrolls under its own titles.
    */
-  const pinBodyToPane = fillBody || flow.view === "clusters";
+  const pinBodyToPane = true;
 
   return (
     <div
       className={cn(
         "flex flex-col gap-2",
         // `h-full` fills the fill layout's `absolute inset-0` box; `flex-1`
-        // fills the scroll layout's column, whose `min-h-full` makes the
-        // pane the scroll viewport. Without `min-h-0` there — the Sankey's
-        // case — `flex-1` only ever adds height, so that diagram still grows
-        // past the pane and the owning container scrolls it.
-        fillBody ? "h-full" : "flex-1",
-        pinBodyToPane && "min-h-0 overflow-hidden",
+        // fills the scroll layout's leftover column. `min-h-0` lets the
+        // Sankey shrink to that pane and scroll inside it.
+        fillBody ? "h-full min-h-0 overflow-hidden" : "min-h-0 flex-1 overflow-hidden",
         className,
       )}
       data-testid={`${testIdPrefix}-panel`}
@@ -476,46 +539,28 @@ export function InsightsWorkbench({
         </div>
         {flow.view === "flow" ? (
           <div
-            className={cn(
-              selectionOpen
-                ? "z-10 bg-background sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
-                : "hidden",
-              // Fill layout: an overlay on mobile, an in-flow static panel
-              // beside the chart on sm+.
-              selectionOpen && fillBody && "absolute inset-0 sm:static",
-              // Scroll layout: the chart row is as tall as the whole diagram, so
-              // a stretched drill-down would run that full height. On mobile,
-              // anchor the panel to the viewport (fixed) so selecting a low node
-              // never opens it off-screen; on sm+ it is a bounded, sticky side
-              // panel that scrolls its own session list while the diagram
-              // scrolls past beside it. `sm:static` is deliberately absent so
-              // `sm:sticky` wins by intent, not by Tailwind emit order.
-              selectionOpen &&
-                !fillBody &&
-                "fixed inset-0 z-20 sm:sticky sm:inset-auto sm:top-4 sm:self-start sm:h-[min(70vh,40rem)]",
-            )}
             data-testid={`${testIdPrefix}-drill-panel`}
             aria-hidden={!selectionOpen}
           >
-            {/* Always mounted (hidden when closed) so close toggles
-                `enabled: false` instead of unmounting — the flow-selection
-                tests pin that contract. */}
+            {/* Always mounted so close toggles `enabled: false` instead of
+                unmounting — the flow-selection tests pin that contract. */}
             <GoalOutcomeDrilldown
               scope={scope}
               selection={flow.flowSelection}
               filter={flow.effectiveFilter}
-              variant="panel"
+              variant="sheet"
               onClose={flow.handleCloseFlow}
               onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
               footer={
                 onOpenSessionsTab ? (
-                  <button
+                  <Button
                     type="button"
-                    className="self-start text-xs font-medium text-primary hover:underline"
+                    variant="outline"
+                    size="sm"
                     onClick={onOpenSessionsTab}
                   >
                     Open in Sessions tab →
-                  </button>
+                  </Button>
                 ) : null
               }
             />

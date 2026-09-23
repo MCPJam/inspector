@@ -1791,11 +1791,12 @@ export function ChatTabV2({
     }
     track("credit_topup_cta_clicked", {
       location: "chat_tab",
+      organization_id: organizationId,
       source: "chat_banner",
     });
     setPendingResendMessage(text);
     setIsTopupDialogOpen(true);
-  }, []);
+  }, [organizationId]);
 
   const handleTopupDialogOpenChange = useCallback((open: boolean) => {
     setIsTopupDialogOpen(open);

@@ -7,9 +7,9 @@
  * safe to import from the Vite-bundled widget.
  */
 import type {
-  GetScenarioResult,
+  GetStudyResult,
   GetEvalRunResult,
-  ListScenariosResult,
+  ListStudiesResult,
   ListEvalRunIterationsResult,
   ListEvalSuiteRunsResult,
   ListEvalSuitesResult,
@@ -22,8 +22,11 @@ export type PlatformWidgetPayloadMap = {
   eval_suite_runs: ListEvalSuiteRunsResult;
   eval_run: GetEvalRunResult;
   eval_run_iterations: ListEvalRunIterationsResult;
-  scenarios: ListScenariosResult;
-  scenario: GetScenarioResult;
+  // The VIEW KEYS stay as they are. They address a bundled HTML resource
+  // (`ui://mcpjam/scenarios.html`), which is worker-internal and never on the
+  // public API — only the payloads they carry were renamed.
+  scenarios: ListStudiesResult;
+  scenario: GetStudyResult;
 };
 
 export type PlatformWidgetView = keyof PlatformWidgetPayloadMap;
@@ -91,8 +94,10 @@ const WIDGET_PAYLOAD_GUARDS: Record<
     isRecord(payload.project) && Array.isArray(payload.items),
   scenarios: (payload) =>
     isRecord(payload.project) && Array.isArray(payload.items),
-  scenario: (payload) =>
-    isRecord(payload.project) && isRecord(payload.scenario),
+  // `study`, not `scenario`: the VIEW KEY stays (it addresses a bundled HTML
+  // resource) but the payload it carries is now `GetStudyResult`, whose
+  // members are `project` and `study`.
+  scenario: (payload) => isRecord(payload.project) && isRecord(payload.study),
 };
 
 /**

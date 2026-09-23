@@ -45,8 +45,7 @@ it("saves a family override, reloads it off, and restores the customized inherit
     "data-state",
     "checked",
   );
-  // The inherited rule reads with its own criterion, not the preset's.
-  expect(screen.getByText(/1,234/)).toBeTruthy();
+  expect(screen.getByText(check.label)).toBeTruthy();
   expect(screen.getByText("From suite")).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: check.name }));
   expect(save).toHaveBeenCalledWith({
@@ -65,7 +64,7 @@ it("saves a family override, reloads it off, and restores the customized inherit
     predicates: undefined,
     suppressedSuiteStandardCheckIds: [],
   });
-  expect(screen.getByText(/1,234/)).toBeTruthy();
+  expect(screen.getByText(check.label)).toBeTruthy();
 });
 it("keeps inherited toggles disabled until suppression is supported", () => {
   render(

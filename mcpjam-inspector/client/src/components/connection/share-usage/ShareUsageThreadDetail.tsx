@@ -302,6 +302,11 @@ interface ShareUsageThreadDetailProps {
    * there to label.
    */
   fadeScrollEdges?: boolean;
+  /**
+   * Drop the identity / share header when a parent already supplies that
+   * chrome — the Evaluate inspect sheet is the one caller today.
+   */
+  hideHeader?: boolean;
 }
 
 /**
@@ -333,6 +338,7 @@ export function ShareUsageThreadDetail({
   sessionLink,
   promote,
   fadeScrollEdges = false,
+  hideHeader = false,
 }: ShareUsageThreadDetailProps) {
   const host = useHostSnapshotForSession(threadId);
   const { thread } = useSharedChatThread({
@@ -718,7 +724,8 @@ export function ShareUsageThreadDetail({
   const reasoningDisplayMode = isScenarioThread ? "collapsible" : "collapsed";
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
+      {hideHeader ? null : (
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-5">
         <div className="flex min-w-0 items-center gap-3">
           <p className="truncate text-sm font-semibold text-card-foreground">
@@ -820,6 +827,7 @@ export function ShareUsageThreadDetail({
           </Button>
         </div>
       </div>
+      )}
 
       {/* Swarm-only: render before the first score exists so deployments with
           automatic judging disabled still expose the on-demand entry point. */}
