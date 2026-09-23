@@ -115,7 +115,7 @@ describe("SuitePassOrFailSection", () => {
     const advisory = renderSection();
     fireEvent.click(
       within(advisory.container).getByRole("button", {
-        name: "Goal completion judge",
+        name: "Edit evaluators",
       }),
     );
     expect(
@@ -135,7 +135,7 @@ describe("SuitePassOrFailSection", () => {
     ) as HTMLElement;
     // The row's control reads Required; it sits on the row itself.
     fireEvent.click(
-      within(group).getByRole("button", { name: "Goal completion judge" }),
+      within(gating.container).getByRole("button", { name: "Edit evaluators" }),
     );
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
