@@ -36,7 +36,7 @@ export function ScenarioUnreachableServersBanner({
                 {serverNames.length > 1 ? `${serverNames.join(", ")}. ` : null}
                 Anything that needs{" "}
                 {serverNames.length > 1 ? "these tools" : "this tool"} won&apos;t
-                work in this session. You can still chat — let whoever shared
+                work in this session. You can still chat. Let whoever shared
                 this link know.
               </p>
             </div>
