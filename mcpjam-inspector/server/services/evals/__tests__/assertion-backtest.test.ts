@@ -348,7 +348,7 @@ it("does not compare a tool match graded before the split with the draft's", asy
     toolCallOrder: "ignore",
     maxExtraToolCalls: null,
     argumentMatching: "partial",
-  };
+  } as const;
   // The right tool, the wrong argument.
   const today = buildHostedScoreContract({
     evaluation: {
@@ -406,4 +406,82 @@ it("does not compare a tool match graded before the split with the draft's", asy
   expect(
     differences.find((item) => item.evaluatorId === "toolCalls:arguments"),
   ).toMatchObject({ change: "added", comparable: false });
+});
+
+it("declares no hosted tool scorer for a case the runner grades with none", () => {
+  // A hosted case: its stored config holds a platform predicate.
+  const hosted = resolveScoreDefinition(
+    hostedPredicateScoreDefinition({ predicate: oldRule }),
+  );
+  const stored = scoreResultFromPredicateResult(
+    hosted,
+    evaluatePredicates({ toolCalls: [], finalAssistantMessage: "hello" }, [
+      oldRule,
+    ])[0],
+  );
+  const source = {
+    ...row,
+    evaluationConfig: { definitions: [hosted] },
+    results: [stored],
+  };
+  const draftWithMatch = {
+    assertions: { mode: "replace" as const, list: [oldRule] },
+    matchOptions: { argumentMatching: "exact" as const },
+  };
+  const toolIds = (differences: ReturnType<typeof backtestIteration>) =>
+    differences
+      .map((item) => item.evaluatorId)
+      .filter((id) => id.startsWith("toolCalls:"));
+  // The first pass declares `toolCalls:*` only when the matcher reports
+  // expected calls. It reports none for a case that expects none…
+  expect(
+    toolIds(
+      backtestIteration(
+        { ...source, expectedToolCalls: [], isNegativeTest: false },
+        draftWithMatch,
+      ),
+    ),
+  ).toEqual([]);
+  // …and none for a negative test, whatever it lists.
+  expect(
+    toolIds(
+      backtestIteration(
+        {
+          ...source,
+          expectedToolCalls: [{ toolName: "search", arguments: {} }],
+          isNegativeTest: true,
+        },
+        draftWithMatch,
+      ),
+    ),
+  ).toEqual([]);
+  // Nor are they ungradable there when the transcript is missing: there is
+  // nothing for them to grade.
+  expect(
+    toolIds(
+      backtestIteration(
+        {
+          ...source,
+          expectedToolCalls: [],
+          isNegativeTest: false,
+          completeness: { transcript: "missing" },
+        },
+        draftWithMatch,
+      ),
+    ),
+  ).toEqual([]);
+  // A positive case that expects a call still gets both.
+  expect(
+    toolIds(
+      backtestIteration(
+        {
+          ...source,
+          expectedToolCalls: [{ toolName: "search", arguments: { q: "x" } }],
+          actualToolCalls: [{ toolName: "search", arguments: { q: "x" } }],
+          isNegativeTest: false,
+        },
+        draftWithMatch,
+      ),
+    ).sort(),
+  ).toEqual(["toolCalls:arguments", "toolCalls:match"]);
 });

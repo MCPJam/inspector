@@ -264,6 +264,22 @@ function frozenToolEvidenceMissing(
   );
 }
 
+/**
+ * Whether the runner's first pass declares the hosted tool scorers for this
+ * frozen case. It does only when the matcher reports expected calls, which is
+ * a positive case expecting at least one: `evaluateMultiTurnResults` reports
+ * none for a negative test. `undefined` when the frozen case does not say.
+ */
+function hostedToolScorersDeclared(row: EvidenceRow): boolean | undefined {
+  if (
+    !Array.isArray(row.expectedToolCalls) ||
+    typeof row.isNegativeTest !== "boolean"
+  ) {
+    return undefined;
+  }
+  return !row.isNegativeTest && row.expectedToolCalls.length > 0;
+}
+
 /** One matcher-backed evaluator's difference, stored result against draft. */
 function toolCallDifference(
   row: EvidenceRow,
@@ -343,6 +359,9 @@ function hostedToolCallDifferences(
   draftMatchOptions: NonNullable<EvalBacktestDraft["matchOptions"]>,
   context: ToolCallBacktestContext,
 ): EvalBacktestDifference[] {
+  // A case the runner grades with neither scorer gets neither here. A stored
+  // one, should there be any, is then reported as outside the draft.
+  if (hostedToolScorersDeclared(row) === false) return [];
   const matchOptions = resolveMatchOptions(draftMatchOptions);
   const unavailable = frozenToolEvidenceMissing(row, context.missing);
   if (unavailable) {
@@ -363,8 +382,8 @@ function hostedToolCallDifferences(
     isNegativeTest: row.isNegativeTest,
   });
   const contract = buildHostedScoreContract({
-    // Declared from the frozen case, as the runner declares it.
-    toolMatchAuthored: true,
+    // Declared from the frozen case's expected calls, as the runner declares
+    // it; `hostedToolScorersDeclared` has already required some.
     evaluation: {
       passed: result.passed,
       expectedToolCalls: expected,
