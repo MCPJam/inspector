@@ -85,7 +85,7 @@ export type GraderRow = {
   /** Which match-options field a `match` row came from. */
   matchField?: "toolCallOrder" | "maxExtraToolCalls" | "argumentMatching";
   /** Which judge slot a `judge` row came from. */
-  judgeSlot?: "goalCompletion" | "groundedness";
+  judgeSlot?: "goalCompletion" | "groundedness" | "rubricChecks";
 };
 
 export type SuiteGradingModel = {
@@ -194,6 +194,11 @@ export function groupGradersByStage(input: {
   matchOptions?: EvalMatchOptions;
   predicates: Predicate[];
   judgeConfig?: EvalJudgeConfig;
+  /**
+   * True when this deployment grades rubric checks. Off by default, so a
+   * backend that predates the slot never shows a row it would not honor.
+   */
+  rubricChecks?: boolean;
 }): SuiteGradingModel {
   const byStage = emptyByStage();
 
@@ -249,6 +254,16 @@ export function groupGradersByStage(input: {
     severity: input.judgeConfig?.groundedness?.severity,
     judgeSlot: "groundedness",
   });
+  if (input.rubricChecks) {
+    // Always advisory: the slot has no other role to author.
+    byStage[GRADER_STAGE["judge:rubricChecks"]].push({
+      id: "judge:rubricChecks",
+      kind: "judge",
+      label: "Rubric checks",
+      role: "advisory",
+      judgeSlot: "rubricChecks",
+    });
+  }
 
   return { byStage };
 }
