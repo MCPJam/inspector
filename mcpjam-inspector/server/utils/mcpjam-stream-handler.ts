@@ -107,6 +107,13 @@ import {
 import { isWebmcpPageToolName } from "@/shared/declared-tools";
 import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
 import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  presentHistoryForModel,
+  toolCallLookupFor,
+  type HistoryPresentation,
+} from "./history-provenance.js";
+import {
   mintToolApprovalId,
   requiresServerVerifiedApproval,
   toolApprovalBindingFor,
@@ -1055,6 +1062,13 @@ export interface MCPJamHandlerOptions {
    */
   approvalBinding?: ToolApprovalBinding;
   /**
+   * Present the history to the model as `history-provenance.ts` describes
+   * (MJ-009): tool results fenced, content the server could not verify
+   * labelled. Applied to what each step SENDS; the history itself, and so
+   * the persisted transcript, is unchanged. Browser-facing chat sets it.
+   */
+  historyPresentation?: HistoryPresentation;
+  /**
    * Hosted MRTR (§12.5, PR5) resume descriptor. Present only on a fresh request
    * that resumes a suspended tool call: the engine drives one retry leg BEFORE
    * the first model call, splices the driven result into the identified
@@ -1273,6 +1287,8 @@ interface StepContext {
   approvalDecisions: ApprovalDecisionCache;
   /** What this turn's approval ids are bound to (see `tool-approval-token`). */
   approvalBinding: ToolApprovalBinding;
+  /** See `MCPJamHandlerOptions.historyPresentation`. */
+  historyPresentation?: HistoryPresentation;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
@@ -3084,6 +3100,7 @@ async function processOneStep(
     selectedServers,
     approvalDecisions,
     approvalBinding,
+    historyPresentation,
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
@@ -3177,13 +3194,16 @@ async function processOneStep(
   // Scrub messages before sending to backend. Preserve reasoning on
   // assistant messages added during the current turn so thinking models can
   // see their own scratchpad across tool steps.
-  const scrubbedMessages = scrubMessagesForBackend(
+  const backendMessages = scrubMessagesForBackend(
     messageHistory,
     tools,
     mcpClientManager,
     selectedServers,
     traceTurn.promptMessageStartIndex,
   );
+  const scrubbedMessages = historyPresentation
+    ? presentHistoryForModel(backendMessages, tools, historyPresentation)
+    : backendMessages;
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
@@ -4355,6 +4375,16 @@ export async function runChatEngineLoop(
   const approvalBinding =
     options.approvalBinding ??
     toolApprovalBindingFor({ authHeader, projectId, chatSessionId });
+  // Sign what this turn streams as the server's own (MJ-009): assistant text
+  // and reasoning at their end chunks, tool results as they are emitted. A
+  // no-op where provenance is off (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   // Per TURN, not per step: the emit gate runs on one step and the unresolved
   // / auto-deny re-scans re-walk the whole history on later ones, and all
   // three must reach the same answer about the same call — once.
@@ -4425,7 +4455,7 @@ export async function runChatEngineLoop(
         lastWriteAt = Date.now();
         if (streamClosed) return;
         try {
-          writer.write(chunk);
+          writer.write(signChunk ? signChunk(chunk) : chunk);
         } catch (writeError) {
           // The SDK closes the underlying controller on client
           // disconnect; subsequent writes throw. Treat this as a
@@ -4682,6 +4712,9 @@ export async function runChatEngineLoop(
           selectedServers,
           approvalDecisions,
           approvalBinding,
+          ...(options.historyPresentation
+            ? { historyPresentation: options.historyPresentation }
+            : {}),
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
