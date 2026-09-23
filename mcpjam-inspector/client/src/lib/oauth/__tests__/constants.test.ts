@@ -34,6 +34,22 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
     ).toBe("https://staging.mcpjam.com");
   });
 
+  it("keeps the current origin on Inspector PR previews", () => {
+    expect(
+      resolveBrowserOAuthRedirectOrigin(
+        new URL("https://mcp-inspector-pr-5479.up.railway.app/home")
+      )
+    ).toBe("https://mcp-inspector-pr-5479.up.railway.app");
+  });
+
+  it("does not trust unrelated Railway tenants as OAuth callbacks", () => {
+    expect(
+      resolveBrowserOAuthRedirectOrigin(
+        new URL("https://unrelated-app.up.railway.app/home")
+      )
+    ).toBe(MCPJAM_HOSTED_APP_ORIGIN);
+  });
+
   it("falls back to the hosted app origin from the marketing site", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
