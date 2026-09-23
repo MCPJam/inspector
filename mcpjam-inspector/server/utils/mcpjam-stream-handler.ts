@@ -2899,6 +2899,18 @@ async function handlePendingApprovals(
   return didHandle;
 }
 
+/** Ids of the tool calls that already have a result in a history. */
+function collectToolResultIds(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "tool") continue;
+    for (const part of (msg as ToolModelMessage).content) {
+      if (part.type === "tool-result") ids.add(part.toolCallId);
+    }
+  }
+  return ids;
+}
+
 /**
  * Tool-call ids present in a history, whatever their state. Taken from the
  * turn's INITIAL messages, it names every call this request inherited rather
@@ -3682,6 +3694,7 @@ async function processOneStep(
           stepCallsNeedingApproval.add(part.toolCallId);
         }
       }
+      const resultIdsBeforeDrain = collectToolResultIds(messageHistory);
       let drainedMessages: ModelMessage[] = [];
       try {
         drainedMessages = await executeToolCallsFromMessages(messageHistory, {
@@ -3705,6 +3718,21 @@ async function processOneStep(
         ) {
           throw error;
         }
+        // The executor spliced the siblings that COMPLETED into the history
+        // before it rethrew — their side effects happened. They are emitted
+        // below like any other drained result: a result the client never
+        // receives is missing from the history it sends back, where the
+        // resume would find the call unresolved.
+        drainedMessages = messageHistory.filter(
+          (msg) =>
+            msg?.role === "tool" &&
+            (msg as ToolModelMessage).content.some(
+              (part) =>
+                part.type === "tool-result" &&
+                stepCallIds.has(part.toolCallId) &&
+                !resultIdsBeforeDrain.has(part.toolCallId),
+            ),
+        );
       }
       if (drainedMessages.length > 0) {
         await emitToolResults(
