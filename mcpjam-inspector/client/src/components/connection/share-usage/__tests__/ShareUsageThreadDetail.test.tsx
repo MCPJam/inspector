@@ -30,6 +30,7 @@ const {
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
     runAttemptStatus: undefined as unknown,
+    messagesBlobUrl: "https://storage.example.com/thread.json",
     analysisPhase: undefined as string | undefined,
   },
   mockBrowserArtifactsState: {
@@ -86,7 +87,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       goalScore: mockThreadState.goalScore,
       runAttemptStatus: mockThreadState.runAttemptStatus,
       analysisPhase: mockThreadState.analysisPhase,
-      messagesBlobUrl: "https://storage.example.com/thread.json",
+      messagesBlobUrl: mockThreadState.messagesBlobUrl,
       modelId: "openai/gpt-oss-120b",
       recordedContext: {
         toolSnapshots: [
@@ -275,6 +276,92 @@ describe("ShareUsageThreadDetail", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+  });
+
+  it("fetches the transcript once per transcript, not once per link to it", async () => {
+    // Artifact links expire and are re-minted with a new expiry for the same
+    // object. A renewed link is not new content: refetching would swap the
+    // viewer (and its live widgets) for the loading state for nothing.
+    const signedLink = (storageId: string, expiresAt: number) => {
+      const body = btoa(
+        JSON.stringify({ v: 1, s: storageId, k: "json", e: expiresAt }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+    };
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    try {
+      mockThreadState.messagesBlobUrl = signedLink(
+        "kg-transcript",
+        1_800_000_000,
+      );
+      const { rerender } = render(
+        <ShareUsageThreadDetail threadId="thread-1" />,
+      );
+      await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      mockThreadState.messagesBlobUrl = signedLink(
+        "kg-transcript",
+        1_800_003_600,
+      );
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      mockThreadState.messagesBlobUrl = signedLink("kg-next", 1_800_003_600);
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    } finally {
+      mockThreadState.messagesBlobUrl =
+        "https://storage.example.com/thread.json";
+    }
+  });
+
+  it("retries a failed transcript load when a renewed link arrives", async () => {
+    // The flip side of fetching once per transcript: a load that FAILED (an
+    // expired link nothing renewed in time, a transient 5xx) must be retried
+    // by the next link to the same transcript, not stay failed until reload.
+    const signedLink = (expiresAt: number) => {
+      const body = btoa(
+        JSON.stringify({ v: 1, s: "kg-retry", k: "json", e: expiresAt }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+    };
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    } as Response);
+    try {
+      mockThreadState.messagesBlobUrl = signedLink(1_800_000_000);
+      const { rerender } = render(
+        <ShareUsageThreadDetail threadId="thread-1" />,
+      );
+      expect(
+        await screen.findByText("Failed to fetch messages: 503"),
+      ).toBeInTheDocument();
+
+      mockThreadState.messagesBlobUrl = signedLink(1_800_003_600);
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(
+        screen.queryByText("Failed to fetch messages: 503"),
+      ).not.toBeInTheDocument();
+    } finally {
+      mockThreadState.messagesBlobUrl =
+        "https://storage.example.com/thread.json";
+      consoleError.mockRestore();
+    }
   });
 
   it("keeps the configured transcript after a ratings failure and retries on session change", async () => {
