@@ -4746,6 +4746,8 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.getByRole("button", { name: "Open Playground" }),
     ).toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
@@ -4803,6 +4805,8 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       await screen.findByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Failed to connect to MCP server",
     );
