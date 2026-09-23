@@ -5,8 +5,17 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionFlowSankey } from "../SessionFlowSankey";
+
+// Analyze now is shown to members only; the check is a Convex query.
+const member = vi.hoisted(() => ({ value: true as boolean | undefined }));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => member.value,
+}));
+beforeEach(() => {
+  member.value = true;
+});
 import type {
   InsightsAnalysisSummary,
   InsightsSankey,
@@ -411,7 +420,7 @@ describe("SessionFlowSankey", () => {
     renderSankey({
       breakdown: breakdown({ analysis: analysis({ pending: 4 }) }),
     });
-    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(screen.getByText(/Analyzing 4 sessions/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Analyze sessions/ }),
     ).not.toBeInTheDocument();
@@ -436,7 +445,7 @@ describe("SessionFlowSankey", () => {
       }),
     });
 
-    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(screen.getByText(/Analyzing 4 sessions/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Rebuild clusters/ }),
     ).not.toBeInTheDocument();
@@ -444,21 +453,169 @@ describe("SessionFlowSankey", () => {
 
   it("offers no voluntary rebuild on an empty flow a completed analysis produced", () => {
     // Voluntary re-analysis is gated off (#5277): analysis runs on its own as
-    // sessions settle, and the one place to ask for it again is the freshness
-    // chip's popover. The empty state must not grow a second door.
+    // sessions settle. Analyze now appears only where its reason can help,
+    // and "analyzed, themes still coming" is not one of those.
+    const onAnalyzeNow = vi.fn();
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
         analysis: analysis(),
       }),
-      analysisIsAutomatic: true,
+      onAnalyzeNow,
     });
 
-    expect(screen.getByText("No session flow yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Grouping sessions into themes"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze now/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /rebuild clusters/i }),
     ).not.toBeInTheDocument();
     expect(onRebuild).not.toHaveBeenCalled();
+  });
+
+  /** One session, analyzed or not, with no theme yet: placeholders only. */
+  const PLACEHOLDERS: InsightsSankey = {
+    nodes: (["goal", "behavior", "outcome", "sentiment"] as const).map(
+      (stage) => ({
+        id: `${stage}:__analyzing__`,
+        stage,
+        key: "__analyzing__",
+        label: "Analyzing",
+        count: 1,
+        clickable: false,
+      }),
+    ),
+    links: [],
+    foldedGoalCount: 0,
+    foldedByStage: {},
+  };
+
+  it("says why a flow of placeholders is empty instead of drawing it (2026-09-22)", async () => {
+    const user = userEvent.setup();
+    const onAnalyzeNow = vi.fn();
+    const soon = Date.now() + 2 * 60_000;
+    renderSankey({
+      breakdown: breakdown({
+        sankey: PLACEHOLDERS,
+        analysis: analysis({
+          total: 1,
+          analyzed: 0,
+          owed: 1,
+          pending: 1,
+          nextAnalysisAt: soon,
+        }),
+      }),
+      onAnalyzeNow,
+    });
+
+    expect(
+      screen.queryByTestId("scenario-insights-sankey"),
+    ).not.toBeInTheDocument();
+    const status = screen.getByTestId("session-flow-status");
+    expect(status).toHaveAttribute("data-status", "waiting");
+    expect(status).toHaveTextContent("Waiting for the session to go quiet");
+    // Not "Analyzing": nothing runs until the door opens.
+    expect(screen.queryByText(/Analyzing/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    // No arguments: the rebuild path serializes whatever it is handed.
+    expect(onAnalyzeNow.mock.calls).toEqual([[]]);
+  });
+
+  it("hides Analyze now from a reader who is not a member", () => {
+    member.value = false;
+    renderSankey({
+      breakdown: breakdown({
+        sankey: PLACEHOLDERS,
+        analysis: analysis({ total: 1, analyzed: 0, owed: 1, pending: 1 }),
+      }),
+      onAnalyzeNow: vi.fn(),
+    });
+    expect(screen.getByTestId("session-flow-status")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze now/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names a guest-owned study's reason, and offers Analyze now to members only", () => {
+    const guestStudy = () =>
+      renderSankey({
+        breakdown: breakdown({
+          sankey: PLACEHOLDERS,
+          analysis: analysis({
+            total: 1,
+            analyzed: 0,
+            skipped: 1,
+            skips: { guest_owned: 1 },
+          }),
+        }),
+        onAnalyzeNow: vi.fn(),
+      });
+    guestStudy();
+    expect(screen.getByTestId("session-flow-status")).toHaveTextContent(
+      "Not analyzed automatically",
+    );
+    // A member's request is allowed on a guest study.
+    expect(
+      screen.getByRole("button", { name: /Analyze now/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a pending outcome column on a drawn flow, with Analyze now", async () => {
+    // The first half hour of every study after B5: goal, behavior and
+    // sentiment are drawn, and the outcome column reads "Analyzing".
+    const user = userEvent.setup();
+    const onAnalyzeNow = vi.fn();
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({
+          provisional: 4,
+          nextAnalysisAt: Date.now() + 20 * 60_000,
+          taxonomies: [
+            {
+              dimension: "goal",
+              version: 1,
+              status: "idle",
+              assigned: 4,
+              unassigned: 0,
+              sampleSize: 4,
+            },
+          ],
+        }),
+      }),
+      onAnalyzeNow,
+    });
+    expect(screen.getByTestId("scenario-insights-sankey")).toBeInTheDocument();
+    expect(screen.getByText("Outcomes are still coming")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    expect(onAnalyzeNow.mock.calls).toEqual([[]]);
+  });
+
+  it("says a drawn flow is still waiting on a session, in one line", () => {
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({ owed: 1, pending: 1 }),
+      }),
+    });
+    expect(screen.getByTestId("scenario-insights-sankey")).toBeInTheDocument();
+    expect(
+      screen.getByText("Waiting for the session to go quiet"),
+    ).toBeInTheDocument();
+  });
+
+  it("labels draft themes under the title", () => {
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({
+          themes: { reason: "draft", sessionsUntilStable: 7 },
+        }),
+      }),
+    });
+    expect(screen.getByTestId("session-flow-themes-note")).toHaveTextContent(
+      "Early themes. They settle after 7 more sessions.",
+    );
   });
 
   it("draws each column header at its own column's x", () => {

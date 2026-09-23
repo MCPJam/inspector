@@ -38,6 +38,9 @@ import { deriveScenarioFindingsModel } from "./scenario-findings-derivation";
 import { composeScenarioFindingsSummary } from "./scenario-findings-summary";
 import { ScenarioGoalChain } from "./scenario-goal-chain";
 import type { ScenarioGoalStages } from "./scenario-findings-stages";
+import { useInsightsRebuild } from "@/hooks/useInsightsFlowController";
+import { analysisStatus } from "@/components/shared/usage-insights/analysis-status";
+import { AnalysisStatusPanel } from "@/components/shared/usage-insights/analysis-status-panel";
 
 /**
  * One page. `MAX_LIMIT` server-side is 200, and paging the whole study to build
@@ -71,27 +74,21 @@ export function ScenarioFindingsTab({
    * the only honest signal for the former. Same hook and same one-attempt
    * discipline as the Insights workbench.
    */
-  const { breakdown } = useUsageInsights({
+  const { breakdown, rebuild } = useUsageInsights({
     scope: { kind: "scenario", scenarioId },
     filters,
     threadsEnabled: false,
     breakdownEnabled: true,
   });
-  /**
-   * Is an analysis on its way? Same rule the session-flow diagram applies: on
-   * a surface that starts its own, a MISSING run means one is being arranged
-   * rather than waiting to be asked for — until a refusal withdraws that.
-   *
-   * Gated on the breakdown having loaded, so the first subscription cannot
-   * flash "analyzing" at a study that has simply never been analyzed and never
-   * will be.
-   */
-  const analysisInFlight =
-    !!breakdown?.analysis &&
-    breakdown.analysis.pending +
-      breakdown.analysis.running -
-      breakdown.analysis.deferred >
-      0;
+  // Analyze now; the status panel shows it to members only.
+  const { rebuildBusy, handleRebuild } = useInsightsRebuild(
+    rebuild,
+    scenarioId,
+  );
+  const handleAnalyzeNow = useCallback(
+    () => void handleRebuild({ settled: true }),
+    [handleRebuild],
+  );
 
   const model = useMemo(
     () =>
@@ -233,21 +230,31 @@ export function ScenarioFindingsTab({
   }
 
   if (!persona) {
+    // Why there is nothing to show yet, from the same summary the Session
+    // flow reads (BB-196, and the 2026-09-22 report that "a few minutes" said
+    // nothing). Gated on the breakdown having loaded, so the first
+    // subscription cannot flash a reason at a study it does not describe.
+    const status =
+      model.unanalyzedCount === 0
+        ? null
+        : analysisStatus(breakdown?.analysis, Date.now());
     return (
       <div
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
         data-testid="scenario-findings-empty"
       >
-        {/* An analysis on its way is working, not waiting for a click — the
-            whole of BB-196, and it matters most here because this is the tab
-            people land on. "No session has been analyzed yet" stays for the
-            cases where that is the end of the story: a refused start, or a run
-            that failed. */}
-        {model.unanalyzedCount === 0
-          ? "No sessions in this study yet."
-          : analysisInFlight
-          ? "Analyzing sessions to group goals, behaviors, outcomes, and sentiment. This can take a few minutes."
-          : "No session has been analyzed yet."}
+        {model.unanalyzedCount === 0 ? (
+          "No sessions in this study yet."
+        ) : status ? (
+          <AnalysisStatusPanel
+            status={status}
+            onAnalyzeNow={handleAnalyzeNow}
+            busy={rebuildBusy}
+            testId="scenario-findings-status"
+          />
+        ) : (
+          "No session has been analyzed yet."
+        )}
       </div>
     );
   }

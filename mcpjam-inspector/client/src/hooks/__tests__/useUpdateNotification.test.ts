@@ -1,414 +1,160 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { errorToastMessage } from "@/test/utils";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useUpdateNotification } from "../useUpdateNotification";
-import type { UpdateStatus } from "@/types/electron";
+import type { UpdateStatus, FailedUpdateStatus } from "@/types/electron";
 
-const { mockToastError } = vi.hoisted(() => ({
-  mockToastError: vi.fn(),
-}));
-
-vi.mock("sonner", () => ({
-  toast: {
-    error: mockToastError,
-  },
-}));
-
-function setupElectronMock(initial: UpdateStatus = { kind: "idle" }) {
-  const mockOnUpdateStatus = vi.fn();
-  const mockRemoveUpdateStatusListener = vi.fn();
-  const mockOnUpdateError = vi.fn();
-  const mockRemoveUpdateErrorListener = vi.fn();
-  const mockGetUpdateStatus = vi.fn().mockResolvedValue(initial);
-  const mockRestartAndInstall = vi.fn();
-  const mockSimulateUpdate = vi.fn();
-  const mockSimulateUpdateDownloaded = vi.fn();
-  const mockSimulateUpdateError = vi.fn();
-
+const { errorToast } = vi.hoisted(() => ({ errorToast: vi.fn() }));
+vi.mock("@/lib/toast", () => ({ toast: { error: errorToast } }));
+const failure: FailedUpdateStatus = {
+  kind: "failed",
+  attemptId: "attempt-1",
+  reason: "updater_error",
+};
+function setup(initial: UpdateStatus = { kind: "idle" }) {
+  const update = {
+    onUpdateStatus: vi.fn(),
+    removeUpdateStatusListener: vi.fn(),
+    onUpdateError: vi.fn(),
+    removeUpdateErrorListener: vi.fn(),
+    getUpdateStatus: vi.fn().mockResolvedValue(initial),
+    restartAndInstall: vi.fn(),
+    simulateUpdate: vi.fn(),
+    simulateUpdateDownloaded: vi.fn(),
+    simulateUpdateError: vi.fn(),
+  };
+  const openExternal = vi.fn();
   window.isElectron = true;
-  window.electronAPI = {
-    update: {
-      onUpdateStatus: mockOnUpdateStatus,
-      removeUpdateStatusListener: mockRemoveUpdateStatusListener,
-      onUpdateError: mockOnUpdateError,
-      removeUpdateErrorListener: mockRemoveUpdateErrorListener,
-      getUpdateStatus: mockGetUpdateStatus,
-      restartAndInstall: mockRestartAndInstall,
-      simulateUpdate: mockSimulateUpdate,
-      simulateUpdateDownloaded: mockSimulateUpdateDownloaded,
-      simulateUpdateError: mockSimulateUpdateError,
-    },
-  } as any;
-
+  window.electronAPI = { update, app: { openExternal } } as any;
   return {
-    mockOnUpdateStatus,
-    mockRemoveUpdateStatusListener,
-    mockOnUpdateError,
-    mockRemoveUpdateErrorListener,
-    mockGetUpdateStatus,
-    mockRestartAndInstall,
-    mockSimulateUpdate,
-    mockSimulateUpdateDownloaded,
-    mockSimulateUpdateError,
+    update,
+    openExternal,
+    status: (value: UpdateStatus) =>
+      act(() => update.onUpdateStatus.mock.calls[0][0](value)),
+    error: (value: FailedUpdateStatus) =>
+      act(() => update.onUpdateError.mock.calls[0][0](value)),
   };
 }
-
-function clearElectronMock() {
+beforeEach(() => {
   delete window.isElectron;
   delete window.electronAPI;
-}
+  vi.clearAllMocks();
+});
 
-describe("useUpdateNotification", () => {
-  beforeEach(() => {
-    clearElectronMock();
-    mockToastError.mockClear();
+describe("desktop update notification", () => {
+  it("is idle outside Electron", () => {
+    const { result } = renderHook(() => useUpdateNotification());
+    expect(result.current.status).toEqual({ kind: "idle" });
   });
-
-  describe("initial state", () => {
-    it("returns idle when not running in Electron", () => {
-      const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.status).toEqual({ kind: "idle" });
-    });
-
-    it("hydrates initial status from main via getUpdateStatus", async () => {
-      const initial: UpdateStatus = {
-        kind: "downloaded",
-        version: "3.0.0",
-        releaseNotes: "Big release",
-      };
-      setupElectronMock(initial);
-
-      const { result } = renderHook(() => useUpdateNotification());
-
-      await waitFor(() => {
-        expect(result.current.status).toEqual(initial);
-      });
-    });
+  it("hydrates a downloaded update", async () => {
+    setup({ kind: "downloaded", version: "3.11.0" });
+    const { result } = renderHook(() => useUpdateNotification());
+    await waitFor(() => expect(result.current.status.kind).toBe("downloaded"));
   });
-
-  describe("Electron status listener", () => {
-    it("registers onUpdateStatus listener in Electron", () => {
-      const { mockOnUpdateStatus, mockOnUpdateError } = setupElectronMock();
-
-      renderHook(() => useUpdateNotification());
-      expect(mockOnUpdateStatus).toHaveBeenCalledWith(expect.any(Function));
-      expect(mockOnUpdateError).toHaveBeenCalledWith(expect.any(Function));
-    });
-
-    it("does not register listener when not in Electron", () => {
-      const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.status).toEqual({ kind: "idle" });
-    });
-
-    it("transitions through pending → downloaded as main broadcasts", () => {
-      const { mockOnUpdateStatus } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      const callback = mockOnUpdateStatus.mock.calls[0][0];
-
-      act(() => {
-        callback({ kind: "pending", installRequested: false });
-      });
-      expect(result.current.status).toEqual({
-        kind: "pending",
-        installRequested: false,
-      });
-
-      act(() => {
-        callback({
-          kind: "downloaded",
-          version: "3.0.0",
-          releaseNotes: "Big release",
-        });
-      });
-      expect(result.current.status).toEqual({
-        kind: "downloaded",
-        version: "3.0.0",
-        releaseNotes: "Big release",
-      });
-    });
-
-    it("does not let a slower initial snapshot overwrite a live status event", async () => {
-      const { mockGetUpdateStatus, mockOnUpdateStatus } = setupElectronMock();
-      let resolveInitialStatus!: (status: UpdateStatus) => void;
-      mockGetUpdateStatus.mockReturnValueOnce(
-        new Promise<UpdateStatus>((resolve) => {
-          resolveInitialStatus = resolve;
-        }),
-      );
-
-      const { result } = renderHook(() => useUpdateNotification());
-      const callback = mockOnUpdateStatus.mock.calls[0][0];
-
-      act(() => {
-        callback({ kind: "pending", installRequested: false });
-      });
-      expect(result.current.status).toEqual({
-        kind: "pending",
-        installRequested: false,
-      });
-
-      await act(async () => {
-        resolveInitialStatus({ kind: "idle" });
-      });
-
-      expect(result.current.status).toEqual({
-        kind: "pending",
-        installRequested: false,
-      });
-    });
-
-    it("reflects installRequested flag from pending status", () => {
-      const { mockOnUpdateStatus } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      const callback = mockOnUpdateStatus.mock.calls[0][0];
-
-      act(() => {
-        callback({ kind: "pending", installRequested: true });
-      });
-
-      expect(result.current.status).toEqual({
-        kind: "pending",
-        installRequested: true,
-      });
-    });
-
-    it("shows a generic toast when main reports an update error", () => {
-      const { mockOnUpdateError } = setupElectronMock();
-
-      renderHook(() => useUpdateNotification());
-      const callback = mockOnUpdateError.mock.calls[0][0];
-
-      act(() => {
-        callback();
-      });
-
-      expect(mockToastError).toHaveBeenCalledWith(
-        errorToastMessage("Update failed. Try again later."),
-        expect.objectContaining({
-          action: expect.objectContaining({
-            label: "Download manually",
-          }),
-        }),
-      );
-    });
-
-    it("drops the try-again promise once auto-update has given up", () => {
-      // In `manual` there is no in-app retry left to promise: the main
-      // process ignores every later update-available for the session.
-      const mocks = setupElectronMock();
-
-      renderHook(() => useUpdateNotification());
-      act(() => {
-        mocks.mockOnUpdateStatus.mock.calls[0][0]({
-          kind: "manual",
-          version: undefined,
-        });
-        mocks.mockOnUpdateError.mock.calls[0][0]();
-      });
-
-      expect(mockToastError).toHaveBeenCalledWith(
-        errorToastMessage(
-          "Automatic update isn't working on this install. Download the new version instead.",
-        ),
-        expect.anything(),
-      );
-    });
-
-    it("toast action opens the releases page via openExternal", () => {
-      const mocks = setupElectronMock();
-      const mockOpenExternal = vi.fn().mockResolvedValue(undefined);
-      (window.electronAPI as any).app = { openExternal: mockOpenExternal };
-
-      renderHook(() => useUpdateNotification());
-      const callback = mocks.mockOnUpdateError.mock.calls[0][0];
-
-      act(() => {
-        callback();
-      });
-
-      const toastOptions = mockToastError.mock.calls[0][1];
-      expect(toastOptions?.action?.label).toBe("Download manually");
-
-      act(() => {
-        toastOptions.action.onClick();
-      });
-
-      expect(mockOpenExternal).toHaveBeenCalledWith(
-        "https://github.com/MCPJam/inspector/releases",
-      );
-    });
-
-    it("removes listener on unmount", () => {
-      const { mockRemoveUpdateStatusListener, mockRemoveUpdateErrorListener } =
-        setupElectronMock();
-
-      const { unmount } = renderHook(() => useUpdateNotification());
-      unmount();
-
-      expect(mockRemoveUpdateStatusListener).toHaveBeenCalled();
-      expect(mockRemoveUpdateErrorListener).toHaveBeenCalled();
-    });
+  it("shows startup failures as persistent dismissible toasts", async () => {
+    setup(failure);
+    renderHook(() => useUpdateNotification());
+    await waitFor(() =>
+      expect(errorToast).toHaveBeenCalledWith(
+        "Update failed. Please reopen MCPJam and try again.",
+        {
+          id: "desktop-update-attempt-1",
+          duration: Infinity,
+          closeButton: true,
+        },
+      ),
+    );
   });
-
-  describe("restartAndInstall", () => {
-    it("forwards to the Electron API", () => {
-      const { mockRestartAndInstall } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-
-      act(() => {
-        result.current.restartAndInstall();
-      });
-
-      expect(mockRestartAndInstall).toHaveBeenCalled();
-    });
-
-    it("does nothing when not in Electron", () => {
-      const { result } = renderHook(() => useUpdateNotification());
-
-      act(() => {
-        result.current.restartAndInstall();
-      });
-    });
-
-    it("reports the restart as requested so the caller can disable its button", () => {
-      // INSPECTOR-ELECTRON-GT. The main process does not change the status
-      // when it starts an install from `downloaded` — it hands off to Electron
-      // and the app tears down — so only the click distinguishes "ready to
-      // install" from "installing", and without this the button stays live
-      // through the teardown and a second click fires quitAndInstall twice.
-      setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.restartRequested).toBe(false);
-
-      act(() => {
-        result.current.restartAndInstall();
-      });
-
-      expect(result.current.restartRequested).toBe(true);
-    });
-
-    it("re-arms after the install fails so the user can try again", () => {
-      const { mockOnUpdateError } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      act(() => {
-        result.current.restartAndInstall();
-      });
-      expect(result.current.restartRequested).toBe(true);
-
-      // The main process broadcasts `update-error` when quitAndInstall throws
-      // (a mis-signed staged build, a corrupted Squirrel staging dir).
-      act(() => {
-        mockOnUpdateError.mock.calls[0][0]();
-      });
-
-      expect(result.current.restartRequested).toBe(false);
-    });
-
-    it("re-arms when a silent collapse retires the download", () => {
-      // A click can race a collapse: the main process drops to `idle` without
-      // broadcasting an error, so nothing used to clear this and the pill came
-      // back stuck on "Updating…" at the next download.
-      const { mockOnUpdateStatus } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      const onStatus = mockOnUpdateStatus.mock.calls[0][0];
-
-      act(() => {
-        onStatus({ kind: "pending", installRequested: false });
-        result.current.restartAndInstall();
-      });
-      expect(result.current.restartRequested).toBe(true);
-
-      act(() => {
-        onStatus({ kind: "idle" });
-      });
-
-      expect(result.current.restartRequested).toBe(false);
-    });
-
-    it("re-arms when the install itself hangs and the main process gives up", () => {
-      // The silent-quit watchdog: the build was downloaded, the click reached
-      // Squirrel, and nothing came back. The main process retires the install
-      // to `manual`, and that has to unstick the spinner here — otherwise the
-      // pill reads "Updating…" for the life of the process.
-      const { mockOnUpdateStatus } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      const onStatus = mockOnUpdateStatus.mock.calls[0][0];
-
-      act(() => {
-        onStatus({ kind: "downloaded", version: "3.6.0" });
-        result.current.restartAndInstall();
-      });
-      expect(result.current.restartRequested).toBe(true);
-
-      act(() => {
-        onStatus({ kind: "manual", version: "3.6.0" });
-      });
-
-      expect(result.current.restartRequested).toBe(false);
-    });
-
-    it("stays armed through a downloaded install so a second click cannot land", () => {
-      const { mockOnUpdateStatus } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-      const onStatus = mockOnUpdateStatus.mock.calls[0][0];
-
-      act(() => {
-        onStatus({ kind: "downloaded", version: "3.6.0" });
-        result.current.restartAndInstall();
-      });
-
-      expect(result.current.restartRequested).toBe(true);
-    });
+  it("only recommends force quit when shutdown is stuck", () => {
+    const api = setup();
+    renderHook(() => useUpdateNotification());
+    api.status({ ...failure, reason: "shutdown_stuck" });
+    expect(errorToast).toHaveBeenCalledWith(
+      "Update failed. Force quit MCPJam and reopen it.",
+      expect.any(Object),
+    );
   });
-
-  describe("downloadManually", () => {
-    it("opens the releases page", () => {
-      // The escape hatch behind the `manual` status: auto-update announced a
-      // build it could not install, so the pill stops offering an in-app
-      // install and sends the user somewhere that works.
-      setupElectronMock();
-      const mockOpenExternal = vi.fn().mockResolvedValue(undefined);
-      (window.electronAPI as any).app = { openExternal: mockOpenExternal };
-
-      const { result } = renderHook(() => useUpdateNotification());
-
-      act(() => {
-        result.current.downloadManually();
-      });
-
-      expect(mockOpenExternal).toHaveBeenCalledWith(
-        "https://github.com/MCPJam/inspector/releases",
-      );
-    });
+  it("deduplicates status, error and snapshot delivery for the same failure", async () => {
+    const api = setup(failure);
+    renderHook(() => useUpdateNotification());
+    api.status(failure);
+    api.error(failure);
+    await act(async () => {});
+    expect(errorToast).toHaveBeenCalledTimes(1);
   });
-
-  describe("simulateUpdate", () => {
-    it("calls the Electron simulate API", () => {
-      const {
-        mockSimulateUpdate,
-        mockSimulateUpdateDownloaded,
-        mockSimulateUpdateError,
-      } = setupElectronMock();
-
-      const { result } = renderHook(() => useUpdateNotification());
-
-      act(() => {
-        result.current.simulateUpdate();
-        result.current.simulateUpdateDownloaded();
-        result.current.simulateUpdateError();
-      });
-
-      expect(mockSimulateUpdate).toHaveBeenCalled();
-      expect(mockSimulateUpdateDownloaded).toHaveBeenCalled();
-      expect(mockSimulateUpdateError).toHaveBeenCalled();
+  it("does not let a stale snapshot replace recovery", async () => {
+    const api = setup();
+    let resolve!: (value: UpdateStatus) => void;
+    api.update.getUpdateStatus.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const { result } = renderHook(() => useUpdateNotification());
+    api.status({ kind: "recovering", attemptId: "attempt-1" });
+    await act(async () => resolve({ kind: "idle" }));
+    expect(result.current.status.kind).toBe("recovering");
+  });
+  it("reopens the error without launching a browser or restarting", async () => {
+    const api = setup(failure);
+    const { result } = renderHook(() => useUpdateNotification());
+    await waitFor(() => expect(result.current.status.kind).toBe("failed"));
+    act(() => {
+      result.current.showUpdateError();
+      result.current.restartAndInstall();
     });
+    expect(errorToast).toHaveBeenCalledTimes(2);
+    expect(api.update.restartAndInstall).not.toHaveBeenCalled();
+    expect(api.openExternal).not.toHaveBeenCalled();
+  });
+  it("requests an install and clears its spinner on failure", async () => {
+    const api = setup({ kind: "downloaded", version: "3.11.0" });
+    const { result } = renderHook(() => useUpdateNotification());
+    await waitFor(() => expect(result.current.status.kind).toBe("downloaded"));
+    act(() => result.current.restartAndInstall());
+    expect(api.update.restartAndInstall).toHaveBeenCalledTimes(1);
+    expect(result.current.restartRequested).toBe(true);
+    api.status(failure);
+    expect(result.current.restartRequested).toBe(false);
+  });
+  it("does not start another install while recovering", () => {
+    const api = setup();
+    const { result } = renderHook(() => useUpdateNotification());
+    api.status({ kind: "recovering", attemptId: "attempt-1" });
+    act(() => result.current.restartAndInstall());
+    expect(api.update.restartAndInstall).not.toHaveBeenCalled();
+    expect(errorToast).not.toHaveBeenCalled();
+  });
+  it("shows a new failure once after a new attempt", () => {
+    const api = setup();
+    renderHook(() => useUpdateNotification());
+    api.status(failure);
+    api.status({ ...failure, attemptId: "attempt-2" });
+    expect(errorToast).toHaveBeenCalledTimes(2);
+  });
+  it("unsubscribes on unmount", () => {
+    const api = setup();
+    const { unmount } = renderHook(() => useUpdateNotification());
+    unmount();
+    expect(api.update.removeUpdateStatusListener).toHaveBeenCalledTimes(1);
+    expect(api.update.removeUpdateErrorListener).toHaveBeenCalledTimes(1);
+  });
+  it("ignores snapshot completion after unmount", async () => {
+    setup(failure);
+    const { unmount } = renderHook(() => useUpdateNotification());
+    unmount();
+    await act(async () => {});
+    expect(errorToast).not.toHaveBeenCalled();
+  });
+  it("preserves dev simulation controls", () => {
+    const api = setup();
+    const { result } = renderHook(() => useUpdateNotification());
+    act(() => {
+      result.current.simulateUpdate();
+      result.current.simulateUpdateDownloaded();
+      result.current.simulateUpdateError();
+    });
+    expect(api.update.simulateUpdate).toHaveBeenCalledTimes(1);
+    expect(api.update.simulateUpdateDownloaded).toHaveBeenCalledTimes(1);
+    expect(api.update.simulateUpdateError).toHaveBeenCalledTimes(1);
   });
 });
