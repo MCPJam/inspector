@@ -907,6 +907,7 @@ export async function authorizeProject(
       method: "POST",
       headers: buildConvexAuthHeaders(caller, bearerToken),
       body: JSON.stringify({ projectId }),
+      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
     });
   } catch (error) {
     throw new WebRouteError(

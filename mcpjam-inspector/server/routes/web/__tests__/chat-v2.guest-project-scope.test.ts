@@ -215,6 +215,14 @@ describe("web routes — chat-v2 guest project scope (MJ-013)", () => {
     );
 
     expect(response.status).toBe(404);
+    expect(authorizeProjectCalls()).toEqual([
+      [
+        AUTHORIZE_PROJECT_URL,
+        expect.objectContaining({
+          body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+        }),
+      ],
+    ]);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -229,7 +237,16 @@ describe("web routes — chat-v2 guest project scope (MJ-013)", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(authorizeProjectCalls()).toHaveLength(1);
+    expect(authorizeProjectCalls()).toEqual([
+      [
+        AUTHORIZE_PROJECT_URL,
+        expect.objectContaining({
+          body: JSON.stringify({ projectId: "guest-project-1" }),
+          // Bounded, so a stalled backend cannot hold the turn open.
+          signal: expect.any(AbortSignal),
+        }),
+      ],
+    ]);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "guest-project-1" }),
     );
