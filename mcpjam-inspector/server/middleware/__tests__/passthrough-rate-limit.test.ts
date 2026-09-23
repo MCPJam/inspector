@@ -1,14 +1,11 @@
 /**
- * The spike brake on the last unmetered credential class.
+ * The spike brake on the JWT branches of `bearerAuthMiddleware`.
  *
- * `bearerAuthMiddleware` has three branches and only two of them cost
- * anything to hold: an `sk_` key is validated against WorkOS and metered per
- * key id, a guest token is validated and metered per guest id. The third — an
- * AuthKit JWT — is deliberately NOT verified at the gateway (every route it
- * fronts forwards the bearer to Convex, which verifies it against JWKS, and
- * verifying twice would add a round trip to reach the same answer). Sound
- * reasoning, and it left that branch reaching the handlers with no budget
- * attached to it at all.
+ * An `sk_` key is validated against WorkOS and metered per key id, a guest
+ * token is validated and metered per guest id. An AuthKit JWT — verified at
+ * the gateway (`authkit_jwt`) or passed through for Convex to verify
+ * (`unverified_passthrough`) — has no budget of its own anywhere else, so it is
+ * metered here, per token with a per-address backstop.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
@@ -19,6 +16,7 @@ const {
   PASSTHROUGH_IP_LIMIT,
   PASSTHROUGH_MAX_ENTRIES,
   PASSTHROUGH_TOKEN_LIMIT,
+  PASSTHROUGH_UNATTESTED_IP_LIMIT,
   passthroughRateLimitMiddleware,
   resetPassthroughRateLimitForTests,
 } = await import("../passthrough-rate-limit.js");
@@ -45,9 +43,14 @@ function app(authMethod: AuthMethod = "unverified_passthrough") {
   return a;
 }
 
+/**
+ * The address arrives the way the hosted edge delivers it: Cloudflare rewrites
+ * `cf-connecting-ip`, so it is ATTESTED and earns a window of its own. A
+ * forwarding header the caller writes (`x-real-ip`, `x-forwarded-for`) is not.
+ */
 const req = (token?: string, ip = "203.0.113.1") => ({
   headers: {
-    "x-real-ip": ip,
+    "cf-connecting-ip": ip,
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   },
 });
@@ -131,7 +134,7 @@ describe("the per-IP backstop", () => {
     let refused = 0;
     for (let i = 0; i < PASSTHROUGH_IP_LIMIT + 5; i++) {
       const res = await a.request("/x", {
-        headers: { "x-real-ip": "198.51.100.8" },
+        headers: { "cf-connecting-ip": "198.51.100.8" },
       });
       if (res.status === 429) refused++;
     }
@@ -184,7 +187,7 @@ describe("the per-IP backstop", () => {
     const a = app();
     const shared = "198.51.100.44";
     const blank = {
-      headers: { "x-real-ip": shared, authorization: "Bearer \u00a0" },
+      headers: { "cf-connecting-ip": shared, authorization: "Bearer \u00a0" },
     };
 
     let refused = 0;
@@ -207,16 +210,61 @@ describe("the per-IP backstop", () => {
     expect(PASSTHROUGH_IP_LIMIT).toBeGreaterThan(PASSTHROUGH_TOKEN_LIMIT);
   });
 
-  it("does not collapse header-stripped callers into one shared bucket", async () => {
-    // No attributable IP means no bucket to charge. Falling through matches
-    // the other limiters' posture; the alternative is one shared bucket where
-    // a single header-stripped request starves everyone else behind it.
+  it("pools callers it cannot attest into ONE larger window", async () => {
+    // Skipping them would make the backstop opt-out by stripping a header;
+    // giving each claimed address its own window would let one host mint as
+    // many as it likes. So they share one, sized as a multiple because it
+    // covers many callers — and an attested caller never draws on it.
+    expect(PASSTHROUGH_UNATTESTED_IP_LIMIT).toBeGreaterThan(
+      PASSTHROUGH_IP_LIMIT
+    );
     const a = app();
-    for (let i = 0; i < PASSTHROUGH_IP_LIMIT + 5; i++) {
-      const res = await a.request("/x", { headers: {} });
+    for (let i = 0; i < PASSTHROUGH_UNATTESTED_IP_LIMIT; i++) {
+      const res = await a.request("/x", {
+        headers: { authorization: `Bearer stripped-${i}` },
+      });
       expect(res.status).toBe(200);
     }
-  });
+    expect(
+      (
+        await a.request("/x", {
+          headers: { authorization: "Bearer stripped-next" },
+        })
+      ).status
+    ).toBe(429);
+
+    expect((await a.request("/x", req("tok-attested"))).status).toBe(200);
+  }, 30_000);
+
+  it("A ROTATED FORWARDING HEADER IS NOT AN ADDRESS", async () => {
+    // Keyed on the claimed `x-real-ip` / `x-forwarded-for`, one host rotating
+    // that header with fresh tokens got a new window per request, filled the
+    // IP map, and — because that map fails closed — locked out every genuinely
+    // new caller. Claimed addresses now converge on the pooled window instead,
+    // so the flood is braked and never occupies the map.
+    const a = app();
+    let refused = 0;
+    for (let i = 0; i < PASSTHROUGH_MAX_ENTRIES; i++) {
+      const spoofed = `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+      const res = await a.request("/x", {
+        headers: {
+          ...(i % 2 === 0
+            ? { "x-real-ip": spoofed }
+            : { "x-forwarded-for": spoofed }),
+          authorization: `Bearer spoof-${i}`,
+        },
+      });
+      if (res.status === 429) refused++;
+    }
+    expect(refused).toBe(
+      PASSTHROUGH_MAX_ENTRIES - PASSTHROUGH_UNATTESTED_IP_LIMIT
+    );
+
+    // A brand-new, attested caller is still served.
+    expect(
+      (await a.request("/x", req("tok-newcomer", "192.0.2.251"))).status
+    ).toBe(200);
+  }, 60_000);
 });
 
 describe("bounded, and fails closed when full", () => {
@@ -231,18 +279,20 @@ describe("bounded, and fails closed when full", () => {
       (await a.request("/x", req("tok-established", established))).status
     ).toBe(200);
 
-    // Fill the IP map to its cap from distinct addresses.
+    // Fill the IP map to its cap from distinct (attested) addresses.
     for (let i = 0; i < PASSTHROUGH_MAX_ENTRIES; i++) {
       await a.request("/x", {
         headers: {
-          "x-real-ip": `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`,
+          "cf-connecting-ip": `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${
+            i & 255
+          }`,
         },
       });
     }
 
     // A brand-new address is refused…
     const fresh = await a.request("/x", {
-      headers: { "x-real-ip": "192.0.2.250" },
+      headers: { "cf-connecting-ip": "192.0.2.250" },
     });
     expect(fresh.status).toBe(429);
 
