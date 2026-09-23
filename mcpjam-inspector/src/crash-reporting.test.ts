@@ -221,6 +221,17 @@ describe("isUpdaterInstallSpawnRejection", () => {
     ).toBe(true);
   });
 
+  // `spawnUpdate` throws this sentence for ANY colliding invocation and names
+  // the NEW call's arguments. An overlapping poll or download is not a skipped
+  // install — `update-listeners.ts` relies on this same shape for its refused
+  // concurrent checks — so only `--processStartAndWait` may match.
+  it.each([
+    "AutoUpdater process with arguments --checkForUpdate,https://updates.example/win is already running",
+    "AutoUpdater process with arguments --update,https://updates.example/win is already running",
+  ])("does not mistake a colliding check or download for the install: %s", (message) => {
+    expect(isUpdaterInstallSpawnRejection(new Error(message))).toBe(false);
+  });
+
   it("leaves every other rejection alone", () => {
     // Especially the updater's OWN other failures: those are real and the
     // main process deliberately carries no `ignoreErrors`.
@@ -248,6 +259,13 @@ describe("dropUpdaterInstallSpawnRejection", () => {
         ),
       ),
     ).toBeNull();
+  });
+
+  it("keeps a colliding check in Sentry", () => {
+    const check = event(
+      "AutoUpdater process with arguments --checkForUpdate,https://updates.example/win is already running",
+    );
+    expect(dropUpdaterInstallSpawnRejection(check)).toBe(check);
   });
 
   it("passes everything else through unchanged", () => {

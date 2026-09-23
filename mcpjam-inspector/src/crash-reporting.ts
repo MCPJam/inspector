@@ -55,12 +55,20 @@ export const CAPTURED_EXIT_REASONS = [
  * undefined state, and no code of ours was negligent — there is no version of
  * this app that can handle that promise.
  *
- * Matching the message and not a flag, because this string can only come from
- * `processStart`, which only runs from `quitAndInstall`. There is no other
- * caller to confuse it with.
+ * Anchored on `--processStartAndWait`, because the message alone is NOT unique
+ * to the install. `spawnUpdate` throws the same sentence for ANY colliding
+ * invocation, and the arguments it names are the NEW call's — so an
+ * overlapping poll reads `--checkForUpdate,<url>` and a download `--update,
+ * <url>`. `update-listeners.ts` already depends on exactly that for its refused
+ * concurrent checks (`CONCURRENT_CHECK_MESSAGE`).
+ *
+ * Unanchored, a colliding check that reached `unhandledRejection` would be
+ * logged as "staged update not applied at quit" when no install was attempted,
+ * and dropped from Sentry besides. Only the install names
+ * `--processStartAndWait`, so only the install is matched.
  */
 const UPDATER_INSTALL_SPAWN_COLLISION =
-  /AutoUpdater process with arguments .* is already running/;
+  /AutoUpdater process with arguments --processStartAndWait,.* is already running/;
 
 export function isUpdaterInstallSpawnRejection(reason: unknown): boolean {
   const message =
