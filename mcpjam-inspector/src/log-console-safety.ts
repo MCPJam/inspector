@@ -1,74 +1,72 @@
 /**
- * Stop a failed console write from taking the app down.
+ * Stop a dead stdout/stderr pipe from taking the app down.
  *
- * INSPECTOR-ELECTRON-WE: a packaged Windows build died three seconds after
- * launch with `EPIPE: broken pipe, write`, thrown out of `console.info` inside
- * electron-log's console transport:
+ * INSPECTOR-ELECTRON-WE: packaged Windows builds died three seconds after
+ * launch with `EPIPE: broken pipe, write`. A packaged GUI app's stdout is a
+ * pipe, and when whatever launched it goes away the pipe has no reader.
  *
- *     Logger.logData -> Logger.processMessage -> transport -> writeFn
- *       -> console.info -> Writable.write -> Socket._write   // EPIPE
+ * How the failure actually ARRIVES matters more than where it starts, and the
+ * first version of this fix got it wrong. The Sentry stack runs through
+ * `console.info` down to `Socket._write`, which reads like a synchronous throw
+ * out of the log call — so it wrapped electron-log's `writeFn` in a
+ * `try/catch`. That catch never runs. Node's console already swallows a
+ * synchronous throw from `stream.write()` (`[kWriteToConsole]`), and the
+ * EPIPE is delivered LATER, as an `'error'` event on the stream. With no
+ * listener, an unhandled `'error'` event is an uncaught exception, and the
+ * process dies. The stack shows where the error object was created, not where
+ * it was delivered.
  *
- * On Windows a packaged GUI app's stdout is a pipe, and a pipe with nothing on
- * the other end throws on write. Neither electron-log nor the call site guards
- * that: `Logger.processMessage` invokes each transport bare, so the throw walks
- * straight out of the log call into whatever was running at the time. Sentry
- * recorded it `level: fatal`, `handled: no`.
+ * Reproduced on Windows, Node 24, writing to a pipe whose reader was closed:
  *
- * Whether it also ended the process is not something the report settles — the
- * mechanism is `generic`, not `onuncaughtexception`, so it did not come through
- * the forced-exit integration. What argues for it is the shape: two users, one
- * event each, three seconds after launch, and then silence. A dead pipe does
- * not heal, so a process that kept running would have thrown again on the next
- * line and the next; one event per user is what a process that stopped looks
- * like. Inference, not a finding.
+ *   no listener    `console.info` throws 0 times; process exits on
+ *                  `UNCAUGHT: EPIPE`
+ *   'error' listener  `console.info` throws 0 times; process survives, and
+ *                  the event fires on EVERY write
  *
- * Either way the defect is the same and so is the fix. A log line must not be
- * able to end the statement that emitted it.
+ * So the guard is a listener on the streams themselves. And it retires the
+ * console transport as well, because that second row is the other half: a
+ * broken pipe does not heal, and without retiring it every later log line
+ * pays for the same failure. `level = false` is how electron-log skips a
+ * transport (`core/Logger.js`: `transFn.level === false`).
  *
- * The rule this restores is the one `process-vitals.ts` already states for its
- * sampler: telemetry must never be what takes the process down. Logging is not
- * load-bearing; the thing it was describing is.
+ * The listener covers every writer to those streams, not only electron-log —
+ * any stray `console.*` in the main process would have hit the same pipe.
  */
 
-/**
- * What this needs from `log.transports.console`.
- *
- * Structural rather than imported: electron-log declares its types inside a
- * `declare namespace`, and stating the two members directly keeps the test
- * free of electron-log entirely. Method syntax to match the declaration
- * (`writeFn(options: { message: LogMessage }): void`) so the real transport
- * satisfies this without a cast at the call site.
- */
-type FailSafeTransport = {
-  writeFn(payload: { message: unknown }): void;
-  level: unknown;
+/** What this needs from `log.transports.console`. Structural rather than
+ *  imported, so the tests need neither electron-log nor Electron. */
+type RetirableTransport = { level: unknown };
+
+/** What this needs from `process.stdout` / `process.stderr`. */
+type ErrorEmittingStream = {
+  on(event: "error", listener: (error: Error) => void): unknown;
 };
 
 /**
- * Wrap the console transport so a write failure is survivable, and stop using
- * it once it fails.
+ * Keep an error on any of `streams` from being fatal, and retire the console
+ * transport the first time one happens.
  *
- * DISABLED rather than merely swallowed. A broken pipe does not heal: the
- * reader is gone for the life of the process, so every later line would pay
- * the same throw for the same nothing. Setting `level = false` is how
- * electron-log skips a transport (`core/Logger.js`: `transFn.level === false`).
+ * Both streams, because electron-log's console transport sends `warn` and
+ * `error` through `console.warn` / `console.error` — stderr — and the rest to
+ * stdout. Guarding one would leave the app to die on the first warning.
  *
- * Silent on purpose. The obvious instinct is to log that logging broke, and
- * the only logger available is the one that just threw — either a recursive
- * write into the same dead pipe, or a line nobody will read. The file
- * transport is untouched and keeps every subsequent line, which is the channel
- * a user attaches to a bug report anyway. What is lost is console output that
- * was already going nowhere.
+ * `onRetire` runs once, after the transport is already retired. That order is
+ * the point: a line logged from it cannot reach the dead console, only the
+ * file transport, which is the log a user attaches to a bug report. It is the
+ * only record that console output stopped.
  */
-export function makeConsoleTransportFailSafe(
-  transport: FailSafeTransport
+export function retireConsoleOnStreamError(
+  transport: RetirableTransport,
+  streams: ErrorEmittingStream[],
+  onRetire?: (error: Error) => void,
 ): void {
-  const write = transport.writeFn;
-  transport.writeFn = (payload: { message: unknown }) => {
-    try {
-      write(payload);
-    } catch {
+  let retired = false;
+  for (const stream of streams) {
+    stream.on("error", (error) => {
       transport.level = false;
-    }
-  };
+      if (retired) return;
+      retired = true;
+      onRetire?.(error);
+    });
+  }
 }
