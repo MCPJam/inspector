@@ -15,7 +15,10 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
   return { ...actual, createOAuthStateMachine };
 });
 
-import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "@mcpjam/sdk/browser";
+import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+} from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
 
@@ -137,6 +140,25 @@ describe("OAuth debugger step-failure reporting", () => {
 
     expect(reportCaught).not.toHaveBeenCalled();
     expect(updateState).toHaveBeenCalledWith(serverFault);
+  });
+
+  it("ignores an authorization server that offers no dynamic registration", () => {
+    // The server under test advertises no registration_endpoint and the user
+    // configured no pre-registered client to fall back to. That is a setup the
+    // debugger exists to surface, not an MCPJam fault, so the toast stands on
+    // its own and nothing reaches Sentry.
+    const { wrapped, updateState } = wrappedUpdateState(
+      vi.fn(),
+      "register_client",
+    );
+
+    const notOurs = {
+      error: REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+    };
+    wrapped(notOurs);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(notOurs);
   });
 
   it("ignores an authenticated request failure from the server under test", () => {

@@ -1,5 +1,6 @@
 import {
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -266,11 +267,17 @@ function createHostedClientSecretResolver({
  * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
  * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
  *
- * The SDK owns the message and exports it, so matching here cannot drift out of
- * sync with what the machines actually throw.
+ * The missing `registration_endpoint` failure is the same shape: the server
+ * under test offers no dynamic client registration and the user configured no
+ * pre-registered client to fall back to. That is a setup the debugger exists to
+ * surface, and the toast says exactly what to do about it.
+ *
+ * The SDK owns both messages and exports them, so matching here cannot drift
+ * out of sync with what the machines actually throw.
  */
 const UNREPORTED_STEP_FAILURES = new Set([
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
 ]);
 
 function isUnreportedStepFailure(error: string): boolean {

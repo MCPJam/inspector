@@ -67,6 +67,7 @@ import {
 import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
 } from "./shared/dynamic-client-registration.js";
 import {
   applyEmulationToDcrMetadata,
@@ -1057,8 +1058,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!fallbackClient) {
                 updateState({
-                  error:
-                    "Authorization server metadata does not include a registration_endpoint. Configure a pre-registered client or use a different registration strategy.",
+                  error: REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
                   isInitiatingAuth: false,
                 });
                 return;
