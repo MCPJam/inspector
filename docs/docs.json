@@ -249,6 +249,186 @@
     {
       "source": "/sdk/reference/test-agent",
       "destination": "/sdk/reference/host-runner"
+    },
+    {
+      "source": "/inspector/views",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/api-reference/chatboxes/get-a-chatbox",
+      "destination": "/api-reference/studies/get-a-study"
+    },
+    {
+      "source": "/api-reference/chatboxes/list-a-projects-chatboxes",
+      "destination": "/api-reference/studies/list-a-projects-scenarios"
+    },
+    {
+      "source": "/api-reference/computer-environments/boot-your-computer-from-an-environment",
+      "destination": "/api-reference/sandbox-images/boot-your-computer-from-a-sandbox-image"
+    },
+    {
+      "source": "/api-reference/computer-environments/build-a-computer-environment",
+      "destination": "/api-reference/sandbox-images/build-a-sandbox-image"
+    },
+    {
+      "source": "/api-reference/computer-environments/create-a-computer-environment",
+      "destination": "/api-reference/sandbox-images/create-a-sandbox-image"
+    },
+    {
+      "source": "/api-reference/computer-environments/delete-a-computer-environment",
+      "destination": "/api-reference/sandbox-images/delete-a-sandbox-image"
+    },
+    {
+      "source": "/api-reference/computer-environments/get-a-computer-environment",
+      "destination": "/api-reference/sandbox-images/get-a-sandbox-image"
+    },
+    {
+      "source": "/api-reference/computer-environments/list-a-projects-computer-environments",
+      "destination": "/api-reference/sandbox-images/list-a-projects-sandbox-images"
+    },
+    {
+      "source": "/api-reference/computer-environments/list-an-environments-builds",
+      "destination": "/api-reference/sandbox-images/list-a-sandbox-images-builds"
+    },
+    {
+      "source": "/api-reference/computer-environments/reset-your-computer-to-its-image",
+      "destination": "/api-reference/sandbox-images/reset-your-computer-to-its-image"
+    },
+    {
+      "source": "/api-reference/computer-environments/share-an-environment-with-the-project",
+      "destination": "/api-reference/sandbox-images/share-a-sandbox-image-with-the-project"
+    },
+    {
+      "source": "/api-reference/computer-environments/update-a-computer-environment",
+      "destination": "/api-reference/sandbox-images/update-a-sandbox-image"
+    },
+    {
+      "source": "/api-reference/hosts/create-a-host-from-a-template-or-a-full-config",
+      "destination": "/api-reference/clients/create-a-client-from-a-template-or-a-full-config"
+    },
+    {
+      "source": "/api-reference/hosts/delete-a-host",
+      "destination": "/api-reference/clients/delete-a-client"
+    },
+    {
+      "source": "/api-reference/hosts/duplicate-a-host",
+      "destination": "/api-reference/clients/duplicate-a-client"
+    },
+    {
+      "source": "/api-reference/hosts/get-a-host",
+      "destination": "/api-reference/clients/get-a-client"
+    },
+    {
+      "source": "/api-reference/hosts/list-a-projects-hosts",
+      "destination": "/api-reference/clients/list-a-projects-clients"
+    },
+    {
+      "source": "/api-reference/hosts/replace-a-hosts-server-attachments",
+      "destination": "/api-reference/clients/replace-a-clients-servers"
+    },
+    {
+      "source": "/api-reference/hosts/update-a-host",
+      "destination": "/api-reference/clients/update-a-client"
+    },
+    {
+      "source": "/api-reference/scenarios/get-a-scenario",
+      "destination": "/api-reference/studies/get-a-study"
+    },
+    {
+      "source": "/api-reference/scenarios/list-a-projects-scenarios",
+      "destination": "/api-reference/studies/list-a-projects-scenarios"
+    },
+    {
+      "source": "/api-reference/swarm-insights/cancel-a-pending-wave-insights-generation",
+      "destination": "/api-reference/swarm-insights/cancel-a-pending-swarm-run-insights-generation"
+    },
+    {
+      "source": "/api-reference/swarm-insights/get-wave-insights",
+      "destination": "/api-reference/swarm-insights/get-swarm-run-insights"
+    },
+    {
+      "source": "/api-reference/swarm-insights/request-wave-insights",
+      "destination": "/api-reference/swarm-insights/request-swarm-run-insights"
+    },
+    {
+      "source": "/api-reference/user-testing/cancel-a-windows-generation",
+      "destination": "/api-reference/studies/cancel-a-windows-generation"
+    },
+    {
+      "source": "/api-reference/user-testing/current-window-signals",
+      "destination": "/api-reference/studies/current-window-signals"
+    },
+    {
+      "source": "/api-reference/user-testing/dismiss-a-finding",
+      "destination": "/api-reference/studies/dismiss-a-finding"
+    },
+    {
+      "source": "/api-reference/user-testing/get-a-scenario",
+      "destination": "/api-reference/studies/get-a-study"
+    },
+    {
+      "source": "/api-reference/user-testing/get-a-session-transcript",
+      "destination": "/api-reference/studies/get-a-session-transcript"
+    },
+    {
+      "source": "/api-reference/user-testing/invite-a-member",
+      "destination": "/api-reference/studies/invite-a-member"
+    },
+    {
+      "source": "/api-reference/user-testing/list-a-scenarios-sessions",
+      "destination": "/api-reference/studies/list-a-scenarios-sessions"
+    },
+    {
+      "source": "/api-reference/user-testing/list-scenario-findings",
+      "destination": "/api-reference/studies/list-scenario-findings"
+    },
+    {
+      "source": "/api-reference/user-testing/point-a-scenario-at-a-different-environment",
+      "destination": "/api-reference/studies/point-a-scenario-at-a-different-environment"
+    },
+    {
+      "source": "/api-reference/user-testing/publish-an-environment-for-user-testing",
+      "destination": "/api-reference/studies/publish-an-environment-for-user-testing"
+    },
+    {
+      "source": "/api-reference/user-testing/read-a-windows-insights",
+      "destination": "/api-reference/studies/read-a-windows-insights"
+    },
+    {
+      "source": "/api-reference/user-testing/remove-a-member",
+      "destination": "/api-reference/studies/remove-a-member"
+    },
+    {
+      "source": "/api-reference/user-testing/request-insights-for-the-current-window",
+      "destination": "/api-reference/studies/request-insights-for-the-current-window"
+    },
+    {
+      "source": "/api-reference/user-testing/restore-a-dismissed-finding",
+      "destination": "/api-reference/studies/restore-a-dismissed-finding"
+    },
+    {
+      "source": "/api-reference/user-testing/rotate-the-share-link",
+      "destination": "/api-reference/studies/rotate-the-share-link"
+    },
+    {
+      "source": "/api-reference/user-testing/session-metrics",
+      "destination": "/api-reference/studies/session-metrics"
+    },
+    {
+      "source": "/api-reference/user-testing/set-the-guest-execution-caps",
+      "destination": "/api-reference/studies/set-the-guest-execution-caps"
+    },
+    {
+      "source": "/api-reference/user-testing/unpublish-an-environment",
+      "destination": "/api-reference/studies/unpublish-an-environment"
+    },
+    {
+      "source": "/api-reference/user-testing/update-a-scenario",
+      "destination": "/api-reference/studies/update-a-scenario"
+    },
+    {
+      "source": "/api-reference/user-testing/usage-breakdown",
+      "destination": "/api-reference/studies/usage-breakdown"
     }
   ],
   "navbar": {
