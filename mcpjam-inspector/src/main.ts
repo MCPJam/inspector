@@ -10,6 +10,7 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
+import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
   buildElectronSentryConfig,
@@ -39,6 +40,8 @@ Sentry.init({
   // already on by default in @sentry/electron 5.12 and is left alone.
   integrations: crashReportingIntegrations,
 });
+
+const desktopDiagnostics = installDesktopDiagnostics();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -604,6 +607,8 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     },
     show: false, // Don't show until ready
   });
+
+  desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
 
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);

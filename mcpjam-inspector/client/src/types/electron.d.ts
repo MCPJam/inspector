@@ -1,3 +1,4 @@
+import type { DesktopActivity } from "../../../shared/desktop-diagnostics";
 import type {
   UpdateStatus,
   FailedUpdateStatus,
@@ -8,6 +9,7 @@ export type {
 } from "../../../shared/desktop-update";
 
 export interface ElectronAPI {
+  diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
     getVersion: () => Promise<string>;
