@@ -11,6 +11,7 @@ import {
   getGuestSessionRefusal,
 } from "@/lib/guest-session";
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
+import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
 
 /**
  * Stable hook fed to `<ConvexProviderWithAuthKit useAuth={...}>`.
@@ -110,13 +111,12 @@ async function fetchTokenWithRetry(
   // Failures throw their real cause, so the generic message fires only when
   // every attempt returned no token without an error — for a guest, the
   // server answering a create request with a 204 "no guest".
-  const status = httpStatusOf(lastError);
   reportCaught(lastError ?? new Error(`${opts.source} returned no token`), {
     source: opts.source,
     level: "warning",
     extra: {
       attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1,
-      ...(status !== undefined ? { httpStatus: status } : {}),
+      ...guestFailureExtra(lastError),
     },
   });
   // Convex is about to clearAuth() on this null. Surface a banner offering an
@@ -126,12 +126,28 @@ async function fetchTokenWithRetry(
   return null;
 }
 
-// The HTTP status a failed guest-session request carries, if the server
-// answered at all. Read by shape so this module does not depend on the error
-// class.
-function httpStatusOf(error: unknown): number | undefined {
-  const status = (error as { status?: unknown } | null | undefined)?.status;
-  return typeof status === "number" ? status : undefined;
+// What a failed guest-session request knows about its failure: the HTTP status
+// if the server answered, and why the server's own upstream hop failed if it
+// said. Read by shape so this module does not depend on the error class. Each
+// key is absent, not undefined, when unknown.
+function guestFailureExtra(error: unknown): Record<string, string | number> {
+  const { status, upstreamFailure } = (error ?? {}) as {
+    status?: unknown;
+    upstreamFailure?: unknown;
+  };
+  const extra: Record<string, string | number> = {};
+  if (typeof status === "number") extra.httpStatus = status;
+  const failure = sanitizeGuestSessionFailureDetails(upstreamFailure);
+  if (failure) {
+    extra.upstreamReason = failure.reason;
+    if (failure.upstreamStatus !== undefined) {
+      extra.upstreamStatus = failure.upstreamStatus;
+    }
+    if (failure.networkCode !== undefined) {
+      extra.networkCode = failure.networkCode;
+    }
+  }
+  return extra;
 }
 
 // Persist the "this browser used Convex as a guest" marker for the currently
@@ -224,7 +240,6 @@ export function useUnifiedConvexAuth() {
         }
 
         if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
-          const status = httpStatusOf(lastError);
           reportCaught(
             lastError ??
               new Error("Guest session bootstrap exhausted without a token"),
@@ -233,7 +248,7 @@ export function useUnifiedConvexAuth() {
               level: "error",
               extra: {
                 attempts: GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length + 1,
-                ...(status !== undefined ? { httpStatus: status } : {}),
+                ...guestFailureExtra(lastError),
               },
             },
           );

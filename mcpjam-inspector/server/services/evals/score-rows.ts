@@ -16,6 +16,7 @@
 import {
   allGatingScorersPassed,
   errorScoreResult,
+  finalizeScoreResult,
   fromCriterionResult,
   fromGoalCompletionCase,
   notApplicableScoreResult,
@@ -32,6 +33,8 @@ import {
   HOSTED_TOOL_MATCH_SCORER_ID,
   buildHostedEvaluationConfig,
   hostedCriterionId,
+  hostedRubricCheckScorerId,
+  type HostedRubricCheckDefinitionInput,
   type HostedScoreDefinitionInputs,
 } from "./score-definitions.js";
 import { authoredRequiredRole } from "@mcpjam/sdk/contract";
@@ -82,6 +85,22 @@ export type HostedJudgeVerdictLike = {
   role?: unknown;
 };
 
+/**
+ * `metadata.rubricChecksVerdict`, written server-side by the goal-completion
+ * job's rubric-check half. Everything is `unknown` for the same reason as the
+ * judge verdict: it arrives from a database document.
+ */
+export type HostedRubricChecksVerdictLike = {
+  status?: unknown;
+  reason?: unknown;
+  templateVersion?: unknown;
+  templateHash?: unknown;
+  /** The model that ANSWERED. Rows carry it; definitions always name Jev. */
+  model?: unknown;
+  decidedBy?: unknown;
+  questions?: unknown;
+};
+
 export type HostedScoreRowInputs = {
   predicateResults?: readonly HostedPredicateResultLike[];
   evaluation?: HostedEvaluationLike;
@@ -108,7 +127,85 @@ export type HostedScoreRowInputs = {
   toolMatchAuthored?: boolean;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
+  /** Absent on the first pass; present on the judge second pass. */
+  rubricChecksVerdict?: HostedRubricChecksVerdictLike;
 };
+
+const RUBRIC_CHECK_KINDS = new Set(["boolean", "choice", "score"]);
+
+/** One question off a stored verdict, or `undefined` when it is malformed. */
+type StoredRubricCheckQuestion = HostedRubricCheckDefinitionInput & {
+  status: "scored" | "error" | "skipped";
+  value?: number;
+  error?: string;
+  rationale?: string;
+  evidence?: string[];
+};
+
+/**
+ * The questions a stored verdict can be projected from.
+ *
+ * A question missing its key, kind, digest or pass line is DROPPED, not
+ * guessed at: without those there is no definition to resolve a row against,
+ * and inventing one would put a scorer in the snapshot that nobody asked. An
+ * unknown status is kept as an error row, so it cannot vanish silently.
+ */
+export function rubricCheckQuestionsFrom(
+  verdict: HostedRubricChecksVerdictLike | undefined,
+): StoredRubricCheckQuestion[] {
+  if (!verdict || !Array.isArray(verdict.questions)) return [];
+  const templateVersion = isFiniteNumber(verdict.templateVersion)
+    ? verdict.templateVersion
+    : undefined;
+  const templateHash =
+    typeof verdict.templateHash === "string" ? verdict.templateHash : undefined;
+  const seen = new Set<string>();
+  const out: StoredRubricCheckQuestion[] = [];
+  for (const raw of verdict.questions) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const q = raw as Record<string, unknown>;
+    if (
+      typeof q.key !== "string" ||
+      !/^[cq]:[A-Za-z0-9_-]{1,64}$/.test(q.key) ||
+      seen.has(q.key) ||
+      typeof q.kind !== "string" ||
+      !RUBRIC_CHECK_KINDS.has(q.kind) ||
+      typeof q.contentDigest !== "string" ||
+      q.contentDigest.length === 0 ||
+      !isFiniteNumber(q.passThreshold)
+    ) {
+      continue;
+    }
+    seen.add(q.key);
+    const status =
+      q.status === "scored" || q.status === "skipped" ? q.status : "error";
+    out.push({
+      key: q.key,
+      kind: q.kind as StoredRubricCheckQuestion["kind"],
+      label: typeof q.label === "string" ? q.label : q.key,
+      contentDigest: q.contentDigest,
+      passThreshold: q.passThreshold,
+      ...(templateVersion !== undefined ? { templateVersion } : {}),
+      ...(templateHash !== undefined ? { templateHash } : {}),
+      status,
+      ...(isFiniteNumber(q.value) ? { value: q.value } : {}),
+      ...(typeof q.error === "string"
+        ? { error: q.error }
+        : q.status !== status
+          ? { error: `unknown status ${JSON.stringify(q.status)}` }
+          : {}),
+      ...(typeof q.rationale === "string" ? { rationale: q.rationale } : {}),
+      ...(Array.isArray(q.evidence)
+        ? {
+            evidence: q.evidence.filter(
+              (entry): entry is string => typeof entry === "string",
+            ),
+          }
+        : {}),
+    });
+  }
+  return out;
+}
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -154,6 +251,7 @@ export function hostedScoreDefinitionInputs(
   inputs: HostedScoreRowInputs
 ): HostedScoreDefinitionInputs {
   const judge = inputs.judgeVerdict;
+  const rubricChecks = rubricCheckQuestionsFrom(inputs.rubricChecksVerdict);
   return {
     ...(inputs.predicateResults?.length
       ? {
@@ -216,6 +314,25 @@ export function hostedScoreDefinitionInputs(
       : {}),
     ...(inputs.agentActivity?.status === "no_agent_activity"
       ? { agentActivityFired: true }
+      : {}),
+    ...(rubricChecks.length > 0
+      ? {
+          rubricChecks: rubricChecks.map(
+            ({ key, kind, label, contentDigest, passThreshold, ...rest }) => ({
+              key,
+              kind,
+              label,
+              contentDigest,
+              passThreshold,
+              ...(rest.templateVersion !== undefined
+                ? { templateVersion: rest.templateVersion }
+                : {}),
+              ...(rest.templateHash !== undefined
+                ? { templateHash: rest.templateHash }
+                : {}),
+            }),
+          ),
+        }
       : {}),
   };
 }
@@ -330,6 +447,52 @@ export function buildHostedScoreRows(
         errorScoreResult(judgeDefinition, "judge reported no numeric score")
       );
     }
+  }
+
+  // Rubric checks: one advisory row per asked question. The row carries the
+  // rail that answered (`model`), while the definition always names Jev; the
+  // value is handed over unchanged, so an out-of-range one finalizes to an
+  // error rather than being clamped into a pass.
+  const rubricVerdict = inputs.rubricChecksVerdict;
+  const answeredBy =
+    typeof rubricVerdict?.model === "string" && rubricVerdict.model.length > 0
+      ? rubricVerdict.model
+      : undefined;
+  for (const question of rubricCheckQuestionsFrom(rubricVerdict)) {
+    const definition = byId.get(hostedRubricCheckScorerId(question.key));
+    if (!definition) continue;
+    if (question.status === "skipped") {
+      rows.push(
+        skippedScoreResult(
+          definition,
+          typeof rubricVerdict?.reason === "string"
+            ? `rubric checks did not run: ${rubricVerdict.reason}`
+            : "rubric checks did not run",
+        ),
+      );
+      continue;
+    }
+    if (question.status === "error" || question.value === undefined) {
+      rows.push(
+        errorScoreResult(
+          definition,
+          question.error ??
+            (question.status === "scored"
+              ? "rubric check reported no value"
+              : "no_answer"),
+        ),
+      );
+      continue;
+    }
+    rows.push(
+      finalizeScoreResult(definition, {
+        kind: "scored",
+        value: question.value,
+        ...(question.rationale ? { rationale: question.rationale } : {}),
+        ...(question.evidence?.length ? { evidence: question.evidence } : {}),
+        ...(answeredBy ? { model: answeredBy } : {}),
+      }),
+    );
   }
 
   return rows;

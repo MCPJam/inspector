@@ -9,6 +9,7 @@
  */
 
 import { cn } from "@/lib/utils";
+import { BUILT_IN_BADGE } from "@/components/evals/runner-checks";
 import type { ScorecardProvenance } from "./case-scorecard-model";
 
 const LABELS: Record<ScorecardProvenance, string> = {
@@ -18,6 +19,9 @@ const LABELS: Record<ScorecardProvenance, string> = {
   suite: "Suite",
   snapshot: "Run snapshot",
   judge: "Judge",
+  rubricCheck: "Rubric check",
+  // Nobody wrote it: the runner measures this stage on every iteration.
+  builtin: BUILT_IN_BADGE,
 };
 
 export function ProvenanceChip({

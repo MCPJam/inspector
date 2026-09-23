@@ -1,10 +1,11 @@
-export type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "pending"; version?: string; installRequested: boolean }
-  | { kind: "downloaded"; version: string; releaseNotes?: string }
-  // Auto-update announced a version and then could not install it; the UI
-  // sends the user to the releases page instead of a dead Update button.
-  | { kind: "manual"; version?: string };
+import type {
+  UpdateStatus,
+  FailedUpdateStatus,
+} from "../../../shared/desktop-update";
+export type {
+  UpdateStatus,
+  FailedUpdateStatus,
+} from "../../../shared/desktop-update";
 
 export interface ElectronAPI {
   // App metadata
@@ -102,7 +103,7 @@ export interface ElectronAPI {
   update: {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     removeUpdateStatusListener: () => void;
-    onUpdateError: (callback: () => void) => void;
+    onUpdateError: (callback: (status: FailedUpdateStatus) => void) => void;
     removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
