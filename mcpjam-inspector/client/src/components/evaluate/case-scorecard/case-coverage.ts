@@ -12,7 +12,6 @@
  * disagree about how many required assertions a stage has.
  */
 
-import { stageEmptyIsGap } from "@/components/evals/suite-grading-model";
 import { formatStageConfigLine } from "@/components/evals/suite-scorer-table-model";
 import { STAGE_CHIP_TONE_CLASS } from "../stage-chain-model";
 import type { UserValueStage } from "@mcpjam/sdk/contract";
@@ -25,7 +24,11 @@ export type StageCoverage = {
   advisory: number;
   /** The judge grades this stage on this case. */
   judge: boolean;
-  /** Nothing is authorable here — the runner observes it. */
+  /**
+   * Nothing authored grades this stage, and its built-in runner check does.
+   * Read off the rows the scorecard renders, so a stage this case does not
+   * exercise (no runner check) is not claimed as covered.
+   */
   runner: boolean;
 };
 
@@ -44,9 +47,15 @@ export function coverageForCase(
     };
   }
 
+  const withRunnerCheck = new Set<UserValueStage>();
   for (const group of card.groups) {
     for (const row of group.rows) {
       if (row.provenance === "judge") continue;
+      // Not an evaluator: it decides nothing, so it is not a rule to count.
+      if (row.provenance === "builtin") {
+        withRunnerCheck.add(row.stage);
+        continue;
+      }
       // The route counts as one required Selection rule only when it actually
       // asserts a route; "any route, graded by the checks below" asserts
       // nothing.
@@ -75,9 +84,7 @@ export function coverageForCase(
     const entry = out[stage];
     const empty =
       entry.required === 0 && entry.advisory === 0 && !entry.judge;
-    // The suite settings page's own rule for which links are observed rather
-    // than authored, so a case and a suite agree about where a gap can exist.
-    entry.runner = empty && !stageEmptyIsGap(stage);
+    entry.runner = empty && withRunnerCheck.has(stage);
   }
 
   return out;
@@ -88,10 +95,17 @@ export function coverageDetail(
   suggestionsAtStage: number,
 ): StageDetail {
   if (coverage.runner) {
-    return {
-      label: "Observed by the runner",
-      toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
-    };
+    // A runner check is not an assertion, so a suggestion still reads as the
+    // gap it is — the runner check does not close it.
+    return suggestionsAtStage > 0
+      ? {
+          label: `Built-in runner check · ${suggestionsAtStage} suggested`,
+          toneClass: STAGE_CHIP_TONE_CLASS.mixed,
+        }
+      : {
+          label: "Built-in runner check",
+          toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
+        };
   }
   const configured = formatStageConfigLine(coverage);
   if (configured || coverage.judge) {

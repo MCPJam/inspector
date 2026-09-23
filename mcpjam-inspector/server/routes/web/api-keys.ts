@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { z } from "zod";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { logger } from "../../utils/logger.js";
 import {
   ErrorCode,
@@ -77,6 +78,9 @@ apiKeys.use("*", async (c, next) => {
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely (session-auth.ts:103),
 // so this sub-router must explicitly require a bearer.
 apiKeys.use("*", bearerAuthMiddleware);
+// MJ-012: the `/api/web` `*` limiter runs before this router sets `authMethod`,
+// so it cannot see a signed-in caller here. See routes/web/index.ts.
+apiKeys.use("*", passthroughRateLimitMiddleware);
 
 function getWorkOSRestKey(): string {
   const key = process.env.WORKOS_API_KEY;

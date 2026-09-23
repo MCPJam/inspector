@@ -3926,6 +3926,7 @@ export function TestTemplateEditor({
             editForm.suppressedSuiteStandardCheckIds
           }
           suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
+          matchOptions={workspaceDraft.matchOptions}
           suiteJudgeConfig={suite?.judgeConfig}
           capabilities={caseCapabilities.capabilities}
           saveStatus={checksSaveStatus}

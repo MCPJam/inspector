@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
+import { offeredPlans } from "@/lib/pricing-catalog";
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -460,6 +461,55 @@ describe("OrganizationsTab billing", () => {
         name: "Change plan",
       }),
     ).toBeEnabled();
+    expect(screen.getByRole("table")).toHaveClass("table-fixed");
+    const [labelHead, ...planHeads] = within(
+      screen.getAllByRole("row")[0],
+    ).getAllByRole("columnheader");
+    expect(planHeads).toHaveLength(offeredPlans(catalog).length);
+    expect(new Set(planHeads.map((head) => head.style.width)).size).toBe(1);
+    expect(
+      [labelHead, ...planHeads].reduce(
+        (total, head) => total + parseFloat(head.style.width),
+        0,
+      ),
+    ).toBeCloseTo(100);
+    const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
+    expect(within(ssoRow).getAllByRole("cell")[2]).toHaveClass(
+      "border-x",
+      "border-primary/35",
+      "bg-primary/[0.06]",
+    );
+  });
+
+  it("spans section headers across the whole table when Team is not offered", () => {
+    const legacy = createPlanCatalog();
+    const catalog = {
+      ...legacy,
+      plans: {
+        free: { ...legacy.plans.free, catalogPlanId: "free" },
+        pro: {
+          ...legacy.plans.team,
+          plan: "pro",
+          displayName: "Pro",
+          billingModel: "flat",
+          catalogPlanId: "pro",
+          checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+        },
+        enterprise: legacy.plans.enterprise,
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        planCatalog: catalog,
+      }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    const headerCells = within(
+      screen.getByRole("row", { name: "Usage" }),
+    ).getAllByRole("cell") as HTMLTableCellElement[];
+    expect(headerCells).toHaveLength(1);
+    expect(headerCells[0].colSpan).toBe(offeredPlans(catalog).length + 1);
   });
 
   it.each(["upgrade", "downgrade"] as const)(
@@ -584,6 +634,18 @@ describe("OrganizationsTab billing", () => {
     const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
     expect(within(ssoRow).getAllByRole("cell")[3]).toHaveTextContent(
       "Not included",
+    );
+    // Section headers split their span so the Team column stays unbroken; a
+    // miscounted split shows up as a malformed row rather than a failure.
+    const usageHeaderCells = within(
+      screen.getByRole("row", { name: "Usage" }),
+    ).getAllByRole("cell") as HTMLTableCellElement[];
+    const plans = offeredPlans(catalog);
+    expect(usageHeaderCells).toHaveLength(3);
+    expect(usageHeaderCells[0].colSpan).toBe(plans.indexOf("team") + 1);
+    expect(usageHeaderCells[1]).not.toHaveAttribute("colspan");
+    expect(usageHeaderCells[2].colSpan).toBe(
+      plans.length - 1 - plans.indexOf("team"),
     );
     expect(
       within(getPlanColumn("Team")).queryByText("Legacy"),
@@ -1507,6 +1569,37 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("labels the Free column CTA 'Scheduled' once a return to Free is scheduled", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripeCancelAtPeriodEnd: true,
+          stripeCancelAt: Date.parse("2026-05-01T12:00:00.000Z"),
+          stripeCurrentPeriodEnd: Date.parse("2026-05-01T12:00:00.000Z"),
+          stripePriceId: "price_team",
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    const scheduled = within(getPlanColumn("Free")).getByRole("button", {
+      name: "Downgrade scheduled for May 1, 2026",
+    });
+    expect(scheduled).toHaveAttribute("aria-disabled", "true");
+    expect(scheduled).toHaveTextContent("Scheduled");
+    expect(
+      within(getPlanColumn("Free")).queryByRole("button", {
+        name: "Downgrade",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows 'First charge' copy while the subscription is trialing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -2106,6 +2199,32 @@ describe("OrganizationsTab billing", () => {
     expect(upsell.getByText(/\$38/)).toBeInTheDocument();
     fireEvent.click(upsell.getByRole("button", { name: /^Annual$/ }));
     expect(upsell.getByText(/\$30/)).toBeInTheDocument();
+  });
+
+  it("marks the selected interval in the compare-table toggle without a discount badge", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    const toggle = within(
+      within(screen.getByRole("table")).getByRole("group", {
+        name: "Billing interval",
+      }),
+    );
+    const annual = toggle.getByRole("button", { name: /^Annual/ });
+    const monthly = toggle.getByRole("button", { name: "Monthly" });
+    expect(annual).toHaveAttribute("aria-pressed", "true");
+    expect(monthly).toHaveAttribute("aria-pressed", "false");
+    // The legacy Team prices imply a 21% annual discount; the toggle no longer
+    // advertises it.
+    expect(toggle.queryByText(/-\d+%/)).not.toBeInTheDocument();
+    fireEvent.click(monthly);
+    expect(annual).toHaveAttribute("aria-pressed", "false");
+    expect(monthly).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
