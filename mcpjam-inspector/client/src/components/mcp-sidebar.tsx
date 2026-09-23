@@ -19,7 +19,6 @@ import {
   Users,
   ShieldCheck,
   Loader2,
-  ExternalLink,
   Layers,
   Cable,
   MessagesSquare,
@@ -547,34 +546,20 @@ export function MCPSidebar({
   const {
     status: updateStatus,
     restartRequested,
-    downloadManually,
+    showUpdateError,
     restartAndInstall,
   } = useUpdateNotification();
-  const showUpdateButton =
-    updateStatus.kind === "pending" ||
-    updateStatus.kind === "downloaded" ||
-    updateStatus.kind === "manual";
-  // Auto-update announced a build it then failed to install. The pill has to
-  // stay — there IS a newer version — but it must stop offering an in-app
-  // install that has already proven it cannot happen, or the user is back to
-  // clicking a control that does nothing.
-  const updateIsManual = updateStatus.kind === "manual";
-  // Two ways to be mid-install, and both must disable the button: waiting on a
-  // download that was asked to install when it finishes, and waiting on the
-  // app to quit for one already downloaded. The second is the one a repeat
-  // click used to get through.
+  const showUpdateButton = updateStatus.kind !== "idle";
+  const updateFailed = updateStatus.kind === "failed";
+  const updateRecovering = updateStatus.kind === "recovering";
   const updateInstalling =
-    !updateIsManual &&
-    (restartRequested ||
+    !updateFailed &&
+    (updateRecovering ||
+      restartRequested ||
       (updateStatus.kind === "pending" && updateStatus.installRequested));
   const handleUpdateClick = () => {
-    if (updateIsManual) {
-      downloadManually();
-      return;
-    }
-    if (!updateInstalling) {
-      restartAndInstall();
-    }
+    if (updateFailed) showUpdateError();
+    else if (!updateInstalling) restartAndInstall();
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
@@ -810,14 +795,13 @@ export function MCPSidebar({
                 {updateInstalling && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateIsManual && (
-                  <ExternalLink className="size-2.5" aria-hidden />
-                )}
-                {updateIsManual
-                  ? "Download update"
-                  : updateInstalling
-                  ? "Updating…"
-                  : "Update"}
+                {updateFailed
+                  ? "Update failed"
+                  : updateRecovering
+                    ? "Restarting to retry update…"
+                    : updateInstalling
+                      ? "Updating…"
+                      : "Update"}
               </Button>
             </div>
           )}

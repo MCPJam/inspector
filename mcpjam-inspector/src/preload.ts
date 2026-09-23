@@ -1,13 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-// Mirror of the main-process UpdateStatus union (kept inline to avoid a shared module).
-type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "pending"; version?: string; installRequested: boolean }
-  | { kind: "downloaded"; version: string; releaseNotes?: string }
-  // Auto-update announced a version and then could not install it; the UI
-  // sends the user to the releases page instead of a dead Update button.
-  | { kind: "manual"; version?: string };
+import type {
+  UpdateStatus,
+  FailedUpdateStatus,
+} from "../shared/desktop-update";
 
 // Define the API interface
 interface ElectronAPI {
@@ -94,7 +90,7 @@ interface ElectronAPI {
   update: {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     removeUpdateStatusListener: () => void;
-    onUpdateError: (callback: () => void) => void;
+    onUpdateError: (callback: (status: FailedUpdateStatus) => void) => void;
     removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
@@ -164,8 +160,10 @@ const electronAPI: ElectronAPI = {
     removeUpdateStatusListener: () => {
       ipcRenderer.removeAllListeners("update-status");
     },
-    onUpdateError: (callback: () => void) => {
-      ipcRenderer.on("update-error", () => callback());
+    onUpdateError: (callback: (status: FailedUpdateStatus) => void) => {
+      ipcRenderer.on("update-error", (_event, status: FailedUpdateStatus) =>
+        callback(status),
+      );
     },
     removeUpdateErrorListener: () => {
       ipcRenderer.removeAllListeners("update-error");
