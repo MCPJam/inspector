@@ -710,10 +710,18 @@ describe("update-listeners", () => {
     expect(() => installUpdateOnQuit()).not.toThrow();
     // Returned false so the caller falls through to the normal quit path
     // instead of being trapped in event.preventDefault().
-    expect(installUpdateOnQuit()).toBe(true);
-    // ^ second call: the previous throw cleared `isQuittingForUpdate`, and
-    // status is still "downloaded", so the second call re-enters and this
-    // time quitAndInstall doesn't throw (mockImplementationOnce). Returns true.
+    expect(installUpdateOnQuit()).toBe(false);
+    // ^ second call. This used to expect `true` — it re-entered because the
+    // throw cleared `isQuittingForUpdate` while the status stayed
+    // `downloaded`, which is precisely the re-entry that produced
+    // INSPECTOR-ELECTRON-WF. The latch is spent by the throwing call now, so
+    // there is no second `quitAndInstall`...
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    // ...and the status is retired rather than left inviting a click that
+    // this process can no longer honour.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual" });
   });
 
   it("fires update-error broadcast when stuck in pending+installRequested past the watchdog", async () => {
@@ -861,6 +869,77 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not install on quit after an error unstuck the flag mid-install", async () => {
+    // INSPECTOR-ELECTRON-WF, the exact path four users hit on 3.7.2.
+    //
+    // `isQuittingForUpdate` is about the CURRENT attempt, so the error handler
+    // has to clear it to give the user an answer. But `retireAfterUpdaterError`
+    // only rewrites a `pending` status, so the status stays `downloaded` — and
+    // both conditions `installUpdateOnQuit` checks are true again while
+    // Electron still holds the observer the first `quitAndInstall` registered.
+    // Quitting then called it a second time: "Observers can only be added
+    // once!" through DumpWithoutCrashing.
+    const window = createWindow();
+    windows.push(window);
+    const { installUpdateOnQuit, registerUpdateListeners } =
+      await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    // A plain updater error — NOT the refused-by-Electron shape, which has its
+    // own relaunch recovery. This one only unsticks the flag.
+    emitAutoUpdaterEvent("error", new Error("network died mid-install"));
+
+    // The precondition that made this reachable: the status never moved.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "downloaded" });
+
+    // The user quits. No second call, and the quit is NOT held — returning
+    // true here would `preventDefault()` a quit that nothing will finish.
+    expect(installUpdateOnQuit()).toBe(false);
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    // And the status is retired on the way out. The quit can still stall on
+    // the async browser teardown in `main.ts`, and an app left up on
+    // `downloaded` shows a Restart button wired to an install this process
+    // can no longer perform.
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual", version: "3.8.1" });
+  });
+
+  it("hands over the manual download when a click follows a spent install", async () => {
+    // Same setup, through the button instead of the quit. Refusing silently
+    // would rebuild the dead-button bug this file is full of fixes for, so the
+    // refusal has to land somewhere the user can actually act.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", new Error("network died mid-install"));
+    // That error already broadcast `update-error`. Without this the assertion
+    // below would pass on the FIRST notification and say nothing about the
+    // second click, which is the whole subject of the test.
+    (window.webContents.send as any).mockClear();
+
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual", version: "3.8.1" });
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+  });
+
   it("ignores a repeat click after the install started from a queued download", async () => {
     // The other way in: the user clicks while still downloading, so
     // `update-downloaded` starts the install itself. A click after that lands
@@ -976,7 +1055,52 @@ describe("update-listeners", () => {
     }
   });
 
-  it("catches quitAndInstall throws and surfaces an error broadcast", async () => {
+  it("spends the latch even when the call throws, so a re-armed button cannot retry", async () => {
+    // Pins the ORDERING, which nothing else reaches.
+    //
+    // `quitAndInstallCalled = true` sits ABOVE the call because Electron
+    // registers the observer before the work that throws. Move it back below
+    // and every other test in this file still passes: the two latch tests
+    // start from a call that RETURNED, so the latch is spent either way, and
+    // the throw test above is refused by its `manual` status before the latch
+    // is ever consulted. The fix would rest on a comment.
+    //
+    // What makes the latch the only defence is a build landing afterwards:
+    // `update-downloaded` puts the status back to `downloaded` ("downloaded
+    // always wins"), so the status no longer refuses the click. Not a
+    // contrived fixture either — a process that already spent its call can
+    // absolutely see the next poll land another build.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    quitAndInstallMock.mockImplementationOnce(() => {
+      throw new Error("squirrel: staging dir missing");
+    });
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.1");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    // A later poll lands another build and re-arms the button.
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "3.8.2");
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "downloaded" });
+
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    // The observer may already be registered from the throwing call, so this
+    // second call is the NOTREACHED. Only the latch stands in the way.
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual", version: "3.8.2" });
+  });
+
+  it("does not retry quitAndInstall after a throw, and hands over instead", async () => {
     const window = createWindow();
     windows.push(window);
     const { registerUpdateListeners } = await loadUpdateListeners();
@@ -994,10 +1118,19 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
     expect(window.webContents.send).toHaveBeenCalledWith("update-error");
 
-    // isQuittingForUpdate should not be stuck — a subsequent click should
-    // attempt quitAndInstall again (mock no longer throws).
+    // This used to assert the opposite — that a second click retried. The
+    // latch is set BEFORE the call now, because Electron registers the
+    // observer ahead of the work that throws, so a throw may well have left
+    // the registration behind and a retry would hit the NOTREACHED. We cannot
+    // tell from out here which kind of throw it was, so the retry goes.
+    //
+    // It must not just go quiet, though: the status is retired so the button
+    // becomes the releases page rather than one that can only throw again.
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
-    expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toMatchObject({ kind: "manual" });
   });
 });
 
