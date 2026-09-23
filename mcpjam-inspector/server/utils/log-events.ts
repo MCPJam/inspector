@@ -394,6 +394,41 @@ export type RequestEventMap = {
     errorCode: string;
   };
   "route.operation.failed": RouteOperationFailedFields;
+  /**
+   * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS
+   * key's id, never its value.
+   *
+   * WorkOS rejected `expires_at` when a key was created, so the key was minted
+   * without it. It still expires: the org binding carries the same instant
+   * and the bearer middleware enforces it. Any row here means WorkOS-native
+   * expiry is not in effect for new keys.
+   */
+  "apikey.expiry.workos_refused": { statusCode: number };
+  /**
+   * The backend capped an organization's key inventory, so the page listed
+   * only part of it (and says so to the admin).
+   */
+  "apikey.inventory.truncated": { listed: number };
+  /**
+   * An owner or admin revoked a key from the organization inventory.
+   * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
+   * the key is gone at WorkOS but its org binding was not removed — inert,
+   * and revoking it again from the inventory clears it.
+   */
+  "apikey.admin_revoke.completed": {
+    workosKeyId: string;
+    alreadyRevoked: boolean;
+    bindingCleanupFailed: boolean;
+    bindingStatus?: number;
+  };
+  /**
+   * No authorization decision could be had for an admin revoke (backend
+   * unreachable, or one without the route yet), so nothing was revoked.
+   */
+  "apikey.admin_revoke.unavailable": {
+    workosKeyId: string;
+    errorMessage: string;
+  };
 };
 
 export type SystemEventMap = {
