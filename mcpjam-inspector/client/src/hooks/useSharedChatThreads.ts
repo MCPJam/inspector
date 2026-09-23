@@ -109,6 +109,22 @@ export interface SharedChatThread {
   sentimentClusterLabel?: string;
   /** Multi-label trajectory tags, derived from the transcript (no model call). */
   behaviorTags?: string[];
+  /**
+   * Where this session's insight analysis stands, from `getSession` only.
+   * `owed`: nothing has run yet, the automatic pass is still coming.
+   * `provisional`: analyzed before the outcome could be asserted; the outcome
+   * follows once the session has been quiet for 30 minutes. Both are what
+   * Analyze now changes. Absent from older backends.
+   */
+  analysisPhase?:
+    | "owed"
+    | "analyzing"
+    | "deferred"
+    | "provisional"
+    | "final"
+    | "failed"
+    | "guest"
+    | "none";
   /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
   pathKey?: string;
   /**

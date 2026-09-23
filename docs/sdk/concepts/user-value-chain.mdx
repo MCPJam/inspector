@@ -47,13 +47,14 @@ Two consequences worth keeping in mind:
 
 ## Graders that are not predicates
 
-Three graders file at a link without being checks you write in a list:
+Four graders file at a link without being checks you write in a list:
 
 | Grader | Link | What it is |
 |--------|------|------------|
 | Tool-call matcher | Selection | The `expectedToolCalls` comparison, configured by [match options](/sdk/reference/validators) rather than authored as a predicate |
 | Goal completion judge | User value | The hosted LLM judge scoring whether the request was satisfied |
 | Groundedness judge | User value | Advisory only, run on demand; it has no score definition and never decides a link |
+| Rubric checks | User value | Advisory only: one row per suite criterion or authored question, graded with the goal completion judge; never decides a link |
 
 A **gating** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
 

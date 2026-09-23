@@ -18,6 +18,7 @@ const LABELS: Record<ScorecardProvenance, string> = {
   suite: "Suite",
   snapshot: "Run snapshot",
   judge: "Judge",
+  rubricCheck: "Rubric check",
 };
 
 export function ProvenanceChip({

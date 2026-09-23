@@ -51,6 +51,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { SessionClientModelChip } from "@/components/connection/share-usage/session-client-model";
+import { SessionAnalyzeNowButton } from "@/components/connection/share-usage/session-analyze-now";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
@@ -818,6 +819,7 @@ export function ShareUsageThreadDetail({
               </Button>
             )
           ) : null}
+          <SessionAnalyzeNowButton thread={thread} />
           {/* Labeled, never icon-only: readers who wanted to send a session to
               a teammate did not recognize the copy icon as the way to do it.
               Same label on Swarm and User Testing. */}
