@@ -18,6 +18,7 @@ import {
   crashReportingIntegrations,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
+import { makeConsoleTransportFailSafe } from "./log-console-safety.js";
 
 // `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
 // a packaged build, so the previous NODE_ENV check reported every shipped
@@ -81,6 +82,11 @@ import {
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+// ...and make the console one survivable. On Windows a packaged build's stdout
+// is a pipe, and writing to one nobody is reading throws EPIPE straight out of
+// `console.info`, through electron-log, and into whatever was running
+// (INSPECTOR-ELECTRON-WE: two users, `fatal`, three seconds into launch).
+makeConsoleTransportFailSafe(log.transports.console);
 
 // Sentry's default integrations capture these; this puts them in the log file
 // the user actually attaches to a bug report (and is the only diagnostic when
