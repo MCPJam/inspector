@@ -26,7 +26,7 @@ import {
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
-import { shouldQueryProjectId } from "./useProjects";
+import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -180,6 +180,7 @@ export function buildDisconnectedRuntimeServers(
 
 export function useAppState({
   currentUserId,
+  isWorkOsLoading = false,
   currentActorKey,
   routeOrganizationId,
   hasOrganizations,
@@ -188,6 +189,7 @@ export function useAppState({
   requestSignIn,
 }: {
   currentUserId: string | null;
+  isWorkOsLoading?: boolean;
   /**
    * Stable identifier for the active actor — `currentUserId` for signed-in
    * users, the guest cookie's `guestId` for guests. Used to scope per-actor
@@ -199,7 +201,7 @@ export function useAppState({
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
-  requestSignIn?: () => void | Promise<void>;
+  requestSignIn?: (returnPath?: string) => void | Promise<void>;
 }) {
   const isUserReady = useDbUserReady();
   const logger = useLogger("Connections");
@@ -520,13 +522,18 @@ export function useAppState({
     projectDefaultHostConfig: activeProjectDefaultHostConfig ?? null,
   });
 
+  const oauthMemberships = useProjectQueries({ isAuthenticated });
   const serverState = useServerState({
     appState,
     dispatch,
     isLoading,
     isAuthenticated,
     hasSignedInUser: currentUserId != null,
-    isAuthLoading,
+    currentUserId,
+    oauthProjectIds: oauthMemberships.allProjects === undefined
+      ? undefined
+      : new Set(oauthMemberships.allProjects.map((project) => project._id)),
+    isAuthLoading: isAuthLoading || isWorkOsLoading,
     isLoadingProjects: projectState.isLoadingProjects,
     useLocalFallback: projectState.useLocalFallback,
     activeOrganizationId,

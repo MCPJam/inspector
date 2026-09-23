@@ -1,3 +1,5 @@
+import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
+import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
 import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
@@ -45,8 +47,8 @@ import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
   clearOAuthData,
+  clearPendingOAuthAttempt,
   initiateOAuth,
-  isElectronMcpCallbackState,
   readStoredOAuthConfig,
   OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
@@ -91,6 +93,7 @@ import {
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import {
+  useCurrentLocationParts,
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
   navigateApp,
@@ -359,32 +362,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
 }
 
-export function buildElectronMcpCallbackUrl(): string | null {
-  if (window.isElectron || window.location.pathname !== "/oauth/callback") {
-    return null;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  if (!params.get("code") && !params.get("error")) {
-    return null;
-  }
-
-  // Electron-started MCP OAuth explicitly tags the state parameter so the
-  // browser callback can hand control back to the desktop app without relying
-  // on browser-local storage heuristics.
-  if (!isElectronMcpCallbackState(params.get("state"))) {
-    return null;
-  }
-
-  const callbackUrl = new URL("mcpjam://oauth/callback");
-  callbackUrl.searchParams.set("flow", "mcp");
-
-  for (const [key, value] of params.entries()) {
-    callbackUrl.searchParams.append(key, value);
-  }
-
-  return callbackUrl.toString();
-}
+export { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
 
 const OAUTH_CONNECTION_RETRY_DELAY_MS = 1500;
 
@@ -647,6 +625,8 @@ interface UseServerStateParams {
   isAuthenticated: boolean;
   /** True when a signed-in WorkOS user is present (not guest Convex-only auth). */
   hasSignedInUser: boolean;
+  currentUserId: string | null;
+  oauthProjectIds?: ReadonlySet<string>;
   isAuthLoading: boolean;
   isLoadingProjects: boolean;
   useLocalFallback: boolean;
@@ -678,7 +658,7 @@ interface UseServerStateParams {
    * applied when the call site also supplies the `serverId`.
    */
   activeHostConfig?: HostConfigDtoV2;
-  requestSignIn?: () => void | Promise<void>;
+  requestSignIn?: (returnPath?: string) => void | Promise<void>;
   logger: LoggerLike;
 }
 
@@ -910,6 +890,8 @@ export function useServerState({
   isLoading,
   isAuthenticated,
   hasSignedInUser,
+  currentUserId = null,
+  oauthProjectIds,
   isAuthLoading,
   isLoadingProjects,
   useLocalFallback,
@@ -923,6 +905,17 @@ export function useServerState({
   requestSignIn,
   logger,
 }: UseServerStateParams) {
+  const callbackLocation = useCurrentLocationParts();
+  const oauthAccessRef = useRef({
+    loading: isAuthLoading,
+    userId: currentUserId,
+    projectIds: oauthProjectIds,
+  });
+  oauthAccessRef.current = {
+    loading: isAuthLoading,
+    userId: currentUserId,
+    projectIds: oauthProjectIds,
+  };
   const isUserReady = useDbUserReady();
   const convex = useConvex();
   const {
@@ -981,7 +974,7 @@ export function useServerState({
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  const oauthCallbackHandledRef = useRef(false);
+  const oauthCallbackHandledRef = useRef(new Set<string>());
   const opTokenRef = useRef<Map<string, number>>(new Map());
   const nextOpToken = (name: string) => {
     const current = opTokenRef.current.get(name) ?? 0;
@@ -1009,6 +1002,54 @@ export function useServerState({
       return pendingServerName;
     },
     [dispatch]
+  );
+  const recoverProjectOAuth = useCallback(
+    (
+      context: NonNullable<ReturnType<typeof getHostedOAuthCallbackContext>>,
+      access: ReturnType<typeof checkProjectOAuthAccess>,
+      state: string | null,
+    ) => {
+      const message =
+        access === "membership"
+          ? "You no longer have access to this project. Ask a project owner for access, then reconnect."
+          : access === "identity"
+            ? "Your sign-in changed during authorization. Sign in with the original account, then reconnect."
+            : "This authorization needs to be restarted. Return to the server and reconnect.";
+      failPendingOAuthConnection(message);
+      clearPendingOAuthAttempt(context.serverName, state);
+      if (context.organizationId)
+        restoreActiveOrganizationId?.(context.organizationId);
+      navigateApp(resolveHostedOAuthReturnPath(context), { replace: true });
+      toast.error(
+        message,
+        access === "identity" && requestSignIn
+          ? {
+              action: {
+                label: "Sign in",
+                onClick: () => {
+                  void requestSignIn(resolveHostedOAuthReturnPath(context));
+                },
+              },
+            }
+          : undefined,
+      );
+      logger.warn("OAuth callback access rejected", {
+        failureStage: "project-access",
+        identityMatch:
+          context.initiatingUserId === undefined
+            ? null
+            : context.initiatingUserId === oauthAccessRef.current.userId,
+        reason: access,
+        deliveryMode: window.isElectron ? "ipc" : "browser",
+        appVersion: __APP_VERSION__,
+      });
+    },
+    [
+      failPendingOAuthConnection,
+      restoreActiveOrganizationId,
+      requestSignIn,
+      logger,
+    ],
   );
   const updateServerOAuthTrace = useCallback(
     (serverName: string, oauthTrace: OAuthTrace) => {
@@ -1065,6 +1106,7 @@ export function useServerState({
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
         surface: "project",
+        initiatingUserId: currentUserId,
         ...(connectionIntent ? { connectionIntent } : {}),
         organizationId,
         projectId: effectiveActiveProjectId,
@@ -1081,7 +1123,7 @@ export function useServerState({
       }
       return true;
     },
-    [effectiveActiveProjectId, effectiveProjects, isAuthenticated]
+    [effectiveActiveProjectId, effectiveProjects, isAuthenticated, currentUserId]
   );
 
   const activeProject = useMemo(() => {
@@ -2878,19 +2920,53 @@ export function useServerState({
         }
       };
 
+      const assertProjectAccess = () => {
+        if (hostedCallbackContext?.surface !== "project") return;
+        if (
+          checkProjectOAuthAccess(hostedCallbackContext, oauthAccessRef.current) !==
+          "allow"
+        ) {
+          throw new Error(
+            "Your session or project access changed. Return to the server and reconnect.",
+          );
+        }
+      };
       try {
+        assertProjectAccess();
         const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
               callbackState: state,
               callbackIss: iss,
+              assertProjectAccess,
               onTraceUpdate: handleLiveOAuthTrace,
             })
           : await handleOAuthCallback(code, {
               onTraceUpdate: handleLiveOAuthTrace,
               callbackState: state,
               callbackIss: iss,
+              assertProjectAccess,
             });
 
+        if (!result.success && hostedCallbackContext?.surface === "project") {
+          const access = checkProjectOAuthAccess(
+            hostedCallbackContext,
+            oauthAccessRef.current,
+          );
+          if (access !== "allow") {
+            recoverProjectOAuth(hostedCallbackContext, access, state);
+            return;
+          }
+        }
+        if (!result.success)
+          logger.warn("OAuth completion rejected", {
+            requestId: result.requestId,
+            failureStage: result.failureStage ?? "hosted-completion",
+            identityMatch:
+              !hostedCallbackContext ||
+              hostedCallbackContext.initiatingUserId === oauthAccessRef.current.userId,
+            deliveryMode: window.isElectron ? "ipc" : "browser",
+            appVersion: __APP_VERSION__,
+          });
         localStorage.removeItem("mcp-oauth-return-hash");
         if (hostedCallbackContext) {
           // The pending marker is written for local-mode project flows too —
@@ -3169,6 +3245,7 @@ export function useServerState({
     [
       dispatch,
       failPendingOAuthConnection,
+      recoverProjectOAuth,
       isAuthenticated,
       logger,
       persistServerToLocalProject,
@@ -3190,14 +3267,6 @@ export function useServerState({
     if (isLoading) return;
     if (isAuthLoading) return;
 
-    if (
-      isAuthenticated &&
-      !useLocalFallback &&
-      (isLoadingProjects || !effectiveActiveProjectId)
-    ) {
-      return;
-    }
-
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
     const state = urlParams.get("state");
@@ -3216,11 +3285,35 @@ export function useServerState({
     }
     const isHostedProjectCallback =
       hostedOAuthCallbackContext?.surface === "project";
+    const attempt = `${state}:${code ?? error}`;
+    const pendingServer = hostedOAuthCallbackContext?.serverName ??
+      localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
+    const issuedState = pendingServer
+      ? localStorage.getItem(`mcp-oauth-issued-state-${pendingServer}`)
+      : null;
+    if (oauthCallbackHandledRef.current.has(attempt)) return;
+    if (isHostedProjectCallback && (code || error)) {
+      const access = checkProjectOAuthAccess(
+        hostedOAuthCallbackContext, oauthAccessRef.current,
+      );
+      if (access === "wait") return;
+      if (access !== "allow") {
+        // A delayed result must not discard a newer authorization attempt.
+        if (issuedState && issuedState !== state) return;
+        oauthCallbackHandledRef.current.add(attempt);
+        recoverProjectOAuth(hostedOAuthCallbackContext, access, state);
+        return;
+      }
+    }
+    if (
+      isAuthenticated && !useLocalFallback &&
+      (isLoadingProjects || !effectiveActiveProjectId)
+    ) return;
     if (code) {
       if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
-      if (oauthCallbackHandledRef.current) {
+      if (oauthCallbackHandledRef.current.has(attempt)) {
         return;
       }
 
@@ -3254,7 +3347,7 @@ export function useServerState({
         return;
       }
 
-      oauthCallbackHandledRef.current = true;
+      oauthCallbackHandledRef.current.add(attempt);
 
       // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
       // concurrently) cannot set the server back to "disconnected" while the
@@ -3328,7 +3421,7 @@ export function useServerState({
         error,
         errorDescription,
       });
-      oauthCallbackHandledRef.current = true;
+      oauthCallbackHandledRef.current.add(attempt);
       // Denied/failed authorizations return the user to where they started
       // too: same org restore + router-aware navigation as the success path.
       const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
@@ -3341,6 +3434,12 @@ export function useServerState({
       navigateApp(returnTarget, { replace: true });
     }
   }, [
+    recoverProjectOAuth,
+    callbackLocation.pathname,
+    callbackLocation.search,
+    currentUserId,
+    oauthProjectIds,
+    requestSignIn,
     isLoading,
     isAuthLoading,
     isAuthenticated,
