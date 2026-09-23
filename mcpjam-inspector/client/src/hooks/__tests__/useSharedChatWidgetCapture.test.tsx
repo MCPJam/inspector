@@ -131,6 +131,17 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
     expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
     expect(global.fetch).toHaveBeenCalledTimes(3);
+    // Widget HTML is uploaded as text so storage never serves it as a page;
+    // the tool payloads stay JSON.
+    const uploadedTypes = vi
+      .mocked(global.fetch)
+      .mock.calls.map(([, init]) => (init?.body as Blob).type)
+      .sort();
+    expect(uploadedTypes).toEqual([
+      "application/json",
+      "application/json",
+      "text/plain; charset=utf-8",
+    ]);
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
       scenarioId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-1",

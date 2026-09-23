@@ -257,17 +257,19 @@ describe("STAGE_EMPTY_COPY", () => {
     }
   });
 
-  it("distinguishes a runner-measured stage from an ungraded one", () => {
-    const runnerMeasured: UserValueStage[] = [
+  it("distinguishes a stage with a runner check from an ungraded one", () => {
+    const withRunnerCheck: UserValueStage[] = [
       "connection",
       "discovery",
       "call",
+      "response",
     ];
-    for (const stage of runnerMeasured) {
+    for (const stage of withRunnerCheck) {
       expect(stageEmptyIsGap(stage), stage).toBe(false);
-      expect(STAGE_EMPTY_COPY[stage]).toContain("Observed by the runner");
+      expect(STAGE_EMPTY_COPY[stage]).toContain("Built-in runner check");
+      expect(STAGE_EMPTY_COPY[stage]).not.toMatch(/observed by the runner/i);
     }
-    for (const stage of ["selection", "response", "userValue"] as const) {
+    for (const stage of ["selection", "userValue"] as const) {
       expect(stageEmptyIsGap(stage), stage).toBe(true);
       expect(STAGE_EMPTY_COPY[stage]).toBe("No evaluator");
     }
@@ -309,8 +311,9 @@ describe("stageConfigStates", () => {
       required: 1,
       advisory: 0,
     });
+    // Its runner check measures it, so an empty Response is not a gap.
     expect(stateOf(states, "response")).toMatchObject({
-      state: "gap",
+      state: "runner",
       required: 0,
       advisory: 0,
     });

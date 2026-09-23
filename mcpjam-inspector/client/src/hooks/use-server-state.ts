@@ -1,3 +1,4 @@
+import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
 import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
@@ -2900,6 +2901,7 @@ export function useServerState({
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
+      const finishDiagnostic = startDesktopOperation("oauth_callback");
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
         HOSTED_MODE &&
@@ -2946,6 +2948,8 @@ export function useServerState({
               callbackIss: iss,
               assertProjectAccess,
             });
+
+        finishDiagnostic(result.success);
 
         if (!result.success && hostedCallbackContext?.surface === "project") {
           const access = checkProjectOAuthAccess(
@@ -3224,6 +3228,7 @@ export function useServerState({
         if (!suppressErrorToast) {
           toast.error(`Error completing OAuth flow: ${errorMessage}`);
         }
+        finishDiagnostic(false, error);
         logger.error("OAuth callback failed", { error: errorMessage });
         const oauthTrace =
           typeof error === "object" && error !== null && "oauthTrace" in error

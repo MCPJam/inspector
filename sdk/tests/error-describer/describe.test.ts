@@ -932,6 +932,18 @@ it.each([
     "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
     "provider/mcpjam_limit",
   ],
+  [
+    "This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    "provider/mcpjam_limit_insufficient",
+  ],
+  [
+    "This request needs about 30 MCPJam credits; your organization has 0 left today.",
+    undefined,
+  ],
+  [
+    "This request needs about 20 MCPJam credits; your organization has 23 left today.",
+    undefined,
+  ],
   ["Provider rate limit", undefined],
 ])("classifies MCPJam limit markers: %s", (message, slug) => {
   expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
@@ -942,4 +954,31 @@ it("describes the credit exhaustion heading with plan-appropriate recovery guida
   const result = describeError("Out of MCPJam credits.");
   expect(result.slug).toBe("provider/mcpjam_limit");
   expect(result.title).toBe("Out of MCPJam credits");
+});
+
+it("classifies the shortfall even when composed copy also says out of credits", () => {
+  expect(
+    describeError(
+      "Out of MCPJam credits. This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    ).slug,
+  ).toBe("provider/mcpjam_limit_insufficient");
+});
+
+it("does not call a partial balance used up when the request needs more than is left", () => {
+  const result = describeError(
+    JSON.stringify({
+      code: "user_rate_limit",
+      limitKind: "total",
+      refusalReason: "insufficient_for_request",
+      creditsRemaining: 23,
+      creditsRequired: 30,
+      error:
+        "Daily MCPJam model limit reached. This request needs about 30 MCPJam credits; your organization has 23 left today.",
+    }),
+  );
+  expect(result.slug).toBe("provider/mcpjam_limit_insufficient");
+  expect(result.title).toBe("Not enough MCPJam credits");
+  expect(result.oneLine).toBe(
+    "This request needs about 30 MCPJam credits; your organization has 23 left today.",
+  );
 });

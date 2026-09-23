@@ -47,6 +47,12 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { useImageUpload } from "@/hooks/useImageUpload";
+import {
+  IMAGE_UPLOAD_ACCEPT,
+  ImageUploadError,
+  validateImageFile,
+} from "@/lib/image-upload";
 import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import {
   Alert,
@@ -653,9 +659,8 @@ function OrganizationPage({
     changeMemberRole,
     transferOrganizationOwnership,
     removeMember,
-    generateLogoUploadUrl,
-    updateOrganizationLogo,
   } = useOrganizationMutations();
+  const uploadImage = useImageUpload();
 
   const currentMember = activeMembers.find(
     (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase(),
@@ -876,47 +881,31 @@ function OrganizationPage({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
-      return;
-    }
-
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image must be less than 5MB");
+    const problem = validateImageFile(file);
+    if (problem) {
+      toast.error(problem);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       return;
     }
 
     setIsUploadingLogo(true);
 
     try {
-      // Get upload URL from Convex
-      const uploadUrl = await generateLogoUploadUrl({
-        organizationId: organization._id,
-      });
-
-      // Upload file to Convex storage
-      const result = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-
-      if (!result.ok) {
-        throw new Error("Failed to upload file");
-      }
-
-      const { storageId } = await result.json();
-
-      // Update organization's logo in database
-      await updateOrganizationLogo({
-        organizationId: organization._id,
-        storageId,
-      });
+      // The backend checks the bytes, stores them and sets the logo; the
+      // organization query updates on its own.
+      await uploadImage(
+        { kind: "organization-logo", organizationId: organization._id },
+        file,
+      );
     } catch (error) {
       console.error("Failed to upload logo:", error);
-      toast.error("Failed to upload logo. Please try again.");
+      toast.error(
+        error instanceof ImageUploadError
+          ? error.message
+          : "Failed to upload logo. Please try again.",
+      );
     } finally {
       setIsUploadingLogo(false);
       // Reset input so the same file can be selected again
@@ -1846,7 +1835,7 @@ function OrganizationPage({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept={IMAGE_UPLOAD_ACCEPT}
         className="hidden"
         onChange={handleLogoFileChange}
       />
@@ -1889,7 +1878,7 @@ function OrganizationPage({
 
       {children ??
         (activeSection === "api-keys" ? (
-          <ApiKeysRoute organizationId={organization._id} />
+          <ApiKeysRoute organizationId={organization._id} isAdmin={canEdit} />
         ) : activeSection === "models" ? (
           <OrganizationModelsSection
             organizationId={organization._id}

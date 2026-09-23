@@ -69,6 +69,7 @@ import {
   postServiceRoute,
 } from "./github-checks/service-route.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
+import { createConformanceFetch } from "../routes/shared/conformance.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -1442,6 +1443,13 @@ async function defaultRunConformance(args: {
     server: {
       url: args.serverUrl,
       ...(args.oauthAccessToken ? { accessToken: args.oauthAccessToken } : {}),
+      // The URL is ours — the sandbox's public HTTPS edge — but what answers
+      // it is the pull request's code, which can redirect anywhere. Every
+      // suite dials through the hosted conformance guard: the same pinned,
+      // hop-by-hop transport the eval half of this check already reaches the
+      // URL through (`createAuthorizedManager`), so the sandbox needs no
+      // allowance.
+      baseFetch: createConformanceFetch("MCP server"),
     },
     suites,
     source: "github_app",
@@ -1452,6 +1460,8 @@ async function defaultRunConformance(args: {
   });
   return { runId: result.runId };
 }
+
+export const defaultRunConformanceForTests = () => defaultRunConformance;
 
 function defaultDeps(): CheckExecutionDeps {
   return {

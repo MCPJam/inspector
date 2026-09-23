@@ -106,6 +106,26 @@ import {
 } from "@/shared/mcp-tool-origin-metadata";
 import { isWebmcpPageToolName } from "@/shared/declared-tools";
 import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  presentHistoryForModel,
+  toolCallLookupFor,
+  type HistoryPresentation,
+} from "./history-provenance.js";
+import {
+  mintToolApprovalId,
+  requiresServerVerifiedApproval,
+  toolApprovalBindingFor,
+  UNAPPROVED_HISTORY_CALL_RESULT,
+  UNVERIFIED_APPROVAL_RESULT,
+  verifyToolApprovalId,
+  type ToolApprovalBinding,
+} from "./tool-approval-token.js";
+
+export { UNAPPROVED_HISTORY_CALL_RESULT, UNVERIFIED_APPROVAL_RESULT };
+
+let warnedLegacyUnsignedApproval = false;
 
 function unwrapJsonEnvelope(value: unknown): unknown {
   let current = value;
@@ -149,31 +169,6 @@ function isModelVisibleImageOutput(value: unknown): boolean {
       partRecord.mediaType.startsWith("image/")
     );
   });
-}
-
-/**
- * Whether a tool-call name is one of this turn's discovery meta-tools.
- *
- * Its one remaining job is the DRAIN filter: before pausing for approval on a
- * real tool, the step runs any meta-tool calls the model made in the same
- * assistant message, so the resumed turn does not lose the discovery side
- * effect. Approval itself no longer consults this — the meta-tools declare a
- * `never` floor like every other family, and the gate reads declarations.
- *
- * Still name-plus-plan rather than name alone: when progressive mode is off
- * there are no meta-tools in the toolset, and a real MCP server is free to
- * expose a tool literally named `search_mcp_tools`. Draining that one would
- * execute a real tool while the turn was paused waiting to ask about it.
- * `progressivePlan?.enabled` is the only mode in which the orchestrator mints
- * the meta-tools, and it fails fast on real-tool name collisions in
- * `prepareChatV2`, so a matching name truly is one of ours.
- */
-function isApprovalFreeMetaToolName(
-  name: string,
-  progressivePlan: ProgressiveToolPlan | undefined,
-): boolean {
-  if (!progressivePlan?.enabled) return false;
-  return META_TOOL_NAMES.includes(name);
 }
 
 /**
@@ -1049,6 +1044,31 @@ export interface MCPJamHandlerOptions {
    */
   approvalMode?: "prompt" | "auto-deny";
   /**
+   * `messages` came from the REQUEST BODY rather than from state the server
+   * holds (MJ-008).
+   *
+   * When true, a tool call already in that history with no result is a
+   * CLAIM, and it runs only if a verified server-issued approval covers it;
+   * any other such call is answered with {@link UNAPPROVED_HISTORY_CALL_RESULT}
+   * before the first model step. Browser-facing chat routes set it. Omitted ⇒
+   * the history is the server's own (durable agent jobs, eval and swarm
+   * runners), whose unresolved calls keep running as before.
+   */
+  clientSuppliedHistory?: boolean;
+  /**
+   * Who and where this turn's approvals are bound to. Defaults to the bearer's
+   * subject + `projectId` + `chatSessionId`, which is right for every caller
+   * today; the override exists for tests.
+   */
+  approvalBinding?: ToolApprovalBinding;
+  /**
+   * Present the history to the model as `history-provenance.ts` describes
+   * (MJ-009): tool results fenced, content the server could not verify
+   * labelled. Applied to what each step SENDS; the history itself, and so
+   * the persisted transcript, is unchanged. Browser-facing chat sets it.
+   */
+  historyPresentation?: HistoryPresentation;
+  /**
    * Hosted MRTR (§12.5, PR5) resume descriptor. Present only on a fresh request
    * that resumes a suspended tool call: the engine drives one retry leg BEFORE
    * the first model call, splices the driven result into the identified
@@ -1265,6 +1285,10 @@ interface StepContext {
   selectedServers?: string[];
   /** One approval decision per tool call, shared across the whole turn. */
   approvalDecisions: ApprovalDecisionCache;
+  /** What this turn's approval ids are bound to (see `tool-approval-token`). */
+  approvalBinding: ToolApprovalBinding;
+  /** See `MCPJamHandlerOptions.historyPresentation`. */
+  historyPresentation?: HistoryPresentation;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
@@ -1963,6 +1987,9 @@ async function processStream(
   // prevent, and it would do so silently.
   approvalDecisions: ApprovalDecisionCache,
   messageHistory: ModelMessage[],
+  // Who and where a pill minted here is bound to (MJ-008). Required: an
+  // approval id minted without it could not be verified on resume.
+  approvalBinding: ToolApprovalBinding,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
@@ -2255,8 +2282,22 @@ async function processStream(
               decisions: approvalDecisions,
             })
           ) {
+            // THE APPROVAL ID IS THE PROOF (MJ-008): an HMAC over this exact
+            // call, verified when the answer comes back in the next request.
+            // Unsignable only on a hosted deployment with no key, where the
+            // tools that must verify were already built to refuse (see
+            // `built-in-tools/mcpjam.ts`); everything else keeps the legacy
+            // random id and the legacy trust in the answer.
             emitToolApprovalRequest(writer, {
-              approvalId: generateToolCallId(),
+              approvalId:
+                mintToolApprovalId({
+                  call: {
+                    toolCallId,
+                    toolName: chunk.toolName,
+                    input: chunk.input ?? {},
+                  },
+                  binding: approvalBinding,
+                }) ?? generateToolCallId(),
               toolCallId,
             });
           }
@@ -2562,6 +2603,15 @@ function emitInheritedToolCalls(
  * When the client responds with approval/denial decisions, this function
  * processes them: executes approved tools and emits denied notifications.
  *
+ * AN APPROVAL IS HONORED ONLY IF THE SERVER ISSUED IT (MJ-008). Every part of
+ * the pause arrives in client-sent history — the call, its arguments, the
+ * request and the answer — so "approved" is checked against the approval id
+ * the server minted for exactly that call, caller and conversation
+ * (`tool-approval-token.ts`). An approval that does not verify is a DENIAL,
+ * logged and answered with {@link UNVERIFIED_APPROVAL_RESULT}. And only the
+ * calls a verified approval covers are executed here: a sibling sitting
+ * unresolved in the same history is not the approval's to authorize.
+ *
  * Returns true if approvals were found and handled (agentic loop should continue).
  */
 async function handlePendingApprovals(
@@ -2569,6 +2619,7 @@ async function handlePendingApprovals(
   messageHistory: ModelMessage[],
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
+  approvalBinding: ToolApprovalBinding,
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
   abortSignal?: AbortSignal,
@@ -2581,10 +2632,10 @@ async function handlePendingApprovals(
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
   onToolCall?: (event: MCPJamToolCallEvent) => void,
 ): Promise<boolean> {
-  // Build approvalId → toolCallId map, toolCallId → toolName map,
+  // Build approvalId → toolCallId map, toolCallId → tool call map,
   // and toolCallId → assistant message index map from assistant messages
   const approvalIdToToolCallId = new Map<string, string>();
-  const toolCallIdToToolName = new Map<string, string>();
+  const toolCallById = new Map<string, { toolName: string; input: unknown }>();
   const toolCallIdToAssistantIdx = new Map<string, number>();
   for (let i = 0; i < messageHistory.length; i++) {
     const msg = messageHistory[i];
@@ -2596,7 +2647,10 @@ async function handlePendingApprovals(
           approvalIdToToolCallId.set(part.approvalId, part.toolCallId);
         }
         if (part.type === "tool-call" && part.toolCallId) {
-          toolCallIdToToolName.set(part.toolCallId, part.toolName);
+          toolCallById.set(part.toolCallId, {
+            toolName: part.toolName,
+            input: part.input,
+          });
           toolCallIdToAssistantIdx.set(part.toolCallId, i);
         }
       }
@@ -2608,6 +2662,9 @@ async function handlePendingApprovals(
   // Scan tool messages for approval responses
   const approvedToolCallIds = new Set<string>();
   const deniedToolCallIds = new Set<string>();
+  // Denials the SERVER made because an approval did not verify, and the
+  // model-visible reason for each. A user's own denial keeps its old text.
+  const unverifiedToolCallIds = new Set<string>();
 
   for (const msg of messageHistory) {
     if (msg?.role === "tool") {
@@ -2617,11 +2674,54 @@ async function handlePendingApprovals(
           const toolCallId = approvalIdToToolCallId.get(part.approvalId);
           if (!toolCallId) continue;
 
-          if (part.approved) {
-            approvedToolCallIds.add(toolCallId);
-          } else {
+          if (!part.approved) {
             deniedToolCallIds.add(toolCallId);
+            continue;
           }
+
+          const call = toolCallById.get(toolCallId);
+          const verdict = call
+            ? verifyToolApprovalId({
+                approvalId: part.approvalId,
+                call: {
+                  toolCallId,
+                  toolName: call.toolName,
+                  input: call.input,
+                },
+                binding: approvalBinding,
+              })
+            : ({ ok: false, reason: "malformed" } as const);
+          if (verdict.ok) {
+            approvedToolCallIds.add(toolCallId);
+            continue;
+          }
+          // A deployment that cannot sign keeps the legacy trust for the
+          // tools that allow it — nothing that must verify is ever built
+          // there with an approval to answer.
+          if (
+            verdict.reason === "no_key" &&
+            call &&
+            !requiresServerVerifiedApproval(tools[call.toolName])
+          ) {
+            if (!warnedLegacyUnsignedApproval) {
+              warnedLegacyUnsignedApproval = true;
+              logger.warn(
+                "[mcpjam-stream-handler] no tool-approval signing key on this deployment; honoring approvals unverified",
+              );
+            }
+            approvedToolCallIds.add(toolCallId);
+            continue;
+          }
+          logger.warn(
+            "[mcpjam-stream-handler] approval did not verify; treating it as denied",
+            {
+              toolCallId,
+              toolName: call?.toolName,
+              reason: verdict.reason,
+            },
+          );
+          deniedToolCallIds.add(toolCallId);
+          unverifiedToolCallIds.add(toolCallId);
         }
       }
     }
@@ -2653,22 +2753,14 @@ async function handlePendingApprovals(
   // the client throws `No tool invocation found for tool call ID "…"` and ends
   // the turn with a red banner, after the tools have already run.
   //
-  // EVERY unresolved call, not only the approved ones. Two of the three
-  // reasons a call is sitting here unresolved are not "it was approved":
-  //
-  //   - A DENIED call. Its `tool-output-denied` is written below, and nothing
-  //     had introduced it.
-  //   - A SIBLING that never needed approval. The approval pause is
-  //     whole-step: it drains only approval-free meta tools, so an ordinary
-  //     tool the model emitted in the same assistant message waits here too —
-  //     and `executeToolCallsFromMessages` below runs EVERY unresolved call,
-  //     so a result for that sibling is written whether or not anyone approved
-  //     anything.
-  //
-  // A MIXED STEP IS ORDINARY, and does not need two families on two floors to
-  // happen: the model emits several calls in one assistant message all the
-  // time, an `app_*` or read-only `ui_*` among them never pauses, and one
-  // gated call is enough to park every sibling here.
+  // EVERY unresolved call, not only the approved ones: a DENIED call's
+  // `tool-output-denied` is written below, and nothing had introduced it. A
+  // SIBLING that never needed approval is re-introduced too — though since
+  // MJ-008 it is no longer RUN here. The pause now drains the step's
+  // approval-free calls before it stops (see `processOneStep`), so a sibling
+  // still unresolved at this point is one this server never scheduled, and an
+  // approval for a different call is not its authorization. A client-sent
+  // history answers it with `UNAPPROVED_HISTORY_CALL_RESULT` right after this.
   //
   // Idempotent by construction: the helper skips any call that already has a
   // result, so a second pass over the same history emits nothing.
@@ -2694,7 +2786,10 @@ async function handlePendingApprovals(
 
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
-      const toolName = toolCallIdToToolName.get(toolCallId) ?? "unknown";
+      const toolName = toolCallById.get(toolCallId)?.toolName ?? "unknown";
+      const denialText = unverifiedToolCallIds.has(toolCallId)
+        ? UNVERIFIED_APPROVAL_RESULT
+        : "Tool execution denied by user.";
       emitToolOutputDenied(writer, { toolCallId });
 
       if (traceTurn && typeof stepIndex === "number") {
@@ -2707,9 +2802,9 @@ async function handlePendingApprovals(
           toolName,
           output: {
             type: "error-text",
-            value: "Tool execution denied by user.",
+            value: denialText,
           },
-          errorText: "Tool execution denied by user.",
+          errorText: denialText,
         });
         // PR 5b-pre review fix (Cursor Medium "Denied approval skips
         // onToolResult"): the denial path writes the trace event
@@ -2727,7 +2822,7 @@ async function handlePendingApprovals(
               toolName,
               output: {
                 type: "error-text",
-                value: "Tool execution denied by user.",
+                value: denialText,
               },
               isError: true,
               stepIndex,
@@ -2751,7 +2846,7 @@ async function handlePendingApprovals(
         toolName,
         output: {
           type: "error-text",
-          value: "Tool execution denied by user.",
+          value: denialText,
         },
       };
 
@@ -2792,6 +2887,10 @@ async function handlePendingApprovals(
       tools: tools as Record<string, any>,
       modelVisibleMcpToolResults,
       readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
+      // ONLY the calls a verified approval covers (MJ-008). Every other
+      // unresolved call in this history arrived from the client with nothing
+      // the server issued behind it.
+      filterToolCall: ({ toolCallId }) => approvedToolCallIds.has(toolCallId),
       // Defense-in-depth for client-fulfilled tools (app_*/ui_*): the client
       // resolves an APPROVED ui_* call by executing it and shipping the
       // tool-result directly, so an approval response without a result
@@ -2814,6 +2913,166 @@ async function handlePendingApprovals(
   }
 
   return didHandle;
+}
+
+/** Ids of the tool calls that already have a result in a history. */
+function collectToolResultIds(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "tool") continue;
+    for (const part of (msg as ToolModelMessage).content) {
+      if (part.type === "tool-result") ids.add(part.toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Tool-call ids present in a history, whatever their state. Taken from the
+ * turn's INITIAL messages, it names every call this request inherited rather
+ * than produced.
+ */
+function collectToolCallIds(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call" && part.toolCallId)
+        ids.add(part.toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Answer, without running, every server-executable tool call a CLIENT-SENT
+ * history carried in unresolved and no verified approval covered (MJ-008).
+ *
+ * Runs after `handlePendingApprovals`, so what is left is exactly the set the
+ * server never authorized: a call invented in the history, an approved
+ * call's unapproved sibling, a call stranded by a stopped turn. Before this
+ * the loop ran all of them after its first model step, with whatever
+ * arguments the history held.
+ *
+ * Answered rather than left unresolved: an unanswered call is an invalid
+ * history for the next model request and would be re-introduced on every
+ * step. Client-fulfilled tools (`ui_*`, `page_*`, app tools) are left alone —
+ * the browser, not this server, runs those, and it answers them itself.
+ */
+async function settleUnapprovedHistoryToolCalls(args: {
+  writer: StepContext["writer"];
+  messageHistory: ModelMessage[];
+  inheritedToolCallIds: ReadonlySet<string>;
+  tools: ToolSet;
+  mcpClientManager: MCPClientManager;
+  traceTurn: LiveTraceTurnContext;
+  stepIndex: number;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+}): Promise<void> {
+  const { messageHistory, tools } = args;
+  const resultIds = new Set<string>();
+  for (const msg of messageHistory) {
+    if (msg?.role !== "tool") continue;
+    for (const part of (msg as ToolModelMessage).content) {
+      if (part.type === "tool-result") resultIds.add(part.toolCallId);
+    }
+  }
+
+  const byAssistantIdx = new Map<number, ToolCallPart[]>();
+  for (let i = 0; i < messageHistory.length; i++) {
+    const msg = messageHistory[i];
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (
+        part.type !== "tool-call" ||
+        !args.inheritedToolCallIds.has(part.toolCallId) ||
+        resultIds.has(part.toolCallId) ||
+        // The provider ran it and answered it inside the assistant message.
+        part.providerExecuted === true
+      ) {
+        continue;
+      }
+      // A registered tool without `execute` is fulfilled by the browser.
+      const registered = (tools as Record<string, { execute?: unknown }>)[
+        part.toolName
+      ];
+      if (registered && typeof registered.execute !== "function") continue;
+      const bucket = byAssistantIdx.get(i) ?? [];
+      bucket.push(part as ToolCallPart);
+      byAssistantIdx.set(i, bucket);
+    }
+  }
+  if (byAssistantIdx.size === 0) return;
+
+  const settled = [...byAssistantIdx.values()].flat();
+  logger.warn(
+    "[mcpjam-stream-handler] client-sent history carried unresolved tool calls with no verified approval; answering without running them",
+    {
+      count: settled.length,
+      toolNames: [...new Set(settled.map((part) => part.toolName))],
+    },
+  );
+
+  // Re-introduce each call on THIS response before answering it — the
+  // client's reducer needs a part to attach the answer to.
+  for (const part of settled) {
+    emitToolInput(args.writer, {
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      input: part.input ?? {},
+      ...(part.providerOptions
+        ? { providerMetadata: part.providerOptions }
+        : {}),
+    });
+    if (args.onToolCall) {
+      try {
+        args.onToolCall({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+          stepIndex: args.stepIndex,
+          promptIndex: args.traceTurn.promptIndex,
+          serverId: readToolServerId(tools, part.toolName),
+        });
+      } catch (error) {
+        logger.warn(
+          "[mcpjam-stream-handler] onToolCall callback failed (unapproved history call)",
+          { error: error instanceof Error ? error.message : String(error) },
+        );
+      }
+    }
+  }
+
+  const answers: ModelMessage[] = [];
+  const sortedKeys = [...byAssistantIdx.keys()].sort((a, b) => b - a);
+  for (const idx of sortedKeys) {
+    const message = {
+      role: "tool",
+      content: byAssistantIdx.get(idx)!.map(
+        (part): ToolResultPart => ({
+          type: "tool-result",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
+        }),
+      ),
+    } as ModelMessage;
+    messageHistory.splice(idx + 1, 0, message);
+    answers.unshift(message);
+  }
+  await emitToolResults(
+    args.writer,
+    args.mcpClientManager,
+    answers,
+    args.traceTurn,
+    args.stepIndex,
+    args.onToolResult,
+  );
 }
 
 /**
@@ -2840,6 +3099,8 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     approvalDecisions,
+    approvalBinding,
+    historyPresentation,
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
@@ -2933,13 +3194,16 @@ async function processOneStep(
   // Scrub messages before sending to backend. Preserve reasoning on
   // assistant messages added during the current turn so thinking models can
   // see their own scratchpad across tool steps.
-  const scrubbedMessages = scrubMessagesForBackend(
+  const backendMessages = scrubMessagesForBackend(
     messageHistory,
     tools,
     mcpClientManager,
     selectedServers,
     traceTurn.promptMessageStartIndex,
   );
+  const scrubbedMessages = historyPresentation
+    ? presentHistoryForModel(backendMessages, tools, historyPresentation)
+    : backendMessages;
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
@@ -3216,6 +3480,7 @@ async function processOneStep(
     tools,
     approvalDecisions,
     messageHistory,
+    approvalBinding,
     onLiveTextDelta,
     abortSignal,
     onToolCall,
@@ -3260,6 +3525,40 @@ async function processOneStep(
       typeof firstChunkAt === "number"
         ? Math.max(0, firstChunkAt - llmStartAbs)
         : undefined,
+  };
+
+  // The tool map this step EXECUTES from: trace-wrapped, then gated to what the
+  // step actually advertised. Shared by the pre-pause drain and the normal
+  // execution path so the two can never run a call the other would refuse.
+  const buildStepExecutableTools = () => {
+    const tracedTools = wrapBackendToolsForTrace(tools as Record<string, any>, {
+      runStartedAt: traceTurn.turnStartedAt,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      spans: traceTurn.turnSpans,
+    });
+    // Progressive mode: gate execution to the active subset. Visibility
+    // is already narrowed by `activeToolDefs`, but a model can still
+    // emit a remembered/hallucinated call to a non-active name; gating
+    // turns that into a structured error the model can recover from
+    // via `load_mcp_tools` instead of executing an ungated tool.
+    let executableTools = gateToolsToActiveSubset(
+      tracedTools as Record<string, unknown>,
+      progressivePlan,
+      () => discoveryState,
+    );
+    // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
+    // set (`activeToolDefs`), gate execution to it too so a remembered /
+    // hallucinated call to a hidden tool (e.g. `computer` before a widget
+    // renders) becomes a recoverable tool-error instead of executing.
+    if (prepareAdvertisedTools) {
+      const advertised = new Set(activeToolDefs.map((def) => def.name));
+      executableTools = gateToolsToAdvertisedSubset(
+        executableTools,
+        () => advertised,
+      );
+    }
+    return executableTools;
   };
 
   // Check for unresolved tool calls and execute them
@@ -3382,35 +3681,84 @@ async function processOneStep(
     }
 
     if (hasUnresolvedApprovalRequiredToolCall && approvalMode !== "auto-deny") {
-      // Drain any unresolved meta-tool calls (search/load) before pausing
-      // for approval on real tools. Otherwise mixed-step turns (model
-      // emits a load_mcp_tools + a real tool in one assistant message)
-      // leave the meta-tool unresolved through the approval pause, and
-      // the resumed turn loses the discovery side effect — the loaded
-      // tools never get promoted into `discoveryState.loadedToolIds`,
-      // so the next step still only shows meta-tools.
-      const metaTracedTools = wrapBackendToolsForTrace(
-        tools as Record<string, any>,
-        {
-          runStartedAt: traceTurn.turnStartedAt,
-          promptIndex: traceTurn.promptIndex,
-          stepIndex,
-          spans: traceTurn.turnSpans,
-        },
-      );
-      const metaMessages = await executeToolCallsFromMessages(messageHistory, {
-        tools: metaTracedTools as Record<string, any>,
-        filterToolName: (name) =>
-          isApprovalFreeMetaToolName(name, progressivePlan),
-        modelVisibleMcpToolResults,
-        readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
-        ...(abortSignal ? { abortSignal } : {}),
-      });
-      if (metaMessages.length > 0) {
+      // DRAIN THIS STEP'S APPROVAL-FREE CALLS BEFORE PAUSING — the AI SDK's
+      // own semantics, and since MJ-008 a requirement rather than a courtesy.
+      //
+      // The pause used to be whole-step: only meta-tools (search/load) ran
+      // before it, and every other sibling waited for the resume, which then
+      // ran EVERY unresolved call in the resent history. That last part is
+      // what let a client-sent history run calls the server never scheduled,
+      // so the resume now runs only what a verified approval covers — and a
+      // sibling left for it would never run at all. So the siblings run here:
+      // calls THIS step's model produced (never an inherited one), that need
+      // no approval, and that this server executes (client-fulfilled tools
+      // stay for the browser). Meta-tools are among them, which keeps the
+      // original reason for this drain: a `load_mcp_tools` beside a real tool
+      // must promote its ids before the pause, or the resumed step still sees
+      // only meta-tools. Calls in one step are independent by contract.
+      const stepCallIds = new Set<string>();
+      const stepCallsNeedingApproval = new Set<string>();
+      for (const part of contentParts) {
+        if (part.type !== "tool-call") continue;
+        stepCallIds.add(part.toolCallId);
+        if (
+          await toolCallNeedsApproval({
+            name: part.toolName,
+            input: part.input ?? {},
+            toolCallId: part.toolCallId,
+            tools,
+            messages: messageHistory,
+            decisions: approvalDecisions,
+          })
+        ) {
+          stepCallsNeedingApproval.add(part.toolCallId);
+        }
+      }
+      const resultIdsBeforeDrain = collectToolResultIds(messageHistory);
+      let drainedMessages: ModelMessage[] = [];
+      try {
+        drainedMessages = await executeToolCallsFromMessages(messageHistory, {
+          tools: buildStepExecutableTools() as Record<string, any>,
+          filterToolCall: ({ toolCallId }) =>
+            stepCallIds.has(toolCallId) &&
+            !stepCallsNeedingApproval.has(toolCallId),
+          skipNonExecutableTools: true,
+          modelVisibleMcpToolResults,
+          readLinkedResource:
+            readLinkedMcpResourceWithManager(mcpClientManager),
+          ...(abortSignal ? { abortSignal } : {}),
+        });
+      } catch (error) {
+        // A sibling that SUSPENDED (hosted MRTR / scope step-up) has already
+        // emitted its own pause part; the turn is pausing anyway. Anything
+        // else keeps its old path to the outer handler.
+        if (
+          !isMrtrSuspendSignalShape(error) &&
+          !isScopeStepUpSuspendSignal(error)
+        ) {
+          throw error;
+        }
+        // The executor spliced the siblings that COMPLETED into the history
+        // before it rethrew — their side effects happened. They are emitted
+        // below like any other drained result: a result the client never
+        // receives is missing from the history it sends back, where the
+        // resume would find the call unresolved.
+        drainedMessages = messageHistory.filter(
+          (msg) =>
+            msg?.role === "tool" &&
+            (msg as ToolModelMessage).content.some(
+              (part) =>
+                part.type === "tool-result" &&
+                stepCallIds.has(part.toolCallId) &&
+                !resultIdsBeforeDrain.has(part.toolCallId),
+            ),
+        );
+      }
+      if (drainedMessages.length > 0) {
         await emitToolResults(
           writer,
           mcpClientManager,
-          metaMessages,
+          drainedMessages,
           traceTurn,
           stepIndex,
           onToolResult,
@@ -3468,37 +3816,7 @@ async function processOneStep(
 
     const toolsStartAbs = Date.now();
     try {
-      const tracedTools = wrapBackendToolsForTrace(
-        tools as Record<string, any>,
-        {
-          runStartedAt: traceTurn.turnStartedAt,
-          promptIndex: traceTurn.promptIndex,
-          stepIndex,
-          spans: traceTurn.turnSpans,
-        },
-      );
-
-      // Progressive mode: gate execution to the active subset. Visibility
-      // is already narrowed by `activeToolDefs`, but a model can still
-      // emit a remembered/hallucinated call to a non-active name; gating
-      // turns that into a structured error the model can recover from
-      // via `load_mcp_tools` instead of executing an ungated tool.
-      let executableTools = gateToolsToActiveSubset(
-        tracedTools as Record<string, unknown>,
-        progressivePlan,
-        () => discoveryState,
-      );
-      // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
-      // set (`activeToolDefs`), gate execution to it too so a remembered /
-      // hallucinated call to a hidden tool (e.g. `computer` before a widget
-      // renders) becomes a recoverable tool-error instead of executing.
-      if (prepareAdvertisedTools) {
-        const advertised = new Set(activeToolDefs.map((def) => def.name));
-        executableTools = gateToolsToAdvertisedSubset(
-          executableTools,
-          () => advertised,
-        );
-      }
+      const executableTools = buildStepExecutableTools();
 
       // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` and
       // `page_*` tools)
@@ -4049,6 +4367,24 @@ export async function runChatEngineLoop(
     }
   }
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
+  // Every call this request INHERITED rather than produced — the set that,
+  // from a client-sent history, needs a verified approval before it runs.
+  const inheritedToolCallIds = collectToolCallIds(messageHistory);
+  // What this turn's approval ids bind to (MJ-008): the caller, the project
+  // and the conversation, so a minted id verifies nowhere else.
+  const approvalBinding =
+    options.approvalBinding ??
+    toolApprovalBindingFor({ authHeader, projectId, chatSessionId });
+  // Sign what this turn streams as the server's own (MJ-009): assistant text
+  // and reasoning at their end chunks, tool results as they are emitted. A
+  // no-op where provenance is off (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   // Per TURN, not per step: the emit gate runs on one step and the unresolved
   // / auto-deny re-scans re-walk the whole history on later ones, and all
   // three must reach the same answer about the same call — once.
@@ -4119,7 +4455,7 @@ export async function runChatEngineLoop(
         lastWriteAt = Date.now();
         if (streamClosed) return;
         try {
-          writer.write(chunk);
+          writer.write(signChunk ? signChunk(chunk) : chunk);
         } catch (writeError) {
           // The SDK closes the underlying controller on client
           // disconnect; subsequent writes throw. Treat this as a
@@ -4238,6 +4574,7 @@ export async function runChatEngineLoop(
         messageHistory,
         tools,
         mcpClientManager,
+        approvalBinding,
         traceTurn,
         effectiveSteps(),
         abortSignal,
@@ -4245,6 +4582,29 @@ export async function runChatEngineLoop(
         onToolResult,
         onToolCall,
       );
+
+      // CLIENT-SENT HISTORY RUNS NOTHING THE SERVER DID NOT AUTHORIZE (MJ-008).
+      // Anything still unresolved from that history is answered, not run.
+      // Skipped on an MRTR / step-up resume: those name a suspended call the
+      // server holds a durable continuation for, and a sibling continuation
+      // may legitimately still be pending. The resume pre-phase below owns
+      // them, and it never runs the model — or any tool after it — while any
+      // call in the history is unresolved, so nothing planted beside the
+      // resumed call can run on that path either; it only keeps the turn
+      // paused.
+      if (options.clientSuppliedHistory && !(scopeStepUpResume ?? mrtrResume)) {
+        await settleUnapprovedHistoryToolCalls({
+          writer: safeWriter,
+          messageHistory,
+          inheritedToolCallIds,
+          tools,
+          mcpClientManager,
+          traceTurn,
+          stepIndex: effectiveSteps(),
+          onToolResult,
+          onToolCall,
+        });
+      }
 
       // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
       // A fresh request resuming a suspended tool call drives ONE retry leg
@@ -4351,6 +4711,10 @@ export async function runChatEngineLoop(
           mcpClientManager,
           selectedServers,
           approvalDecisions,
+          approvalBinding,
+          ...(options.historyPresentation
+            ? { historyPresentation: options.historyPresentation }
+            : {}),
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
