@@ -282,3 +282,50 @@ describe("normalizeModelMessagesForConvex — tool-result output", () => {
     expect(parseFirst(messages).success).toBe(false);
   });
 });
+
+describe("normalizeModelMessagesForConvex — empty user text", () => {
+  const promptMessage = {
+    role: "user",
+    content: [{ type: "text", text: "[server] prompt text" }],
+  } as ModelMessage;
+
+  it("drops a user message whose only part is empty text", () => {
+    const result = normalizeModelMessagesForConvex([
+      promptMessage,
+      { role: "user", content: [{ type: "text", text: "" }] } as ModelMessage,
+    ]);
+    expect(result).toEqual([
+      { role: "user", content: "[server] prompt text" },
+    ]);
+  });
+
+  it("drops a user message whose content is an empty string", () => {
+    const result = normalizeModelMessagesForConvex([
+      promptMessage,
+      { role: "user", content: "" } as ModelMessage,
+    ]);
+    expect(result).toHaveLength(1);
+  });
+
+  it("keeps the other parts when only the text is empty", () => {
+    const file = {
+      type: "file",
+      data: "aGVsbG8=",
+      mediaType: "text/plain",
+    };
+    const result = normalizeModelMessagesForConvex([
+      {
+        role: "user",
+        content: [{ type: "text", text: "" }, file],
+      } as ModelMessage,
+    ]);
+    expect(result).toEqual([{ role: "user", content: [file] }]);
+  });
+
+  it("still collapses a single non-empty text part", () => {
+    const result = normalizeModelMessagesForConvex([
+      { role: "user", content: [{ type: "text", text: "hi" }] } as ModelMessage,
+    ]);
+    expect(result).toEqual([{ role: "user", content: "hi" }]);
+  });
+});
