@@ -663,7 +663,7 @@ describe("useAppState active organization recovery", () => {
       );
       window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
-      const { result } = renderHook(() =>
+      const { result, rerender } = renderHook(() =>
         useAppState({
           currentUserId: "user-1",
           currentActorKey: "user-1",
@@ -678,8 +678,6 @@ describe("useAppState active organization recovery", () => {
         "oauth-server",
       );
 
-      window.history.replaceState({}, "", "/home");
-
       act(() => {
         capturedDispatch?.({
           type: "CONNECT_REQUEST",
@@ -693,6 +691,18 @@ describe("useAppState active organization recovery", () => {
           error: "401 Unauthorized",
         });
       });
+
+      // The failed row can land before the callback route is restored. No
+      // settle timer should start while the callback still owns the page.
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "oauth-server",
+      );
+
+      window.history.replaceState({}, "", "/home");
+      rerender();
 
       act(() => {
         vi.advanceTimersByTime(499);
