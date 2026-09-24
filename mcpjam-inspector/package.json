@@ -261,7 +261,7 @@
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
-    "electron": "43.6.0",
+    "electron": "44.4.3",
     "esbuild": "^0.27.0",
     "es-module-lexer": "1.7.0",
     "eslint": "^9",
