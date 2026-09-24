@@ -41,11 +41,18 @@ import { responseFailureFindingKey } from "./response-error.js";
  *    bugs into one issue.
  */
 export function stepFailureFindingKey(message: string): string {
+  // Cut before any pattern runs, after the hint so removing it still works.
+  // Three of the rules below have now been found quadratic on a crafted
+  // message, and the server writes this text; a bound here is what keeps the
+  // next one added from being reachable at all. It costs nothing: the key is
+  // cut to 160 characters, and only text a replacement would have pulled
+  // inside that window from past character 4000 is lost — which needs the
+  // 4000 before it to compress 25-fold.
   const withoutHint = stripTrailingPeriod(
     message.endsWith(` ${FALLBACK_HINT}`)
       ? message.slice(0, -(FALLBACK_HINT.length + 1))
       : message
-  );
+  ).slice(0, MAX_NORMALIZED_CHARS);
 
   return (
     responseFailureFindingKey(withoutHint) ?? normalizeVariableText(withoutHint)
@@ -53,6 +60,8 @@ export function stepFailureFindingKey(message: string): string {
 }
 
 const MAX_KEY_CHARS = 160;
+/** Worst case across the rules below is ~10ms at this length. */
+const MAX_NORMALIZED_CHARS = 4000;
 
 const PERIOD = ".".charCodeAt(0);
 
@@ -116,7 +125,15 @@ function normalizeVariableText(text: string): string {
       )
       // A long token with a digit in it: a client id, trace id or hash. Words
       // like `authorization_servers` have no digit and are left alone.
-      .replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "<id>")
+      //
+      // The digit test is a callback, not a `(?=[A-Za-z0-9_-]*\d)` lookahead.
+      // `-` is in the class but is not a `\w`, so in a run like `a-a-a-…`
+      // every letter sits at a `\b` and the lookahead rescanned the rest of
+      // the run from each one: 80k characters took 3.1s. Matching the token
+      // first and testing it once is linear.
+      .replace(/\b[A-Za-z0-9_-]{16,}\b/g, (token) =>
+        /\d/.test(token) ? "<id>" : token
+      )
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, MAX_KEY_CHARS)

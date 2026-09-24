@@ -247,6 +247,30 @@ describe("stepFailureFindingKey", () => {
     expect(key).toHaveLength(160);
   });
 
+  // Reported by Sebastián on #5473, present since 7b12239d5. The long-id rule
+  // put `(?=[A-Za-z0-9_-]*\d)` ahead of the token; `-` is in the class but is
+  // not a `\w`, so `a-a-a-…` sits every letter on a `\b` and the lookahead
+  // rescans the rest of the run from each one. Measured on the pattern alone:
+  // 200k characters took 21s. A run of plain letters does NOT show it — there
+  // is one `\b` in it — which is why the shape here is hyphenated.
+  //
+  // Deliberately NOT a timing test. With the lookahead restored AND the cap
+  // removed this input still cleared the whole pipeline in 130ms, so a
+  // duration cannot tell the fixed rule from the broken one here. The cap in
+  // `stepFailureFindingKey` has no test either: it only changes a key when
+  // the first 4000 characters compress 25-fold, which nothing real does. It
+  // is defense in depth against the NEXT pattern, not something observable.
+  // What is testable is the rewritten rule's behaviour, so that is what this
+  // asserts.
+  it("still replaces a long token once a digit is in it", () => {
+    expect(stepFailureFindingKey("client abc-def-ghi-jkl-mno rejected")).toBe(
+      "client abc-def-ghi-jkl-mno rejected"
+    );
+    expect(stepFailureFindingKey("client abc-def-ghi-jkl-mn0 rejected")).toBe(
+      "client <id> rejected"
+    );
+  });
+
   it("does not mistake statuses, codes or versions for hosts", () => {
     const message =
       "Dynamic Client Registration failed (400): invalid_client_metadata: release 3.9.2";
