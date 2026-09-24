@@ -7,7 +7,7 @@
 //
 // Per FILE: this package's `tokens-parity` test reads `tokens.css` through
 // `import.meta.url`, which jsdom turns into http: and `readFileSync` rejects.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
@@ -669,6 +669,52 @@ describe("ServerPickerPanel — removing a group", () => {
     expect(
       screen.getByRole("button", { name: "Delete Group 1" }),
     ).toBeDisabled();
+  });
+
+  it("greys out delete for a group in use and says why on hover", async () => {
+    // Radix's tooltip measures itself; jsdom has no ResizeObserver.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const onDeleteGroup = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          onDeleteGroup,
+          groups: [
+            {
+              id: "g_1",
+              name: "Group 1",
+              serverNames: ["excalidraw"],
+              deleteDisabledReason: "In use by a test suite.",
+            },
+            { id: "g_2", name: "Group 2", serverNames: ["sample"] },
+          ],
+        })}
+      />,
+    );
+
+    const blocked = screen.getByRole("button", { name: "Delete Group 1" });
+    expect(blocked).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: "Delete Group 2" }),
+    ).toBeEnabled();
+
+    await userEvent.hover(blocked);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "In use by a test suite.",
+    );
+    await userEvent.click(blocked);
+    expect(onDeleteGroup).not.toHaveBeenCalled();
   });
 });
 
