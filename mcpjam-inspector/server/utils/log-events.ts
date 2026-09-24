@@ -393,6 +393,13 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
   };
+  // Sign-out session revocation (routes/web/auth-session.ts, MJ-011): the
+  // backend could not be asked to revoke the session a user just signed out
+  // of, so tokens already issued for it stay valid until they expire. The
+  // sign-out itself still completed.
+  "auth.session.revoke_incomplete": {
+    reason: "failed" | "timeout";
+  };
   "route.operation.failed": RouteOperationFailedFields;
   /**
    * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS

@@ -28,6 +28,13 @@ export function resolveClientSentryConfig() {
     // browser session, and any session that LOADS on `/results/<token>`, is
     // recorded by neither.
     replayEnabled: shouldRecordSession(),
+    // Lets `beforeSend` recognise a frame the browser stamped with the
+    // document instead of a script — see shared/injected-script-frames.ts.
+    // The origin, not the href: it is stable across SPA route changes, and
+    // the frames carry whichever route was showing when the injected code
+    // was evaluated.
+    documentOrigin:
+      typeof window === "undefined" ? undefined : window.location.origin,
   });
 }
 

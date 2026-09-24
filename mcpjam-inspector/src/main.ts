@@ -18,8 +18,10 @@ import {
 } from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
+  dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
+import { retireConsoleOnStreamError } from "./log-console-safety.js";
 
 // `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
 // a packaged build, so the previous NODE_ENV check reported every shipped
@@ -39,6 +41,12 @@ Sentry.init({
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
   // already on by default in @sentry/electron 5.12 and is left alone.
   integrations: crashReportingIntegrations,
+  // Drops the ONE rejection the app cannot catch: Electron leaves
+  // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
+  // in-flight Update.exe arrives as an unhandled rejection for something that
+  // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
+  // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
+  beforeSend: dropUpdaterInstallSpawnRejection,
 });
 
 const desktopDiagnostics = installDesktopDiagnostics();
@@ -85,6 +93,21 @@ import {
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+// ...and make a dead console survivable. On Windows a packaged build's stdout
+// is a pipe; once nothing reads it, every write fails with EPIPE, delivered as
+// an `'error'` event on the stream — which, unhandled, is an uncaught exception
+// that ends the app (INSPECTOR-ELECTRON-WE, three seconds into launch). Both
+// streams: warn and error lines go to stderr.
+retireConsoleOnStreamError(
+  log.transports.console,
+  [process.stdout, process.stderr],
+  (error) =>
+    // Already retired when this runs, so it reaches the file transport only.
+    log.warn(
+      "[main] console output disabled: stdout/stderr is no longer readable",
+      error,
+    ),
+);
 
 // Sentry's default integrations capture these; this puts them in the log file
 // the user actually attaches to a bug report (and is the only diagnostic when

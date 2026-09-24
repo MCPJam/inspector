@@ -4,6 +4,10 @@ import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
 import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
 import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
+import {
+  classifyAuthKitBearer,
+  type AuthKitBearerVerdict,
+} from "../services/authkit-jwt.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
 import {
   handleSlackServiceAuth,
@@ -25,7 +29,9 @@ import {
  *    (memoized per request) and resolves the owning MCPJam user.
  * 4. Otherwise attempts to validate it as a guest JWT.
  * 5. If valid guest token, sets `c.set("guestId", guestId)`.
- * 6. If not a guest token, assumes WorkOS JWT and passes through.
+ * 6. If not a guest token and it claims a WorkOS AuthKit issuer, VERIFIES it
+ *    (signature, issuer, audience, expiry) — `authkit_jwt` on success, 401 on
+ *    a token that fails. Anything else passes through for Convex to judge.
  *
  * Prefix discrimination is sound: real WorkOS JWTs start with `eyJ`
  * (base64 `{"`), so `sk_`/`slk_` prefixes are unambiguous and those
@@ -343,25 +349,92 @@ export async function bearerAuthMiddleware(
     // Guest token service not initialized — treat as non-guest token
   }
 
-  // Not a guest token — assume a WorkOS AuthKit JWT and let it through
-  // WITHOUT verifying it here.
+  // Not a guest token. A bearer that claims a WorkOS AuthKit issuer is
+  // verified HERE — signature against the issuer's JWKS, issuer, audience,
+  // expiry — and one that fails is refused before any handler runs. Convex
+  // still verifies whatever is forwarded to it; this makes the gateway stop
+  // being the one hop that took an AuthKit token at its word. The keys are
+  // cached by jose, so on the hot path this is a local signature check.
+  const verdict = await classifyAuthKitBearer(token);
+  if (verdict.kind === "verified") {
+    c.set("authMethod", "authkit_jwt");
+    c.set("workosUserId", verdict.sub);
+    if (verdict.sid) c.set("workosSessionId", verdict.sid);
+    return next();
+  }
+  if (verdict.kind === "invalid") {
+    // `info`, not `warn`: the volume is attacker-controlled (see the same note
+    // in require-verified-auth.ts), and Axiom is where a spike is queried.
+    logger.info("Rejected an AuthKit bearer that failed verification", {
+      event: "auth.authkit_jwt_rejected",
+      reason: verdict.reason,
+      path: c.req.path,
+    });
+    return c.json(
+      {
+        code: ErrorCode.UNAUTHORIZED,
+        message: "Invalid or expired session token",
+      },
+      401
+    );
+  }
+  if (verdict.kind === "keys_unavailable") {
+    warnAuthKitKeysUnavailable(verdict);
+  }
+
+  // Everything else passes through UNVERIFIED, exactly as every JWT used to:
   //
-  // That is legitimate for the routes this middleware normally fronts: every
-  // one of them forwards the bearer to Convex, which verifies it against
-  // AuthKit's JWKS before doing anything. Verifying twice would add a JWKS
-  // round trip to the hot path to reach the same answer, and a token that
-  // fails downstream fails the request.
+  //   - `keys_unavailable`: the issuer is ours but its signing keys could not
+  //     be fetched. Failing closed would turn a WorkOS JWKS blip into an
+  //     outage for every signed-in user, while the routes behind this
+  //     middleware forward the bearer to Convex, which verifies it anyway.
+  //   - `foreign_audience`: a valid AuthKit token minted for another audience
+  //     (the MCP worker, the CLI's Connect app). The backend decides which
+  //     audiences it honours on which path; refusing here would break them.
+  //   - `not_authkit`: MCPJam-minted guest/delegated JWTs (verified by Convex
+  //     against the guest JWKS), non-JWT strings, or a deployment with no
+  //     AuthKit configured at all (the OSS install).
   //
-  // It is NOT legitimate for a v1 route that does not forward the bearer.
-  // Such a route treats "reached the handler" as "authenticated", and nothing
-  // downstream ever contradicts it — so `Authorization: Bearer whatever`
-  // reads it. THE RULE, therefore:
+  // It is NOT legitimate for a route that does not forward the bearer to
+  // trust this label. Such a route treats "reached the handler" as
+  // "authenticated", and nothing downstream ever contradicts it. THE RULE:
   //
-  //   A v1 route that does not forward the bearer to Convex MUST mount
+  //   A route that does not forward the bearer to Convex MUST mount
   //   `middleware/require-verified-auth.ts`.
   //
   // The label below is what lets that middleware tell the two apart: a
   // request that got here carries an ASSERTED identity, not a verified one.
   c.set("authMethod", "unverified_passthrough");
   return next();
+}
+
+/**
+ * Throttled: during a JWKS outage every AuthKit request lands here, and the
+ * verifier already backs off per issuer (`AUTHKIT_KEYS_UNAVAILABLE_BACKOFF_MS`),
+ * so one line per minute is the signal and the rest is noise.
+ */
+const KEYS_UNAVAILABLE_WARN_INTERVAL_MS = 60_000;
+let lastKeysUnavailableWarnAt = 0;
+
+function warnAuthKitKeysUnavailable(
+  verdict: Extract<AuthKitBearerVerdict, { kind: "keys_unavailable" }>
+): void {
+  const now = Date.now();
+  if (now - lastKeysUnavailableWarnAt < KEYS_UNAVAILABLE_WARN_INTERVAL_MS) {
+    return;
+  }
+  lastKeysUnavailableWarnAt = now;
+  logger.warn(
+    "AuthKit signing keys unavailable; deferring bearer verification to Convex",
+    {
+      event: "auth.authkit_jwks_unavailable",
+      issuer: verdict.issuer,
+      reason: verdict.reason,
+    }
+  );
+}
+
+/** Test-only: re-arm the throttled JWKS-outage warning. */
+export function resetAuthKitKeysWarningForTests(): void {
+  lastKeysUnavailableWarnAt = 0;
 }
