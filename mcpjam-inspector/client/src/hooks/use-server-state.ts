@@ -5923,6 +5923,7 @@ export function useServerState({
       serverName: string,
       options?: {
         forceOAuthFlow?: boolean;
+        replaceExistingOAuthConnection?: boolean;
         connectionIntent?: ConnectionIntent;
         allowInteractiveOAuthFlow?: boolean;
         suppressErrors?: boolean;
@@ -5930,7 +5931,11 @@ export function useServerState({
       },
     ) => {
       let connectionIntent = options?.connectionIntent;
-      if (options?.forceOAuthFlow && !connectionIntent) {
+      if (
+        options?.forceOAuthFlow &&
+        options.replaceExistingOAuthConnection !== false &&
+        !connectionIntent
+      ) {
         const target = tryResolveProjectServer(serverName);
         if (target) {
           const result = await listOAuthConnections(
