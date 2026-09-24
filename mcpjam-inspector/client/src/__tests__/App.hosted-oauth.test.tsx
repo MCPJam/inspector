@@ -4329,6 +4329,52 @@ describe("App hosted OAuth callback handling", () => {
     ).toEqual(expect.objectContaining({ status: "started" }));
   });
 
+  it("ignores an OAuth challenge published after its first-run attempt was canceled", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    let requestAuthorization:
+      | ((serverName: string) => Promise<boolean>)
+      | undefined;
+    appState.handleConnect.mockImplementation(
+      (_formData: unknown, options: Record<string, unknown>) => {
+        requestAuthorization = options.requestOAuthAuthorization as (
+          serverName: string,
+        ) => Promise<boolean>;
+      },
+    );
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+    await screen.findByRole("heading", {
+      name: "Connecting to Excalidraw (App)",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await expect(requestAuthorization?.("Excalidraw (App)")).resolves.toBe(
+      false,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Excalidraw (App) needs authorization",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("waits for project provisioning before starting the first-run handshake", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -4719,6 +4765,32 @@ describe("App hosted OAuth callback handling", () => {
       screen.getByRole("button", { name: "Edit server details" }),
     ).toBeInTheDocument();
     expect(appState.connectServerWithResult).not.toHaveBeenCalled();
+
+    // This screen is remounted after the OAuth round trip, so its local URL
+    // fields are empty. A bearer retry must recover the saved endpoint and
+    // must not inherit OAuth-return classification after the new attempt.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use a token instead" }),
+    );
+    fireEvent.change(screen.getByLabelText("Bearer token"), {
+      target: { value: "replacement-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect with token" }));
+
+    await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
+    expect(appState.handleConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "OAuth server",
+        type: "http",
+        url: "https://oauth.example/mcp",
+        authMethod: "bearer",
+        useOAuth: false,
+      }),
+      expect.any(Object),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Set up your server" }),
+    ).toBeInTheDocument();
   });
 
   it("lets the callback owner publish OAuth success without starting a duplicate reconnect", async () => {

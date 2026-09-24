@@ -4870,7 +4870,10 @@ export function useServerState({
       nextOpToken(serverName);
       const resolved = tryResolveProjectServer(serverName);
       autoOAuthEscalation.markFailed({
-        projectId: resolved?.projectId ?? appState.activeProjectId,
+        // Auto escalation is created in the active project scope. Use that
+        // same identity for cleanup even when a stale resolver entry points at
+        // a different project.
+        projectId: appState.activeProjectId,
         serverId: resolved?.serverId ?? null,
         serverName,
       });

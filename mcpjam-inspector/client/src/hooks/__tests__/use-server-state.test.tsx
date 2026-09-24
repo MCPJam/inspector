@@ -1658,7 +1658,7 @@ describe("useServerState OAuth callback failures", () => {
     sessionStorage.setItem(
       "mcp-auto-oauth-escalated",
       JSON.stringify([
-        "project_default::srv_demo",
+        "default::srv_demo",
         "default::name:demo-server",
       ])
     );

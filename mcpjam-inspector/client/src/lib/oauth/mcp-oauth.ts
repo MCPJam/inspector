@@ -1755,6 +1755,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
   configuredResourceUrl?: string;
   /** Concrete version resolved for this flow before leaving the page. */
   protocolVersion: OAuthProtocolVersion;
+  shouldContinue?: () => boolean;
 }): Promise<string | undefined> {
   if (!HOSTED_MODE) {
     return undefined;
@@ -1843,6 +1844,12 @@ async function createHostedOAuthSessionIfNeeded(input: {
     sessionId?: string;
     error?: string;
   } | null;
+
+  // Cancel can invalidate the connect while the hosted session request is in
+  // flight. Do not restore the pending marker after the cancel path cleared it.
+  if (input.shouldContinue && !input.shouldContinue()) {
+    return undefined;
+  }
 
   if (
     !response.ok ||
@@ -2888,6 +2895,7 @@ export async function initiateOAuth(
           authorizationUrl: redirectedAuthorizationUrl,
           configuredResourceUrl: oauthResourceUrl,
           protocolVersion,
+          shouldContinue: control?.shouldContinue,
         });
         assertCurrent();
         await persistOAuthStateArtifacts(provider, getState());
