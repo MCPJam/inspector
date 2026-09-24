@@ -266,27 +266,7 @@ export function SwarmHostCell({
       >
         {meta.label}
       </span>
-      {verdict ? <SessionEvaluatorCount counts={verdict.counts} /> : null}
     </button>
-  );
-}
-
-/**
- * A run whose pinned rubric had no required criteria has no denominator to
- * report, and `0/0` would claim it was graded against an empty one. Goals
- * decided by the judge alone are the common case, so this printed `0/0` on
- * most cells.
- */
-function SessionEvaluatorCount({
-  counts,
-}: {
-  counts: SwarmSessionVerdict["counts"];
-}) {
-  if (counts.gating === 0) return null;
-  return (
-    <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
-      {counts.gatingPassed}/{counts.gating} evaluators passed
-    </span>
   );
 }
 

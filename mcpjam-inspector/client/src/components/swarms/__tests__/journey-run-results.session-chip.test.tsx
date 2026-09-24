@@ -100,32 +100,37 @@ describe("SwarmHostCell status", () => {
 });
 
 describe("SwarmHostCell evaluator count", () => {
-  it("claims no denominator when the run pinned no rubric", () => {
-    const verdict = deriveSwarmSessionVerdict({
-      ...unrubricked,
-      attempt: { status: "succeeded" },
-      goalScore: { status: "completed", passed: true },
-    });
-    expect(verdict.counts.gating).toBe(0);
-    cell(verdict);
-    expect(screen.queryByText(/evaluators passed/)).not.toBeInTheDocument();
+  const noFraction = (el: HTMLElement) => {
+    expect(el).toHaveTextContent("Goal passed");
+    expect(el).not.toHaveTextContent(/evaluators|\d+\/\d+/);
+  };
+
+  it("prints no fraction when the run pinned no rubric", () => {
+    noFraction(
+      cell(
+        deriveSwarmSessionVerdict({
+          ...unrubricked,
+          attempt: { status: "succeeded" },
+          goalScore: { status: "completed", passed: true },
+        }),
+      ),
+    );
   });
 
-  it("reports the fraction when required criteria were graded", () => {
-    cell(
-      deriveSwarmSessionVerdict({
-        hasTranscript: true,
-        attempt: { status: "succeeded" },
-        rubric: [{ id: "c1", role: "required" }],
-        criteria: {
-          status: "completed",
-          results: [{ criterionId: "c1", passed: true }],
-        },
-        goalScore: null,
-        judge: { automatic: false, role: "advisory" },
-        grading: { state: "settled" },
-      }),
-    );
-    expect(screen.getByText("1/1 evaluators passed")).toBeInTheDocument();
+  it("prints no fraction when required criteria were graded", () => {
+    const verdict = deriveSwarmSessionVerdict({
+      hasTranscript: true,
+      attempt: { status: "succeeded" },
+      rubric: [{ id: "c1", role: "required" }],
+      criteria: {
+        status: "completed",
+        results: [{ criterionId: "c1", passed: true }],
+      },
+      goalScore: null,
+      judge: { automatic: false, role: "advisory" },
+      grading: { state: "settled" },
+    });
+    expect(verdict.counts.gating).toBe(1);
+    noFraction(cell(verdict));
   });
 });
