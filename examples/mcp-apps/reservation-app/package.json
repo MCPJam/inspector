@@ -12,7 +12,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@types/node": "^25.0.6",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "cross-env": "^10.1.0",
@@ -20,7 +20,7 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^0.3.1",
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@vitejs/plugin-react": "^6.1.1",
     "react": "^19.2.0",
