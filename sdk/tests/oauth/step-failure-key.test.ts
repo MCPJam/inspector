@@ -121,6 +121,43 @@ describe("stepFailureFindingKey", () => {
     ).toBe("x <id> y");
   });
 
+  // Review of #5473: the debug proxy names the host it refused, bare rather
+  // than as a URL, so each host a user typed opened its own issue.
+  it("keeps one proxy refusal together across hosts", () => {
+    const refused = (host: string) =>
+      `Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: Could not resolve ${host}`;
+
+    expect(stepFailureFindingKey(refused("tenant-a.example.com"))).toBe(
+      stepFailureFindingKey(refused("tenant-b.example.com")),
+    );
+    expect(stepFailureFindingKey(refused("tenant-a.example.com"))).toBe(
+      "Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: Could not resolve <host>",
+    );
+  });
+
+  it("replaces IP addresses, and keeps the cause inside the cap", () => {
+    const privateAddress = (host: string, ip: string) =>
+      `Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: ${host} resolves to a private or reserved address (${ip})`;
+    const longHost = "mcp-gateway.staging.platform.intranet.corp.example";
+    // Long enough that the raw text runs past the cap before the address.
+    expect(privateAddress(longHost, "10.0.0.7").length).toBeGreaterThan(160);
+    const key = stepFailureFindingKey(privateAddress(longHost, "10.0.0.7"));
+
+    expect(key).toBe(
+      stepFailureFindingKey(privateAddress("db.internal.example", "fd00::1")),
+    );
+    // The address is this message's tail, and it now survives the cap.
+    expect(key.endsWith("resolves to a private or reserved address (<ip>)")).toBe(
+      true,
+    );
+  });
+
+  it("does not mistake statuses, codes or versions for hosts", () => {
+    const message =
+      "Dynamic Client Registration failed (400): invalid_client_metadata: release 3.9.2";
+    expect(stepFailureFindingKey(message)).toBe(message);
+  });
+
   it("leaves ordinary words alone", () => {
     // Long, but no digit: not an id.
     expect(
@@ -128,7 +165,7 @@ describe("stepFailureFindingKey", () => {
     ).toBe("Protected resource metadata is missing authorization_servers");
   });
 
-  it("caps the key, so no message yields an unbounded number of keys", () => {
+  it("caps the key's length", () => {
     expect(stepFailureFindingKey(`Boom: ${"word ".repeat(200)}`).length).toBeLessThanOrEqual(160);
   });
 

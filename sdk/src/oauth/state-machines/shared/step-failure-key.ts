@@ -26,9 +26,11 @@ import { responseFailureFindingKey } from "./response-error.js";
  *    registration forms place it differently.
  * 2. A response failure reduces to label, status and OAuth `error` code
  *    ({@link responseFailureFindingKey}).
- * 3. Anything else keeps its full text, cause included, with URLs and long
- *    ids replaced and the length capped — a backstop, so no message can yield
- *    an unbounded number of keys.
+ * 3. Anything else keeps its full text, cause included, with every part a
+ *    user or server chooses replaced: URLs, bare hostnames and IP addresses
+ *    (the debug proxy names the host it refused, not a URL), and long ids.
+ *    Those replacements are what bound the number of keys; the length cap
+ *    only bounds how long one key can be.
  */
 export function stepFailureFindingKey(message: string): string {
   const withoutHint = stripTrailingPeriod(
@@ -48,9 +50,19 @@ function stripTrailingPeriod(text: string): string {
   return text.endsWith(".") ? text.slice(0, -1) : text;
 }
 
+// IPv6 before hostnames, so its hex groups are never read as DNS labels. Two
+// colons at least, with no whitespace between, so `Bad Request: …` is left alone.
+const IPV6_ADDRESS = /(?<![\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi;
+const IPV4_ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+// Dotted labels ending in an alphabetic TLD, so a version like `3.9.2` is not one.
+const HOSTNAME = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi;
+
 function normalizeVariableText(text: string): string {
   return text
     .replace(/\bhttps?:\/\/[^\s"'<>)]+/g, "<url>")
+    .replace(IPV6_ADDRESS, "<ip>")
+    .replace(IPV4_ADDRESS, "<ip>")
+    .replace(HOSTNAME, "<host>")
     .replace(
       /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
       "<id>",
