@@ -169,6 +169,15 @@ To start a full OAuth flow, use the explicit **Reconnect** button on the server 
 
 When a server has [multiple accounts](#multiple-oauth-accounts) connected, the **Reconnect** option in each account row's menu (in the server detail modal's Config tab) replaces only that row's credential. The other accounts are not affected. Using the top-level **Reconnect** button on the card replaces the default account's credential.
 
+## Recovering from a rejected authorization code
+
+When the authorization server rejects the token exchange with an `invalid_grant` error (for example, because the code expired or was already used), the debugger automatically resets to re-run the authorization request:
+
+- The **Continue** button changes to **Authorize**.
+- Clicking **Authorize** generates a fresh PKCE verifier, state, and authorization URL, then reopens the sign-in popup.
+
+This is distinct from a network failure during the token request: if the request never reached the server, the code is still valid and **Continue** retries the exchange as normal.
+
 ## Desktop app behavior
 
 When using the OAuth Debugger in the MCPJam Desktop app, the authorization step opens in your system browser instead of inside the app. After you approve access in the browser, you will see a **"Continue in MCPJam Desktop"** page that automatically hands control back to the desktop app. If the handoff does not happen automatically, click the link on that page to return.
