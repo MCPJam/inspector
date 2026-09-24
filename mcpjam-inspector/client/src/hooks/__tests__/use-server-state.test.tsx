@@ -1823,6 +1823,39 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
+  it("clears pending OAuth state when a runtime connect is canceled", () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify([
+        "project_default::srv_demo",
+        "default::name:demo-server",
+      ])
+    );
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "/playground");
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        projectId: "project_default",
+        serverId: "srv_demo",
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        returnPath: "/playground",
+        startedAt: Date.now(),
+      })
+    );
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    act(() => result.current.handleRuntimeDisconnect("demo-server"));
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+    expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+    expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
+    expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+  });
+
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
     // Regression: switching an existing OAuth server from 2026 back to 2025
     // must not recover the stale 2026 pin from the stored server.config /
@@ -3512,7 +3545,8 @@ describe("useServerState OAuth callback failures", () => {
         registryServerId: "registry-asana",
         useRegistryOAuthProxy: true,
         scopes: ["default"],
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
   });
 
@@ -3539,7 +3573,8 @@ describe("useServerState OAuth callback failures", () => {
       expect.objectContaining({
         serverName: "New OAuth Server",
         serverUrl: "https://oauth.example.com/mcp",
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
     expect(dispatch).toHaveBeenCalledWith({
       type: "UPSERT_SERVER",
@@ -3586,7 +3621,8 @@ describe("useServerState OAuth callback failures", () => {
         registryServerId: "registry-linear",
         useRegistryOAuthProxy: false,
         scopes: ["read", "write"],
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
   });
 
@@ -3700,7 +3736,8 @@ describe("useServerState OAuth callback failures", () => {
         useRegistryOAuthProxy: true,
         protocolVersion: "2025-11-25",
         registrationStrategy: "preregistered",
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
     expect(dispatch).toHaveBeenCalledWith({
       type: "UPSERT_SERVER",
@@ -3774,7 +3811,8 @@ describe("useServerState OAuth callback failures", () => {
         protocolVersion: "2025-11-25",
         registrationMode: "preregistered",
         registrationStrategy: "preregistered",
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
   });
 

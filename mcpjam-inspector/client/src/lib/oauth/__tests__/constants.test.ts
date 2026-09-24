@@ -3,6 +3,7 @@ import {
   MCPJAM_HOSTED_APP_ORIGIN,
   getRedirectUri,
   resolveBrowserOAuthRedirectOrigin,
+  supportsMcpJamCimdRedirect,
 } from "../constants";
 
 describe("resolveBrowserOAuthRedirectOrigin", () => {
@@ -76,6 +77,25 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
         new URL("https://www.score.mcpjam.com/embed/score")
       )
     ).toBe("https://www.score.mcpjam.com");
+  });
+});
+
+describe("supportsMcpJamCimdRedirect", () => {
+  it("rejects ephemeral Railway preview callbacks", () => {
+    expect(
+      supportsMcpJamCimdRedirect({
+        hostname: "mcp-inspector-pr-5479.up.railway.app",
+      } as Location)
+    ).toBe(false);
+  });
+
+  it("allows stable hosted and local callbacks", () => {
+    expect(
+      supportsMcpJamCimdRedirect({ hostname: "app.mcpjam.com" } as Location)
+    ).toBe(true);
+    expect(
+      supportsMcpJamCimdRedirect({ hostname: "localhost" } as Location)
+    ).toBe(true);
   });
 });
 

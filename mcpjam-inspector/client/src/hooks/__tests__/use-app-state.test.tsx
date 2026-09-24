@@ -646,4 +646,67 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
+
+  it("gives a stale OAuth failure one commit to be replaced by callback success", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let capturedDispatch: ((action: any) => void) | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    try {
+      localStorage.setItem("mcp-oauth-pending", "oauth-server");
+      localStorage.setItem(
+        "mcp-serverUrl-oauth-server",
+        "https://oauth.example/mcp",
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "oauth-server",
+      );
+
+      window.history.replaceState({}, "", "/home");
+
+      act(() => {
+        capturedDispatch?.({
+          type: "CONNECT_REQUEST",
+          name: "oauth-server",
+          config: { type: "http", url: "https://oauth.example/mcp" },
+          select: true,
+        });
+        capturedDispatch?.({
+          type: "CONNECT_FAILURE",
+          name: "oauth-server",
+          error: "401 Unauthorized",
+        });
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(499);
+      });
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "oauth-server",
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
