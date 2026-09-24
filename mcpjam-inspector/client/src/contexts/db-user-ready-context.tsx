@@ -1,5 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
+
 type DbUserReadyContextValue = {
   isEnsuringUser: boolean;
   isUserReady: boolean;
@@ -19,8 +21,11 @@ export function DbUserReadyProvider({
   isEnsuringUser?: boolean;
   isUserReady: boolean;
 }) {
+  const queriesPaused = useSessionRefreshStore((state) => state.queriesPaused);
   return (
-    <DbUserReadyContext.Provider value={{ isEnsuringUser, isUserReady }}>
+    <DbUserReadyContext.Provider
+      value={{ isEnsuringUser, isUserReady: isUserReady && !queriesPaused }}
+    >
       {children}
     </DbUserReadyContext.Provider>
   );
