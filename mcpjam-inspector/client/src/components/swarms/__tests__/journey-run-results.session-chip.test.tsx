@@ -7,8 +7,14 @@ import type {
 } from "@mcpjam/sdk/contract";
 import {
   SwarmHostCell,
+  SwarmSessionsMatrix,
   type SwarmMatrixCellOutcome,
 } from "../journey-run-results";
+import {
+  reduceSwarmStreamEvent,
+  type JourneyRunStreamState,
+} from "../use-journey-run-stream";
+import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
 vi.mock("convex/react", () => ({
   useQuery: () => null,
@@ -83,6 +89,18 @@ describe("SwarmHostCell status", () => {
     expect(cell(verdict, "failed")).toHaveTextContent("Did not run");
   });
 
+  it("does not say a session withdrawn mid-conversation did not run", () => {
+    const verdict = deriveSwarmSessionVerdict({
+      ...unrubricked,
+      attempt: { status: "failed", errorCode: "canceled" },
+      goalScore: null,
+    });
+    expect(verdict.lifecycle).toBe("withdrawn");
+    const el = cell(verdict, "failed", true);
+    expect(el).toHaveTextContent("Not established");
+    expect(el).not.toHaveTextContent("Did not run");
+  });
+
   it("does not say a session that broke partway through did not run", () => {
     const grading = deriveSwarmSessionVerdict({
       ...unrubricked,
@@ -131,6 +149,58 @@ describe("SwarmHostCell status", () => {
 
   it("does not say a verdictless session that broke partway through did not run", () => {
     const el = cell(undefined, "failed", true);
+    expect(el).toHaveTextContent("Broke");
+    expect(el).not.toHaveTextContent("Did not run");
+  });
+});
+
+describe("SwarmSessionsMatrix transcript evidence", () => {
+  it("counts streamed messages before Convex records them", () => {
+    const event = (
+      partial: Partial<SwarmStreamEvent> & Pick<SwarmStreamEvent, "type">,
+    ) =>
+      ({
+        runId: "run_1",
+        hostId: "host_a",
+        chatSessionId: "synth_run_1_host_a_0",
+        sessionIndex: 0,
+        ...partial,
+      }) as SwarmStreamEvent;
+    const stream = [
+      event({ type: "turn_start", turnIndex: 0, prompt: "draw a dog" }),
+      event({ type: "text_delta", content: "Sure" }),
+      event({ type: "attempt_status", status: "failed" }),
+    ].reduce<JourneyRunStreamState>(reduceSwarmStreamEvent, {
+      sessions: {},
+      cellStatus: {},
+      runComplete: false,
+      connected: true,
+      error: null,
+    });
+
+    render(
+      <SwarmSessionsMatrix
+        runId="run_1"
+        targets={[
+          {
+            key: "host_a",
+            hostId: "host_a",
+            label: "Claude",
+            identity: { hostId: "host_a" },
+          },
+        ]}
+        sessionsPerTarget={1}
+        sessions={[]}
+        hostSummaries={[]}
+        stream={stream}
+        runStatus="running"
+        selection={null}
+        onSelect={() => {}}
+      />,
+    );
+
+    const el = screen.getByTestId("swarm-host-cell");
+    expect(el).toHaveAttribute("data-outcome", "failed");
     expect(el).toHaveTextContent("Broke");
     expect(el).not.toHaveTextContent("Did not run");
   });

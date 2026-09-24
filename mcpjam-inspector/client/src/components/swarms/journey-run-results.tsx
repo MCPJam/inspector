@@ -24,6 +24,7 @@ import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import { SPAN_LOAD_FAILURE_CONSEQUENCE } from "@/components/evals/turn-trace-spans";
 import {
+  liveSessionTrace,
   swarmCellKey,
   type JourneyRunStreamState,
   type SwarmCellLiveStatus,
@@ -193,9 +194,12 @@ function sessionResultMeta(
   if (verdict.lifecycle === "pending" || verdict.lifecycle === "running") {
     return CELL_META[verdict.lifecycle];
   }
+  // `limited` and `executionFailed` already mean no transcript; `withdrawn`
+  // comes from the cancel error code alone, so a session canceled mid-
+  // conversation needs the transcript check.
   if (
     verdict.lifecycle === "limited" ||
-    verdict.lifecycle === "withdrawn" ||
+    (verdict.lifecycle === "withdrawn" && !hasTranscript) ||
     verdict.reason === "executionFailed"
   ) {
     return SESSION_RESULT_META.didNotRun;
@@ -228,7 +232,7 @@ export function SwarmHostCell({
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
   verdict?: SwarmSessionVerdict;
-  /** The session saved messages; only read while `verdict` is missing. */
+  /** The session has messages, saved or still streaming. */
   hasTranscript?: boolean;
   selected: boolean;
   onSelect: () => void;
@@ -387,7 +391,13 @@ export function SwarmSessionsMatrix({
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
                 verdict={convexSession?.verdict}
-                hasTranscript={(convexSession?.messageCount ?? 0) > 0}
+                hasTranscript={
+                  (convexSession?.messageCount ?? 0) > 0 ||
+                  // The stream can report the cell failed before Convex
+                  // counts the messages it already carried.
+                  (liveSessionTrace(stream.sessions[chatSessionId])?.messages
+                    ?.length ?? 0) > 0
+                }
                 selected={selected}
                 onSelect={() =>
                   onSelect({
