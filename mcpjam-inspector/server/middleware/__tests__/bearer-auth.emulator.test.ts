@@ -50,13 +50,16 @@ vi.mock("../../services/guest-token.js", () => ({
   })),
 }));
 
+import { decodeJwt } from "jose";
 import {
   bearerAuthMiddleware,
   resetWorkOSRateLimitForTests,
 } from "../bearer-auth.js";
+import { resetAuthKitJwksCacheForTests } from "../../services/authkit-jwt.js";
 import {
   SEED,
   emulatorRest,
+  loginWithPkce,
   mintUserApiKey,
   startWorkosEmulator,
   type WorkosEmulatorHandle,
@@ -97,6 +100,9 @@ function createApp(): Hono {
       workosUserId: c.get("workosUserId") ?? null,
       mcpjamUserId: c.get("mcpjamUserId") ?? null,
       mcpjamOrganizationId: c.get("mcpjamOrganizationId") ?? null,
+      ...(c.get("workosSessionId")
+        ? { workosSessionId: c.get("workosSessionId") }
+        : {}),
     }),
   );
   return app;
@@ -250,5 +256,60 @@ describe("sk_ validation against a real WorkOS", () => {
 
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ message: "Unknown user" });
+  }, 30_000);
+});
+
+describe("AuthKit access tokens against a real WorkOS JWKS", () => {
+  it("verifies a genuine token at the gateway and names its user and session", async () => {
+    const { accessToken } = await loginWithPkce(h, { email: SEED.user.email });
+    const { sid } = decodeJwt(accessToken) as { sid?: string };
+
+    const res = await request(accessToken);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      authMethod: "authkit_jwt",
+      workosUserId: SEED.user.id,
+      ...(sid ? { workosSessionId: sid } : {}),
+    });
+    // No sk_ lookups for a session token.
+    expect(resolveUserByExternalIdMock).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("refuses a token whose signature was tampered with", async () => {
+    const { accessToken } = await loginWithPkce(h, { email: SEED.user.email });
+    const [header, payload, signature] = accessToken.split(".");
+    const flipped = `${signature.slice(0, -2)}${signature.endsWith("AA") ? "BB" : "AA"}`;
+
+    const res = await request(`${header}.${payload}.${flipped}`);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({
+      message: "Invalid or expired session token",
+    });
+  }, 30_000);
+
+  it("defers to downstream verification while the JWKS is unreachable", async () => {
+    const { accessToken } = await loginWithPkce(h, { email: SEED.user.email });
+    // A loopback port nothing listens on: the key fetch is refused outright.
+    vi.stubEnv("WORKOS_API_BASE_URL", "http://127.0.0.1:9");
+    resetAuthKitJwksCacheForTests();
+    try {
+      const res = await request(accessToken);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        authMethod: "unverified_passthrough",
+        workosUserId: null,
+      });
+    } finally {
+      vi.stubEnv("WORKOS_API_BASE_URL", h.url);
+      resetAuthKitJwksCacheForTests();
+    }
+
+    // And verification is back as soon as the keys are.
+    expect(await (await request(accessToken)).json()).toMatchObject({
+      authMethod: "authkit_jwt",
+    });
   }, 30_000);
 });

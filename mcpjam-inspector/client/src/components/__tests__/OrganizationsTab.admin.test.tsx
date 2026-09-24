@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toast as sonnerToast } from "sonner";
 import { OrganizationsTab } from "../OrganizationsTab";
+import { ImageUploadError } from "@/lib/image-upload";
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -14,8 +16,7 @@ const mockAddMember = vi.fn();
 const mockChangeMemberRole = vi.fn();
 const mockTransferOrganizationOwnership = vi.fn();
 const mockRemoveMember = vi.fn();
-const mockGenerateLogoUploadUrl = vi.fn();
-const mockUpdateOrganizationLogo = vi.fn();
+const mockUploadImage = vi.fn();
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: (...args: unknown[]) => mockUseAuth(...args),
@@ -66,11 +67,13 @@ vi.mock("@/hooks/useOrganizations", async () => {
       changeMemberRole: mockChangeMemberRole,
       transferOrganizationOwnership: mockTransferOrganizationOwnership,
       removeMember: mockRemoveMember,
-      generateLogoUploadUrl: mockGenerateLogoUploadUrl,
-      updateOrganizationLogo: mockUpdateOrganizationLogo,
     }),
   };
 });
+
+vi.mock("@/hooks/useImageUpload", () => ({
+  useImageUpload: () => mockUploadImage,
+}));
 
 vi.mock("../organization/OrganizationAuditLog", () => ({
   OrganizationAuditLog: () => (
@@ -289,8 +292,75 @@ describe("OrganizationsTab member management", () => {
       changed: true,
     });
     mockRemoveMember.mockResolvedValue({ success: true });
-    mockGenerateLogoUploadUrl.mockResolvedValue("https://upload.example.com");
-    mockUpdateOrganizationLogo.mockResolvedValue({ success: true });
+    mockUploadImage.mockResolvedValue({ url: "https://files.example/logo" });
+  });
+
+  function chooseLogo(container: HTMLElement, file: File) {
+    const input = container.querySelector('input[type="file"]')!;
+    expect(input).toHaveAttribute(
+      "accept",
+      "image/png,image/jpeg,image/gif,image/webp",
+    );
+    fireEvent.change(input, { target: { files: [file] } });
+  }
+
+  function expectErrorToast(text: string) {
+    expect(sonnerToast.error).toHaveBeenCalledWith(
+      expect.objectContaining({ props: expect.objectContaining({ text }) }),
+      expect.anything(),
+    );
+  }
+
+  it("uploads a logo through the upload route", async () => {
+    const { container } = render(<OrganizationsTab organizationId="org-1" />);
+    const logo = new File(["png"], "logo.png", { type: "image/png" });
+
+    chooseLogo(container, logo);
+
+    await waitFor(() =>
+      expect(mockUploadImage).toHaveBeenCalledWith(
+        { kind: "organization-logo", organizationId: "org-1" },
+        logo,
+      ),
+    );
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+  });
+
+  it("refuses an SVG logo before uploading it", () => {
+    const { container } = render(<OrganizationsTab organizationId="org-1" />);
+
+    chooseLogo(
+      container,
+      new File(["<svg/>"], "logo.svg", { type: "image/svg+xml" }),
+    );
+
+    expect(mockUploadImage).not.toHaveBeenCalled();
+    expectErrorToast("Choose a PNG, JPEG, GIF, or WebP image.");
+  });
+
+  it("shows the server's reason when it refuses a logo", async () => {
+    mockUploadImage.mockRejectedValueOnce(
+      new ImageUploadError(
+        "Only organization owners and admins can change the logo.",
+        403,
+        "FORBIDDEN",
+      ),
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { container } = render(<OrganizationsTab organizationId="org-1" />);
+      chooseLogo(
+        container,
+        new File(["png"], "logo.png", { type: "image/png" }),
+      );
+      await waitFor(() =>
+        expectErrorToast(
+          "Only organization owners and admins can change the logo.",
+        ),
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("preserves organization branding and separates General from Members", () => {

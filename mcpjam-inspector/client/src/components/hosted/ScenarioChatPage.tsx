@@ -1,6 +1,7 @@
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
@@ -1222,8 +1223,11 @@ export function ScenarioChatPage({
     const returnTo = rememberReturnPath() ?? window.location.origin;
     clearCurrentSession(sessionRef.current?.scenarioId);
     setSession(null);
-    void signOut({ returnTo });
-  }, [rememberReturnPath, clearCurrentSession, signOut]);
+    // Revoke the session being left before WorkOS forgets it; bounded, never
+    // rejects. See `revoke-session`.
+    const leave = () => void signOut({ returnTo });
+    void startSessionRevocation(getAccessToken).then(leave, leave);
+  }, [rememberReturnPath, clearCurrentSession, signOut, getAccessToken]);
 
   const handleOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {

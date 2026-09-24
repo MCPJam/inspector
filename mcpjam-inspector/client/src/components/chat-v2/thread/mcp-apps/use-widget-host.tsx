@@ -23,6 +23,7 @@ import {
   VIEW_SUBDOMAINS_ENABLED,
 } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
@@ -194,6 +195,10 @@ export function useWidgetHost(): WidgetHostImpl {
         return listResourceTemplates(serverId);
       },
       authFetch,
+      // Cached widget HTML arrives as a short-lived artifact link; these let
+      // the renderer renew an expired one and ignore a re-minted one.
+      fetchArtifact: (url: string) => fetchArtifact(url),
+      artifactCacheKey: artifactStableKey,
     }),
     [],
   );
