@@ -619,7 +619,7 @@ describe("useAppState active organization recovery", () => {
       );
       window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
-      const { result } = renderHook(() =>
+      const { result, rerender } = renderHook(() =>
         useAppState({
           currentUserId: "user-1",
           currentActorKey: "user-1",
@@ -640,6 +640,13 @@ describe("useAppState active organization recovery", () => {
       act(() => {
         vi.advanceTimersByTime(30_000);
       });
+
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "demo-server",
+      );
+
+      window.history.replaceState({}, "", "/home");
+      rerender();
 
       expect(result.current.pendingDashboardOAuth).toBeNull();
     } finally {

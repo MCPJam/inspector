@@ -7,6 +7,9 @@ const importValidator = async (hosted: boolean) => {
   return (await import("../server-form-validation")).validateServerFormData;
 };
 
+const importBearerValidator = async () =>
+  (await import("../server-form-validation")).validateBearerTargetUrl;
+
 afterEach(() => {
   vi.doUnmock("@/lib/config");
   vi.resetModules();
@@ -62,5 +65,24 @@ describe("validateServerFormData", () => {
   it("allows https in hosted mode", async () => {
     const validate = await importValidator(true);
     expect(validate(httpForm())).toBeNull();
+  });
+});
+
+describe("validateBearerTargetUrl", () => {
+  it("rejects bearer credentials over public HTTP", async () => {
+    const validate = await importBearerValidator();
+    expect(validate("http://mcp.example.com/mcp")).toMatch(
+      /require HTTPS for non-local/i,
+    );
+  });
+
+  it.each([
+    "http://localhost:8787/mcp",
+    "http://127.0.0.1:8787/mcp",
+    "http://192.168.1.10/mcp",
+    "https://mcp.example.com/mcp",
+  ])("allows a bearer credential for %s", async (url) => {
+    const validate = await importBearerValidator();
+    expect(validate(url)).toBeNull();
   });
 });

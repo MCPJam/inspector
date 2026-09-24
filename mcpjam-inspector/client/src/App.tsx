@@ -92,7 +92,10 @@ import {
   type FirstRunServerDraft,
 } from "./components/onboarding/FirstRunOnboardingOverlay";
 import type { ServerFormData } from "@/shared/types.js";
-import { validateServerFormData } from "@/lib/server-form-validation";
+import {
+  validateBearerTargetUrl,
+  validateServerFormData,
+} from "@/lib/server-form-validation";
 import { parseCommandInput } from "@/lib/command-input";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { ProfileTab } from "./components/ProfileTab";
@@ -3572,7 +3575,10 @@ export default function App() {
             }
           : {}),
       };
-      const validationError = validateServerFormData(formData);
+      const validationError =
+        (authorizationHeader && draft.transport === "http"
+          ? validateBearerTargetUrl(effectiveUrlOrCommand)
+          : null) ?? validateServerFormData(formData);
       if (validationError) {
         setFirstRunConnectionState({
           status: "failed",
