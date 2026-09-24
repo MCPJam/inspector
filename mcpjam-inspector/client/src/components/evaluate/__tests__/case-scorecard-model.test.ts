@@ -53,7 +53,11 @@ const base: CaseScorecardInput = {
 };
 
 function allRows(input: CaseScorecardInput) {
-  return buildCaseScorecard(input).groups.flatMap((group) => group.rows);
+  return allRowsOf(buildCaseScorecard(input));
+}
+
+function allRowsOf(card: ReturnType<typeof buildCaseScorecard>) {
+  return card.groups.flatMap((group) => group.rows);
 }
 
 describe("buildCaseScorecard — shape", () => {
@@ -225,6 +229,72 @@ describe("buildCaseScorecard — built-in runner checks", () => {
   it("expects what the stage analysis decides, never a rule", () => {
     const [connection] = builtins(base);
     expect(expectationOf(connection!)).toBe(RUNNER_CHECK_EXPECTED.connection);
+  });
+});
+
+describe("buildCaseScorecard — the route's arguments", () => {
+  const routed = (matchOptions?: CaseScorecardInput["matchOptions"]) =>
+    buildCaseScorecard({
+      ...base,
+      steps: [
+        prompt("p1", "who am I?"),
+        assert("t1", {
+          type: "toolCalledWith",
+          toolName: "get_me",
+          args: { args: { id: 7 } },
+        } as Predicate),
+      ],
+      toolsChoice: "tools",
+      ...(matchOptions ? { matchOptions } : {}),
+    });
+
+  it("grades them at Tool call, beside the runner check, joined to their own scorer", () => {
+    const card = routed();
+    const call = card.groups.find((group) => group.stage === "call");
+    expect(call?.rows.map((row) => row.key)).toEqual([
+      "builtin:call",
+      "route:arguments",
+    ]);
+    const row = call!.rows[1]!;
+    expect(row).toMatchObject({
+      label: "Arguments match",
+      provenance: "route",
+      role: "required",
+      roleLock: "route",
+      editable: false,
+      join: { kind: "toolArguments", scorerId: "toolCalls:arguments" },
+    });
+    // Not the route question: it carries no route to render.
+    expect(row.route).toBeUndefined();
+    expect(expectationOf(row)).toBe(
+      "Call get_me with the expected arguments (partial matching)",
+    );
+    // The route row stays at Selection, joined as before.
+    expect(card.route.join).toEqual({
+      kind: "toolMatch",
+      scorerId: "toolCalls:match",
+    });
+  });
+
+  it("names the case's own matching mode", () => {
+    const row = allRowsOf(routed({ argumentMatching: "exact" })).find(
+      (r) => r.key === "route:arguments",
+    );
+    expect(expectationOf(row!)).toBe(
+      "Call get_me with the expected arguments (exact matching)",
+    );
+  });
+
+  it("is absent where no arguments are compared, or no route is asserted", () => {
+    expect(
+      allRowsOf(routed({ argumentMatching: "ignore" })).map((r) => r.key),
+    ).not.toContain("route:arguments");
+    for (const toolsChoice of ["noTool", "checks", "unset"] as const) {
+      expect(
+        allRows({ ...base, toolsChoice }).map((r) => r.key),
+        toolsChoice,
+      ).not.toContain("route:arguments");
+    }
   });
 });
 

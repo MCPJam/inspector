@@ -57,8 +57,10 @@ import type { PredicateScope } from "@mcpjam/sdk/predicates";
 import {
   hostedCriterionId,
   HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
+import { ARGS_OPTIONS } from "@/components/evals/validators-section";
 import {
   MATCH_OPTIONS_DEFAULTS,
   resolveCasePredicates,
@@ -195,6 +197,13 @@ export type ScorecardProvenance =
 /** How a row finds its result on a trial. See `joinTrialResults`. */
 export type ScorecardJoin =
   | { kind: "toolMatch"; scorerId: string }
+  /**
+   * The arguments half of the tool-call matcher. Its score row, or nothing:
+   * unlike the route there is no chain fallback, because the `call` stage
+   * also fails for reasons that are not arguments. A trial that never
+   * declared the scorer — one graded before the split — shows no such row.
+   */
+  | { kind: "toolArguments"; scorerId: string }
   /** A runner check: the verified chain's own row for this stage. */
   | { kind: "stage"; stage: RunnerCheckStage }
   | {
@@ -317,6 +326,11 @@ export type ScorecardRow = {
   judge?: JudgeFacts;
   /** Rubric-check rows only: the question's key, and whether it is a criterion. */
   rubricCheck?: { key: string; criterion: boolean };
+  /**
+   * The EXPECTED line, for a row whose configuration is neither a predicate
+   * nor the route question it belongs to. See `expectationOf`.
+   */
+  expectation?: string;
   tooltip: string;
   join?: ScorecardJoin;
 };
@@ -922,6 +936,39 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
       : {}),
   };
 
+  // The route's arguments, graded at Tool call by their own scorer since the
+  // split: the route row above says WHICH tools, this one says HOW. Edited
+  // through the route (its tools' argument fields and the matching mode), so
+  // it is locked here. Only where arguments are compared at all.
+  const argumentsRow: ScorecardRow | null =
+    route.kind === "tools" &&
+    route.tools.length > 0 &&
+    route.resolvedMatch.argumentMatching !== "ignore"
+      ? {
+          key: "route:arguments",
+          stage: "call",
+          provenance: "route",
+          label: "Arguments match",
+          kindLabel: "Arguments",
+          role: "required",
+          roleLock: "route",
+          editable: false,
+          expectation: `Call ${route.tools
+            .map((tool) => tool.toolName)
+            .filter(Boolean)
+            .join(", ")} with the expected arguments (${(
+            ARGS_OPTIONS.find(
+              (option) => option.value === route.resolvedMatch.argumentMatching,
+            )?.label ?? String(route.resolvedMatch.argumentMatching)
+          ).toLowerCase()} matching)`,
+          tooltip: rowTooltip("Tool-call argument matching", "required", false),
+          join: {
+            kind: "toolArguments",
+            scorerId: HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+          },
+        }
+      : null;
+
   const judgeRole = roleOfJudgeSlot("goalCompletion", input.suiteJudgeConfig);
   const judgeRow: ScorecardRow = {
     key: "judge:goalCompletion",
@@ -1003,6 +1050,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
   // First in each stage, ahead of anything authored there.
   builtinRows.forEach(push);
   push(routeRow);
+  if (argumentsRow) push(argumentsRow);
   authoredStepRows.forEach(push);
   caseRows.forEach(push);
   suiteRows.forEach(push);
@@ -1135,6 +1183,7 @@ export function removeCaseScorer(
  */
 export function expectationOf(row: ScorecardRow): string {
   if (row.join?.kind === "stage") return RUNNER_CHECK_EXPECTED[row.join.stage];
+  if (row.expectation) return row.expectation;
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
   if (row.route) return routeLabel(row.route);
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);

@@ -1,3 +1,4 @@
+import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
@@ -44,8 +45,13 @@ export function resolveClientSentryConfig() {
  */
 export function initSentry() {
   const config = resolveClientSentryConfig();
+  const processQueryEvent = createConvexQueryEventProcessor();
   Sentry.init({
     ...config,
+    beforeSend: (event, hint) => {
+      const filtered = config.beforeSend(event);
+      return filtered === null ? null : processQueryEvent(filtered, hint);
+    },
     integrations: [
       // Don't even load the replay integration where replay is not permitted;
       // zero sample rates alone would still ship the recorder code and open
