@@ -51,6 +51,7 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -86,6 +87,7 @@ type LocalAuthorizeServerConfig =
       httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
+      secretsBoundOrigin?: string;
       timeout?: number;
       clientCapabilities?: unknown;
       useOAuth?: boolean;
@@ -937,8 +939,23 @@ async function applyLocalRuntimeResolution<
     (result.serverConfig.transportType === "http" &&
       result.serverConfig.hasHeaders === true &&
       !hasNonEmptyStringRecord(result.serverConfig.headers));
+  if (
+    result.serverConfig.transportType === "http" &&
+    result.serverConfig.hasHeaders === true
+  ) {
+    assertSecretsOriginMatches({
+      boundOrigin: result.serverConfig.secretsBoundOrigin,
+      targetUrl: result.serverConfig.url,
+      serverName: args.serverDisplayName ?? args.managerKey,
+    });
+  }
+
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
+      expectedTargetUrl:
+        result.serverConfig.transportType === "http"
+          ? result.serverConfig.url
+          : null,
       bearerToken,
       projectId,
       serverId,
@@ -1083,6 +1100,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
     config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
       ? (
           await fetchRuntimeServerSecrets({
+            expectedTargetUrl: null,
             bearerToken: args.bearerToken,
             projectId: args.projectId,
             serverId: args.serverId,
@@ -1378,6 +1396,13 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    if (registrationMode !== "cimd") {
+      assertSecretsOriginMatches({
+        boundOrigin: sc.secretsBoundOrigin,
+        targetUrl: sc.url,
+        serverName: options?.serverDisplayName ?? serverId,
+      });
+    }
     const xaaFailureTarget = {
       serverId,
       serverName: options?.serverDisplayName ?? serverId,
