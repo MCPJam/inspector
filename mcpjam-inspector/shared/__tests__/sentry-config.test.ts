@@ -698,6 +698,42 @@ describe("groupOAuthDebuggerStepFailures", () => {
     );
   });
 
+  // INSPECTOR-CLIENT-2FD: six events titled "Token request failed: 403
+  // Forbidden: invalid_target", which only one of them was. The other five were
+  // two more findings, from different servers and users.
+  it("splits the findings that shared the 2FD stack", () => {
+    const invalidTarget = fingerprint(
+      stepEvent(
+        "Token request failed: 403 Forbidden: invalid_target: Unauthorized resource: http://localhost:8080/v2/local",
+        { step: "token_request" },
+      ),
+    );
+    const registration = fingerprint(
+      stepEvent("Dynamic Client Registration failed (400)."),
+    );
+    const registrationWithHint = fingerprint(
+      stepEvent(
+        "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server.",
+      ),
+    );
+    const wrongStatus = fingerprint(
+      stepEvent(
+        "MCP server returned HTTP 405 Method Not Allowed where MCP requires 401 Unauthorized (or 200, if the server allows anonymous access).",
+        { step: "request_unauthenticated" },
+      ),
+    );
+
+    expect(
+      new Set(
+        [invalidTarget, registration, wrongStatus].map((f) => JSON.stringify(f)),
+      ).size,
+    ).toBe(3);
+    // The two registration events were one finding, one with the advisory.
+    expect(registrationWithHint).toEqual(registration);
+    // The server's own resource URL is free text, not part of the finding.
+    expect(invalidTarget?.[2]).not.toContain("localhost");
+  });
+
   // Review of #5473: the cause of a discovery failure comes after the first
   // period. The first version cut there and merged all of these.
   it("keeps discovery failures with different causes apart", () => {
