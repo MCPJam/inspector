@@ -481,10 +481,21 @@ export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 // instead of re-typing the message — it is the server under test violating
 // RFC 8414, which a host may want to treat differently from its own errors.
 export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-machines/shared/required-metadata.js";
+// Same reason: an authorization server that offers no dynamic client
+// registration and no configured fallback client is a target-server
+// configuration, not a host bug.
+export {
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
 // The debug proxy's own failures use a different error shape. This classifier
 // lets browser hosts keep a target server's authenticated-request rejection in
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
+export {
+  isResourceMetadataNotImplemented,
+  RESOURCE_METADATA_NOT_IMPLEMENTED,
+} from "./oauth/state-machines/shared/resource-metadata-error.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";

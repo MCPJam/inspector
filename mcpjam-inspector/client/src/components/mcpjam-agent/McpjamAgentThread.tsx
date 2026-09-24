@@ -326,7 +326,7 @@ export function McpjamAgentThread({
         ready={canAccept}
         loadingMessage={
           scopeMissing
-            ? "Case context is missing. Your message is kept here."
+            ? "This test case couldn’t be loaded. Your message is still here."
             : contextLoading
             ? "Connecting to your case… Your message is kept here."
             : "Loading project…"

@@ -733,6 +733,14 @@ describe("reportEvalResults", () => {
       expect(sent.widgetHtml).toBeUndefined();
       expect(sent.widgetHtmlBlobId).toBe("storage_1");
     }
+    // Uploaded as text so storage never serves the widget as a page.
+    const uploadCalls = fetchMock.mock.calls.filter(
+      (call) => String(call[0]) === "https://example.com/upload"
+    );
+    expect(uploadCalls).toHaveLength(2);
+    for (const [, init] of uploadCalls) {
+      expect(init.headers["Content-Type"]).toBe("text/plain; charset=utf-8");
+    }
     // The point of the offload: the request now fits.
     expect(new TextEncoder().encode(reportCall![1].body).length).toBeLessThan(
       1024 * 1024

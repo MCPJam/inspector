@@ -162,6 +162,8 @@ import {
 } from "../shared/evals.js";
 import {
   resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
   environmentServerIds,
   environmentServerNames,
   type ResolvedEnvironmentForLaunch,
@@ -1206,41 +1208,6 @@ function isConvexFunctionMissing(error: unknown): boolean {
 function convexFunctionUnavailableError(message: string): WebRouteError {
   // Status is remapped by the v1 envelope: FEATURE_NOT_SUPPORTED is 422.
   return new WebRouteError(422, ErrorCode.FEATURE_NOT_SUPPORTED, message);
-}
-
-/**
- * Map a launch-resolution failure onto the public envelope. The environment
- * exists and is readable, but cannot currently produce a runnable
- * configuration (a pinned plugin was disabled, the host was deleted, the
- * closed server set came out empty) — that is a 409 conflict, not bad input,
- * and the machine-readable `ENV_*` code rides along in `details` so callers can
- * branch on the reason. Mirrors `/v1/projects/:p/environments/:e/resolve`.
- */
-function translateEnvironmentResolveError(error: unknown): unknown {
-  if (error instanceof WebRouteError) return error;
-  const data = (error as { data?: unknown } | null)?.data;
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    const code = (data as { code?: unknown }).code;
-    const message = (data as { message?: unknown }).message;
-    if (typeof code === "string" && code.startsWith("ENV_")) {
-      if (code === "ENV_NOT_FOUND" || code === "ENV_CROSS_PROJECT") {
-        return new WebRouteError(
-          404,
-          ErrorCode.NOT_FOUND,
-          "Environment not found",
-        );
-      }
-      return new WebRouteError(
-        409,
-        ErrorCode.CONFLICT,
-        typeof message === "string"
-          ? message
-          : "Environment cannot be launched right now.",
-        { code },
-      );
-    }
-  }
-  return error;
 }
 
 function requireProjectMatch(
@@ -2424,6 +2391,13 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
 type SuiteDoc = Record<string, any>;
 
 /**
+ * Judge slots a suite can store that this API does not write. A PATCH carries
+ * each one forward from the stored suite, so an edit to goal completion never
+ * reads to the platform as a deliberate clear of another judge.
+ */
+const PUBLIC_UNWRITABLE_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
+
+/**
  * Whether the platform will refuse configuration writes to this suite.
  *
  * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
@@ -3254,6 +3228,12 @@ const suiteSettingsShape = {
        * while execution is unwired.
        */
       groundedness: z.unknown().optional(),
+      /**
+       * App-only on day one (see the `judgeRubricChecks` manifest row).
+       * Accepted here for the same reason as `groundedness`: a caller who
+       * sends it gets a 400 naming the field, never a silent strip.
+       */
+      rubricChecks: z.unknown().optional(),
       // The suite's own grading criteria, handed to the judge alongside
       // each case's expected output. `null` CLEARS them; an empty array is
       // refused because a rubric that asks nothing is not the absence of
@@ -3269,6 +3249,14 @@ const suiteSettingsShape = {
           path: ["groundedness"],
           message:
             "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+        });
+      }
+      if (judge.rubricChecks !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rubricChecks"],
+          message:
+            "settings.judge.rubricChecks is authored in the app only; the criteria it grades are settings.judge.rubric.",
         });
       }
     })
@@ -4413,6 +4401,7 @@ async function resolveLaunchServers(params: {
     const convex = createConvexReadClient(convexAuthToken);
     try {
       environmentLaunch = await resolveEnvironmentForLaunch(convex, {
+        serverSource: EVAL_LAUNCH_SERVER_SOURCE,
         projectId,
         environmentId,
       });
@@ -8311,15 +8300,16 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       // editing it retires the suite's calibration. Nested under `judge` on
       // the wire because that is where a caller looks for it.
       if (s.judge.rubric !== undefined) updateArgs.judgeRubric = s.judge.rubric;
-      // Preserve a stored groundedness slot. A goal-completion-only write
-      // must not drop the reserved slot; a groundedness write is refused
-      // by the schema before this merge runs.
-      updateArgs.judgeConfig = {
-        goalCompletion,
-        ...(suite!.judgeConfig?.groundedness
-          ? { groundedness: suite!.judgeConfig.groundedness }
-          : {}),
-      };
+      // Preserve every stored slot this route cannot write. A
+      // goal-completion-only write must not drop a reserved slot, because
+      // `updateTestSuite` replaces `judgeConfig` wholesale; a write to one of
+      // them is refused by the schema before this merge runs.
+      const preserved = Object.fromEntries(
+        PUBLIC_UNWRITABLE_JUDGE_SLOTS.filter(
+          (slot) => suite!.judgeConfig?.[slot],
+        ).map((slot) => [slot, suite!.judgeConfig[slot]]),
+      );
+      updateArgs.judgeConfig = { goalCompletion, ...preserved };
     }
     applyVerdictPolicySettings(
       suite!,
@@ -9152,6 +9142,7 @@ evals.post(
       let launch: ResolvedEnvironmentForLaunch;
       try {
         launch = await resolveEnvironmentForLaunch(readClient, {
+          serverSource: EVAL_LAUNCH_SERVER_SOURCE,
           projectId,
           environmentId,
         });

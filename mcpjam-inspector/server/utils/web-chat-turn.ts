@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
  * Shared web-chat streaming turn.
  *
@@ -26,6 +27,15 @@
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
+import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
+import {
+  historyProvenanceContextFor,
+  resolveToolOutputFenceKey,
+  signHistoryForPersistence,
+  TOOL_OUTPUT_TRUST_NOTE,
+  verifyClientHistory,
+  type HistoryPresentation,
+} from "./history-provenance.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -672,10 +682,49 @@ export async function streamWebChatTurn(
   }
 
   const sessionStartedAt = Date.now();
+
+  // HISTORY PROVENANCE (MJ-009). The browser sent this whole conversation.
+  // What the server itself produced carries its signatures; anything that
+  // does not verify is marked here, before conversion, so the engine shows it
+  // to the model as client-supplied and persistence does not re-sign it. Off
+  // (null) in local mode and without a signing key.
+  const provenance = historyProvenanceContextFor(persist.projectId);
+  const provenanceReport = provenance
+    ? verifyClientHistory(prepare.uiMessages as unknown[], provenance)
+    : null;
+  if (
+    provenanceReport &&
+    (provenanceReport.unverifiedTextParts > 0 ||
+      provenanceReport.unverifiedToolResults > 0 ||
+      provenanceReport.demotedSystemMessages > 0 ||
+      provenanceReport.removedAssistantContextParts > 0)
+  ) {
+    logger.info(
+      "[web-chat-turn] client-sent history carried content the server could not verify",
+      {
+        unverifiedTextParts: provenanceReport.unverifiedTextParts,
+        unverifiedToolResults: provenanceReport.unverifiedToolResults,
+        demotedSystemMessages: provenanceReport.demotedSystemMessages,
+        removedAssistantContextParts:
+          provenanceReport.removedAssistantContextParts,
+      },
+    );
+  }
+  const uiMessagesForTurn = provenanceReport?.messages ?? prepare.uiMessages;
+  // What each step shows the model: tool output fenced, unverified content
+  // labelled. The harness engine builds its own context from the last user
+  // message, so it gets neither this nor the prompt note below.
+  const historyPresentation: HistoryPresentation | undefined = persist.harness
+    ? undefined
+    : {
+        fenceKey: resolveToolOutputFenceKey(),
+        labelUnverified: provenanceReport !== null,
+      };
+
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
   const modelMessages = await convertToMcpjamModelMessages(
-    prepare.uiMessages as never,
+    uiMessagesForTurn as never,
     {
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       // Browser-sent history can replay already-resolved media, but must not
@@ -855,6 +904,11 @@ export async function streamWebChatTurn(
             projectId: persist.projectId,
             chatSessionId: persist.chatSessionId!,
             manager,
+            connectionId: toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              info.toolCallId,
+            )?.connectionId,
             serverName: scopeStepUpServerNamesById[info.serverId],
             info,
             toolName,
@@ -941,6 +995,7 @@ export async function streamWebChatTurn(
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
     widgetModelContextSystemPrompt,
+    historyPresentation ? TOOL_OUTPUT_TRUST_NOTE : "",
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
@@ -1064,6 +1119,11 @@ export async function streamWebChatTurn(
       turnTrace: PersistedTurnTrace,
       harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
+      if (prepared.connectionsAtTurn)
+        turnTrace = {
+          ...turnTrace,
+          connectionsAtTurn: prepared.connectionsAtTurn,
+        };
       const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
       // Surfaces with synthetic server ids (mcpjam-agent) opt out via
@@ -1126,8 +1186,22 @@ export async function streamWebChatTurn(
         // ingest contract — the local route has always filled this one.
         systemPrompt: effectiveEnhancedSystemPrompt,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
-          stripUiContextModelParts(fullHistory),
-          persist.originalMessages as unknown[],
+          stripUiContextModelParts(
+            // Signed as the server's own where it is: this turn's output,
+            // and history that verified on the way in (MJ-009).
+            provenance
+              ? signHistoryForPersistence(
+                  fullHistory,
+                  provenance,
+                  allTools as ToolSet,
+                )
+              : fullHistory,
+          ),
+          // The verified copy when there is one: it is the same list, with a
+          // system message now a user message, so user ordinals line up.
+          (provenanceReport && persist.originalMessages === prepare.uiMessages
+            ? provenanceReport.messages
+            : persist.originalMessages) as unknown[],
           { authenticatedUserId: persist.authenticatedUserId },
         ),
         startedAt: sessionStartedAt,
@@ -1254,8 +1328,22 @@ export async function streamWebChatTurn(
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
     if (orgRuntime.runtimeLocation === "local") {
+      // The local runtime cannot resume a server-executed approval, and it
+      // refuses a WHOLE turn that advertises one. The always-ask workspace
+      // operations (MJ-008) would therefore take every other tool down with
+      // them; they are withheld here instead — refused, not run unasked.
+      const localTools = withoutServerVerifiedApprovalTools(
+        allTools as ToolSet,
+      );
+      if (localTools.removed.length > 0) {
+        logger.warn(
+          "[web-chat-turn] local-runtime org provider cannot serve always-ask workspace tools; withholding them",
+          { toolNames: localTools.removed },
+        );
+      }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
+        ...(historyPresentation ? { historyPresentation } : {}),
         failureReporter,
         projectId: persist.projectId,
         modelId,
@@ -1264,7 +1352,7 @@ export async function streamWebChatTurn(
         messages: scrubbedMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: localTools.tools,
         progressivePlan,
         discoveryState,
         authHeader: runtime.authHeader,
@@ -1317,6 +1405,10 @@ export async function streamWebChatTurn(
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // The browser sent this history (MJ-008): its unresolved calls run only
+      // under a verified approval.
+      clientSuppliedHistory: true,
+      ...(historyPresentation ? { historyPresentation } : {}),
       // The hosted loop is the ONE engine that can grow its tool set between
       // steps, so it is the one that gets this.
       ...(refreshTools ? { refreshTools } : {}),
@@ -1411,6 +1503,10 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    // The browser sent this history (MJ-008): its unresolved calls run only
+    // under a verified approval.
+    clientSuppliedHistory: true,
+    ...(historyPresentation ? { historyPresentation } : {}),
     ...(refreshTools ? { refreshTools } : {}),
     // Harness engine only: it builds its own MCP tool set (host-executed
     // delivery) rather than consuming `allTools`, so the host's

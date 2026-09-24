@@ -309,10 +309,10 @@ export function UserTestingScenarioDetail({
         setComposer(previous);
         toast.error(
           isAdhocUnavailable(err)
-            ? "This workspace's backend doesn't support editing a scenario's setup yet."
+            ? "This workspace's backend doesn't support editing a study's setup yet."
             : getBillingErrorMessage(
                 err,
-                "Could not update this scenario's setup",
+                "Could not update this study's setup",
               ),
         );
       } finally {
@@ -377,7 +377,7 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(getBillingErrorMessage(err, "Failed to rename the scenario"));
+      toast.error(getBillingErrorMessage(err, "Failed to rename the study"));
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -513,12 +513,12 @@ export function UserTestingScenarioDetail({
     setIsDeleting(true);
     try {
       await deleteScenario({ scenarioId: scenario.scenarioId } as any);
-      toast.success("Scenario deleted");
+      toast.success("Study deleted");
       setDeleteOpen(false);
       onDeleted();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to delete the scenario",
+        err instanceof Error ? err.message : "Failed to delete the study",
       );
       // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
       // swallowing here would dismiss the confirmation on a delete that
@@ -535,7 +535,7 @@ export function UserTestingScenarioDetail({
         value={scenario.name}
         onSave={handleRename}
         variant="h1"
-        placeholder="Scenario name"
+        placeholder="Study name"
         // `shrink` overrides the design-system button's own shrink-0, which
         // otherwise keeps the name at full width and pushes the tabs off.
         className="-ml-2 min-w-0 shrink px-2 text-xl font-semibold tracking-tight"
@@ -599,7 +599,7 @@ export function UserTestingScenarioDetail({
                session (BB-176). The visible label stays short; the hover and
                accessible name carry the rest. */
             title="Opens this study exactly as a tester sees it, in a new tab"
-            aria-label="Open preview — this study as a tester sees it"
+            aria-label="Open preview: this study as a tester sees it"
           >
             <Eye className="mr-1.5 size-3.5" />
             Open preview
@@ -630,7 +630,7 @@ export function UserTestingScenarioDetail({
           {/* Back goes to the scenario, not the list: Edit is a sub-route, and
             its own Edit button is inert here, so the list would strand it. */}
           <DetailPageHeader
-            backLabel={scenario.name || "Scenario"}
+            backLabel={scenario.name || "Study"}
             onBack={() =>
               navigate(buildUserTestingScenarioPath(scenario.scenarioId))
             }
@@ -679,7 +679,7 @@ export function UserTestingScenarioDetail({
                     >
                       <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
                       <TextareaAutosize
-                        aria-label="Scenario description"
+                        aria-label="Study description"
                         data-testid="user-testing-description"
                         value={descriptionDraft}
                         onChange={(e) => setDescriptionDraft(e.target.value)}
@@ -704,8 +704,8 @@ export function UserTestingScenarioDetail({
                         <div className="min-w-0 text-sm">
                           <p className="font-medium text-foreground">
                             {environmentError.code === "ENV_ARCHIVED"
-                              ? "This scenario's environment is archived — the share link no longer opens."
-                              : "This scenario's environment can't be loaded right now — the share link won't open."}
+                              ? "This study's environment is archived, so the share link no longer opens."
+                              : "This study's environment can't be loaded right now, so the share link won't open."}
                           </p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {environmentError.message} Its sessions are
@@ -815,7 +815,7 @@ export function UserTestingScenarioDetail({
                     data-testid="user-testing-delete"
                   >
                     <Trash2 className="mr-1.5 size-4" />
-                    Delete scenario
+                    Delete study
                   </Button>
                 </div>
               </div>
@@ -829,7 +829,7 @@ export function UserTestingScenarioDetail({
           />
 
           <ScenarioDeleteConfirmDialog
-            entityLabel="scenario"
+            entityLabel="study"
             open={deleteOpen}
             onOpenChange={setDeleteOpen}
             scenarioName={scenario.name}
@@ -991,7 +991,7 @@ export function UserTestingScenarioDetail({
       />
 
       <ScenarioDeleteConfirmDialog
-        entityLabel="scenario"
+        entityLabel="study"
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         scenarioName={scenario.name}

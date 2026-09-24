@@ -282,7 +282,7 @@ export function ScenarioShareEmptyPanel({
                 href={share.shareLink!}
                 target="_blank"
                 rel="noreferrer"
-                aria-label="Try the study yourself — opens the live study in a new tab"
+                aria-label="Try the study yourself. Opens the live study in a new tab"
                 data-testid="user-testing-share-empty-preview"
                 className={cn(
                   "relative flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm",
@@ -291,7 +291,7 @@ export function ScenarioShareEmptyPanel({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                  Try it yourself — ask it something
+                  Try it yourself. Ask it something
                   <span
                     aria-hidden
                     className="ml-1 inline-block h-[1.05em] w-px translate-y-[0.2em] bg-primary animate-[blink_1.15s_ease-in-out_infinite]"
@@ -314,7 +314,7 @@ export function ScenarioShareEmptyPanel({
           >
             {share.shareLink ? (
               <>
-                This study can&apos;t be opened right now — its environment
+                This study can&apos;t be opened right now. Its environment
                 isn&apos;t resolving, so the link won&apos;t load for you or a
                 tester.
                 {/* The BACKEND'S OWN reason, not just the fact of a failure.

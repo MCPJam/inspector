@@ -1549,6 +1549,10 @@ agent.post("/projects/:projectId/agent", async (c) => {
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
+      // A durable job's history is the server's own checkpoint; otherwise it
+      // is the request body's, and an unresolved tool call in it is a claim
+      // the engine answers rather than runs (MJ-008).
+      ...(durable ? {} : { clientSuppliedHistory: true }),
       messages: turnMessages,
       modelDefinition: AGENT_API_MODEL,
       systemPrompt: prepared.enhancedSystemPrompt,

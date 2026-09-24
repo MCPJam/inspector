@@ -48,6 +48,8 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
   mergePageToolBindingMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
@@ -390,6 +392,12 @@ export interface RunDirectChatTurnOptions {
   /** Identifies the temporary tool-error result to omit from trace/history. */
   suspendedToolCallId?: () => string | undefined;
   /**
+   * What each step SENDS, derived from the messages the step would send — the
+   * history-provenance presentation on browser-facing chat (MJ-009). The
+   * conversation `streamText` accumulates, and the transcript, are unchanged.
+   */
+  transformStepMessages?: (messages: ModelMessage[]) => ModelMessage[];
+  /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
    * observability; chat currently omits.
@@ -447,7 +455,10 @@ export function stampMcpToolOriginProviderOptions(
         // thing the tool's `execute` compares itself to on resume.
         const providerOptions = mergePageToolBindingMetadata(
           withPageToolAttributionMetadata(
-            mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+            mergeMcpToolConnectionMetadata(
+              mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+              toolConnectionAttribution(tools[toolName], record.input, record.toolCallId),
+            ),
             tools[toolName],
           ),
           record.type === "tool-call"
@@ -482,7 +493,10 @@ export function withMcpToolOriginChunkMetadata<
   const serverId = readToolServerId(tools, chunk.toolName);
   const providerMetadata = mergePageToolBindingMetadata(
     withPageToolAttributionMetadata(
-      mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+      mergeMcpToolConnectionMetadata(
+        mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+        toolConnectionAttribution(tools[chunk.toolName], (chunk as { input?: unknown }).input, (chunk as { toolCallId?: unknown }).toolCallId),
+      ),
       tools[chunk.toolName],
     ),
     pageToolBindingOf(tools[chunk.toolName])
@@ -576,6 +590,7 @@ export function runDirectChatTurn(
     maxSteps,
     shouldPauseAfterStep,
     suspendedToolCallId,
+    transformStepMessages,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -764,12 +779,17 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
+      // What the model is shown this step, when the caller shapes it.
+      const presentedMessages =
+        transformStepMessages && stepMessages
+          ? transformStepMessages(stepMessages)
+          : undefined;
       const request = {
         turnId: traceTurn.turnId,
         promptIndex: traceTurn.promptIndex,
         stepIndex: stepNumber,
         systemPrompt,
-        messages: stepMessages ?? traceHistory,
+        messages: presentedMessages ?? stepMessages ?? traceHistory,
         tools: activeToolNames
           ? Object.fromEntries(
               activeToolNames.map((name) => [name, tools[name]]),
@@ -786,7 +806,11 @@ export function runDirectChatTurn(
       const stepOptions: {
         activeTools?: string[];
         toolChoice?: ToolChoice<Record<string, AiTool>>;
+        messages?: ModelMessage[];
       } = {};
+      if (presentedMessages) {
+        stepOptions.messages = presentedMessages;
+      }
       if (activeToolNames !== undefined) {
         stepOptions.activeTools = activeToolNames;
       }

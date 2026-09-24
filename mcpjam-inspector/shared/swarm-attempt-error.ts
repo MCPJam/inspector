@@ -42,6 +42,7 @@ export const SPEND_REFUSAL_REASONS = [
   "budget_reached",
   "allowance_exhausted",
   "admission_invalid",
+  "insufficient_for_request",
 ] as const;
 
 export function isTransientSpendRefusal(

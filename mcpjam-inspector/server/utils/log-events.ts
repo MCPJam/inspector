@@ -1,3 +1,4 @@
+import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 
@@ -286,6 +287,20 @@ export type RequestEventMap = {
     secretCount: number;
     isScenarioSession: boolean;
   };
+  /**
+   * Built-in tool ids a chat request asked for that the turn did not get
+   * (MJ-008): unknown ids, ids outside the host or project configuration, and
+   * workspace operations the caller's project role does not allow.
+   *
+   * `toolIds` holds catalog names only. An unknown id is free text from the
+   * request body, so it is counted in `unknownCount` and never echoed.
+   */
+  "chat.builtin_tools.withheld": {
+    toolIds: string[];
+    unknownCount: number;
+    reasons: string[];
+    targetKind: "adhoc" | "host" | "environment" | "scenario";
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"
@@ -378,7 +393,49 @@ export type RequestEventMap = {
     statusCode: number;
     errorCode: string;
   };
+  // Sign-out session revocation (routes/web/auth-session.ts, MJ-011): the
+  // backend could not be asked to revoke the session a user just signed out
+  // of, so tokens already issued for it stay valid until they expire. The
+  // sign-out itself still completed.
+  "auth.session.revoke_incomplete": {
+    reason: "failed" | "timeout";
+  };
   "route.operation.failed": RouteOperationFailedFields;
+  /**
+   * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS
+   * key's id, never its value.
+   *
+   * WorkOS rejected `expires_at` when a key was created, so the key was minted
+   * without it. It still expires: the org binding carries the same instant
+   * and the bearer middleware enforces it. Any row here means WorkOS-native
+   * expiry is not in effect for new keys.
+   */
+  "apikey.expiry.workos_refused": { statusCode: number };
+  /**
+   * The backend capped an organization's key inventory, so the page listed
+   * only part of it (and says so to the admin).
+   */
+  "apikey.inventory.truncated": { listed: number };
+  /**
+   * An owner or admin revoked a key from the organization inventory.
+   * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
+   * the key is gone at WorkOS but its org binding was not removed — inert,
+   * and revoking it again from the inventory clears it.
+   */
+  "apikey.admin_revoke.completed": {
+    workosKeyId: string;
+    alreadyRevoked: boolean;
+    bindingCleanupFailed: boolean;
+    bindingStatus?: number;
+  };
+  /**
+   * No authorization decision could be had for an admin revoke (backend
+   * unreachable, or one without the route yet), so nothing was revoked.
+   */
+  "apikey.admin_revoke.unavailable": {
+    workosKeyId: string;
+    errorMessage: string;
+  };
 };
 
 export type SystemEventMap = {
@@ -452,6 +509,7 @@ export type SystemEventMap = {
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted
   // per-request.
+  "launch.engagement": LaunchEngagement;
   "relay.stats": {
     requests: number;
     res2xx: number;

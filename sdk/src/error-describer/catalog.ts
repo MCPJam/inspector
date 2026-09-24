@@ -77,6 +77,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // server as the failing boundary. Keep protocol codes that can also be
   // caused by the client or transport out of this bucket.
   "jsonrpc/internal_error": "user_server",
+  "jsonrpc/invalid_response_format": "user_server",
   // Parse errors, missing methods, invalid params, and unsupported versions
   // are direction-dependent protocol signals. A client can send malformed
   // JSON, call an unadvertised method, or request a version the server does
@@ -122,6 +123,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "account/suspended": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
+  "provider/mcpjam_limit_insufficient": "user_config",
   // The MCP server under test throttled US. That is the server's own
   // behaviour, so it belongs to the server being inspected — not to the
   // user's provider settings, which is what `provider/quota` claims.
@@ -275,6 +277,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Retry the request once the server is healthy.",
     ],
     "internal-error",
+  ),
+  "jsonrpc/invalid_response_format": entry(
+    "jsonrpc/invalid_response_format",
+    "Invalid response format (-32603)",
+    "The server replied, but the result was not a valid MCP tool, resource, or prompt payload.",
+    [
+      "The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).",
+    ],
+    [
+      "Inspect the result in the Traffic Log and compare it to the MCP result shape.",
+      "Return `{ content: [{ type: \"text\", text: \"...\" }] }` from the handler, or the matching resource/prompt result.",
+    ],
+    "invalid-response-format",
   ),
   "jsonrpc/connection_closed": entry(
     "jsonrpc/connection_closed",
@@ -745,7 +760,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Disable progressive tool discovery for this server, or move headers into the server config.",
     ],
-    "paginated-tool-header-discovery-unsupported",
+    "paginated-tool-and-header-discovery-unsupported",
     "warning",
   ),
 
@@ -798,7 +813,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       // have no BYOK path, so adding a key does nothing for them.
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/mcpjam_limit_monthly": entry(
@@ -813,7 +828,22 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Wait for the billing period to renew.",
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
+    "warning",
+  ),
+  "provider/mcpjam_limit_insufficient": entry(
+    "provider/mcpjam_limit_insufficient",
+    "Not enough MCPJam credits",
+    "Your organization has MCPJam credits left, but not enough for this request.",
+    [
+      "MCPJam reserves a request's worst-case cost before it runs, so an expensive model or a long conversation can need more than the remaining balance.",
+    ],
+    [
+      "Try a cheaper model or a shorter conversation.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+    ],
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/mcpjam_platform_budget": entry(
@@ -840,7 +870,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Wait for the allowance to reset.",
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
-    "mcpjam-model-limit-reached",
+    "out-of-mcpjam-credits",
     "warning",
   ),
   "provider/quota": entry(

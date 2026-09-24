@@ -519,6 +519,66 @@ describe("v1 eval-edit routes", () => {
     expect(convexMutationMock).not.toHaveBeenCalled();
   });
 
+  it("PATCH goal-completion preserves a stored rubric-checks slot", async () => {
+    // The slot is app-only, so the public route can never write it, and
+    // `updateTestSuite` replaces `judgeConfig` wholesale. Dropping it here
+    // would switch a suite's rubric checks back to the defaults and erase its
+    // authored questions on an unrelated threshold edit.
+    const rubricChecks = {
+      enabled: false,
+      questions: [
+        {
+          id: "tone",
+          kind: "choice",
+          label: "Tone",
+          instructions: "How did the reply sound?",
+          options: [
+            { id: "warm", label: "Warm" },
+            { id: "curt", label: "Curt" },
+          ],
+          pass: { anyOf: ["warm"] },
+        },
+      ],
+    };
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: { enabled: true },
+              groundedness: { role: "advisory", judgeModel: "stored-g" },
+              rubricChecks,
+            },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { threshold: 0.9 } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: { enabled: true, threshold: 0.9 },
+      groundedness: { role: "advisory", judgeModel: "stored-g" },
+      rubricChecks,
+    });
+  });
+
+  it("PATCH refuses a rubric-checks write: the slot is app-only", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { rubricChecks: { enabled: false } } } },
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toMatch(/rubricChecks/);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
   it("GET reports stored groundedness and severity without inventing defaults", async () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"
