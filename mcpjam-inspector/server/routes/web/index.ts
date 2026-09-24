@@ -1,6 +1,7 @@
 import oauthConnections from "./oauth-connections.js";
 import { Hono } from "hono";
-import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
+import { mapWebBoundaryError } from "./boundary-error.js";
+import { webError, webErrorFromRoute } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import { denyGuests } from "../../middleware/deny-guests.js";
@@ -333,7 +334,7 @@ web.onError((error, c) => {
   // passing only `normalized` here discarded it at the very last step — for
   // every handler on /api/web/* that throws rather than returns. That drop
   // was the single largest reason `origin=mcpjam` never appeared in Axiom.
-  const routeError = mapRuntimeError(error);
+  const routeError = mapWebBoundaryError(error);
   return webErrorFromRoute(c, routeError);
 });
 
