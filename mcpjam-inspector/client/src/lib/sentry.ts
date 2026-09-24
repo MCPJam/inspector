@@ -48,8 +48,10 @@ export function initSentry() {
   const processQueryEvent = createConvexQueryEventProcessor();
   Sentry.init({
     ...config,
-    beforeSend: (event, hint) =>
-      processQueryEvent(config.beforeSend(event), hint),
+    beforeSend: (event, hint) => {
+      const filtered = config.beforeSend(event);
+      return filtered === null ? null : processQueryEvent(filtered, hint);
+    },
     integrations: [
       // Don't even load the replay integration where replay is not permitted;
       // zero sample rates alone would still ship the recorder code and open
