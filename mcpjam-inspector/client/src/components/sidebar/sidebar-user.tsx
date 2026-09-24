@@ -24,6 +24,7 @@ import {
   markSignOutInProgress,
   SIGN_OUT_REQUEST_TIMEOUT_MS,
 } from "@/lib/auth/sign-out-latch";
+import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
@@ -47,7 +48,12 @@ interface SidebarUserProps {
 
 export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signOut, isLoading: isWorkOsAuthLoading } = useAuth();
+  const {
+    user,
+    signOut,
+    getAccessToken,
+    isLoading: isWorkOsAuthLoading,
+  } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -72,6 +78,14 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
     // next tick, and an unlatched failure would redirect this tab to the login
     // page on top of the logout navigation below. See `sign-out-latch`.
     markSignOutInProgress();
+    // Revoke the session server-side with the token about to be discarded,
+    // so it stops working everywhere now rather than when it expires. Bounded
+    // and never rejects; see `revoke-session`.
+    const leave = () => signOutOfWorkOs();
+    void startSessionRevocation(getAccessToken).then(leave, leave);
+  };
+
+  const signOutOfWorkOs = () => {
     const returnTo = window.location.origin;
     if (window.isElectron) {
       // Bounded, because the latch above is. This promise settles when the

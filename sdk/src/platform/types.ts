@@ -1336,6 +1336,7 @@ export interface PlatformExecutionDisclosure {
 export type PlatformEvalLlmTouchpointId =
   | "goalCompletion"
   | "groundedness"
+  | "rubricChecks"
   | "serverQuality"
   | "runInsights"
   | "runGroupQuality"
@@ -1353,7 +1354,12 @@ export interface PlatformAnalysisTouchpointDisclosure {
   rail: {
     fixed: "openrouter" | null;
     because: string;
-    routing?: "gateway_preferred";
+    /**
+     * `gateway_preferred`: Gateway when configured and priced there, else
+     * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
+     * with a fallback model only when the classifier cannot be reached.
+     */
+    routing?: "gateway_preferred" | "typed_decision";
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];

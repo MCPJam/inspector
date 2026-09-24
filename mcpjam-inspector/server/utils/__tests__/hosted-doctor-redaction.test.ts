@@ -371,7 +371,7 @@ describe("hosted doctor transport-detail redaction", () => {
     restore = loaded.restore;
 
     const refusal =
-      'Metadata pointer hostname "metadata.example.test" resolves to a private or internal address that the hosted inspector will not dial.';
+      'Request URL hostname "metadata.example.test" resolves to a private or internal address that the hosted inspector will not dial.';
     const redacted = loaded.redact(oauthDiscoveryEnvelope(refusal));
 
     expect(redacted.probe?.oauth?.discoveryError).toBe(refusal);
@@ -425,4 +425,60 @@ describe("hosted doctor transport-detail redaction", () => {
       /ECONNREFUSED|6379|127\.0\.0\.1/
     );
   });
+
+  it("does not let a socket error smuggle the refusal wording past the redactor", async () => {
+    // The allowlist used to be two bare substring tests, so it asked whether
+    // the phrase appeared ANYWHERE in the detail rather than whether the detail
+    // WAS a refusal. A target that can get text into the transport message —
+    // through a certificate subject, a SAN, or a redirect echoed back — only
+    // had to include the phrase to carry its own socket outcome out with it.
+    // Each string below is a real open-versus-closed differential wearing the
+    // refusal's words.
+    const smuggled = [
+      `${CLOSED_PORT} (not a publicly routable address)`,
+      "certificate subject CN=it is not a publicly routable address, " +
+        "connect ECONNREFUSED 127.0.0.1:6379",
+      'Refusing to connect to "a.test": it is not a publicly routable ' +
+        "address. connect ECONNREFUSED 127.0.0.1:6379",
+      "resolves to a private or internal address that the hosted inspector " +
+        "will not dial. ssl3_get_record:wrong version number",
+      // Leading text: the label span used to be `^[^"]*`, which swallowed any
+      // quote-free prefix, so the socket outcome only had to come FIRST.
+      "connect ECONNREFUSED 127.0.0.1:6379; Server URL hostname " +
+        '"a.test" resolves to a private or internal address that the hosted ' +
+        "inspector will not dial.",
+      "ssl3_get_record:wrong version number Server URL points at a private " +
+        'or internal address ("10.0.0.1") that the hosted inspector will not ' +
+        "dial. Run this server locally in the inspector instead.",
+      // Socket text inside the quoted host field.
+      'Refusing to connect to "a.test: connect ECONNREFUSED 127.0.0.1:6379 ' +
+        '": it is not a publicly routable address.',
+    ];
+
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    for (const detail of smuggled) {
+      const serialized = JSON.stringify(
+        loaded.redact(socketFailureEnvelope(detail))
+      );
+      expect(serialized).not.toMatch(/ECONNREFUSED|6379|127\.0\.0\.1/);
+      expect(serialized).not.toMatch(/ssl3_get_record|wrong version/);
+    }
+  });
+
+  it("still refuses to match a refusal that was reworded", async () => {
+    // The safe direction, asserted rather than assumed. If someone rewords
+    // `classifyPinnedTransportError`, the detail stops matching and degrades to
+    // the uniform message — it does not start leaking.
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const reworded =
+      'Refusing to connect to "redirector.example.test" because it is not publicly routable.';
+    const redacted = loaded.redact(socketFailureEnvelope(reworded));
+
+    expect(redacted.connection.detail).not.toBe(reworded);
+  });
 });
+

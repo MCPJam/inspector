@@ -83,6 +83,39 @@ describe("pruneEmpty keeps a config that still means something", () => {
     ).toEqual({ groundedness: { role: "advisory" } });
   });
 
+  it("keeps a stored rubric-checks slot, questions and all", () => {
+    // This section edits goal completion only. Dropping a slot it does not
+    // own would read, to every other writer, as a deliberate clear of the
+    // suite's rubric checks and their authored questions.
+    const rubricChecks = {
+      enabled: false,
+      questions: [
+        {
+          id: "tone",
+          kind: "score" as const,
+          label: "Tone",
+          instructions: "How warm was the reply?",
+          levels: ["Cold", "Neutral", "Warm"],
+          pass: { minLevel: 2 },
+        },
+      ],
+    };
+    expect(pruneEmpty({ goalCompletion: {}, rubricChecks })).toEqual({
+      rubricChecks,
+    });
+    expect(
+      pruneEmpty({
+        goalCompletion: { threshold: 0.8 },
+        groundedness: { role: "advisory" },
+        rubricChecks,
+      }),
+    ).toEqual({
+      goalCompletion: { threshold: 0.8 },
+      groundedness: { role: "advisory" },
+      rubricChecks,
+    });
+  });
+
   it("KEEPS a config whose only field is the gating role", () => {
     // The case that matters. `enabled` may legitimately be absent — the
     // backend resolves an absent one to on — so a gating suite can carry

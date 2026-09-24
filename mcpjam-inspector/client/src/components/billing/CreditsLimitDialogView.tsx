@@ -14,6 +14,7 @@ import {
 } from "./RequestUpgradeButton";
 
 export interface CreditsLimitDialogViewProps {
+  title?: string;
   description: string;
   isFreePlan?: boolean;
   isSwarm?: boolean;
@@ -33,6 +34,7 @@ export interface CreditsLimitDialogViewProps {
 
 /** Shared Eval/Swarm presentation; billing data and navigation stay in the caller. */
 export function CreditsLimitDialogView({
+  title = "Out of MCPJam credits",
   description,
   isFreePlan = false,
   isSwarm = false,
@@ -61,7 +63,7 @@ export function CreditsLimitDialogView({
       <DialogContent className="sm:max-w-md">
         <JamIllustration />
         <DialogHeader>
-          <DialogTitle>Out of MCPJam credits</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription
             className="text-pretty"
             data-testid="limit-dialog-description"
