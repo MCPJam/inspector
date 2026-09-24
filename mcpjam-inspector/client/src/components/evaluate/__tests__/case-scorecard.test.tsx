@@ -125,6 +125,37 @@ describe("CaseScorecard", () => {
     }
   });
 
+  it("shows the route's arguments as their own locked row at Tool call", () => {
+    const { container } = renderCard({
+      input: {
+        ...baseInput,
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "Who am I signed in as?" },
+          {
+            id: "t1",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "get_me",
+              args: { args: {} },
+            },
+          },
+        ],
+        toolsChoice: "tools",
+      },
+    });
+    const call = container.querySelector(
+      '[data-stage-group="call"]',
+    ) as HTMLElement;
+    const row = within(call)
+      .getAllByTestId("case-scorecard-row")
+      .find((r) => r.textContent?.includes("Arguments match"));
+    expect(row).toHaveAttribute("data-provenance", "route");
+    expect(within(row!).queryByRole("button")).not.toBeInTheDocument();
+    // One route question on the page, at Selection.
+    expect(screen.getAllByTestId("case-route-row")).toHaveLength(1);
+  });
+
   it("never shows a wire enum", () => {
     const { container } = renderCard();
     expect(container.textContent).not.toMatch(

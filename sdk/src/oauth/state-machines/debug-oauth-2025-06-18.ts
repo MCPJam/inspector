@@ -13,6 +13,7 @@ import {
   describeTokenRequestFailure,
 } from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
+import { describeResourceMetadataRequestFailure } from "./shared/resource-metadata-error.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
@@ -765,7 +766,7 @@ export const createDebugOAuthStateMachine = (
               });
 
               throw new Error(
-                `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`,
+                describeResourceMetadataRequestFailure(error),
               );
             }
             break;
