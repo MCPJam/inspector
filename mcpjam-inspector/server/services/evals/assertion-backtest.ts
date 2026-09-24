@@ -268,16 +268,25 @@ function frozenToolEvidenceMissing(
  * Whether the runner's first pass declares the hosted tool scorers for this
  * frozen case. It does only when the matcher reports expected calls, which is
  * a positive case expecting at least one: `evaluateMultiTurnResults` reports
- * none for a negative test. `undefined` when the frozen case does not say.
+ * none for a negative test. An empty expectation or a negative test rules both
+ * out on its own, whatever the other field says or whether it is there at all.
+ * `undefined` when neither does and the frozen case does not say.
  */
 function hostedToolScorersDeclared(row: EvidenceRow): boolean | undefined {
+  if (
+    (Array.isArray(row.expectedToolCalls) &&
+      row.expectedToolCalls.length === 0) ||
+    row.isNegativeTest === true
+  ) {
+    return false;
+  }
   if (
     !Array.isArray(row.expectedToolCalls) ||
     typeof row.isNegativeTest !== "boolean"
   ) {
     return undefined;
   }
-  return !row.isNegativeTest && row.expectedToolCalls.length > 0;
+  return true;
 }
 
 /** One matcher-backed evaluator's difference, stored result against draft. */
@@ -367,8 +376,7 @@ function hostedToolCallDifferences(
   if (unavailable) {
     const ids = [
       HOSTED_TOOL_MATCH_SCORER_ID,
-      ...(matchOptions.argumentMatching !== "ignore" &&
-      row.isNegativeTest !== true
+      ...(matchOptions.argumentMatching !== "ignore"
         ? [HOSTED_TOOL_ARGUMENTS_SCORER_ID]
         : []),
     ];

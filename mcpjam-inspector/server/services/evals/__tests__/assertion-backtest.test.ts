@@ -485,3 +485,51 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
     ).sort(),
   ).toEqual(["toolCalls:arguments", "toolCalls:match"]);
 });
+
+it("declares no hosted tool scorer when one frozen field rules both out", () => {
+  const hosted = resolveScoreDefinition(
+    hostedPredicateScoreDefinition({ predicate: oldRule }),
+  );
+  const stored = scoreResultFromPredicateResult(
+    hosted,
+    evaluatePredicates({ toolCalls: [], finalAssistantMessage: "hello" }, [
+      oldRule,
+    ])[0],
+  );
+  // The base row carries neither `expectedToolCalls` nor `isNegativeTest`.
+  const source = {
+    ...row,
+    evaluationConfig: { definitions: [hosted] },
+    results: [stored],
+  };
+  const draftWithMatch = {
+    assertions: { mode: "replace" as const, list: [oldRule] },
+    matchOptions: { argumentMatching: "exact" as const },
+  };
+  const toolDifferences = (differences: ReturnType<typeof backtestIteration>) =>
+    differences.filter((item) => item.evaluatorId.startsWith("toolCalls:"));
+  // A case that expects no call is graded by neither, whatever its polarity…
+  expect(
+    toolDifferences(
+      backtestIteration({ ...source, expectedToolCalls: [] }, draftWithMatch),
+    ),
+  ).toEqual([]);
+  // …and so is a negative test, whatever it expects.
+  expect(
+    toolDifferences(
+      backtestIteration({ ...source, isNegativeTest: true }, draftWithMatch),
+    ),
+  ).toEqual([]);
+  // With neither field, the frozen case cannot say: both are not comparable.
+  const unknown = toolDifferences(backtestIteration(source, draftWithMatch));
+  expect(unknown.map((item) => item.evaluatorId).sort()).toEqual([
+    "toolCalls:arguments",
+    "toolCalls:match",
+  ]);
+  for (const item of unknown) {
+    expect(item).toMatchObject({
+      comparable: false,
+      reason: "Frozen tool expectations or test polarity are unavailable",
+    });
+  }
+});
