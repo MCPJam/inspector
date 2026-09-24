@@ -155,7 +155,7 @@ const SESSION_RESULT_META = {
   didNotRun: {
     label: "Did not run",
     dot: "bg-warning",
-    text: "text-warning-foreground",
+    text: "text-warning",
   },
 } satisfies Record<string, SessionResultMeta>;
 
