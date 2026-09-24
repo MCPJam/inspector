@@ -675,7 +675,9 @@ describe("SwarmRunDetail findings wiring", () => {
 });
 
 describe("SwarmFindingsTab on shared findings", () => {
-  it("renders backend findings and mounts remediation for this wave", () => {
+  // PLB-29: the tab ends at the persona cards. The actionable-findings list
+  // ("Fix in your MCP server" and the rest) must not render below them.
+  it("renders backend findings without the actionable-findings list", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -688,14 +690,9 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(
       screen.getByRole("tab", { name: new RegExp(WIRE_PERSONA.name) }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
-      "data-run-id",
-      wave().anchor.runId,
-    );
-    expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
-      "data-hide-empty",
-      "true",
-    );
+    expect(
+      screen.queryByTestId("actionable-findings-mount"),
+    ).not.toBeInTheDocument();
   });
 
   it("names the cause and shows its fix on its own line", () => {
