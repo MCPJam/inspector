@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { once } from "node:events";
@@ -14,6 +14,23 @@ let provider;
 let providerRequests = 0;
 let output = "";
 
+function appEnv(port) {
+  return {
+    PATH: process.env.PATH,
+    NODE_ENV: "production",
+    NEXT_TELEMETRY_DISABLED: "1",
+    WORKOS_API_KEY: "sk_test_synthetic_not_a_real_key",
+    WORKOS_CLIENT_ID: "client_synthetic",
+    WORKOS_COOKIE_PASSWORD: "synthetic-cookie-password-at-least-32-characters",
+    NEXT_PUBLIC_WORKOS_REDIRECT_URI: `http://127.0.0.1:${port}/callback`,
+    WORKOS_API_HOSTNAME: "127.0.0.1",
+    WORKOS_API_PORT: String(provider.address().port),
+    WORKOS_API_HTTPS: "false",
+    MCPJAM_NONPROD_LOCKDOWN: "true",
+    MCPJAM_EMPLOYEE_EMAIL_DOMAINS: "example.invalid",
+  };
+}
+
 before(async () => {
   provider = createServer((_request, response) => {
     providerRequests++;
@@ -25,22 +42,16 @@ before(async () => {
   const port = reservation.address().port;
   await new Promise((resolve) => reservation.close(resolve));
   origin = `http://127.0.0.1:${port}`;
-  app = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", String(port)], {
+  // Production build + `next start`, not `next dev`: the dev server marks every
+  // response no-store on its own, which would make the cache assertions pass
+  // whatever the middleware does. `NEXT_PUBLIC_*` values are inlined at build
+  // time, so the port is chosen before the build.
+  const next = require.resolve("next/dist/bin/next");
+  const build = spawnSync(process.execPath, [next, "build"], { cwd: appDirectory, env: appEnv(port), encoding: "utf8" });
+  assert.equal(build.status, 0, `next build failed:\n${build.stdout}\n${build.stderr}`);
+  app = spawn(process.execPath, [next, "start", "--hostname", "127.0.0.1", "--port", String(port)], {
     cwd: appDirectory,
-    env: {
-      PATH: process.env.PATH,
-      NODE_ENV: "development",
-      NEXT_TELEMETRY_DISABLED: "1",
-      WORKOS_API_KEY: "sk_test_synthetic_not_a_real_key",
-      WORKOS_CLIENT_ID: "client_synthetic",
-      WORKOS_COOKIE_PASSWORD: "synthetic-cookie-password-at-least-32-characters",
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${origin}/callback`,
-      WORKOS_API_HOSTNAME: "127.0.0.1",
-      WORKOS_API_PORT: String(provider.address().port),
-      WORKOS_API_HTTPS: "false",
-      MCPJAM_NONPROD_LOCKDOWN: "true",
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: "example.invalid",
-    },
+    env: appEnv(port),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const ready = new Promise((resolve, reject) => {

@@ -1,0 +1,38 @@
+name: Soundcheck checks
+
+# Soundcheck deploys to production on every push to main that touches it
+# (deploy-soundcheck.yml), so its auth checks run before merge.
+on:
+  pull_request:
+    paths:
+      - "soundcheck/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/soundcheck-checks.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soundcheck-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  checks:
+    name: Typecheck and auth smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Node major Railway builds Soundcheck with.
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - run: npm run typecheck -w @mcpjam/soundcheck
+      - run: npm run test:auth -w @mcpjam/soundcheck
