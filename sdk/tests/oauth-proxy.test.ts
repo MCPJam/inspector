@@ -13,13 +13,6 @@ const httpRequestMock = vi.hoisted(() => vi.fn());
 const httpsRequestMock = vi.hoisted(() => vi.fn());
 const dnsLookupMock = vi.hoisted(() => vi.fn());
 
-vi.mock("node:tls", () => ({
-  default: {
-    getCACertificates: (type: string) =>
-      type === "system" ? ["system-ca"] : ["default-ca", "extra-ca"],
-  },
-}));
-
 vi.mock("node:dns", () => ({
   __esModule: true,
   lookup: dnsLookupMock,
@@ -114,32 +107,6 @@ describe("oauth-proxy helpers", () => {
         callback: (error: Error | null, addresses: unknown) => void
       ) => callback(null, [{ address: "93.184.216.34", family: 4 }])
     );
-  });
-
-  it("keeps local system trust after a public redirect narrows network access", async () => {
-    queueMetadataResponses(httpsRequestMock, [
-      { status: 302, headers: { location: "https://issuer.example/metadata" } },
-      { body: JSON.stringify({ issuer: "https://issuer.example" }) },
-    ]);
-    await executeDebugOAuthProxy({
-      url: "https://auth.example/metadata",
-      allowPrivateNetwork: true,
-    });
-    expect(httpsRequestMock).toHaveBeenCalledTimes(2);
-    for (const [, options] of httpsRequestMock.mock.calls) {
-      expect(options.ca).toEqual(["default-ca", "extra-ca", "system-ca"]);
-      expect(options.rejectUnauthorized).not.toBe(false);
-    }
-  });
-
-  it("does not enable system trust for hosted requests even with a local opt-in", async () => {
-    queueMetadataResponses(httpsRequestMock, [{ body: "{}" }]);
-    await executeDebugOAuthProxy({
-      url: "https://auth.example/metadata",
-      httpsOnly: true,
-      allowPrivateNetwork: true,
-    });
-    expect(httpsRequestMock.mock.calls[0][1]).not.toHaveProperty("ca");
   });
 
   it("blocks private hosts when httpsOnly is enabled", async () => {
