@@ -234,6 +234,19 @@ describe("stepFailureFindingKey", () => {
     );
   });
 
+  // CodeQL js/polynomial-redos on #5473: the trailing-period strip was
+  // `/\.+$/`, which retries the run from every index when the match fails, so
+  // a long run of periods followed by anything else cost O(n^2). The periods
+  // must NOT be last — that is the case the regex handles quickly. The server
+  // writes `error_description`, so it chooses this text. The regex form takes
+  // ~13s here; the timeout is what fails if it comes back.
+  it("does not backtrack over a long run of periods", { timeout: 2000 }, () => {
+    const padded = `Client registration failed: ${".".repeat(200_000)}x`;
+    const key = stepFailureFindingKey(padded);
+    expect(key.startsWith("Client registration failed: ..")).toBe(true);
+    expect(key).toHaveLength(160);
+  });
+
   it("does not mistake statuses, codes or versions for hosts", () => {
     const message =
       "Dynamic Client Registration failed (400): invalid_client_metadata: release 3.9.2";

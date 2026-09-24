@@ -54,8 +54,18 @@ export function stepFailureFindingKey(message: string): string {
 
 const MAX_KEY_CHARS = 160;
 
+const PERIOD = ".".charCodeAt(0);
+
+/**
+ * Not `/\.+$/`: an unanchored-start `+` before `$` retries the run from every
+ * index when the match fails, so a message padded with periods costs O(n²)
+ * (80k of them took 2s locally, and `error_description` is the server's
+ * text). A scan from the end is linear and says the same thing.
+ */
 function stripTrailingPeriod(text: string): string {
-  return text.replace(/\.+$/, "");
+  let end = text.length;
+  while (end > 0 && text.charCodeAt(end - 1) === PERIOD) end -= 1;
+  return end === text.length ? text : text.slice(0, end);
 }
 
 // Where the debug proxy puts a host (`oauth-proxy.ts`, `pinned-dns.ts`):
@@ -66,11 +76,24 @@ function stripTrailingPeriod(text: string): string {
 //   Refusing a plaintext connection to "<host>": …
 // The resolve form's host is the message's last word, after the label's plain
 // words, so the lazy words give way until the token reaches the end.
+//
+// Every host run is bounded to {1,253}, the maximum length of a DNS name. The
+// private-address rule is why: its token comes BEFORE its literal, so with an
+// unbounded `+` the engine retried the whole run from each index and a message
+// padded with periods cost O(n^2) — 4.6s for 60k of them, and the server
+// writes this text. The other three sit behind a literal and fail fast, but
+// they are bounded too so the next edit here cannot reintroduce it.
 const PROXY_HOSTS: ReadonlyArray<[RegExp, string]> = [
-  [/(\bCould not resolve (?:[a-z-]+ )*?)[^\s"'()]+(?=[)"',;]*$)/g, "$1<host>"],
-  [/[^\s"'()]+(?= resolves to a private or reserved address\b)/g, "<host>"],
-  [/(\bhost \()[^\s)]+(\))/g, "$1<host>$2"],
-  [/(\bconnection to ")[^\s"]+(")/g, "$1<host>$2"],
+  [
+    /(\bCould not resolve (?:[a-z-]{1,63} ){0,8}?)[^\s"'()]{1,253}(?=[)"',;]*$)/g,
+    "$1<host>",
+  ],
+  [
+    /[^\s"'()]{1,253}(?= resolves to a private or reserved address\b)/g,
+    "<host>",
+  ],
+  [/(\bhost \()[^\s)]{1,253}(\))/g, "$1<host>$2"],
+  [/(\bconnection to ")[^\s"]{1,253}(")/g, "$1<host>$2"],
 ];
 // Two colons at least, with no whitespace between, so `Bad Request: …` is
 // left alone.
