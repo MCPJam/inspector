@@ -179,7 +179,8 @@ function sessionResultMeta(
   if (!verdict) {
     // A failed attempt lands before its verdict does. With a transcript the
     // judge may still grade it, so it reads "Broke" in gray, not "Did not run".
-    if (outcome === "failed" && hasTranscript) {
+    // A rate-limited attempt with a transcript is `broke` in the SDK too.
+    if ((outcome === "failed" || outcome === "rate_limited") && hasTranscript) {
       return { ...CELL_META.pending, label: CELL_META.failed.label };
     }
     if (outcome === "failed" || outcome === "rate_limited") {

@@ -147,11 +147,14 @@ describe("SwarmHostCell status", () => {
     expect(cell(undefined, "failed")).toHaveTextContent("Did not run");
   });
 
-  it("does not say a verdictless session that broke partway through did not run", () => {
-    const el = cell(undefined, "failed", true);
-    expect(el).toHaveTextContent("Broke");
-    expect(el).not.toHaveTextContent("Did not run");
-  });
+  it.each(["failed", "rate_limited"] as const)(
+    "does not say a verdictless %s session with a transcript did not run",
+    (outcome) => {
+      const el = cell(undefined, outcome, true);
+      expect(el).toHaveTextContent("Broke");
+      expect(el).not.toHaveTextContent("Did not run");
+    },
+  );
 });
 
 describe("SwarmSessionsMatrix transcript evidence", () => {
