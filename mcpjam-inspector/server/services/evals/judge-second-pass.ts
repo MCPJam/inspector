@@ -49,9 +49,16 @@
  * so a duplicate doorbell produces the same rows and the same reports.
  */
 
-import type { StageEvidence } from "@mcpjam/sdk/contract";
+import type {
+  ResolvedScoreDefinition,
+  StageEvidence,
+} from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
-import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import {
+  buildEvaluationConfigSnapshot,
+  resolvedScoreDefinitionSchema,
+  STAGE_ANALYZER_VERSION,
+} from "@mcpjam/sdk/contract";
 import { resolveCasePromptTurns, turnsNeedModel } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
@@ -77,6 +84,10 @@ import {
   buildHostedScoreContract,
   type HostedRubricChecksVerdictLike,
 } from "./score-rows.js";
+import {
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+} from "./score-definitions.js";
 import { evaluateMultiTurnResults } from "./types.js";
 
 /** Iteration statuses that can still receive a derivation. */
@@ -597,7 +608,18 @@ export function deriveIterationPayload(args: {
   // verdict — which is not this pass's business either way.
   if (!isDualWrite(args.mode)) return { stage };
 
-  const { scores, evaluationConfig } = buildHostedScoreContract({
+  // The tool-call scorers are graded by the FIRST pass alone: this one has no
+  // matcher output, so their rows are the first pass's and stay as stored.
+  // Their definitions therefore have to be the ones those rows were minted
+  // against — carried over from the stored config, ids, versions and hashes
+  // as written — and never rebuilt by this build. A run finalized before a
+  // deploy and judged after it would otherwise get this build's `toolCalls:*`
+  // definitions: the stored row orphaned under a new hash, and a definition
+  // (the arguments scorer) with no row at all, which reads as an unresolved
+  // gate at `enforce`.
+  const storedTools = storedToolScorerDefinitions(metadata.evaluationConfig);
+
+  const { scores, evaluationConfig: builtConfig } = buildHostedScoreContract({
     ...(predicateRows.length
       ? {
           predicateResults: predicateRows.map((row) => ({
@@ -625,8 +647,13 @@ export function deriveIterationPayload(args: {
     // GATING scorer silently dropped from the verdict.
     //
     // Read from the RESOLVED case, never the raw top-level list: see
-    // `firstPassDeclaredToolMatch`.
-    toolMatchAuthored: firstPassDeclaredToolMatch(iteration.authoredCase),
+    // `firstPassDeclaredToolMatch`. Only when there is no stored config to
+    // carry the definitions from (see `storedTools` above).
+    ...(storedTools
+      ? {}
+      : {
+          toolMatchAuthored: firstPassDeclaredToolMatch(iteration.authoredCase),
+        }),
     // The SAME resolved options and polarity the first pass hashed into
     // `toolCalls:match`. Omitting them would rebuild that definition under a
     // different `implementationHash` and orphan the first pass's row.
@@ -643,9 +670,46 @@ export function deriveIterationPayload(args: {
       ? { rubricChecksVerdict: args.rubricChecksVerdict }
       : {}),
   });
+  const evaluationConfig = storedTools?.length
+    ? buildEvaluationConfigSnapshot([
+        ...builtConfig.definitions,
+        ...storedTools,
+      ])
+    : builtConfig;
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
     : { stage };
+}
+
+const TOOL_SCORER_IDS: ReadonlySet<string> = new Set([
+  HOSTED_TOOL_MATCH_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+]);
+
+/**
+ * The `toolCalls:*` definitions the first pass stored, exactly as stored.
+ *
+ * `undefined` when there is no stored config to read, or one this build cannot
+ * validate: the caller then falls back to declaring the scorer from the
+ * authored case. An empty list is an answer — the first pass declared no
+ * tool-call scorer — and is honoured as one.
+ */
+function storedToolScorerDefinitions(
+  evaluationConfig: unknown,
+): ResolvedScoreDefinition[] | undefined {
+  const definitions = asRecord(evaluationConfig)?.definitions;
+  if (!Array.isArray(definitions)) return undefined;
+  const tools: ResolvedScoreDefinition[] = [];
+  for (const value of definitions) {
+    const scorerId = asRecord(value)?.scorerId;
+    if (typeof scorerId !== "string" || !TOOL_SCORER_IDS.has(scorerId)) {
+      continue;
+    }
+    const parsed = resolvedScoreDefinitionSchema.safeParse(value);
+    if (!parsed.success) return undefined;
+    tools.push(parsed.data);
+  }
+  return tools;
 }
 
 /**

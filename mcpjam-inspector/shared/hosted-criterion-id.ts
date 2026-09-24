@@ -28,6 +28,8 @@ import {
 
 /** Stable id of the hosted tool-call matcher projection. */
 export const HOSTED_TOOL_MATCH_SCORER_ID = "toolCalls:match";
+/** Stable id of the hosted tool-call arguments projection. */
+export const HOSTED_TOOL_ARGUMENTS_SCORER_ID = "toolCalls:arguments";
 /** Stable id of the hosted goal-completion judge projection. */
 export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
 

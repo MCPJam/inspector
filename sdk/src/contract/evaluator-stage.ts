@@ -142,11 +142,15 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
 /**
  * Where each non-predicate grader's evidence is filed.
  *
- * Every entry is a projection rather than an authored predicate: the
- * tool-call matcher, and the hosted judges.
+ * Projections rather than authored predicates: the tool-call matcher's two
+ * halves, and the hosted judges. `toolCalls:match` is WHICH tools were called
+ * (missing calls, extras past the cap); `toolCalls:arguments` is HOW the
+ * expected ones were called, which is the Tool call stage's question rather
+ * than Selection's.
  */
 export const EVALUATOR_STAGE = {
   "toolCalls:match": "selection",
+  "toolCalls:arguments": "call",
   "judge:goalCompletion": "userValue",
   /**
    * Presentation routing only. Groundedness has no score definition until
