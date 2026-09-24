@@ -18,6 +18,7 @@ vi.mock("convex/react", () => ({
 function cell(
   verdict: SwarmSessionVerdict | undefined,
   outcome: SwarmMatrixCellOutcome = "succeeded",
+  hasTranscript = false,
 ) {
   render(
     <SwarmHostCell
@@ -25,6 +26,7 @@ function cell(
       sessionIndex={0}
       outcome={outcome}
       verdict={verdict}
+      hasTranscript={hasTranscript}
       selected={false}
       onSelect={() => {}}
     />,
@@ -121,6 +123,16 @@ describe("SwarmHostCell status", () => {
 
   it("falls back to the execution outcome without a verdict", () => {
     expect(cell(undefined, "rate_limited")).toHaveTextContent("Did not run");
+  });
+
+  it("says a verdictless session that broke with no transcript did not run", () => {
+    expect(cell(undefined, "failed")).toHaveTextContent("Did not run");
+  });
+
+  it("does not say a verdictless session that broke partway through did not run", () => {
+    const el = cell(undefined, "failed", true);
+    expect(el).toHaveTextContent("Broke");
+    expect(el).not.toHaveTextContent("Did not run");
   });
 });
 

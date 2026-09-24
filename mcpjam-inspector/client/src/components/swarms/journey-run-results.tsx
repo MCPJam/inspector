@@ -155,7 +155,9 @@ const SESSION_RESULT_META = {
   didNotRun: {
     label: "Did not run",
     dot: "bg-warning",
-    text: "text-warning",
+    // Light `text-warning` is a mid-yellow at ~2:1 on the page background, too
+    // faint for a small label; amber-700 clears AA there.
+    text: "text-amber-700 dark:text-warning",
   },
 } satisfies Record<string, SessionResultMeta>;
 
@@ -170,9 +172,15 @@ const SESSION_RESULT_META = {
  */
 function sessionResultMeta(
   outcome: SwarmMatrixCellOutcome,
-  verdict?: SwarmSessionVerdict,
+  verdict: SwarmSessionVerdict | undefined,
+  hasTranscript: boolean,
 ): SessionResultMeta {
   if (!verdict) {
+    // A failed attempt lands before its verdict does. With a transcript the
+    // judge may still grade it, so it reads "Broke" in gray, not "Did not run".
+    if (outcome === "failed" && hasTranscript) {
+      return { ...CELL_META.pending, label: CELL_META.failed.label };
+    }
     if (outcome === "failed" || outcome === "rate_limited") {
       return SESSION_RESULT_META.didNotRun;
     }
@@ -205,6 +213,7 @@ export function SwarmHostCell({
   sessionIndex,
   outcome,
   verdict,
+  hasTranscript = false,
   selected,
   onSelect,
 }: {
@@ -219,10 +228,12 @@ export function SwarmHostCell({
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
   verdict?: SwarmSessionVerdict;
+  /** The session saved messages; only read while `verdict` is missing. */
+  hasTranscript?: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const meta = sessionResultMeta(outcome, verdict);
+  const meta = sessionResultMeta(outcome, verdict, hasTranscript);
   return (
     <button
       type="button"
@@ -376,6 +387,7 @@ export function SwarmSessionsMatrix({
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
                 verdict={convexSession?.verdict}
+                hasTranscript={(convexSession?.messageCount ?? 0) > 0}
                 selected={selected}
                 onSelect={() =>
                   onSelect({
@@ -649,11 +661,14 @@ export function SwarmLiveStreamPane({
         </div>
       ) : failureInfo || live?.errorMessage ? (
         <div data-testid="swarm-live-pane-failure">
-          <ErrorCard variant="inline" error={describeSwarmAttemptFailure(
-            attempt?.errorMessage ?? live?.errorMessage,
-            attempt?.errorCode,
-            providerLabelForModelId(convexSession?.modelId),
-          )} />
+          <ErrorCard
+            variant="inline"
+            error={describeSwarmAttemptFailure(
+              attempt?.errorMessage ?? live?.errorMessage,
+              attempt?.errorCode,
+              providerLabelForModelId(convexSession?.modelId),
+            )}
+          />
         </div>
       ) : null}
 
@@ -752,7 +767,12 @@ export function SwarmLiveStreamPane({
           !fillHeight && "max-h-[min(70vh,36rem)]",
         )}
       >
-        {displayTrace && resolvedHost.status === "ready" && (!emptyCompletedTrace || displayTrace.spans?.length || showReplay || viewMode !== "chat") ? (
+        {displayTrace &&
+        resolvedHost.status === "ready" &&
+        (!emptyCompletedTrace ||
+          displayTrace.spans?.length ||
+          showReplay ||
+          viewMode !== "chat") ? (
           <TraceViewer
             trace={displayTrace}
             hostSnapshot={resolvedHost.snapshot}
@@ -788,11 +808,21 @@ export function SwarmLiveStreamPane({
               />
             ) : showLoading ||
               (displayTrace && resolvedHost.status === "loading") ? (
-              <TranscriptEmptyState kind={displayTrace || persisted.loading ? "loading" : "streaming"} />
+              <TranscriptEmptyState
+                kind={
+                  displayTrace || persisted.loading ? "loading" : "streaming"
+                }
+              />
             ) : (
-              <TranscriptEmptyState kind="unrecorded" execution={
-                (convexSession?.messageCount ?? 0) > 0 || (displayTrace?.spans?.length ?? 0) > 0 ? "observed" : "unknown"
-              } />
+              <TranscriptEmptyState
+                kind="unrecorded"
+                execution={
+                  (convexSession?.messageCount ?? 0) > 0 ||
+                  (displayTrace?.spans?.length ?? 0) > 0
+                    ? "observed"
+                    : "unknown"
+                }
+              />
             )}
           </div>
         )}
