@@ -55,12 +55,18 @@ function luhnValid(match: string): boolean {
 
 /**
  * Card networks issue from 2–6 (Mastercard 2/5, Amex/Diners/JCB 3, Visa 4,
- * Discover/UnionPay 6). Epoch-ms timestamps and snowflake ids start with 1,
- * and about one in ten of them passes Luhn by chance, so a model would read
- * `createdAt: [card-a]`. Those fall through to `id` instead.
+ * Discover/UnionPay 6), plus UATP from 1 at exactly 15 digits. Epoch-ms
+ * timestamps (13 digits) and snowflake ids (17–19) also start with 1, and
+ * about one in ten of them passes Luhn by chance, so a model would read
+ * `createdAt: [card-a]`. Those fall through to `id` instead. A UATP number
+ * has to stay a card: written with spaces it matches no other pattern.
  */
 function cardValid(match: string): boolean {
-  return match[0] >= "2" && match[0] <= "6" && luhnValid(match);
+  const digits = match.replace(/[ -]/g, "");
+  const network =
+    (digits[0] >= "2" && digits[0] <= "6") ||
+    (digits[0] === "1" && digits.length === 15);
+  return network && luhnValid(match);
 }
 
 function ipv4Valid(match: string): boolean {

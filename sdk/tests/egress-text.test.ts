@@ -30,6 +30,17 @@ describe("egress redactor (local mirror)", () => {
     );
   });
 
+  it("keeps a 15-digit UATP card a card, spaced or not", () => {
+    const redactor = createEgressRedactor();
+    // Spaced, it matches no other pattern, so falling through would leak it.
+    expect(redactor.string("UATP 1000 000000 00009 / 100000000000009")).toBe(
+      "UATP [card-a] / [card-b]"
+    );
+    expect(createEgressRedactor().string("ref 100000000000000")).toBe(
+      "ref [id-a]"
+    );
+  });
+
   it("never reissues a placeholder already in the input", () => {
     expect(
       createEgressRedactor().text({ old: "[email-a]", raw: "c@z.io" })
