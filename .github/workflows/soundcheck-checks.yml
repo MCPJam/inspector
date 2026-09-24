@@ -33,6 +33,8 @@ jobs:
           # Matches the Node major Railway builds Soundcheck with.
           node-version: "22"
           cache: npm
-      - run: npm ci --ignore-scripts --legacy-peer-deps
+      # Railway runs `npm install` on Node 22, and the root lockfile does not
+      # pass npm 10's `npm ci` sync check (it does under npm 11), so mirror it.
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck -w @mcpjam/soundcheck
       - run: npm run test:auth -w @mcpjam/soundcheck
