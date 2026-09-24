@@ -23,6 +23,13 @@ describe("egress redactor (local mirror)", () => {
     );
   });
 
+  it("files a Luhn-valid timestamp as an id: no card network issues from 1", () => {
+    const redactor = createEgressRedactor();
+    expect(redactor.string('{"createdAt":1758700000005}')).toBe(
+      '{"createdAt":[id-a]}'
+    );
+  });
+
   it("never reissues a placeholder already in the input", () => {
     expect(
       createEgressRedactor().text({ old: "[email-a]", raw: "c@z.io" })

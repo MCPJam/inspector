@@ -53,14 +53,25 @@ function luhnValid(match: string): boolean {
   return sum % 10 === 0;
 }
 
+/**
+ * Card networks issue from 2–6 (Mastercard 2/5, Amex/Diners/JCB 3, Visa 4,
+ * Discover/UnionPay 6). Epoch-ms timestamps and snowflake ids start with 1,
+ * and about one in ten of them passes Luhn by chance, so a model would read
+ * `createdAt: [card-a]`. Those fall through to `id` instead.
+ */
+function cardValid(match: string): boolean {
+  return match[0] >= "2" && match[0] <= "6" && luhnValid(match);
+}
+
 function ipv4Valid(match: string): boolean {
   return match.split(".").every((octet) => Number(octet) <= 255);
 }
 
 /**
- * Applied in this order. Card before id before phone: a Luhn-valid run is a
- * card, any other ≥13-digit run is an id (the removed DLP pass's
- * `PROVIDER_NUMERIC_ID`), and only what is left can be a phone number.
+ * Applied in this order. Card before id before phone: a Luhn-valid run with
+ * a card-network prefix is a card, any other ≥13-digit run is an id (the
+ * removed DLP pass's `PROVIDER_NUMERIC_ID`), and only what is left can be a
+ * phone number.
  */
 export const PII_PATTERNS: ReadonlyArray<EgressPiiPattern> = [
   {
@@ -70,7 +81,7 @@ export const PII_PATTERNS: ReadonlyArray<EgressPiiPattern> = [
   {
     kind: "card",
     regex: /\b\d(?:[ -]?\d){12,18}\b/g,
-    validate: luhnValid,
+    validate: cardValid,
   },
   { kind: "ssn", regex: /\b\d{3}-\d{2}-\d{4}\b/g },
   { kind: "id", regex: /\b\d{13,}\b/g },
