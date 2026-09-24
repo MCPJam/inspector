@@ -292,6 +292,8 @@ function renderUseServerState(
       isLoading: false,
       isAuthenticated: options?.isAuthenticated ?? false,
       hasSignedInUser: options?.hasSignedInUser ?? false,
+      currentUserId: options?.hasSignedInUser ? "user_1" : null,
+      oauthProjectIds: new Set(["project-1", "project_pinned"]),
       isAuthLoading: false,
       isLoadingProjects: false,
       useLocalFallback: options?.useLocalFallback ?? true,
@@ -1811,7 +1813,7 @@ describe("useServerState OAuth callback failures", () => {
 
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
     expect(toastWarning).toHaveBeenCalledWith(
-      expect.stringContaining("can't auto-refresh in hosted mode")
+      expect.stringContaining("hosted web app can’t renew this connection automatically")
     );
   });
 
@@ -2146,6 +2148,7 @@ describe("useServerState OAuth callback failures", () => {
       "mcp-hosted-oauth-pending",
       JSON.stringify({
         surface: "project",
+        initiatingUserId: null,
         projectId: "project-1",
         serverId: "server-1",
         serverName: "demo-server",
@@ -2193,6 +2196,7 @@ describe("useServerState OAuth callback failures", () => {
       "mcp-hosted-oauth-pending",
       JSON.stringify({
         surface: "project",
+        initiatingUserId: "user_1",
         organizationId: "org_pinned",
         projectId: "project_pinned",
         serverId: "srv_pinned",
@@ -2277,6 +2281,7 @@ describe("useServerState OAuth callback failures", () => {
       "mcp-hosted-oauth-pending",
       JSON.stringify({
         surface: "project",
+        initiatingUserId: "user_1",
         organizationId: "org_pinned",
         projectId: "project_pinned",
         serverId: "srv_deleted",
@@ -2338,6 +2343,7 @@ describe("useServerState OAuth callback failures", () => {
       "mcp-hosted-oauth-pending",
       JSON.stringify({
         surface: "project",
+        initiatingUserId: "user_1",
         organizationId: "org_pinned",
         projectId: "project_pinned",
         serverId: "srv_pinned",

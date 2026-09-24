@@ -149,7 +149,7 @@ export function sessionParentChipLabel(
     case "journeyRun":
       return "Swarm run";
     case "scenario":
-      return "Scenario";
+      return "User Testing";
     default:
       // Future parent kinds render nothing rather than a wrong guess.
       return null;

@@ -9,9 +9,63 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-24
+
+#### Changed
+
+- **Swarm Findings tab ends at the persona cards** — the "Fix in your MCP server" and "Agent and prompt" actionable-findings list that previously appeared below the persona cards is no longer shown on a swarm's Findings tab. The summary card and the persona cards are unchanged. The same list continues to appear on individual eval run detail pages.
+
+- **Each session chip on the goal card now shows one status** — the chip previously printed an execution state and a goal result side by side (for example, "Broke" next to "Goal result: Failed"), which read as two verdicts on one session. It now shows exactly one of three statuses:
+
+  - **Goal passed** (green) — the judge or rubric passed this session.
+  - **Goal failed** (red) — the judge or rubric failed this session. A session that broke after the judge failed it reads "Goal failed", not "Broke".
+  - **Did not run** (yellow) — the session never produced a conversation: it was rate-limited, withdrawn before any messages were exchanged, or broke with no transcript. A session that broke partway through a conversation is never "Did not run" — it ran, and the judge may still grade its transcript.
+
+  Sessions without a goal verdict keep a neutral gray label: Pending, Running, Grading, Not graded, Broke, or Inconclusive depending on where they are in the lifecycle.
+
+- **Session chip no longer shows an evaluator fraction** — the chip previously printed `N/M evaluators passed`. With no rubric configured, this printed `0/0 evaluators passed` on most cells, implying the session was graded against an empty rubric. With a rubric it duplicated information already in the card header. The fraction is removed; the card header still names how many evaluators the goal has.
+
+- **Run status chip says "grading" while grades are pending** — the `latest:` chip on a goal card previously read "running" even after all sessions had finished executing and were only waiting on grades. It now reads **grading** in that state, matching the label the run detail panel already used.
+
+- **Results matrix heading renamed** — the section heading above the session chips reads **Results** instead of **Sessions**.
+
+- **Target name omitted from chips inside a filtered matrix** — when the goal card is filtered to one target, the session chips no longer repeat the target name (the column header above them already names it). The name is still present in each chip's accessible label. In the run detail view, which shows multiple targets side by side, the name continues to appear in each chip.
+
+### 2026-09-22 (2)
+
+#### Changed
+
+- **The API calls things what the product calls them** — three nouns the API never carried over from the UI are renamed: `scenario` is now **study**, `journey` is **goal**, and `wave` is **swarm run**. The operation names, the routes, the SDK types and the noun-bearing response fields all move with them, and `sessionsPerTarget` becomes `iterations` on the same terms. The API is still in preview, which is what makes a rename free; after general availability it would have cost a `/v2`.
+
+  **Nothing is removed.** Every operation is still exported and still executable under its old name, with its old input and its old response shape, calling its own old route — they are simply absent from the advertised catalogs, so no surface offers one. Every old route still answers, with its original field spellings and a `Deprecation: true` header naming its successor. A request that mixes the two vocabularies is refused rather than guessed at. Both go at general availability, with a changelog entry of their own before they do.
+
+  | Was | Is |
+  | --- | --- |
+  | `/projects/{id}/scenarios[/{scenarioId}]`, `/projects/{id}/user-testing/scenarios/{scenarioId}/…` | `/projects/{id}/studies[/{studyId}]/…` |
+  | `/projects/{id}/environments/{envId}/scenario` | `.../environments/{envId}/study` |
+  | `/projects/{id}/journeys[/{journeyId}]`, `/journey-runs/{runId}` | `/projects/{id}/goals[/{goalId}]`, `/goal-runs/{runId}` |
+  | `/projects/{id}/journeys-overview`, `/journey-findings` | `/projects/{id}/goals-overview`, `/goal-findings` |
+  | `/projects/{id}/waves/{waveId}/insights` | `/projects/{id}/swarm-runs/{swarmRunId}/insights` |
+
+  Two reads became one: `get_scenario` served a study's execution settings and `get_user_testing_scenario` served its environment id and insights envelope. `get_study` returns both, and the two caller-dependent fields are absent rather than null when you may not have them. One behaviour change rides with it: `get_study` is no longer offered to the in-app assistant, because the merged read carries an envelope that quotes real visitors.
+
+  A few operations kept their names and so have no deprecated twin to hold the old field spellings. `get_swarms_overview`, `create_swarm` and `update_swarm` emit both and accept either — never both in one request — until general availability.
+
+- **Renamed VALUES negotiate, behind `x-mcpjam-api-vocabulary`** — a name can move behind an alias; a value cannot. `sourceType` is one field with one string in it, and a client switching on `"scenario"` has no second name to fall back to. Send `x-mcpjam-api-vocabulary: 2` and a session's `sourceType` reads `study`, its `parentRef.kind` reads `study` or `goalRun` with its id fields re-keyed to match, a share's `resourceType` reads `study` (as a path segment too), and a trace destination's `sourceTypes` reads `study`. No header means vocabulary 1, byte-for-byte today's values; any other value is a `400`; a response that varies sends `Vary`. Read `GET /projects/{id}/capabilities` — the new `apiVocabulary` block — before sending it. In the SDK: `new PlatformApiClient({ apiVocabulary: 2 })` or `client.withApiVocabulary(2)`.
+
+  This is a **separate header** from `x-mcpjam-eval-vocabulary`, which is eval-scoped by name and moves on its own schedule; a deployment may speak one and not the other.
+
+- **`mcpjam cloud studies` and `cloud goals`** — the CLI groups follow the nouns. `cloud scenarios` and `cloud user-testing` merge into `cloud studies`, and `cloud journeys` becomes `cloud goals`; all three old names still work as aliases. `--study`, `--goal-id`, `--swarm-run` and `--iterations` are the flags, with `--scenario`, `--journey`, `--wave` and `--sessions-per-target` kept beside them. Passing both spellings of one flag is refused rather than resolved by precedence — they configure spend.
+
 ### 2026-09-22
 
 #### Changed
+
+- **Swarm Confirm now names the target for every swarm, including reuse-only ones** — the **Runs on …** line previously appeared only when a swarm had newly authored goals. A swarm built entirely from existing personas now shows the same line, so the launch target is visible before you approve the spend.
+
+- **Swarm Confirm shows a move notice when reused goals will run somewhere new** — if a persona's goals were authored against one target and this launch will run them against a different one, Confirm lists how many goals are affected and what they were written for. The notice adds a **Different client.** or **Different server group.** callout when the move crosses those boundaries, and a note that the goals were written for another server's tools when the server group changes.
+
+- **Duplicate environment names are disambiguated with a `#n` suffix** — when a project has two environments with the same name, both the environment picker and the Confirm screen append `#1`, `#2`, and so on. The suffix is stable and keyed to the environment's identity, not its position in a list, so the same number appears on every screen that names the environment.
 
 - **Session flow columns can now be reordered and hidden** — drag any column header in the Session flow Sankey to move it next to a different neighbor. Click the **×** on a column header to hide it, and use the **+** menu at the end of the header row to restore hidden columns or add a new yes/no question. Column order and visibility are saved per surface in the browser so the layout persists across page loads.
 
@@ -22,6 +76,10 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 - **Each question column gets its own color** — yes/no question columns each use a distinct hue instead of sharing the foreground color. The hue is pinned to the question's identity, not its position, so dragging a column does not change its color.
 
 - **Freshness chip removed from the Session flow header** — the analysis-freshness indicator is no longer shown in the Session flow panel header.
+
+- **User Testing says "study" everywhere** — the rename was half-applied: the create flow, share dialog, overview empty state and task editor already said *study*, while the list header, detail page, share section, preview pane and every not-found, sign-in and loading state still said *scenario*. All of it now reads **study**, including the tester-facing screens a visitor sees before they ever reach the chat. Nothing else moved: URLs, share links, API fields and error codes are untouched, so no link anyone holds and no integration anyone wrote is affected.
+
+- **Swarms copy finishes its own rename** — the few remaining places that said *journey* or *wave* in prose now say **goal** and **swarm run**, matching what the rest of the surface has called them for months.
 
 ### 2026-09-18
 
@@ -51,7 +109,7 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
-- **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. The chip headline continues to show execution state (`Running:` / `Run completed:` / `Broke:`), so both signals are visible without a second label.
+- **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. (The chip's single-status display was further refined in the 2026-09-24 release.)
 
 - **Live pane no longer shows goal result, value chain, or advisory copy** — while a run is in progress, the session detail pane no longer displays a `Goal result:` line, a `User value chain` disclosure, or advisory check rows. Chat and Trace sit directly under the session header. The Sessions tab still shows the full `SwarmSessionReport` details for a selected completed thread.
 

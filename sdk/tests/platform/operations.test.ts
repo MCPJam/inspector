@@ -11,6 +11,10 @@ import {
   createTunnelOperation,
   diagnoseServerOperation,
   getScenarioOperation,
+  getStudyOperation,
+  getShareSettingsOperation,
+  listStudiesOperation,
+  setStudyGuestExecutionOperation,
   runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
@@ -603,6 +607,61 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/scenarios\/[^/]+$/.test(path)) {
       return Response.json(SCENARIO_DETAIL);
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/study$/.test(path)) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "study-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/studies$/.test(path)) {
+      return Response.json({ items: SCENARIOS });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+\/guest-execution$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      return Response.json({ ok: true });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/studies\/[^/]+$/.test(path)) {
+      // Id-addressed, like the real route. A NAME is not a Convex id, and the
+      // upstream answers a malformed id with a 400, not a 404 — so "Support"
+      // gets the 400 and a well-formed id that matches nothing gets the 404.
+      // Either one sends `get_study` down its name-resolution path.
+      const studyId = decodeURIComponent(path.split("/").pop() ?? "");
+      if (!studyId.startsWith("box-")) {
+        return Response.json(
+          { code: "VALIDATION_ERROR", message: "Invalid scenarioId" },
+          { status: 400 }
+        );
+      }
+      if (!SCENARIOS.some((row) => row.id === studyId)) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "Study not found" },
+          { status: 404 }
+        );
+      }
+      return Response.json({ ...SCENARIO_DETAIL, environmentId: "env-1" });
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
@@ -1684,7 +1743,154 @@ describe("eval run polling operations", () => {
   });
 });
 
-describe("scenario operations", () => {
+describe("study operations", () => {
+  it("lists the project's studies", async () => {
+    const { client } = makeClient();
+
+    const result = await listStudiesOperation.execute({}, { client });
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.items).toEqual(SCENARIOS);
+  });
+
+  it("reads a study by id in ONE request", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { study: "box-1" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+    // The merged read carries what only the user-testing read used to.
+    expect(result.study.environmentId).toBe("env-1");
+    expect(callsTo(fetchMock, "/studies")).toHaveLength(1);
+  });
+
+  it("falls back to name resolution when the id path 400s on a name", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { study: "Support" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+    // Miss, then list, then the id read: three calls, and the last one is
+    // addressed by the id the list resolved.
+    const paths = callsTo(fetchMock, "/studies").map((url) => url.pathname);
+    expect(paths).toEqual([
+      "/api/v1/projects/project-new/studies/Support",
+      "/api/v1/projects/project-new/studies",
+      "/api/v1/projects/project-new/studies/box-1",
+    ]);
+  });
+
+  it("falls back to name resolution when a well-formed id 404s", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "box-9" }, { client })
+      .catch((caught: unknown) => caught);
+
+    // Reached the name path: the refusal lists candidates, which only the
+    // list read can produce.
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
+  it("names the candidates when neither the id nor the name matches", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "missing" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("Support (id: box-1)");
+  });
+
+  it("addresses a `study` share by the stored `scenario` path segment", async () => {
+    const { client, fetchMock } = makeClient();
+
+    // The fixture has no share route, so this 404s; the path is the point.
+    await getShareSettingsOperation
+      .execute({ resourceType: "study", resourceId: "box-1" }, { client })
+      .catch(() => undefined);
+
+    // Vocabulary 1 (no header) 404s `/shares/study/...`; `scenario` resolves
+    // under both.
+    expect(callsTo(fetchMock, "/shares/")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/shares/scenario/box-1"
+    );
+  });
+
+  it("accepts the deprecated `scenario` selector", async () => {
+    const { client } = makeClient();
+
+    const result = await getStudyOperation.execute(
+      { scenario: "box-1" },
+      { client }
+    );
+
+    expect(result.study.id).toBe("box-1");
+  });
+
+  it("refuses both selector spellings at once", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({ study: "box-1", scenario: "box-1" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toBe(
+      "Pass either study or its deprecated scenario alias, not both."
+    );
+  });
+
+  it("refuses a request that names no study", async () => {
+    const { client } = makeClient();
+
+    const error = await getStudyOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toContain("study is required");
+  });
+
+  it("drops both selector spellings from the guest-execution body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await setStudyGuestExecutionOperation.execute(
+      {
+        scenario: "box-1",
+        enabled: true,
+        computerEnabled: false,
+        sharedSkillsEnabled: false,
+        dailyCreditCap: 5,
+        dailyComputerStartCap: 0,
+        maxConcurrentComputers: 0,
+      },
+      { client }
+    );
+
+    const call = fetchMock.mock.calls.find(([target]) =>
+      String(target).includes("/guest-execution")
+    );
+    const body = JSON.parse(String((call?.[1] as RequestInit)?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).not.toHaveProperty("scenario");
+    expect(body).not.toHaveProperty("study");
+    expect(body.dailyCreditCap).toBe(5);
+  });
+});
+
+describe("scenario operations (deprecated)", () => {
   it("lists the project's scenarios", async () => {
     const { client } = makeClient();
 
@@ -1983,6 +2189,21 @@ describe("searchSessionsOperation", () => {
     expect(result.nextCursor).toBe("cursor-2");
   });
 
+  it("sends `study` as the stored `scenario`, which every vocabulary accepts", async () => {
+    const { client, fetchMock } = makeClient();
+
+    await searchSessionsOperation.execute(
+      { query: "refund", sourceTypes: ["study", "eval"] },
+      { client }
+    );
+
+    // Vocabulary 1 (no header) refuses `study`; `scenario` is accepted under
+    // both, so the promise that either spelling works holds without a header.
+    expect(
+      callsTo(fetchMock, "/sessions")[0]?.searchParams.get("sourceType")
+    ).toBe("scenario,eval");
+  });
+
   it("defaults to the titles scope and sends no sourceType filter", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -2244,17 +2465,17 @@ describe("operation catalog consistency", () => {
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
-    list_scenarios: {},
-    get_scenario: { scenario: "c" },
+    list_studies: {},
+    get_study: { study: "c" },
     list_chat_sessions: {},
-    list_journeys: {},
-    list_journey_runs: { journey: "j" },
-    get_journey_run: { run: "r" },
-    list_journey_run_sessions: { run: "r" },
-    launch_journey_run: { journey: "j" },
-    cancel_journey_run: { run: "r" },
-    publish_scenario: { environment: "e" },
-    unpublish_scenario: { environment: "e" },
+    list_goals: {},
+    list_goal_runs: { goalId: "j" },
+    get_goal_run: { run: "r" },
+    list_goal_run_sessions: { run: "r" },
+    launch_goal_run: { goalId: "j" },
+    cancel_goal_run: { run: "r" },
+    publish_study: { environment: "e" },
+    unpublish_study: { environment: "e" },
     get_capabilities: {},
     list_personas: {},
     get_persona: { persona: "pe" },
@@ -2299,16 +2520,18 @@ describe("operation catalog consistency", () => {
       destination: "td",
     },
     generate_personas: { environmentId: "e" },
-    get_journey: { journey: "j" },
-    create_journey: {
+    // The deprecated spelling, kept here so the alias fold stays exercised
+    // by the ratchet that parses every minimal input.
+    get_goal: { journey: "j" },
+    create_goal: {
       goal: "buy a thing",
       persona: "pe",
-      sessionsPerTarget: 1,
+      iterations: 1,
       maxTurns: 8,
     },
-    update_journey: { journey: "j", goal: "buy two things" },
-    archive_journey: { journey: "j" },
-    generate_journeys: {
+    update_goal: { goalId: "j", goal: "buy two things" },
+    archive_goal: { goalId: "j" },
+    generate_goals: {
       environmentId: "e",
       persona: { name: "Ada", role: "buyer" },
     },
@@ -2318,28 +2541,27 @@ describe("operation catalog consistency", () => {
     update_swarm: { swarm: "sw", name: "checkout v2" },
     archive_swarm: { swarm: "sw" },
     get_swarms_overview: {},
-    get_journey_run_scorecard: { run: "r" },
+    get_goal_run_scorecard: { run: "r" },
     list_swarm_findings: {},
     dismiss_swarm_finding: { finding: "f" },
     undismiss_swarm_finding: { finding: "f" },
-    get_wave_insights: { wave: "w" },
-    request_wave_insights: { wave: "w" },
-    cancel_wave_insights: { wave: "w" },
-    get_user_testing_scenario: { scenario: "cb" },
-    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
-    list_user_testing_sessions: { scenario: "cb" },
-    get_user_testing_session: { scenario: "cb", session: "s" },
-    get_user_testing_metrics: { scenario: "cb" },
-    get_user_testing_usage: { scenario: "cb" },
-    list_user_testing_findings: { scenario: "cb" },
-    get_user_testing_signals: { scenario: "cb" },
-    get_user_testing_insights: { scenario: "cb", window: "w" },
-    request_user_testing_insights: { scenario: "cb" },
-    cancel_user_testing_insights: { scenario: "cb", window: "w" },
-    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
-    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
-    set_user_testing_guest_execution: {
-      scenario: "cb",
+    get_swarm_run_insights: { swarmRun: "w" },
+    request_swarm_run_insights: { swarmRun: "w" },
+    cancel_swarm_run_insights: { swarmRun: "w" },
+    update_study: { study: "cb", name: "Checkout" },
+    list_study_sessions: { study: "cb" },
+    get_study_session: { study: "cb", session: "s" },
+    get_study_metrics: { study: "cb" },
+    get_study_usage: { study: "cb" },
+    list_study_findings: { study: "cb" },
+    get_study_signals: { study: "cb" },
+    get_study_insights: { study: "cb", window: "w" },
+    request_study_insights: { study: "cb" },
+    cancel_study_insights: { study: "cb", window: "w" },
+    dismiss_study_finding: { study: "cb", finding: "f" },
+    undismiss_study_finding: { study: "cb", finding: "f" },
+    set_study_guest_execution: {
+      study: "cb",
       enabled: true,
       computerEnabled: false,
       sharedSkillsEnabled: false,
@@ -2347,7 +2569,7 @@ describe("operation catalog consistency", () => {
       dailyComputerStartCap: 0,
       maxConcurrentComputers: 0,
     },
-    rotate_user_testing_link: { scenario: "cb" },
+    rotate_study_link: { study: "cb" },
     get_share_settings: { resourceType: "scenario", resourceId: "cb" },
     set_share_mode: {
       resourceType: "scenario",
@@ -2355,9 +2577,9 @@ describe("operation catalog consistency", () => {
       mode: "project_members",
     },
     rotate_share_link: { resourceType: "scenario", resourceId: "cb" },
-    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
-    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
-    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
+    upsert_study_member: { study: "cb", email: "a@example.com" },
+    remove_study_member: { study: "cb", member: "a@example.com" },
+    rebind_study: { study: "cb", environmentId: "env_1" },
     get_share_settings: { resourceType: "scenario", resourceId: "s1" },
     set_share_mode: {
       resourceType: "scenario",
@@ -2442,7 +2664,13 @@ describe("operation catalog consistency", () => {
         `missing fixture for ${operation.name}`
       ).toBeDefined();
       expect(operation.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
-      expect(operation.inputSchema.safeParse(minimalInput).success).toBe(true);
+      const parsed = operation.inputSchema.safeParse(minimalInput);
+      // The failure message names the operation: with 200-odd fixtures, a bare
+      // `expected false to be true` costs a bisect to find which one moved.
+      expect(
+        parsed.success,
+        `${operation.name}: ${JSON.stringify((parsed as { error?: { issues?: unknown } }).error?.issues)}`
+      ).toBe(true);
     }
     expect(
       showServersOperation.inputSchema.safeParse({ project: "" }).success
@@ -2538,13 +2766,13 @@ describe("operation catalog consistency", () => {
       "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.
-      "launch_journey_run",
+      "launch_goal_run",
       // Cancelling settles a run's attempts — a state change, not a read.
-      "cancel_journey_run",
+      "cancel_goal_run",
       // Scenarios: publishing exposes an environment to people outside the
       // project, unpublishing tears that down. Both are writes.
-      "publish_scenario",
-      "unpublish_scenario",
+      "publish_study",
+      "unpublish_study",
       "update_project_environment",
       "restore_project_environment",
       "create_sandbox_image",
@@ -2555,7 +2783,7 @@ describe("operation catalog consistency", () => {
       "reset_computer",
       "delete_sandbox_image",
       // Swarms authoring. Creating a persona or a journey persists but starts
-      // nothing and spends nothing — `launch_journey_run` above is the call
+      // nothing and spends nothing — `launch_goal_run` above is the call
       // that costs.
       "create_persona",
       "update_persona",
@@ -2578,9 +2806,9 @@ describe("operation catalog consistency", () => {
       "pause_trace_destination",
       "resume_trace_destination",
       "backfill_trace_destination",
-      "create_journey",
-      "update_journey",
-      "archive_journey",
+      "create_goal",
+      "update_goal",
+      "archive_goal",
       "create_swarm",
       "update_swarm",
       "archive_swarm",
@@ -2588,29 +2816,29 @@ describe("operation catalog consistency", () => {
       // on the organization's account, and a read that spends is a lie about
       // what calling it costs.
       "generate_personas",
-      "generate_journeys",
+      "generate_goals",
       // Insights: dismissal is a judgement someone recorded, and requesting a
       // pass spends against the org's shared daily budget.
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
-      "request_wave_insights",
-      "cancel_wave_insights",
+      "request_swarm_run_insights",
+      "cancel_swarm_run_insights",
       // User testing writes. The exposure controls are the reason `risk`
       // exists as a separate axis from `readOnly`: rotating a link and
       // dismissing a finding are both writes, and only one of them can lock
       // people out of a live scenario.
-      "update_user_testing_scenario",
-      "request_user_testing_insights",
-      "cancel_user_testing_insights",
-      "dismiss_user_testing_finding",
-      "undismiss_user_testing_finding",
-      "set_user_testing_guest_execution",
-      "rotate_user_testing_link",
+      "update_study",
+      "request_study_insights",
+      "cancel_study_insights",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "set_study_guest_execution",
+      "rotate_study_link",
       "set_share_mode",
       "rotate_share_link",
-      "upsert_user_testing_member",
-      "remove_user_testing_member",
-      "rebind_user_testing_scenario",
+      "upsert_study_member",
+      "remove_study_member",
+      "rebind_study",
       "set_share_mode",
       "rotate_share_link",
       "install_registry_directory_server",

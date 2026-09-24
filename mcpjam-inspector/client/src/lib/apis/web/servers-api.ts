@@ -97,7 +97,13 @@ export async function validateHostedServer(
   serverNameOrId: string,
   oauthAccessToken?: string,
   clientCapabilities?: Record<string, unknown>,
-  hostedContext?: HostedServerValidateContext
+  hostedContext?: HostedServerValidateContext,
+  /**
+   * Cancels the connect for a caller running its own deadline. The route keeps
+   * an MCP connection open for as long as its connect timeout allows, so a
+   * caller that gave up and retried would otherwise hold two open at once.
+   */
+  signal?: AbortSignal
 ): Promise<HostedServerValidateResponse> {
   const request: Record<string, unknown> = hostedContext
     ? {
@@ -165,6 +171,7 @@ export async function validateHostedServer(
   }
   return webPost<typeof request, HostedServerValidateResponse>(
     "/api/web/servers/validate",
-    request
+    request,
+    { signal }
   );
 }
