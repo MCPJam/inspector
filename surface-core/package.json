@@ -13,7 +13,6 @@
 		"test": "node --test",
 		"verify": "npm run test && npm run check && npm run lint"
 	},
-	"dependencies": {},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.11",
 		"typescript": "^7.0.2"

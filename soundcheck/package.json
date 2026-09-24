@@ -19,14 +19,14 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^20.14.10",
+    "@types/node": "^26.6.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^8.57.0",
-    "eslint-config-next": "^15.5.25",
+    "eslint": "^10.11.0",
+    "eslint-config-next": "^16.3.5",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.1.11",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5.5.2"
+    "typescript": "^7.0.2"
   }
 }

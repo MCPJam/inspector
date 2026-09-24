@@ -29,11 +29,11 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.2",
     "@types/ws": "^8.18.1",
     "tsup": "^8.3.5",
     "tsx": "^4.23.12",
-    "typescript": "^5.8.3"
+    "typescript": "^7.0.2"
   },
   "keywords": [
     "mcp",
