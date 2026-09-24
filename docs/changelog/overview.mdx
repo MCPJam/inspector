@@ -9,6 +9,26 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-24
+
+#### Changed
+
+- **Each session chip on the goal card now shows one status** — the chip previously printed an execution state and a goal result side by side (for example, "Broke" next to "Goal result: Failed"), which read as two verdicts on one session. It now shows exactly one of three statuses:
+
+  - **Goal passed** (green) — the judge or rubric passed this session.
+  - **Goal failed** (red) — the judge or rubric failed this session. A session that broke after the judge failed it reads "Goal failed", not "Broke".
+  - **Did not run** (yellow) — the session never produced a conversation: it was rate-limited, withdrawn before any messages were exchanged, or broke with no transcript. A session that broke partway through a conversation is never "Did not run" — it ran, and the judge may still grade its transcript.
+
+  Sessions without a goal verdict keep a neutral gray label: Pending, Running, Grading, Not graded, Broke, or Inconclusive depending on where they are in the lifecycle.
+
+- **Session chip no longer shows an evaluator fraction** — the chip previously printed `N/M evaluators passed`. With no rubric configured, this printed `0/0 evaluators passed` on most cells, implying the session was graded against an empty rubric. With a rubric it duplicated information already in the card header. The fraction is removed; the card header still names how many evaluators the goal has.
+
+- **Run status chip says "grading" while grades are pending** — the `latest:` chip on a goal card previously read "running" even after all sessions had finished executing and were only waiting on grades. It now reads **grading** in that state, matching the label the run detail panel already used.
+
+- **Results matrix heading renamed** — the section heading above the session chips reads **Results** instead of **Sessions**.
+
+- **Target name omitted from chips inside a filtered matrix** — when the goal card is filtered to one target, the session chips no longer repeat the target name (the column header above them already names it). The name is still present in each chip's accessible label. In the run detail view, which shows multiple targets side by side, the name continues to appear in each chip.
+
 ### 2026-09-22 (2)
 
 #### Changed
@@ -87,7 +107,7 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
-- **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. The chip headline continues to show execution state (`Running:` / `Run completed:` / `Broke:`), so both signals are visible without a second label.
+- **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. (The chip's single-status display was further refined in the 2026-09-24 release.)
 
 - **Live pane no longer shows goal result, value chain, or advisory copy** — while a run is in progress, the session detail pane no longer displays a `Goal result:` line, a `User value chain` disclosure, or advisory check rows. Chat and Trace sit directly under the session header. The Sessions tab still shows the full `SwarmSessionReport` details for a selected completed thread.
 
