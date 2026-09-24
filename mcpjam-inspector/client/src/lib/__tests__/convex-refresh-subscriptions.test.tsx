@@ -60,6 +60,8 @@ function protocolPeer() {
   const clearCounts: number[] = [];
   let version = { querySet: 0, identity: 0, ts: "AAAAAAAAAAA=" };
   let timestamp = 0;
+  let hold = false;
+  const pending: Array<() => void> = [];
   class Socket {
     readyState = 0;
     onopen?: (event: object) => void;
@@ -109,10 +111,24 @@ function protocolPeer() {
         modifications,
       };
       version = end;
-      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(message) }));
+      const deliver = () => this.onmessage?.({ data: JSON.stringify(message) });
+      if (hold) pending.push(deliver);
+      else queueMicrotask(deliver);
     }
   }
-  return { active, clearCounts, Socket };
+  return {
+    active,
+    clearCounts,
+    Socket,
+    holdConfirmations: () => {
+      hold = true;
+    },
+    releaseConfirmations: () => {
+      hold = false;
+      for (const deliver of pending.splice(0)) queueMicrotask(deliver);
+    },
+    pendingConfirmations: () => pending.length,
+  };
 }
 function jwt(n: number) {
   return `eyJhbGciOiJIUzI1NiJ9.${btoa(JSON.stringify({ iat: 1700000000, exp: 1700000003, n }))}.test`;
@@ -162,7 +178,21 @@ it.each([false, true])(
       await waitFor(() => expect(peer.active.size).toBe(0));
       expect(useSessionRefreshStore.getState().status).toBe("failed");
       recovering = true;
+      peer.holdConfirmations();
       act(() => useSessionRefreshStore.getState().retry());
+      await waitFor(() =>
+        expect(peer.pendingConfirmations()).toBeGreaterThan(0),
+      );
+      await waitFor(() =>
+        expect(useSessionRefreshStore.getState().status).toBe("idle"),
+      );
+      // A returned token is not confirmation that the server accepted it.
+      expect(peer.active.size).toBe(0);
+      if (guard)
+        expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+      await act(async () => {
+        peer.releaseConfirmations();
+      });
       await waitFor(() => expect(peer.active.size).toBe(8));
       expect(useSessionRefreshStore.getState().status).toBe("idle");
       if (guard)
