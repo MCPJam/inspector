@@ -18,8 +18,8 @@ describe("responseFailureFindingKey", () => {
         tokenFailure(400, "Bad Request", {
           error: "invalid_grant",
           error_description: "Authorization code not found or expired",
-        }),
-      ),
+        })
+      )
     ).toBe("Token request failed: 400: invalid_grant");
   });
 
@@ -36,23 +36,27 @@ describe("responseFailureFindingKey", () => {
     });
     const c = tokenFailure(400, "Client Error", { error: "invalid_client" });
     expect(new Set([a, b, c].map(responseFailureFindingKey))).toEqual(
-      new Set(["Token request failed: 400: invalid_client"]),
+      new Set(["Token request failed: 400: invalid_client"])
     );
   });
 
   it("keeps different codes apart", () => {
     expect(
-      responseFailureFindingKey(tokenFailure(400, "", { error: "invalid_grant" })),
+      responseFailureFindingKey(
+        tokenFailure(400, "", { error: "invalid_grant" })
+      )
     ).not.toBe(
-      responseFailureFindingKey(tokenFailure(400, "", { error: "invalid_client" })),
+      responseFailureFindingKey(
+        tokenFailure(400, "", { error: "invalid_client" })
+      )
     );
   });
 
   it("falls back to label and status when the reason opens with no code", () => {
     expect(
       responseFailureFindingKey(
-        tokenFailure(503, "Service Unavailable", "<html>upstream down</html>"),
-      ),
+        tokenFailure(503, "Service Unavailable", "<html>upstream down</html>")
+      )
     ).toBe("Token request failed: 503");
   });
 
@@ -62,14 +66,19 @@ describe("responseFailureFindingKey", () => {
         describeAuthenticatedRequestFailure({
           status: 401,
           statusText: "Unauthorized",
-          body: { error: "invalid_token", error_description: "expired at 12:03" },
-        } as never),
-      ),
+          body: {
+            error: "invalid_token",
+            error_description: "expired at 12:03",
+          },
+        } as never)
+      )
     ).toBe("Authenticated request failed: 401: invalid_token");
   });
 
   it("is undefined for anything that is not a response failure", () => {
-    expect(responseFailureFindingKey("Dynamic Client Registration failed (400).")).toBeUndefined();
+    expect(
+      responseFailureFindingKey("Dynamic Client Registration failed (400).")
+    ).toBeUndefined();
   });
 });
 
@@ -78,23 +87,30 @@ describe("stepFailureFindingKey", () => {
     // Both registration forms: the error ending in a period plus " HINT", and
     // the one without a period plus ". HINT".
     expect(
-      stepFailureFindingKey(`Dynamic Client Registration failed (401). ${FALLBACK_HINT}`),
+      stepFailureFindingKey(
+        `Dynamic Client Registration failed (401). ${FALLBACK_HINT}`
+      )
     ).toBe(stepFailureFindingKey("Dynamic Client Registration failed (401)."));
     expect(
-      stepFailureFindingKey(`Client registration failed: fetch failed. ${FALLBACK_HINT}`),
+      stepFailureFindingKey(
+        `Client registration failed: fetch failed. ${FALLBACK_HINT}`
+      )
     ).toBe(stepFailureFindingKey("Client registration failed: fetch failed"));
   });
 
   it("keeps different registration statuses apart", () => {
-    expect(stepFailureFindingKey("Dynamic Client Registration failed (400).")).not.toBe(
-      stepFailureFindingKey("Dynamic Client Registration failed (401)."),
+    expect(
+      stepFailureFindingKey("Dynamic Client Registration failed (400).")
+    ).not.toBe(
+      stepFailureFindingKey("Dynamic Client Registration failed (401).")
     );
   });
 
   // Review of #5473: the cause of a discovery failure comes AFTER the first
   // period, so cutting there merged all three into one issue.
   it("keeps discovery failures with different causes apart", () => {
-    const prefix = "Could not discover authorization server metadata. Last error:";
+    const prefix =
+      "Could not discover authorization server metadata. Last error:";
     const keys = [
       `${prefix} undefined`,
       `${prefix} HTTP 500 from https://auth.example.com/.well-known/oauth-authorization-server`,
@@ -104,20 +120,29 @@ describe("stepFailureFindingKey", () => {
   });
 
   it("keeps one discovery cause together across servers' URLs", () => {
-    const prefix = "Could not discover authorization server metadata. Last error:";
+    const prefix =
+      "Could not discover authorization server metadata. Last error:";
     expect(
-      stepFailureFindingKey(`${prefix} HTTP 500 from https://a.example/.well-known/x`),
-    ).toBe(stepFailureFindingKey(`${prefix} HTTP 500 from https://b.example/other`));
+      stepFailureFindingKey(
+        `${prefix} HTTP 500 from https://a.example/.well-known/x`
+      )
+    ).toBe(
+      stepFailureFindingKey(`${prefix} HTTP 500 from https://b.example/other`)
+    );
   });
 
   it("replaces ids that would split one finding per request", () => {
     expect(
-      stepFailureFindingKey("Failed to request resource metadata: trace 4f2a9c81e7b34d0aa1c2 rejected"),
+      stepFailureFindingKey(
+        "Failed to request resource metadata: trace 4f2a9c81e7b34d0aa1c2 rejected"
+      )
     ).toBe(
-      stepFailureFindingKey("Failed to request resource metadata: trace 9b1d77e0c4aa4f2e8830 rejected"),
+      stepFailureFindingKey(
+        "Failed to request resource metadata: trace 9b1d77e0c4aa4f2e8830 rejected"
+      )
     );
     expect(
-      stepFailureFindingKey("x 123e4567-e89b-12d3-a456-426614174000 y"),
+      stepFailureFindingKey("x 123e4567-e89b-12d3-a456-426614174000 y")
     ).toBe("x <id> y");
   });
 
@@ -128,10 +153,10 @@ describe("stepFailureFindingKey", () => {
       `Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: Could not resolve ${host}`;
 
     expect(stepFailureFindingKey(refused("tenant-a.example.com"))).toBe(
-      stepFailureFindingKey(refused("tenant-b.example.com")),
+      stepFailureFindingKey(refused("tenant-b.example.com"))
     );
     expect(stepFailureFindingKey(refused("tenant-a.example.com"))).toBe(
-      "Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: Could not resolve <host>",
+      "Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: Could not resolve <host>"
     );
   });
 
@@ -144,11 +169,68 @@ describe("stepFailureFindingKey", () => {
     const key = stepFailureFindingKey(privateAddress(longHost, "10.0.0.7"));
 
     expect(key).toBe(
-      stepFailureFindingKey(privateAddress("db.internal.example", "fd00::1")),
+      stepFailureFindingKey(privateAddress("db.internal.example", "fd00::1"))
     );
     // The address is this message's tail, and it now survives the cap.
-    expect(key.endsWith("resolves to a private or reserved address (<ip>)")).toBe(
-      true,
+    expect(
+      key.endsWith("resolves to a private or reserved address (<ip>)")
+    ).toBe(true);
+  });
+
+  it("finds the host in every form the proxy writes", () => {
+    const proxied = (reason: string) =>
+      `Failed to request resource metadata: Backend debug proxy error: 400 Bad Request: ${reason}`;
+    const same = (a: string, b: string) =>
+      expect(stepFailureFindingKey(proxied(a))).toBe(
+        stepFailureFindingKey(proxied(b))
+      );
+
+    // A label of plain words before the host, and a bare single-label host.
+    same(
+      "Could not resolve oauth metadata target a.example.com",
+      "Could not resolve oauth metadata target intranet"
+    );
+    expect(
+      stepFailureFindingKey(
+        proxied("Could not resolve oauth metadata target a.example.com")
+      )
+    ).toMatch(/Could not resolve oauth metadata target <host>$/);
+    same(
+      "OAuth metadata target is a private/reserved host (a.corp.example)",
+      "OAuth metadata target is a private/reserved host (10.1.2.3)"
+    );
+    same(
+      'Refusing a plaintext connection to "a.example.com": it is a public host, so the target must be served over https.',
+      'Refusing a plaintext connection to "b.example.org": it is a public host, so the target must be served over https.'
+    );
+  });
+
+  // Review of #5473: a global hostname rule also read property paths as hosts,
+  // so different MCPJam crashes (Safari and Firefox quote the expression)
+  // merged into one issue.
+  it("keeps our own crashes apart when they quote a property path", () => {
+    const crash = (message: string) =>
+      `Failed to request resource metadata: ${message}`;
+    const keys = [
+      "e.json is not a function",
+      "response.headers.get is not a function",
+      "undefined is not an object (evaluating 'e.body.issuer')",
+      "undefined is not an object (evaluating 'n.headers.get')",
+      "e.response is undefined",
+      "JSON.parse: unexpected character at line 1 column 1",
+    ].map((message) => stepFailureFindingKey(crash(message)));
+
+    expect(new Set(keys).size).toBe(6);
+    expect(keys[0]).toBe(crash("e.json is not a function"));
+  });
+
+  // Review of #5473: Firefox's network error already ends in a period, so the
+  // hinted form has two before the advisory.
+  it("keeps a registration network error together with and without the advisory", () => {
+    const firefox =
+      "Client registration failed: NetworkError when attempting to fetch resource.";
+    expect(stepFailureFindingKey(`${firefox}. ${FALLBACK_HINT}`)).toBe(
+      stepFailureFindingKey(firefox)
     );
   });
 
@@ -161,19 +243,26 @@ describe("stepFailureFindingKey", () => {
   it("leaves ordinary words alone", () => {
     // Long, but no digit: not an id.
     expect(
-      stepFailureFindingKey("Protected resource metadata is missing authorization_servers."),
+      stepFailureFindingKey(
+        "Protected resource metadata is missing authorization_servers."
+      )
     ).toBe("Protected resource metadata is missing authorization_servers");
   });
 
   it("caps the key's length", () => {
-    expect(stepFailureFindingKey(`Boom: ${"word ".repeat(200)}`).length).toBeLessThanOrEqual(160);
+    expect(
+      stepFailureFindingKey(`Boom: ${"word ".repeat(200)}`).length
+    ).toBeLessThanOrEqual(160);
   });
 
   it("reduces a token failure through the response rule", () => {
     expect(
       stepFailureFindingKey(
-        tokenFailure(400, "Bad Request", { error: "invalid_grant", error_description: "nope" }),
-      ),
+        tokenFailure(400, "Bad Request", {
+          error: "invalid_grant",
+          error_description: "nope",
+        })
+      )
     ).toBe("Token request failed: 400: invalid_grant");
   });
 });

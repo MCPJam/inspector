@@ -22,21 +22,29 @@ import { responseFailureFindingKey } from "./response-error.js";
  *
  * 1. The registration advisory ({@link FALLBACK_HINT}) is removed exactly —
  *    it is appended only when a fallback client exists, to what is otherwise
- *    the same finding. With it, a single trailing period, since the two
- *    registration forms place it differently.
+ *    the same finding. With it, every trailing period: the two registration
+ *    forms place one differently, and a cause that already ends in a period
+ *    (Firefox's `NetworkError when attempting to fetch resource.`) gains a
+ *    second one before the hint.
  * 2. A response failure reduces to label, status and OAuth `error` code
  *    ({@link responseFailureFindingKey}).
  * 3. Anything else keeps its full text, cause included, with every part a
- *    user or server chooses replaced: URLs, bare hostnames and IP addresses
- *    (the debug proxy names the host it refused, not a URL), and long ids.
- *    Those replacements are what bound the number of keys; the length cap
- *    only bounds how long one key can be.
+ *    user or server chooses replaced: URLs, IP addresses, long ids, and the
+ *    host in the debug proxy's own refusals, which name it bare rather than
+ *    as a URL. Those replacements are what bound the number of keys; the
+ *    length cap only bounds how long one key can be.
+ *
+ *    Hosts are replaced only where the proxy's wording puts one, never
+ *    anywhere a dotted name appears. A dotted name is also a property path,
+ *    and our own step crashes quote one (`e.json is not a function`,
+ *    `evaluating 'e.body.issuer'`), so a global rule merged different MCPJam
+ *    bugs into one issue.
  */
 export function stepFailureFindingKey(message: string): string {
   const withoutHint = stripTrailingPeriod(
     message.endsWith(` ${FALLBACK_HINT}`)
       ? message.slice(0, -(FALLBACK_HINT.length + 1))
-      : message,
+      : message
   );
 
   return (
@@ -47,30 +55,47 @@ export function stepFailureFindingKey(message: string): string {
 const MAX_KEY_CHARS = 160;
 
 function stripTrailingPeriod(text: string): string {
-  return text.endsWith(".") ? text.slice(0, -1) : text;
+  return text.replace(/\.+$/, "");
 }
 
-// IPv6 before hostnames, so its hex groups are never read as DNS labels. Two
-// colons at least, with no whitespace between, so `Bad Request: …` is left alone.
-const IPV6_ADDRESS = /(?<![\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi;
+// Where the debug proxy puts a host (`oauth-proxy.ts`, `pinned-dns.ts`):
+//   Could not resolve <host>
+//   Could not resolve <lowercased target label> <host>
+//   <host> resolves to a private or reserved address (<ip>)
+//   … is a private/reserved host (<host>)
+//   Refusing a plaintext connection to "<host>": …
+// The resolve form's host is the message's last word, after the label's plain
+// words, so the lazy words give way until the token reaches the end.
+const PROXY_HOSTS: ReadonlyArray<[RegExp, string]> = [
+  [/(\bCould not resolve (?:[a-z-]+ )*?)[^\s"'()]+(?=[)"',;]*$)/g, "$1<host>"],
+  [/[^\s"'()]+(?= resolves to a private or reserved address\b)/g, "<host>"],
+  [/(\bhost \()[^\s)]+(\))/g, "$1<host>$2"],
+  [/(\bconnection to ")[^\s"]+(")/g, "$1<host>$2"],
+];
+// Two colons at least, with no whitespace between, so `Bad Request: …` is
+// left alone.
+const IPV6_ADDRESS =
+  /(?<![\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi;
 const IPV4_ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
-// Dotted labels ending in an alphabetic TLD, so a version like `3.9.2` is not one.
-const HOSTNAME = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi;
 
 function normalizeVariableText(text: string): string {
-  return text
-    .replace(/\bhttps?:\/\/[^\s"'<>)]+/g, "<url>")
-    .replace(IPV6_ADDRESS, "<ip>")
-    .replace(IPV4_ADDRESS, "<ip>")
-    .replace(HOSTNAME, "<host>")
-    .replace(
-      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-      "<id>",
-    )
-    // A long token with a digit in it: a client id, trace id or hash. Words
-    // like `authorization_servers` have no digit and are left alone.
-    .replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "<id>")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, MAX_KEY_CHARS);
+  const withoutHosts = PROXY_HOSTS.reduce(
+    (current, [pattern, replacement]) => current.replace(pattern, replacement),
+    text.replace(/\bhttps?:\/\/[^\s"'<>)]+/g, "<url>")
+  );
+  return (
+    withoutHosts
+      .replace(IPV6_ADDRESS, "<ip>")
+      .replace(IPV4_ADDRESS, "<ip>")
+      .replace(
+        /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+        "<id>"
+      )
+      // A long token with a digit in it: a client id, trace id or hash. Words
+      // like `authorization_servers` have no digit and are left alone.
+      .replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "<id>")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, MAX_KEY_CHARS)
+  );
 }
