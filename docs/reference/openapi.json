@@ -18238,7 +18238,7 @@
           },
           "capture": {
             "type": "object",
-            "description": "Capture level, reporting mode, and redaction facts (fixed for this contract version)."
+            "description": "Capture level, reporting mode, and redaction facts (fixed for this contract version). `redaction.egress` says what is scrubbed before a third-party analysis model reads a transcript, and names the pipelines it does not cover; `redaction.providerRetention` carries the no-training policy sent on every platform-key analysis call and whether zero data retention is also requested. Both are absent on older backends."
           },
           "retention": {
             "type": "object",

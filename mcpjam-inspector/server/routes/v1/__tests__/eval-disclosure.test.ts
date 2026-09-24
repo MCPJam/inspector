@@ -216,6 +216,41 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(body.futureSection).toEqual({ brandNew: true, value: 42 });
   });
 
+  it("passes the egress and provider-retention facts through unmodified", async () => {
+    // The backend nests these under capture.redaction; the CLI, the JSON
+    // output and the MCP tool all read them from this route, so it must not
+    // project them away.
+    const base = baseDisclosure() as { capture: { redaction: object } };
+    const egress = {
+      module: "convex/lib/analysisEgressText.ts",
+      isDlp: false,
+      patterns: ["email", "card"],
+      placeholderStyle: "[kind-letters]",
+      appliesTo: ["eval findings"],
+      notAppliedTo: [],
+      limitation: "not DLP",
+    };
+    const providerRetention = {
+      openrouter: { data_collection: "deny" },
+      gateway: { disallowPromptTraining: true },
+      zeroDataRetention: false,
+      appliesTo: ["every analysis call"],
+      notAppliedTo: [],
+      note: "requested per call",
+    };
+    queryMock.mockResolvedValue(
+      baseDisclosure({
+        capture: {
+          ...base.capture,
+          redaction: { ...base.capture.redaction, egress, providerRetention },
+        },
+      }),
+    );
+    const body = (await (await get()).json()) as any;
+    expect(body.capture.redaction.egress).toEqual(egress);
+    expect(body.capture.redaction.providerRetention).toEqual(providerRetention);
+  });
+
   it("passes analysis through unmodified even when execution is absent", async () => {
     // `analysis` is ALWAYS present, even for an ingested run — stored
     // evidence still reaches the judges. This route must never hide it just

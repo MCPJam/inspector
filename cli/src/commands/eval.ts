@@ -676,6 +676,27 @@ function writeRunDisclosure(
         ? ""
         : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
   );
+  // Egress and provider retention are separate questions from at-rest
+  // redaction; older backends omit both, and then nothing is printed rather
+  // than a guess.
+  const egress = disclosure.capture.redaction.egress;
+  if (egress) {
+    lines.push(
+      `  Egress: ${egress.patterns.join(", ")} → consistent placeholders` +
+        (egress.notAppliedTo.length > 0
+          ? ` — NOT applied to: ${egress.notAppliedTo.join("; ")}`
+          : "")
+    );
+  }
+  const providerRetention = disclosure.capture.redaction.providerRetention;
+  if (providerRetention) {
+    lines.push(
+      "  Providers: no-training routing on every analysis call" +
+        (providerRetention.zeroDataRetention
+          ? " · zero data retention requested"
+          : " — zero data retention NOT requested")
+    );
+  }
   lines.push(
     `  Export defaults: ${
       disclosure.capture.exportDefaults.includeContent

@@ -213,6 +213,26 @@ export function describeRunDisclosureDetail(
         ? ""
         : ` — not a DLP system (${disclosure.capture.redaction.limitation})`),
   );
+  // Separate questions from at-rest redaction. Older backends omit both, and
+  // then no line is shown rather than a guess.
+  const egress = disclosure.capture.redaction.egress;
+  if (egress) {
+    lines.push(
+      `Egress: ${egress.patterns.join(", ")} → consistent placeholders` +
+        (egress.notAppliedTo.length > 0
+          ? ` — not applied to: ${egress.notAppliedTo.join("; ")}`
+          : ""),
+    );
+  }
+  const providerRetention = disclosure.capture.redaction.providerRetention;
+  if (providerRetention) {
+    lines.push(
+      "Providers: no-training routing on every analysis call" +
+        (providerRetention.zeroDataRetention
+          ? " · zero data retention requested"
+          : " — zero data retention not requested"),
+    );
+  }
   lines.push(
     `Export defaults: ${
       disclosure.capture.exportDefaults.includeContent

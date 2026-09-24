@@ -417,6 +417,89 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
   });
 });
 
+describe("describeRunDisclosureDetail — egress and provider retention", () => {
+  const withRedaction = (redaction: Record<string, unknown>) =>
+    stateOf({
+      disclosure: baseDisclosure({
+        capture: {
+          captureLevel: "full",
+          reportingMode: "standard",
+          tiersImplemented: false,
+          redaction: {
+            kind: "credential-and-pattern",
+            module: "x",
+            isDlp: false,
+            limitation: "not DLP",
+            appliesTo: [],
+            ...redaction,
+          },
+          exportDefaults: {
+            includeContent: false,
+            ruleLocation: "x",
+            note: "redacted by default",
+          },
+        },
+      }),
+    });
+
+  it("names the egress patterns and the no-training routing when present", () => {
+    const detail = describeRunDisclosureDetail(
+      withRedaction({
+        egress: {
+          module: "convex/lib/analysisEgressText.ts",
+          isDlp: false,
+          patterns: ["email", "card", "phone"],
+          placeholderStyle: "[kind-letters]",
+          appliesTo: ["eval findings"],
+          notAppliedTo: [],
+          limitation: "not DLP",
+        },
+        providerRetention: {
+          openrouter: { data_collection: "deny" },
+          gateway: { disallowPromptTraining: true },
+          zeroDataRetention: false,
+          appliesTo: ["every analysis call"],
+          notAppliedTo: [],
+          note: "requested per call",
+        },
+      }),
+    );
+    expect(detail).toContain(
+      "Egress: email, card, phone → consistent placeholders",
+    );
+    expect(detail).toContain(
+      "Providers: no-training routing on every analysis call — zero data retention not requested",
+    );
+  });
+
+  it("names a pipeline the egress pass does not cover", () => {
+    const detail = describeRunDisclosureDetail(
+      withRedaction({
+        egress: {
+          module: "x",
+          isDlp: false,
+          patterns: ["email"],
+          placeholderStyle: "x",
+          appliesTo: [],
+          notAppliedTo: ["goal-completion judging"],
+          limitation: "x",
+        },
+      }),
+    );
+    expect(
+      detail.some((line) =>
+        /not applied to: goal-completion judging/.test(line),
+      ),
+    ).toBe(true);
+  });
+
+  it("prints neither line for an older backend that omits both", () => {
+    const detail = describeRunDisclosureDetail(withRedaction({}));
+    expect(detail.some((line) => line.startsWith("Egress:"))).toBe(false);
+    expect(detail.some((line) => line.startsWith("Providers:"))).toBe(false);
+  });
+});
+
 describe("RunDisclosureHint — read-only, never gates the run", () => {
   function RowWithRunButton({ state }: { state: RunDisclosureState }) {
     return (

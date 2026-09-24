@@ -886,6 +886,23 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               isDlp: false,
               limitation: "not DLP",
               appliesTo: [],
+              egress: {
+                module: "convex/lib/analysisEgressText.ts",
+                isDlp: false,
+                patterns: ["email", "card", "phone"],
+                placeholderStyle: "[kind-letters]",
+                appliesTo: ["eval findings"],
+                notAppliedTo: ["goal-completion judging"],
+                limitation: "not DLP",
+              },
+              providerRetention: {
+                openrouter: { data_collection: "deny" },
+                gateway: { disallowPromptTraining: true },
+                zeroDataRetention: false,
+                appliesTo: ["every analysis call"],
+                notAppliedTo: [],
+                note: "requested per call",
+              },
             },
             exportDefaults: {
               includeContent: false,
@@ -3438,6 +3455,16 @@ test("eval run prints the disclosure block in human mode, before the run link", 
     assert.match(
       run.stdout,
       /Export defaults: excludes content \(redacted by default\)/
+    );
+    // Egress and provider retention: printed when the backend sends them,
+    // with the uncovered pipeline NAMED rather than left out.
+    assert.match(
+      run.stdout,
+      /Egress: email, card, phone → consistent placeholders — NOT applied to: goal-completion judging/
+    );
+    assert.match(
+      run.stdout,
+      /Providers: no-training routing on every analysis call — zero data retention NOT requested/
     );
     // "fires automatically" vs "fires only if asked" are different consent
     // stories — the fixture's goalCompletion touchpoint is

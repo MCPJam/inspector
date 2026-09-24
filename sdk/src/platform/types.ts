@@ -70,12 +70,7 @@ export type PlatformSessionBrowserTrace = {
   screenshots: PlatformBrowserScreenshot[];
 };
 export type PlatformSessionBrowserOperation =
-  | "open"
-  | "command"
-  | "note"
-  | "trace"
-  | "artifact"
-  | "close";
+  "open" | "command" | "note" | "trace" | "artifact" | "close";
 export interface PlatformSessionBrowserBodies {
   open: PlatformSessionBrowserInput;
   command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
@@ -739,11 +734,7 @@ export interface PlatformWidgetRender {
  * the option it was read under.
  */
 export type PlatformSessionSourceType =
-  | "direct"
-  | "scenario"
-  | "study"
-  | "eval"
-  | "swarm";
+  "direct" | "scenario" | "study" | "eval" | "swarm";
 
 /**
  * The session's parent run, discriminated on `kind`. Also open-ended.
@@ -1161,8 +1152,7 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
   progress?: {
     total: number;
     completed: number;
@@ -1178,8 +1168,7 @@ export interface PlatformEvalRunGoalCompletionJudge
   cases: PlatformEvalRunGoalCompletionCase[];
 }
 
-export interface PlatformEvalRunGroundednessJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGroundednessJudge extends PlatformEvalRunJudgeState {
   /** Per-case grades. EMPTY unless `status` is `"completed"`. */
   cases: PlatformEvalRunGroundednessCase[];
 }
@@ -1206,8 +1195,7 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
   status?: "scored" | "error" | "skipped";
   gradingKey?: string;
   errorCode?: string;
@@ -1219,8 +1207,7 @@ export interface PlatformEvalRunGoalCompletionCase
   rubricHits: string[];
 }
 
-export interface PlatformEvalRunGroundednessCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGroundednessCase extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
 }
@@ -1267,14 +1254,10 @@ export interface PlatformNotApplicableRailDisclosure {
 }
 
 export type PlatformRailDisclosure =
-  | PlatformManagedRailDisclosure
-  | PlatformNotApplicableRailDisclosure;
+  PlatformManagedRailDisclosure | PlatformNotApplicableRailDisclosure;
 
 export type PlatformDisclosureTenantEgress =
-  | "mcpjam-hosted"
-  | "byok-cloud"
-  | "byok-local"
-  | "unknown";
+  "mcpjam-hosted" | "byok-cloud" | "byok-local" | "unknown";
 
 export interface PlatformByokDisclosure {
   providerKey: string;
@@ -1302,9 +1285,7 @@ export interface PlatformDisclosedModel {
  * a fourth runtime kind.
  */
 export type PlatformDisclosureEngine =
-  | "emulated"
-  | "mixed"
-  | `harness:${string}`;
+  "emulated" | "mixed" | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.
@@ -1315,8 +1296,7 @@ export type PlatformDisclosureEngine =
  * the union defensively — a caller MUST NOT treat it as `hosted: false`.
  */
 export type PlatformEvalRunDisclosureLocus =
-  | { known: true; hosted: boolean }
-  | { known: false; reason: string };
+  { known: true; hosted: boolean } | { known: false; reason: string };
 
 export interface PlatformExecutionDisclosure {
   engine: PlatformDisclosureEngine;
@@ -1376,6 +1356,34 @@ export interface PlatformCaptureDisclosure {
     isDlp: boolean;
     limitation: string;
     appliesTo: readonly string[];
+    /**
+     * What is scrubbed on the way OUT to an analysis model, as opposed to the
+     * fields above (what reaches storage). `notAppliedTo` names the pipelines
+     * that send the transcript as recorded. Absent on older backends.
+     */
+    egress?: {
+      module: string;
+      isDlp: boolean;
+      patterns: readonly string[];
+      placeholderStyle: string;
+      appliesTo: readonly string[];
+      notAppliedTo: readonly string[];
+      limitation: string;
+    };
+    /**
+     * The no-training policy sent on every platform-key analysis call, read
+     * off the backend module that builds the wire payload. A per-call
+     * request; `zeroDataRetention` says whether ZDR is also requested.
+     * Absent on older backends.
+     */
+    providerRetention?: {
+      openrouter: { data_collection: "allow" | "deny" };
+      gateway: { disallowPromptTraining: boolean };
+      zeroDataRetention: boolean;
+      appliesTo: readonly string[];
+      notAppliedTo: readonly string[];
+      note: string;
+    };
   };
   exportDefaults: {
     includeContent: boolean;
@@ -1797,8 +1805,7 @@ export interface PlatformEvalSuiteSettingsBase {
 }
 
 /** A suite's settings as vocabulary 1 (no header) spells them. */
-export interface PlatformEvalSuiteSettings
-  extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettings extends PlatformEvalSuiteSettingsBase {
   checks: PublicCheck[];
   /**
    * Suite defaults a case inherits under policy 2. Present only with
@@ -1813,8 +1820,7 @@ export interface PlatformEvalSuiteSettings
  * them: the suite-default rules are `defaultAssertions` and the policy-2
  * default count is `iterations`. Same facts, canonical words.
  */
-export interface PlatformEvalSuiteSettingsV2
-  extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettingsV2 extends PlatformEvalSuiteSettingsBase {
   defaultAssertions: PublicCheck[];
   /** As {@link PlatformEvalSuiteSettings.verdictPolicyDefaults}, spelled canonically. */
   verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaultsV2;
@@ -1844,15 +1850,13 @@ export interface PlatformEvalVerdictPolicyDefaultsBase {
 }
 
 /** Suite-level defaults under verdict policy 2, as vocabulary 1 spells them. */
-export interface PlatformEvalVerdictPolicyDefaults
-  extends PlatformEvalVerdictPolicyDefaultsBase {
+export interface PlatformEvalVerdictPolicyDefaults extends PlatformEvalVerdictPolicyDefaultsBase {
   /** Trials per case unless the case overrides `repetitions`. */
   repetitions: number;
 }
 
 /** Suite-level defaults under verdict policy 2, as vocabulary 2 spells them. */
-export interface PlatformEvalVerdictPolicyDefaultsV2
-  extends PlatformEvalVerdictPolicyDefaultsBase {
+export interface PlatformEvalVerdictPolicyDefaultsV2 extends PlatformEvalVerdictPolicyDefaultsBase {
   /** Iterations per case unless the case overrides `iterations`. */
   iterations: number;
 }
@@ -2017,13 +2021,7 @@ export interface PlatformEvalSuiteRevision {
   revisionNumber: number;
   /** Where the edit came from. `unattributed` is a write nothing claimed. */
   source:
-    | "ui"
-    | "api"
-    | "cli"
-    | "file_sync"
-    | "import"
-    | "system"
-    | "unattributed";
+    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
   /** The user id, or `null` for a write with no human actor. */
   createdBy: string | null;
   /** A display name when one is resolvable; `null` otherwise. */
@@ -2559,10 +2557,7 @@ export interface PlatformRunCompare {
 
 /** Delivery channel a pinned skill reached a run through. */
 export type PlatformRunCompareSkillChannel =
-  | "host"
-  | "environment"
-  | "plugin"
-  | "mcp-server";
+  "host" | "environment" | "plugin" | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export interface PlatformRunCompareSkillSide {
@@ -3048,8 +3043,7 @@ export interface PlatformEnvironmentSecretSelection {
 
 /** Why a skill cannot be pinned into an environment's `skillSelection`. */
 export type PlatformSkillPinnability =
-  | { ok: true }
-  | { ok: false; reason: string };
+  { ok: true } | { ok: false; reason: string };
 
 /** One skill visible to the caller: project-shared, or their own draft. */
 export interface PlatformProjectSkill {
@@ -4443,8 +4437,7 @@ export interface PlatformTraceDestinationHealth {
  * a caller can size the gap — NOTHING was queued while it was paused, and the
  * only way to fill the window is a backfill.
  */
-export interface PlatformTraceDestinationResumed
-  extends PlatformTraceDestination {
+export interface PlatformTraceDestinationResumed extends PlatformTraceDestination {
   pausedSince: number | null;
 }
 
@@ -4676,11 +4669,7 @@ export interface PlatformFindingDismissed {
  * - Reads never trigger generation; `status` is observational.
  */
 export type PlatformInsightsStatus =
-  | "not_available"
-  | "not_requested"
-  | "pending"
-  | "completed"
-  | "failed";
+  "not_available" | "not_requested" | "pending" | "completed" | "failed";
 
 export type PlatformInsightScope =
   | { kind: "eval_run"; id: string }
@@ -4710,9 +4699,7 @@ export type PlatformInsightActionTarget =
   | "environment";
 
 export type PlatformInsightActionability =
-  | "informational"
-  | "investigate"
-  | "ready";
+  "informational" | "investigate" | "ready";
 
 export interface PlatformActionableFindingEvidence {
   sessionId?: string;
@@ -4788,9 +4775,7 @@ export interface PlatformActionableFinding {
  * `unavailable`.
  */
 export type PlatformInsightsObservationState =
-  | "ready"
-  | "partial"
-  | "unavailable";
+  "ready" | "partial" | "unavailable";
 
 /** Coverage for `currentFindings`, describing its OWN population. */
 export interface PlatformInsightsObservationCoverage {
@@ -5427,8 +5412,7 @@ export interface PlatformUserTestingScenario {
  * the insights envelope.
  */
 /** @deprecated Use {@link PlatformStudyDetail}. */
-export interface PlatformUserTestingScenarioDetail
-  extends PlatformUserTestingScenario {
+export interface PlatformUserTestingScenarioDetail extends PlatformUserTestingScenario {
   environmentId: string | null;
   /**
    * Present when the caller may have it. The envelope is gated on workspace
@@ -5562,8 +5546,7 @@ export type PlatformReadinessKind = "claude" | "openai";
  * in this type would let a caller write a request the server refuses.
  */
 export type PlatformReadinessSubmissionMode =
-  | "mcp-only"
-  | "mcp-imported-skills";
+  "mcp-only" | "mcp-imported-skills";
 
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
@@ -5705,8 +5688,7 @@ export interface PlatformReadinessStartBody {
   includeLlmObservations?: boolean;
 }
 
-export interface PlatformOpenAIReadinessStartBody
-  extends PlatformReadinessStartBody {
+export interface PlatformOpenAIReadinessStartBody extends PlatformReadinessStartBody {
   /**
    * The DECLARED submission shape. REQUIRED, and never inferred.
    *
