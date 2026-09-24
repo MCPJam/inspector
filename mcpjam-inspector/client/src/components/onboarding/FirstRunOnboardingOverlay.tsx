@@ -80,6 +80,7 @@ interface FirstRunOnboardingOverlayProps {
   open: boolean;
   skipWelcome?: boolean;
   connectionState: FirstRunConnectionState;
+  recoveryServerDraft?: FirstRunServerDraft;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
   onAuthorizeConnection: () => void;
@@ -101,6 +102,7 @@ export function FirstRunOnboardingOverlay({
   open,
   skipWelcome = false,
   connectionState,
+  recoveryServerDraft,
   onConnectOwnServer,
   onConnectDemo,
   onAuthorizeConnection,
@@ -128,6 +130,23 @@ export function FirstRunOnboardingOverlay({
   const [isTokenEntryOpen, setIsTokenEntryOpen] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   const [bearerTokenError, setBearerTokenError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (
+      connectionState.status !== "authorization-required" ||
+      !recoveryServerDraft ||
+      serverUrlOrCommand.trim()
+    ) {
+      return;
+    }
+
+    setServerName((current) => current || recoveryServerDraft.name);
+    setServerUrlOrCommand(
+      (current) => current || recoveryServerDraft.urlOrCommand,
+    );
+    setServerTransport(recoveryServerDraft.transport);
+    setServerAuthentication(recoveryServerDraft.authentication);
+  }, [connectionState.status, recoveryServerDraft, serverUrlOrCommand]);
 
   useEffect(() => {
     if (open && step === "welcome") onWelcomeShown();

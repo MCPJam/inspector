@@ -17,11 +17,13 @@ import {
   FIRST_RUN_WELCOME_AUTO_ADVANCE_MS,
   FirstRunOnboardingOverlay,
   type FirstRunConnectionState,
+  type FirstRunServerDraft,
 } from "../FirstRunOnboardingOverlay";
 
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
   skipWelcome = false,
+  recoveryServerDraft?: FirstRunServerDraft,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
@@ -36,6 +38,7 @@ function renderOverlay(
       open
       skipWelcome={skipWelcome}
       connectionState={connectionState}
+      recoveryServerDraft={recoveryServerDraft}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
       onAuthorizeConnection={onAuthorizeConnection}
@@ -64,6 +67,7 @@ function renderOverlay(
           open
           skipWelcome={skipWelcome}
           connectionState={nextConnectionState}
+          recoveryServerDraft={recoveryServerDraft}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
           onAuthorizeConnection={onAuthorizeConnection}
@@ -432,6 +436,32 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
+  });
+
+  it("restores saved server details before editing a remounted OAuth recovery", () => {
+    renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Multiaccount",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Multiaccount",
+        transport: "http",
+        urlOrCommand: "https://multiaccount.example/mcp",
+        authentication: "auto",
+      },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
+
+    expect(screen.getByLabelText("Name")).toHaveValue("Multiaccount");
+    expect(screen.getByLabelText("Server URL or command")).toHaveValue(
+      "https://multiaccount.example/mcp",
+    );
   });
 
   it("can retry an authorization challenge with a bearer token", () => {

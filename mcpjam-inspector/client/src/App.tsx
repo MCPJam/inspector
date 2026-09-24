@@ -3668,6 +3668,7 @@ export default function App() {
     // instead of leaving the dedicated authorization screen unresponsive.
     void handleReconnect(serverName, {
       forceOAuthFlow: true,
+      replaceExistingOAuthConnection: false,
       suppressErrors: true,
       suppressSuccessToast: true,
     });
@@ -5998,6 +5999,26 @@ export default function App() {
     </div>
   );
 
+  const firstRunRecoveryServerDraft = (() => {
+    if (firstRunConnectionState.status !== "authorization-required") {
+      return undefined;
+    }
+    const serverName = firstRunConnectionState.serverName;
+    const savedServer =
+      projectServers[serverName] ?? appState.servers[serverName];
+    const savedUrl =
+      savedServer?.config && "url" in savedServer.config
+        ? String(savedServer.config.url)
+        : "";
+    if (!savedUrl) return undefined;
+    return {
+      name: serverName,
+      transport: "http" as const,
+      urlOrCommand: savedUrl,
+      authentication: "auto" as const,
+    };
+  })();
+
   return (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
@@ -6070,6 +6091,7 @@ export default function App() {
                 open={shouldShowFirstRunOverlay}
                 skipWelcome={skipFirstRunWelcome}
                 connectionState={firstRunConnectionState}
+                recoveryServerDraft={firstRunRecoveryServerDraft}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
                 onAuthorizeConnection={authorizeFirstRunConnection}

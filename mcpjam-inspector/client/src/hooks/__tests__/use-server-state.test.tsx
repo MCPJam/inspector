@@ -3512,6 +3512,24 @@ describe("useServerState OAuth callback failures", () => {
     expect(deleteServer).not.toHaveBeenCalled();
   });
 
+  it("can force onboarding OAuth without replacing the default account", async () => {
+    listOAuthConnectionsMock.mockResolvedValue({
+      connections: [{ connectionId: "default-account", isDefault: true }],
+      shared: false,
+    });
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+        replaceExistingOAuthConnection: false,
+      });
+    });
+
+    expect(listOAuthConnectionsMock).not.toHaveBeenCalled();
+    expect(initiateOAuthMock).toHaveBeenCalled();
+  });
+
   it("keeps saved registry OAuth settings when forcing a fresh reconnect", async () => {
     localStorage.setItem(
       "mcp-oauth-config-demo-server",
