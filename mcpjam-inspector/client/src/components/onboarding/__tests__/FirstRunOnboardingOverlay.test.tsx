@@ -393,7 +393,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(onOpenPlayground).toHaveBeenCalledOnce();
   });
 
-  it("keeps OAuth authorization inside the connection modal", () => {
+  it("shows a dedicated OAuth authorization recovery modal", () => {
     const {
       onAuthorizeConnection,
       onCancelConnection,
@@ -407,23 +407,65 @@ describe("FirstRunOnboardingOverlay", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Authorize Multiaccount" }),
+      screen.getByRole("heading", {
+        name: "Multiaccount needs authorization",
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/requires OAuth.*finish connecting/i),
+      screen.getByText("The server returned 401 Unauthorized"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Reach server").parentElement?.querySelector("svg"),
-    ).toHaveClass("text-success");
+      screen.getByRole("button", { name: "Use a token instead" }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText("Negotiate MCP compatibility").parentElement,
-    ).toHaveClass("text-left");
+      screen.getByRole("button", { name: "Edit server details" }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Authorize and continue" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
     expect(onAuthorizeConnection).toHaveBeenCalledOnce();
     expect(onCancelConnection).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
+    expect(onCancelConnection).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("heading", { name: "Set up your server" }),
+    ).toBeInTheDocument();
+  });
+
+  it("can retry an authorization challenge with a bearer token", () => {
+    const { onConnectOwnServer, rerenderWithConnectionState } = renderOverlay(
+      { status: "idle" },
+      true,
+    );
+
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    rerenderWithConnectionState({
+      status: "authorization-required",
+      serverName: "secure.example",
+      serverKind: "personal",
+      error: "401 Unauthorized",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use a token instead" }),
+    );
+    fireEvent.change(screen.getByLabelText("Bearer token"), {
+      target: { value: "secret-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect with token" }));
+
+    expect(onConnectOwnServer).toHaveBeenLastCalledWith({
+      name: "Secure",
+      transport: "http",
+      urlOrCommand: "https://secure.example/mcp",
+      authentication: "bearer",
+      bearerToken: "secret-token",
+    });
   });
 
   it("keeps demo failures out of the personal-server credential form", () => {
