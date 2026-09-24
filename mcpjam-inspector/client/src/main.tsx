@@ -1,7 +1,8 @@
 // Must stay the first import; OAuth modules retain window.fetch at load time.
 import "./lib/install-failed-request-tracker";
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { appRoot } from "./app-root";
+import LoadingScreen from "./components/LoadingScreen";
 import { Button } from "@mcpjam/design-system/button";
 import "./index.css";
 import { buildElectronMcpCallbackUrl } from "./lib/electron-mcp-callback";
@@ -11,15 +12,16 @@ const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
 if (electronMcpReturnUrl) {
   // The browser owns no app session here. Do not initialize auth, Convex,
   // guest sessions or onboarding before handing this result to Electron.
-  createRoot(document.getElementById("root")!).render(
+  appRoot.render(
     <StrictMode>
       <OAuthDesktopReturnNotice returnToElectronUrl={electronMcpReturnUrl} />
     </StrictMode>,
   );
 } else {
+  appRoot.render(<LoadingScreen />);
   void import("./app-bootstrap").catch((error: unknown) => {
     console.error("MCPJam app bootstrap failed", error);
-    createRoot(document.getElementById("root")!).render(
+    appRoot.render(
       <div
         role="alert"
         className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-4 text-foreground"

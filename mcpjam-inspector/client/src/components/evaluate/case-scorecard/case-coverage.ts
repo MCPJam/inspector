@@ -58,8 +58,9 @@ export function coverageForCase(
       }
       // The route counts as one required Selection rule only when it actually
       // asserts a route; "any route, graded by the checks below" asserts
-      // nothing.
-      if (row.provenance === "route") {
+      // nothing. Its arguments row is a rule of its own, at Tool call, and is
+      // counted below like any other.
+      if (row.provenance === "route" && row.route) {
         const kind = row.route?.kind;
         if (kind === "tools" || kind === "noTool") {
           out.selection.required += 1;

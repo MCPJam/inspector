@@ -111,9 +111,14 @@ jobs:
 
       - name: Resolve preview environment metadata
         id: meta
+        env:
+          # Untrusted: a PR head ref can carry shell metacharacters, so it
+          # reaches the shell as data through env, never as an inline expression.
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "environment=${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          echo "branch=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+          echo "environment=${RAILWAY_ENV_PREFIX}${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "branch=${PR_HEAD_REF}" >> "$GITHUB_OUTPUT"
 
       - name: Check for matching backend branch
         id: backend_branch
@@ -277,6 +282,8 @@ jobs:
       - name: Dispatch backend preview request
         if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
         uses: actions/github-script@v7
+        env:
+          PREVIEW_BRANCH: ${{ steps.meta.outputs.branch }}
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
@@ -286,7 +293,7 @@ jobs:
               repo,
               event_type: "inspector_preview_requested",
               client_payload: {
-                branch: "${{ steps.meta.outputs.branch }}",
+                branch: process.env.PREVIEW_BRANCH,
                 inspector_sha: "${{ steps.preview_commit.outputs.deployed_sha }}",
                 inspector_head_sha: "${{ steps.preview_commit.outputs.head_sha }}",
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
@@ -427,13 +434,14 @@ jobs:
         id: meta
         env:
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+          BACKEND_BRANCH: ${{ github.event.client_payload.branch }}
         run: |
           if ! [[ "$BACKEND_PR_NUMBER" =~ ^[0-9]+$ ]]; then
             echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
             exit 1
           fi
           echo "environment=${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BACKEND_BRANCH}" >> "$GITHUB_OUTPUT"
 
       # See upsert-preview above for why `railway link` is skipped.
       - name: Create preview environment
@@ -544,6 +552,7 @@ jobs:
         env:
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+          PREVIEW_BRANCH: ${{ steps.meta.outputs.branch }}
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
@@ -561,7 +570,7 @@ jobs:
               repo,
               event_type: "inspector_preview_requested",
               client_payload: {
-                branch: "${{ steps.meta.outputs.branch }}",
+                branch: process.env.PREVIEW_BRANCH,
                 inspector_sha: "${{ steps.preview_commit.outputs.deployed_sha }}",
                 inspector_head_sha: "${{ steps.preview_commit.outputs.head_sha || steps.preview_commit.outputs.deployed_sha }}",
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
