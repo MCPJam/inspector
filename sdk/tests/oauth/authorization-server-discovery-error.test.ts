@@ -30,7 +30,10 @@ describe("describeAuthorizationServerDiscoveryFailure", () => {
   it("names every URL and what it returned", () => {
     expect(
       describeAuthorizationServerDiscoveryFailure([
-        { url: "https://a.test/.well-known/oauth-authorization-server", status: 404 },
+        {
+          url: "https://a.test/.well-known/oauth-authorization-server",
+          status: 404,
+        },
         { url: "https://a.test/.well-known/openid-configuration", status: 503 },
         {
           url: "https://a.test/.well-known/openid-configuration/x",
@@ -48,7 +51,10 @@ describe("describeAuthorizationServerDiscoveryFailure", () => {
   it("says when a success carried no document", () => {
     expect(
       describeAuthorizationServerDiscoveryFailure([
-        { url: "https://a.test/.well-known/oauth-authorization-server", status: 200 },
+        {
+          url: "https://a.test/.well-known/oauth-authorization-server",
+          status: 200,
+        },
       ])
     ).toBe(
       "Could not discover authorization server metadata. " +
@@ -61,7 +67,9 @@ describe("describeAuthorizationServerDiscoveryFailure", () => {
       describeAuthorizationServerDiscoveryFailure([
         { url: "https://a.test/x", error: "boom" },
       ])
-    ).toBe("Could not discover authorization server metadata. https://a.test/x failed: boom.");
+    ).toBe(
+      "Could not discover authorization server metadata. https://a.test/x failed: boom."
+    );
   });
 
   it("never reads as null", () => {
@@ -86,7 +94,9 @@ function makeMachineAtAsMetadata(
     },
   } as OAuthFlowState;
 
-  const requestExecutor = vi.fn(async ({ url }: { url: string }) => respond(url));
+  const requestExecutor = vi.fn(async ({ url }: { url: string }) =>
+    respond(url)
+  );
 
   const machine = createOAuthStateMachine({
     protocolVersion,
@@ -106,44 +116,74 @@ function makeMachineAtAsMetadata(
   return { machine, getState: () => state, requestExecutor };
 }
 
-describe.each(DISCOVERY_ERAS)("authorization-server discovery failure (%s)", (version) => {
-  const advance = async (machine: { proceedToNextStep: () => Promise<void> }) =>
-    machine.proceedToNextStep().catch(() => {});
+describe.each(DISCOVERY_ERAS)(
+  "authorization-server discovery failure (%s)",
+  (version) => {
+    const advance = async (machine: {
+      proceedToNextStep: () => Promise<void>;
+    }) => machine.proceedToNextStep().catch(() => {});
 
-  it("reports each URL's status when every one answers 404", async () => {
-    const { machine, getState, requestExecutor } = makeMachineAtAsMetadata(
-      version,
-      () => ({
-        ok: false,
-        status: 404,
-        statusText: "Not Found",
+    it("reports each URL's status when every one answers 404", async () => {
+      const { machine, getState, requestExecutor } = makeMachineAtAsMetadata(
+        version,
+        () => ({
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: "",
+        })
+      );
+      await advance(machine);
+
+      const error = getState().error ?? "";
+      expect(error).not.toContain("null");
+      expect(error).toMatch(
+        /^Could not discover authorization server metadata\. /
+      );
+      const urls = requestExecutor.mock.calls.map(([request]) => request.url);
+      expect(urls.length).toBeGreaterThan(1);
+      for (const url of urls) {
+        expect(error).toContain(`${url} returned HTTP 404`);
+      }
+    });
+
+    // Review of #5532: the helper's 2xx wording was tested, but not the machines
+    // recording that attempt. Without the record this reads "No well-known URL
+    // was tried."
+    it("reports a success that carried no document", async () => {
+      const { machine, getState } = makeMachineAtAsMetadata(version, () => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
         headers: {},
         body: "",
-      })
-    );
-    await advance(machine);
+      }));
+      await advance(machine);
 
-    const error = getState().error ?? "";
-    expect(error).not.toContain("null");
-    expect(error).toMatch(/^Could not discover authorization server metadata\. /);
-    const urls = requestExecutor.mock.calls.map(([request]) => request.url);
-    expect(urls.length).toBeGreaterThan(1);
-    for (const url of urls) {
-      expect(error).toContain(`${url} returned HTTP 404`);
-    }
-  });
-
-  it("keeps a transport failure and a later 404 both visible", async () => {
-    let call = 0;
-    const { machine, getState } = makeMachineAtAsMetadata(version, () => {
-      call += 1;
-      if (call === 1) throw new TypeError("Failed to fetch");
-      return { ok: false, status: 404, statusText: "Not Found", headers: {}, body: "" };
+      expect(getState().error).toContain(
+        "returned HTTP 200 with no metadata document"
+      );
     });
-    await advance(machine);
 
-    const error = getState().error ?? "";
-    expect(error).toContain("failed: Failed to fetch");
-    expect(error).toContain("returned HTTP 404");
-  });
-});
+    it("keeps a transport failure and a later 404 both visible", async () => {
+      let call = 0;
+      const { machine, getState } = makeMachineAtAsMetadata(version, () => {
+        call += 1;
+        if (call === 1) throw new TypeError("Failed to fetch");
+        return {
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: "",
+        };
+      });
+      await advance(machine);
+
+      const error = getState().error ?? "";
+      expect(error).toContain("failed: Failed to fetch");
+      expect(error).toContain("returned HTTP 404");
+    });
+  }
+);

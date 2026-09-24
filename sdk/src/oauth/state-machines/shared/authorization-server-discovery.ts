@@ -15,8 +15,7 @@
 
 /** One well-known URL tried, and what it produced. */
 export type AuthorizationServerMetadataAttempt =
-  | { url: string; status: number }
-  | { url: string; error: unknown };
+  { url: string; status: number } | { url: string; error: unknown };
 
 const DISCOVERY_FAILURE_PREFIX =
   "Could not discover authorization server metadata.";
@@ -36,10 +35,12 @@ function describeAttempt(attempt: AuthorizationServerMetadataAttempt): string {
 }
 
 export function describeAuthorizationServerDiscoveryFailure(
-  attempts: readonly AuthorizationServerMetadataAttempt[],
+  attempts: readonly AuthorizationServerMetadataAttempt[]
 ): string {
   if (attempts.length === 0) {
     return `${DISCOVERY_FAILURE_PREFIX} No well-known URL was tried.`;
   }
-  return `${DISCOVERY_FAILURE_PREFIX} ${attempts.map(describeAttempt).join("; ")}.`;
+  return `${DISCOVERY_FAILURE_PREFIX} ${attempts
+    .map(describeAttempt)
+    .join("; ")}.`;
 }
