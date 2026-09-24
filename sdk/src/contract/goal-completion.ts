@@ -289,7 +289,8 @@ export function buildGoalJudgeRequest(
   // A text or JSON attachment is evidence a person may have typed into, so
   // its bytes go through the same map. Binary media (images, audio, video,
   // PDFs) are sent as recorded: this is pattern matching over text, not OCR.
-  // Unchanged text keeps its original bytes, so its hash does not move.
+  // Unchanged text keeps its original bytes, so its hash does not move —
+  // including text with invalid UTF-8 and nothing to redact.
   const artifactData = artifacts.map((artifact, index) => {
     const text = rawArtifactText[index];
     if (text === undefined) return artifact.data;
@@ -385,9 +386,10 @@ function isTextualMediaType(mediaType: string): boolean {
 }
 
 /**
- * Base64 → UTF-8 text, or undefined when the bytes are not valid UTF-8. A
- * non-fatal decode checked for U+FFFD rather than `fatal: true`, so the
- * result is the same in every runtime this file runs in.
+ * Base64 → UTF-8 text, or undefined when the payload is not base64. Invalid
+ * byte sequences decode to U+FFFD rather than failing: one bad byte must not
+ * send the readable text around it to the judge unscrubbed. When the
+ * redactor then changes nothing, the caller keeps the original bytes.
  */
 function decodeBase64Utf8(data: string): string | undefined {
   try {
@@ -395,8 +397,7 @@ function decodeBase64Utf8(data: string): string | undefined {
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1)
       bytes[index] = binary.charCodeAt(index);
-    const text = new TextDecoder("utf-8").decode(bytes);
-    return text.includes("\uFFFD") ? undefined : text;
+    return new TextDecoder("utf-8").decode(bytes);
   } catch {
     return undefined;
   }

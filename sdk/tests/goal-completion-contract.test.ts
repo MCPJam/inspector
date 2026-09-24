@@ -171,3 +171,37 @@ it("matches the hosted v5 contract fixture and template lock", async () => {
     interpretGoalJudgeOutput(fixture.output, request.hasRubric).score
   ).toBe(fixture.expectedScore);
 });
+
+it("still redacts a text artifact that carries an invalid UTF-8 byte", async () => {
+  const { buildGoalJudgeRequest } =
+    await import("../src/contract/goal-completion.js");
+  const bytes = Buffer.concat([
+    Buffer.from([0xff]),
+    Buffer.from(" reply to z@y.com", "utf8"),
+  ]);
+  const request = buildGoalJudgeRequest({
+    caseKey: "case",
+    gradingKey: "case#1",
+    title: "Task",
+    query: "Do task",
+    evidence: {
+      version: 1,
+      trace: { messages: [] },
+      artifacts: [
+        {
+          sourceId: "log",
+          modality: "file",
+          mediaType: "text/plain",
+          data: bytes.toString("base64"),
+        },
+      ],
+    },
+  });
+  const sent = Buffer.from(
+    request.evidence.artifacts![0].data,
+    "base64"
+  ).toString("utf8");
+  // Same as the hosted judge: one bad byte must not carry text past it.
+  expect(sent).not.toContain("z@y.com");
+  expect(sent).toContain("[email-a]");
+});

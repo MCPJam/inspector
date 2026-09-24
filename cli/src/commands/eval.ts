@@ -683,6 +683,9 @@ function writeRunDisclosure(
   if (egress) {
     lines.push(
       `  Egress: ${egress.patterns.join(", ")} → consistent placeholders` +
+        (egress.appliesTo.length > 0
+          ? ` — applied to: ${egress.appliesTo.join("; ")}`
+          : "") +
         (egress.notAppliedTo.length > 0
           ? ` — NOT applied to: ${egress.notAppliedTo.join("; ")}`
           : "")

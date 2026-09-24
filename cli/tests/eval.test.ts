@@ -3460,7 +3460,7 @@ test("eval run prints the disclosure block in human mode, before the run link", 
     // with the uncovered pipeline NAMED rather than left out.
     assert.match(
       run.stdout,
-      /Egress: email, card, phone → consistent placeholders — NOT applied to: goal-completion judging/
+      /Egress: email, card, phone → consistent placeholders — applied to: eval findings — NOT applied to: goal-completion judging/
     );
     assert.match(
       run.stdout,

@@ -465,7 +465,7 @@ describe("describeRunDisclosureDetail — egress and provider retention", () => 
       }),
     );
     expect(detail).toContain(
-      "Egress: email, card, phone → consistent placeholders",
+      "Egress: email, card, phone → consistent placeholders. Applied to: eval findings",
     );
     expect(detail).toContain(
       "Providers: OpenRouter data collection denied, Gateway prompt training disallowed on platform-key analysis calls. Zero data retention not requested",
