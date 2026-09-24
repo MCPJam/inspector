@@ -1,6 +1,7 @@
 import { lookup as dnsLookupCb } from "node:dns";
 import http from "node:http";
 import https from "node:https";
+import { localTlsOptions } from "./oauth/local-tls-options.js";
 import type { LookupFunction } from "node:net";
 import type { IncomingMessage } from "node:http";
 
@@ -495,6 +496,7 @@ async function requestPinnedOAuthHop(
   requestInit: PreparedOAuthRequest,
   policy: EgressPolicy,
   signal: AbortSignal | undefined,
+  useSystemCa: boolean,
   onResolved?: (targetIsPrivate: boolean) => void
 ): Promise<RawPinnedOAuthResponse> {
   const { addresses: pinnedAddresses, targetIsPrivate } =
@@ -513,6 +515,7 @@ async function requestPinnedOAuthHop(
       {
         method: requestInit.method,
         headers: requestInit.headers,
+        ...localTlsOptions(targetUrl, useSystemCa),
         ...(pinnedAddresses
           ? { lookup: createPinnedLookup(pinnedAddresses) }
           : {}),
@@ -577,6 +580,7 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
         requestInit,
         hopPolicy,
         signal,
+        policy.allowPrivateNetwork,
         redirectCount === 0 ? narrowAfterFirstHop : undefined
       );
 
@@ -894,6 +898,7 @@ async function requestPinnedOAuthMetadata(
   targetUrl: URL,
   policy: EgressPolicy,
   signal: AbortSignal | undefined,
+  useSystemCa: boolean,
   onResolved?: (targetIsPrivate: boolean) => void
 ): Promise<RawOAuthMetadataResponse> {
   const { addresses: pinnedAddresses, targetIsPrivate } =
@@ -911,6 +916,7 @@ async function requestPinnedOAuthMetadata(
           "Accept-Encoding": "identity",
           "User-Agent": "MCP-Inspector/1.0",
         },
+        ...localTlsOptions(targetUrl, useSystemCa),
         ...(pinnedAddresses
           ? { lookup: createPinnedLookup(pinnedAddresses) }
           : {}),
@@ -1025,6 +1031,7 @@ export async function fetchOAuthMetadata(
         currentUrl,
         hopPolicy,
         signal,
+        policy.allowPrivateNetwork,
         redirectCount === 0 ? narrowAfterFirstHop : undefined
       );
     } catch (error) {

@@ -40,6 +40,7 @@
  */
 
 import http from "node:http";
+import { localTlsOptions } from "./local-tls-options.js";
 import https from "node:https";
 import type { IncomingMessage } from "node:http";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
@@ -288,6 +289,7 @@ async function openPinnedHop(
   policy: EgressPolicy,
   signal: AbortSignal,
   targetLabel: string,
+  useSystemCa: boolean,
 ): Promise<HopResult> {
   const { addresses: pinnedAddresses } = await resolvePinnedAddresses(
     targetUrl,
@@ -303,6 +305,7 @@ async function openPinnedHop(
       {
         method,
         headers,
+        ...localTlsOptions(targetUrl, useSystemCa),
         ...(pinnedAddresses
           ? { lookup: createPinnedLookup(pinnedAddresses) }
           : {}),
@@ -641,6 +644,7 @@ export function createPinnedStreamingFetch(
           }),
           socketController.signal,
           targetLabel,
+          allowPrivateNetwork,
         );
 
         const status = response.statusCode ?? 0;
