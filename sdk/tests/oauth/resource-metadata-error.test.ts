@@ -102,4 +102,51 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
       )
     ).toBe(false);
   });
+
+  // Discovery tries the path-specific URL first and falls back to the root.
+  // A transport failure on the first attempt followed by a root 404 must not
+  // read as "not implemented": the server may publish PRM only at the path we
+  // never reached.
+  it("does not call it not-implemented when an earlier attempt got no response", async () => {
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/.well-known/oauth-protected-resource/mcp")) {
+        throw new TypeError("Failed to fetch");
+      }
+      return new Response("", { status: 404 });
+    });
+
+    await expect(
+      discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+    ).rejects.toThrow(RESOURCE_METADATA_NO_RESPONSE);
+    expect(fetchFn).toHaveBeenCalledWith(
+      new URL("https://mcp.example.com/.well-known/oauth-protected-resource"),
+      expect.anything()
+    );
+  });
+
+  it("still calls it not-implemented when every attempt was a real 404", async () => {
+    const fetchFn = vi.fn(async () => new Response("", { status: 404 }));
+
+    await expect(
+      discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+    ).rejects.toThrow(RESOURCE_METADATA_NOT_IMPLEMENTED);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the fallback document when the root serves it", async () => {
+    const metadata = {
+      resource: SERVER_URL,
+      authorization_servers: ["https://auth.example.com"],
+    };
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/mcp")) {
+        throw new TypeError("Failed to fetch");
+      }
+      return Response.json(metadata);
+    });
+
+    await expect(
+      discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+    ).resolves.toEqual(metadata);
+  });
 });

@@ -309,12 +309,17 @@ function shouldAttemptFallback(
   );
 }
 
+/**
+ * `response` is the last attempt's. `sawNoResponse` records whether ANY attempt
+ * failed at the transport, because the fallback can turn a path-specific URL we
+ * never reached into a root 404 — and that 404 says nothing about the path.
+ */
 async function discoverMetadataWithFallback(
   serverUrl: string | URL,
   wellKnownType: string,
   fetchFn: FetchFn,
   opts?: DiscoverMetadataOptions,
-) {
+): Promise<{ response: Response | undefined; sawNoResponse: boolean }> {
   const issuer = new URL(serverUrl);
   const protocolVersion = opts?.protocolVersion ?? LATEST_PROTOCOL_VERSION;
 
@@ -328,6 +333,7 @@ async function discoverMetadataWithFallback(
   }
 
   let response = await tryMetadataDiscovery(url, protocolVersion, fetchFn);
+  let sawNoResponse = !response;
 
   if (!opts?.metadataUrl && shouldAttemptFallback(response, issuer.pathname)) {
     response = await tryMetadataDiscovery(
@@ -335,9 +341,10 @@ async function discoverMetadataWithFallback(
       protocolVersion,
       fetchFn,
     );
+    sawNoResponse ||= !response;
   }
 
-  return response;
+  return { response, sawNoResponse };
 }
 
 function buildDiscoveryUrls(authorizationServerUrl: string | URL) {
@@ -778,7 +785,7 @@ export async function discoverOAuthProtectedResourceMetadata(
   opts?: DiscoverProtectedResourceMetadataOptions,
   fetchFn: FetchFn = fetch,
 ): Promise<OAuthProtectedResourceMetadata> {
-  const response = await discoverMetadataWithFallback(
+  const { response, sawNoResponse } = await discoverMetadataWithFallback(
     serverUrl,
     "oauth-protected-resource",
     fetchFn,
@@ -794,7 +801,12 @@ export async function discoverOAuthProtectedResourceMetadata(
 
   if (response.status === 404) {
     await response.text().catch(() => {});
-    throw new Error(RESOURCE_METADATA_NOT_IMPLEMENTED);
+    // Only a 404 on every attempt means the server publishes no document.
+    throw new Error(
+      sawNoResponse
+        ? RESOURCE_METADATA_NO_RESPONSE
+        : RESOURCE_METADATA_NOT_IMPLEMENTED,
+    );
   }
 
   if (!response.ok) {
@@ -821,7 +833,7 @@ export async function discoverOAuthMetadata(
       ? new URL(authorizationServerUrl)
       : authorizationServerUrl ?? issuerUrl;
 
-  const response = await discoverMetadataWithFallback(
+  const { response } = await discoverMetadataWithFallback(
     authServerUrl,
     "oauth-authorization-server",
     fetchFn,

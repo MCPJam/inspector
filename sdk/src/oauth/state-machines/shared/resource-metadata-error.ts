@@ -24,8 +24,10 @@ export const RESOURCE_METADATA_NOT_IMPLEMENTED =
   "Resource server does not implement OAuth 2.0 Protected Resource Metadata.";
 
 /**
- * Thrown by protected-resource-metadata discovery when no response arrived at
- * all — every attempt failed at the transport (network error, CORS rejection).
+ * Thrown by protected-resource-metadata discovery when an attempt got no
+ * response at all — it failed at the transport (network error, CORS
+ * rejection). That includes a path-specific attempt that failed before the
+ * root fallback returned 404: the 404 cannot speak for the path never reached.
  *
  * Kept apart from {@link RESOURCE_METADATA_NOT_IMPLEMENTED} on purpose: the
  * debugger's requests go through our own proxy, so "no response" is as likely
