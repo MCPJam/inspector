@@ -2705,6 +2705,7 @@ export default function App() {
   >(null);
   const restoredFirstRunSelectionRef = useRef<string | null>(null);
   const restoredFirstRunServerRef = useRef<string | null>(null);
+  const firstRunOAuthReturnServerRef = useRef<string | null>(null);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3471,6 +3472,11 @@ export default function App() {
     initialFirstRunServerChoiceState?.status === "started" &&
     pendingDashboardOAuth?.serverName ===
       initialFirstRunServerChoiceState.attemptedServerName;
+  useEffect(() => {
+    if (isReturningFirstRunOAuth && pendingDashboardOAuth) {
+      firstRunOAuthReturnServerRef.current = pendingDashboardOAuth.serverName;
+    }
+  }, [isReturningFirstRunOAuth, pendingDashboardOAuth]);
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
     (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
@@ -3520,7 +3526,15 @@ export default function App() {
       activeProjectId === "none");
   const openFirstRunServerConnection = useCallback(
     (draft: FirstRunServerDraft) => {
+      // A token retry or edited submission replaces any OAuth authorization
+      // challenge that is currently awaiting the user's decision.
+      pendingFirstRunAuthorizationRef.current?.(false);
+      pendingFirstRunAuthorizationRef.current = null;
       const stdioCommand = parseCommandInput(draft.urlOrCommand.trim());
+      const authorizationHeader =
+        draft.authentication === "bearer" && draft.bearerToken?.trim()
+          ? `Bearer ${draft.bearerToken.trim()}`
+          : undefined;
       const formData: ServerFormData = {
         name: draft.name,
         type: draft.transport,
@@ -3533,6 +3547,14 @@ export default function App() {
         useOAuth:
           draft.authentication === "auto" || draft.authentication === "oauth",
         authMethod: draft.authentication,
+        ...(authorizationHeader
+          ? {
+              headers: { Authorization: authorizationHeader },
+              secretPatch: {
+                headers: { Authorization: authorizationHeader },
+              },
+            }
+          : {}),
       };
       const validationError = validateServerFormData(formData);
       if (validationError) {
@@ -3598,15 +3620,31 @@ export default function App() {
   );
   const authorizeFirstRunConnection = useCallback(() => {
     const resolve = pendingFirstRunAuthorizationRef.current;
-    if (!resolve) return;
-    pendingFirstRunAuthorizationRef.current = null;
+    const serverName =
+      firstRunConnectionState.status === "authorization-required"
+        ? firstRunConnectionState.serverName
+        : null;
+    if (!serverName) return;
     setFirstRunConnectionState((current) =>
       current.status === "authorization-required"
         ? { ...current, status: "connecting" }
         : current,
     );
-    resolve(true);
-  }, []);
+    if (resolve) {
+      pendingFirstRunAuthorizationRef.current = null;
+      resolve(true);
+      return;
+    }
+
+    // After an OAuth round trip the original authorization promise no longer
+    // exists. A retry must start a fresh interactive flow for the saved server
+    // instead of leaving the dedicated authorization screen unresponsive.
+    void handleReconnect(serverName, {
+      forceOAuthFlow: true,
+      suppressErrors: true,
+      suppressSuccessToast: true,
+    });
+  }, [firstRunConnectionState, handleReconnect]);
 
   useEffect(() => {
     if (
@@ -3670,6 +3708,7 @@ export default function App() {
     if (!server) return;
 
     if (server.connectionStatus === "connected") {
+      firstRunOAuthReturnServerRef.current = null;
       const attemptId = firstRunConnectionAttemptRef.current;
       const { serverKind, serverName } = firstRunConnectionState;
       setPendingFirstRunConnection(null);
@@ -3708,15 +3747,34 @@ export default function App() {
     }
 
     if (server.connectionStatus === "failed") {
+      const isOAuthReturnFailure =
+        firstRunOAuthReturnServerRef.current ===
+        firstRunConnectionState.serverName;
+      // The saved project row can briefly replay the 401 from before OAuth
+      // while the callback owner is importing the new credential. The
+      // recovery effect above owns that window and will either publish the
+      // credential-aware success or return to the authorization modal. Do not
+      // let this stale failure launch a second account-picker flow.
+      if (isOAuthReturnFailure && pendingDashboardOAuth) return;
+
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
-        status: "failed",
+        status: isOAuthReturnFailure ? "authorization-required" : "failed",
         serverName: firstRunConnectionState.serverName,
         serverKind: firstRunConnectionState.serverKind,
-        error: server.lastError || "MCPJam could not connect to this server.",
+        error: isOAuthReturnFailure
+          ? sanitizeHostedOAuthErrorMessage(
+              server.lastError,
+              "MCPJam could not verify the server after authorization. Try again or use a token.",
+            )
+          : server.lastError || "MCPJam could not connect to this server.",
       });
     }
-  }, [appState.servers, firstRunConnectionState]);
+  }, [
+    appState.servers,
+    firstRunConnectionState,
+    pendingDashboardOAuth,
+  ]);
 
   // Repair stale `started` records left by the earlier flow, which created the
   // server successfully but never wrote its onboarding completion marker.
@@ -5161,6 +5219,15 @@ export default function App() {
     (shouldRouteToFirstRunOnboarding &&
       (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
       !firstRunOverlayDismissed);
+  // On an OAuth return there is a short auth/project hydration window before
+  // the overlay can mount again. Suspending only when it is already visible
+  // lets the background reconciler connect the same server and emit its own
+  // success toast. A persisted started record means onboarding still owns the
+  // connection until the user completes or dismisses the handoff.
+  const shouldSuspendFirstRunBackgroundConnections =
+    shouldShowFirstRunOverlay ||
+    (!firstRunOverlayDismissed &&
+      initialFirstRunServerChoiceState?.status === "started");
 
   useLayoutEffect(() => {
     if (shouldRouteToFirstRunOnboarding) {
@@ -5644,7 +5711,7 @@ export default function App() {
     ensureServersReady,
     evalChatHandoff,
     firstRunPlaygroundPrompt,
-    suspendRouteAutoConnect: shouldShowFirstRunOverlay,
+    suspendRouteAutoConnect: shouldSuspendFirstRunBackgroundConnections,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
@@ -5923,7 +5990,7 @@ export default function App() {
             activeHost={activeHost}
             activeHostId={activeHostId}
             isActiveHostSelectionHydrated={isActiveHostSelectionHydrated}
-            suspendAutoConnect={shouldShowFirstRunOverlay}
+            suspendAutoConnect={shouldSuspendFirstRunBackgroundConnections}
           />
           <AppReadyProvider
             isLoadingAppState={isLoading}

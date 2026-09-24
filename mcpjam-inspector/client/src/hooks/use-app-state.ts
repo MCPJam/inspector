@@ -45,6 +45,7 @@ export interface PendingDashboardOAuthState {
 }
 
 const PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS = 30 * 1000;
+const PENDING_DASHBOARD_OAUTH_FAILURE_SETTLE_MS = 500;
 
 interface ActiveOrganizationSelection {
   organizationId?: string;
@@ -416,12 +417,40 @@ export function useAppState({
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
     const pendingServer = appState.servers[pendingDashboardOAuth.serverName];
-    if (
-      pendingServer?.connectionStatus === "connected" ||
-      pendingServer?.connectionStatus === "failed"
-    ) {
+    // A failed runtime row is not terminal while an OAuth callback is being
+    // resumed. Project hydration can publish the pre-authorization 401 before
+    // the callback owner imports the credential and performs its credential-
+    // aware reconnect. Dropping this marker on that transient failure lets
+    // onboarding launch a second OAuth flow and loses its return destination.
+    // Success is terminal; genuine callback failures are bounded by the
+    // timeout below and are surfaced by the callback recovery owner.
+    if (pendingServer?.connectionStatus === "connected") {
       setPendingDashboardOAuth(null);
+      return;
     }
+
+    if (
+      pendingServer?.connectionStatus !== "failed" ||
+      hasHostedOAuthCallbackParams()
+    ) {
+      return;
+    }
+
+    // The callback owner dispatches its final connection result immediately
+    // before restoring the route. On that first route render React can still
+    // expose the pre-authorization 401 for one commit. Give the callback's
+    // CONNECT_SUCCESS a brief chance to land; if failure remains stable, drop
+    // the resume marker so onboarding can show its authorization recovery UI.
+    const timeoutId = window.setTimeout(() => {
+      setPendingDashboardOAuth((current) =>
+        current?.serverName === pendingDashboardOAuth.serverName &&
+        current.startedAt === pendingDashboardOAuth.startedAt
+          ? null
+          : current,
+      );
+    }, PENDING_DASHBOARD_OAUTH_FAILURE_SETTLE_MS);
+
+    return () => window.clearTimeout(timeoutId);
   }, [appState.servers, pendingDashboardOAuth]);
 
   useEffect(() => {

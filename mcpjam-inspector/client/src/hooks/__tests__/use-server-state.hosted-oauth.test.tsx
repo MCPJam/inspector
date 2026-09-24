@@ -258,6 +258,29 @@ describe("useServerState hosted OAuth callback guards", () => {
     expect(dispatch.mock.calls.some(([action]) => ["RECONNECT_REQUEST", "CONNECT_FAILURE"].includes(action.type))).toBe(false);
   });
 
+  it("preserves inline toast suppression through a forced OAuth reconnect", async () => {
+    const { initiateOAuth } = await import("@/lib/oauth/mcp-oauth");
+    vi.mocked(initiateOAuth).mockResolvedValue({ success: true } as any);
+    const { result } = renderHostedServerState();
+
+    await act(async () => {
+      await result.current.handleReconnect("asana", {
+        forceOAuthFlow: true,
+        connectionIntent: { kind: "add" },
+        suppressErrors: true,
+        suppressSuccessToast: true,
+      });
+    });
+
+    expect(
+      JSON.parse(localStorage.getItem("mcp-hosted-oauth-pending") ?? "{}"),
+    ).toMatchObject({
+      serverName: "asana",
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+  });
+
   // A `?code=` on a route this hook does not own must not be claimed. The
   // GitHub App bind returns to `/settings/integrations/github/callback`, and
   // this effect used to complete it as an MCP flow, fail, toast "No pending

@@ -469,6 +469,36 @@ describe("mcp-oauth", () => {
     ).mockResolvedValue(undefined);
   });
 
+  it("does not redirect after the initiating connect is canceled", async () => {
+    let current = true;
+    mockRunOAuthStateMachine.mockImplementationOnce(async (config: any) => {
+      current = false;
+      await config.onAuthorizationRequest({
+        authorizationUrl: "https://auth.example.com/authorize",
+      });
+      throw new Error("unreachable");
+    });
+
+    const { MCPOAuthProvider, initiateOAuth } = await import("../mcp-oauth");
+    const redirectSpy = vi
+      .spyOn(MCPOAuthProvider.prototype, "redirectToAuthorization")
+      .mockResolvedValue(undefined);
+
+    const result = await initiateOAuth(
+      {
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+      } as any,
+      { shouldContinue: () => current }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "OAuth authorization was canceled.",
+    });
+    expect(redirectSpy).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
