@@ -51,7 +51,10 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
-import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
+import {
+  assertRecordedSecretsOriginMatches,
+  assertSecretsOriginMatches,
+} from "./secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -1397,7 +1400,7 @@ export async function resolveLocalServerForConnect(
       sc.registrationMode
     );
     if (registrationMode !== "cimd") {
-      assertSecretsOriginMatches({
+      assertRecordedSecretsOriginMatches({
         boundOrigin: sc.secretsBoundOrigin,
         targetUrl: sc.url,
         serverName: options?.serverDisplayName ?? serverId,

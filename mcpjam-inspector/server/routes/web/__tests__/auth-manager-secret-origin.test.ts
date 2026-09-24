@@ -361,6 +361,27 @@ describe("credential binding scope — what it must NOT refuse", () => {
     expect(revealCalls).toEqual([]);
   });
 
+  it("does not refuse an unbound preregistered or DCR XAA row at the gate", async () => {
+    // Public clients store no secret, so they are never bound, and a DCR row is
+    // bound only after the registration that happens inside the mint. A stored
+    // secret without a binding is refused where it is resolved, in the mint.
+    for (const registrationMode of ["preregistered", "dcr"]) {
+      const { revealCalls } = mockBackend({
+        url: "https://mcp.example.com/mcp",
+        secretsBoundOrigin: undefined,
+        hasHeaders: false,
+        serverConfigExtra: { authMethod: "xaa", useXaa: true, registrationMode },
+      });
+
+      // Same probe as the CIMD case: the issuer check sits right after the gate.
+      await expect(connect()).rejects.toMatchObject({
+        status: 500,
+        message: expect.stringContaining("Missing XAA issuer"),
+      });
+      expect(revealCalls).toEqual([]);
+    }
+  });
+
   it("refuses a repointed preregistered XAA row before revealing its secret", async () => {
     // `preregistered` and `dcr` post the row's stored client secret to a token
     // endpoint discovered from the row's CURRENT url, which the mint's

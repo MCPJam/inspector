@@ -53,6 +53,22 @@ export interface SecretOriginBindingCheck {
   serverName?: string;
 }
 
+/**
+ * The pre-resolve form, for rows where whether a stored secret exists is only
+ * known once it is resolved (XAA preregistered and DCR). Refuses a binding that
+ * is recorded and names another origin; lets an unrecorded one through, because
+ * a public client stores no secret and so is never bound. Whoever resolves the
+ * secret must then call `assertSecretsOriginMatches` before spending it.
+ */
+export function assertRecordedSecretsOriginMatches(
+  check: SecretOriginBindingCheck,
+): void {
+  if (typeof check.boundOrigin !== "string" || !check.boundOrigin.trim()) {
+    return;
+  }
+  assertSecretsOriginMatches(check);
+}
+
 export function assertSecretsOriginMatches(
   check: SecretOriginBindingCheck,
 ): void {
