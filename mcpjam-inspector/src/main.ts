@@ -10,6 +10,7 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
+import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
   buildElectronSentryConfig,
@@ -20,6 +21,7 @@ import {
   dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
+import { retireConsoleOnStreamError } from "./log-console-safety.js";
 
 // `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
 // a packaged build, so the previous NODE_ENV check reported every shipped
@@ -46,6 +48,8 @@ Sentry.init({
   // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
   beforeSend: dropUpdaterInstallSpawnRejection,
 });
+
+const desktopDiagnostics = installDesktopDiagnostics();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -89,6 +93,21 @@ import {
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+// ...and make a dead console survivable. On Windows a packaged build's stdout
+// is a pipe; once nothing reads it, every write fails with EPIPE, delivered as
+// an `'error'` event on the stream — which, unhandled, is an uncaught exception
+// that ends the app (INSPECTOR-ELECTRON-WE, three seconds into launch). Both
+// streams: warn and error lines go to stderr.
+retireConsoleOnStreamError(
+  log.transports.console,
+  [process.stdout, process.stderr],
+  (error) =>
+    // Already retired when this runs, so it reaches the file transport only.
+    log.warn(
+      "[main] console output disabled: stdout/stderr is no longer readable",
+      error,
+    ),
+);
 
 // Sentry's default integrations capture these; this puts them in the log file
 // the user actually attaches to a bug report (and is the only diagnostic when
@@ -611,6 +630,8 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     },
     show: false, // Don't show until ready
   });
+
+  desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
 
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);

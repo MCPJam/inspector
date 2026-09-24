@@ -189,26 +189,54 @@ describe("buildScorerTable groups", () => {
     expect(groups.map((group) => group.stage)).toEqual([...USER_VALUE_STAGES]);
   });
 
-  it("puts a muted observed row on connection and discovery", () => {
+  it("leads every stage the runner measures with its runner check", () => {
     const { groups } = buildScorerTable({
       model: groupGradersByStage({ predicates: [] }),
       predicates: [],
     });
-    for (const stage of ["connection", "discovery"] as const) {
+    for (const stage of [
+      "connection",
+      "discovery",
+      "call",
+      "response",
+    ] as const) {
       const group = groups.find((entry) => entry.stage === stage);
       // First, ahead of any standard check the stage lists as off.
-      expect(group?.rows[0]).toEqual(
+      expect(group?.rows[0], stage).toEqual(
         expect.objectContaining({
           kind: "observed",
           muted: true,
           enabled: true,
           name: RUNNER_MEASUREMENT_LABELS[stage],
+          // Never a gate. It renders a Built-in badge rather than this role.
+          role: "advisory",
         }),
       );
       expect(
-        group?.rows.slice(1).every((row) => row.kind === "preset"),
+        group?.rows.filter((row) => row.kind === "observed"),
         stage,
-      ).toBe(true);
+      ).toHaveLength(1);
+    }
+    // Named from the SDK catalog, the same names the run page uses.
+    expect(RUNNER_MEASUREMENT_LABELS).toEqual({
+      connection: "Successful connection",
+      discovery: "Tools listed",
+      call: "Tool call completed",
+      response: "Result returned to the model",
+    });
+    // Tool call keeps its argument-matching row beside the runner check.
+    const call = groups.find((entry) => entry.stage === "call");
+    expect(call?.rows.map((row) => row.kind).slice(0, 2)).toEqual([
+      "observed",
+      "match",
+    ]);
+    // Selection and User value have no runner check.
+    for (const stage of ["selection", "userValue"] as const) {
+      const group = groups.find((entry) => entry.stage === stage);
+      expect(
+        group?.rows.some((row) => row.kind === "observed"),
+        stage,
+      ).toBe(false);
     }
   });
 
@@ -293,9 +321,10 @@ describe("buildScorerTable groups", () => {
         family: expect.objectContaining({ id: latency.id, suiteRules: 1 }),
       }),
     ]);
-    // A suppressed rule is listed, not counted: the card reads as ungraded.
+    // A suppressed rule is listed, not counted: the card reads as covered by
+    // its runner check alone.
     expect(cards.find((card) => card.stage === "response")?.chip.label).toBe(
-      "No evaluator",
+      "Built-in runner check",
     );
   });
 

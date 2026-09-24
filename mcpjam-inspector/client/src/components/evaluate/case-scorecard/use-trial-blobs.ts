@@ -15,6 +15,7 @@ import { useAction } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EvalIteration } from "@/components/evals/types";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import { registerArtifactUrls, useArtifactUrlEpoch } from "@/lib/artifact-urls";
 
 export type TrialBlobRead =
   | { state: "ok"; blob: TraceEnvelope }
@@ -159,6 +160,7 @@ export function useTrialBlobs({
       const next = new Map<string, TrialBlobRead>(initial);
       settled.forEach((outcome, index) => {
         const id = fetchIds[index]!;
+        if (outcome.status === "fulfilled") registerArtifactUrls(outcome.value);
         next.set(
           id,
           outcome.status === "fulfilled"
@@ -181,6 +183,49 @@ export function useTrialBlobs({
     // `skipped` is derived from the same inputs as `identity`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, identity, seedId]);
+
+  /**
+   * The trials' widget HTML and screenshots arrive as short-lived artifact
+   * links, and the cache above would keep handing back the expired ones for
+   * as long as the page stays open. When a link expires anywhere on the page,
+   * re-read the trials in the background, register their fresh links and
+   * swap them in without blanking the view. The seeded trial belongs to the
+   * page, whose own loader renews it.
+   */
+  const artifactUrlEpoch = useArtifactUrlEpoch();
+  const handledArtifactUrlEpochRef = useRef(artifactUrlEpoch);
+  useEffect(() => {
+    if (artifactUrlEpoch === handledArtifactUrlEpochRef.current) return;
+    handledArtifactUrlEpochRef.current = artifactUrlEpoch;
+    if (!enabled) return;
+    let cancelled = false;
+    for (const id of fetchIds) {
+      if (id === seedId) continue;
+      const key = sourceKey(id);
+      getBlobRef
+        .current({ iterationId: id })
+        .then((blob) => {
+          registerArtifactUrls(blob);
+          remember(key, Promise.resolve(blob));
+          if (cancelled) return;
+          setReads((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Map(prev);
+            next.set(id, { state: "ok", blob });
+            return next;
+          });
+        })
+        .catch(() => {
+          // Keep what is shown; the next expired link retries.
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // Re-reads what is on screen now; `fetchIds` changing is the main
+    // effect's job.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifactUrlEpoch, enabled]);
 
   return { reads, loading, capped };
 }
