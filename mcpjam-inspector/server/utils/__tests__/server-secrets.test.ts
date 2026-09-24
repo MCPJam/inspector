@@ -39,6 +39,7 @@ describe("fetchRuntimeServerSecrets", () => {
 
     await expect(
       fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
         bearerToken: "bearer-token",
         projectId: "project-1",
         serverId: "server-1",
@@ -52,10 +53,15 @@ describe("fetchRuntimeServerSecrets", () => {
 
   it("requires service authentication for scenario secrets and preserves the viewer bearer", async () => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      Response.json({ success: true, headers: { Authorization: "synthetic" } }),
+      Response.json({
+        success: true,
+        headers: { Authorization: "synthetic" },
+        secretsBoundOrigin: "https://example.com",
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const args = {
+      expectedTargetUrl: "https://example.com/mcp",
       bearerToken: "tester-token",
       projectId: "project-1",
       serverId: "server-1",
