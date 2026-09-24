@@ -85,7 +85,11 @@ describe("useCreditTopupReturnFlow", () => {
 
   it("strips topup + session_id params and leaves stash alone on cancelled", () => {
     setLocationSearch("?topup=cancelled&session_id=cs_test_xyz&keep=1");
-    stashPendingTopup({ chatSessionId: "chat-1", message: "hello" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "hello",
+      organizationId: "org-1",
+    });
 
     const sendMessage = vi.fn();
     renderHook(() =>
@@ -104,13 +108,21 @@ describe("useCreditTopupReturnFlow", () => {
     // Telemetry: cancelled with stash present.
     expect(posthogCaptureMock).toHaveBeenCalledWith(
       "credit_topup_return_cancelled",
-      { location: "credit_topup_return", had_pending_stash: true },
+      {
+        location: "credit_topup_return",
+        organization_id: "org-1",
+        had_pending_stash: true,
+      },
     );
   });
 
   it("resends and clears stash on success when chat session matches", () => {
     setLocationSearch("?topup=success&session_id=cs_test_xyz");
-    stashPendingTopup({ chatSessionId: "chat-1", message: "hello again" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "hello again",
+      organizationId: "org-1",
+    });
 
     const sendMessage = vi.fn();
     renderHook(() =>
@@ -130,6 +142,7 @@ describe("useCreditTopupReturnFlow", () => {
       "credit_topup_return_success",
       {
         location: "credit_topup_return",
+        organization_id: "org-1",
         had_pending_stash: true,
         chat_session_matched: true,
         resend_executed: true,
@@ -142,6 +155,7 @@ describe("useCreditTopupReturnFlow", () => {
     stashPendingTopup({
       chatSessionId: "chat-other",
       message: "from another tab",
+      organizationId: "org-1",
     });
 
     const sendMessage = vi.fn();
@@ -160,6 +174,7 @@ describe("useCreditTopupReturnFlow", () => {
       "credit_topup_return_success",
       {
         location: "credit_topup_return",
+        organization_id: "org-1",
         had_pending_stash: true,
         chat_session_matched: false,
         resend_executed: false,
@@ -169,7 +184,11 @@ describe("useCreditTopupReturnFlow", () => {
 
   it("preserves stash and surfaces an error toast when sendMessage throws", () => {
     setLocationSearch("?topup=success");
-    stashPendingTopup({ chatSessionId: "chat-1", message: "retry me" });
+    stashPendingTopup({
+      chatSessionId: "chat-1",
+      message: "retry me",
+      organizationId: "org-1",
+    });
 
     const sendMessage = vi.fn().mockImplementation(() => {
       throw new Error("send failed");
@@ -192,6 +211,7 @@ describe("useCreditTopupReturnFlow", () => {
       "credit_topup_return_success",
       {
         location: "credit_topup_return",
+        organization_id: "org-1",
         had_pending_stash: true,
         chat_session_matched: true,
         resend_executed: false,

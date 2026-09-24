@@ -184,6 +184,15 @@ type ExecuteToolCallOptionsBase = {
    */
   filterToolName?: (toolName: string) => boolean;
   /**
+   * Per-CALL counterpart of `filterToolName`, with the same skip semantics: a
+   * call it rejects is left unresolved — neither executed nor answered.
+   *
+   * The unit a caller can vouch for is the call, not the name. A resumed
+   * approval authorizes ONE tool call id; a name filter would also run any
+   * other unresolved call to that tool sitting in client-sent history (MJ-008).
+   */
+  filterToolCall?: (call: { toolCallId: string; toolName: string }) => boolean;
+  /**
    * SEP-1865 App-Provided Tools: when true, tool calls whose name isn't in
    * the tool index OR whose tool entry has no `execute` function are SKIPPED
    * (no result written, no throw). Used by the MCPJam free-model handler so
@@ -358,7 +367,12 @@ export async function executeToolCallsFromMessages(
         content?.type === "tool-call" &&
         !existingToolResultIds.has(content.toolCallId) &&
         (!options.filterToolName ||
-          options.filterToolName(content.toolName as string))
+          options.filterToolName(content.toolName as string)) &&
+        (!options.filterToolCall ||
+          options.filterToolCall({
+            toolCallId: content.toolCallId as string,
+            toolName: content.toolName as string,
+          }))
       ) {
         pendingToolCalls.push({ assistantIdx: i, content });
       }

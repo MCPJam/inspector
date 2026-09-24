@@ -55,6 +55,14 @@ const CHUNK_TARGET_BYTES = 1024 * 1024;
  */
 const RESULT_ENVELOPE_SLACK = 4096;
 
+/**
+ * Widget HTML is uploaded as text, never `text/html`: storage serves an object
+ * back with the type it was uploaded with, so HTML stored as HTML renders and
+ * runs its scripts when the storage URL is opened directly. Replay reads the
+ * bytes as text, so nothing that displays the widget changes.
+ */
+const WIDGET_HTML_STORAGE_CONTENT_TYPE = "text/plain; charset=utf-8";
+
 /** Hosts that never leave the machine, so plain http to them is not on a wire. */
 function isLoopbackHostname(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -1002,7 +1010,7 @@ async function uploadWidgetSnapshots(
           config,
           uploadUrl,
           snapshot.widgetHtml,
-          "text/html; charset=utf-8"
+          WIDGET_HTML_STORAGE_CONTENT_TYPE
         );
         uploadedSnapshots.push(
           removeInlineWidgetHtml({

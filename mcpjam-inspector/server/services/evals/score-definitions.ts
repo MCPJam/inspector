@@ -6,13 +6,21 @@
  * — nothing here hashes by hand, because two producers of the same digest is
  * exactly how a `definitionHash` stops meaning anything.
  *
- * Three scorers, and the roles are the load-bearing part:
+ * Five scorers, and the roles are the load-bearing part:
  *
- *   | scorerId                  | deterministic | role         | threshold |
- *   |---------------------------|---------------|--------------|-----------|
- *   | `predicate:<criterionId>` | true          | check policy | 1         |
- *   | `toolCalls:match`         | true          | gating       | 1         |
- *   | `judge:goalCompletion`    | false         | from the run | resolved  |
+ *   | scorerId                   | deterministic | role         | threshold  |
+ *   |----------------------------|---------------|--------------|------------|
+ *   | `predicate:<criterionId>`  | true          | check policy | 1          |
+ *   | `toolCalls:match`          | true          | gating       | 1          |
+ *   | `toolCalls:arguments`      | true          | gating       | 1          |
+ *   | `judge:goalCompletion`     | false         | from the run | resolved   |
+ *   | `judge:rubricChecks:<key>` | false         | advisory     | per answer |
+ *
+ * The two `toolCalls:*` scorers are the tool-call matcher's verdict split at
+ * the chain's stages: `match` is WHICH tools were called (Selection),
+ * `arguments` is HOW the expected ones were called (Tool call). Both gate, and
+ * together they pass exactly when the matcher did, so a gate on the pair means
+ * what a gate on the old single row meant.
  *
  * THE JUDGE'S ROLE COMES FROM THE RUN, NOT FROM THIS FILE. It used to be
  * hard-coded advisory, which made a gating judge structurally powerless: a
@@ -58,13 +66,18 @@ import {
  */
 import {
   hostedCriterionId,
+  hostedRubricCheckScorerId,
   HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
 
 export {
   hostedCriterionId,
   hostedPredicateScorerId,
+  hostedRubricCheckScorerId,
+  HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
@@ -91,8 +104,17 @@ export const HOSTED_PREDICATE_EVALUATOR_VERSION = "1";
  * the same `scorerVersion`, and a reader comparing them would have no way to
  * tell a fixed projection from a changed scorer. With it, the digest moves
  * because the version moved, which is exactly what a version is for.
+ *
+ * BUMPED to "3" when the arguments moved out into `toolCalls:arguments`. The
+ * row now passes on SELECTION alone — per turn, no missing call and extras
+ * within `maxExtraToolCalls` (order folds in through both) — so a v3 row and a
+ * v2 row can disagree on the same transcript, and the version says so. That
+ * also moves `evaluationConfigHash`: a run graded before the split cannot be
+ * gated against one graded after it, by design, until it is re-baselined.
  */
-export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "2";
+export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "3";
+/** Version of the hosted tool-call arguments projection. */
+export const HOSTED_TOOL_ARGUMENTS_EVALUATOR_VERSION = "1";
 /** Version of the hosted judge projection (NOT the judge template version). */
 export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
 
@@ -130,7 +152,8 @@ export function hostedPredicateScoreDefinition(args: {
 }
 
 /**
- * `toolCalls:match` — deterministic, gating, threshold 1.
+ * `toolCalls:match` — deterministic, gating, threshold 1. Selection only: the
+ * arguments are `toolCalls:arguments`.
  *
  * The hash covers the RESOLVED match options and the case polarity, for the
  * same reason `toolMatchScoreDefinition` does: flipping `toolCallOrder` or
@@ -150,6 +173,35 @@ export function hostedToolMatchScoreDefinition(args: {
       ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
     }),
     label: "expected tool calls",
+    deterministic: true,
+    passThreshold: 1,
+    role: authoredRequiredRole(),
+  };
+}
+
+/**
+ * `toolCalls:arguments` — deterministic, gating, threshold 1.
+ *
+ * Declared only when the case expects tool calls and compares their arguments
+ * (`argumentMatching !== "ignore"`): an ignored comparison has no verdict to
+ * report, and a gating row that could only ever pass would be a vacuous gate.
+ *
+ * The hash covers the full RESOLVED match options, not just
+ * `argumentMatching`: which actual call an expected one is compared against is
+ * decided by the pairing, and `toolCallOrder` decides the pairing.
+ */
+export function hostedToolArgumentsScoreDefinition(args: {
+  matchOptions?: Record<string, unknown>;
+}): ScoreDefinition {
+  return {
+    scorerId: HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+    idSource: "platform",
+    scorerVersion: HOSTED_TOOL_ARGUMENTS_EVALUATOR_VERSION,
+    implementationHash: canonicalDigest({
+      evaluatorVersion: HOSTED_TOOL_ARGUMENTS_EVALUATOR_VERSION,
+      matchOptions: args.matchOptions ?? {},
+    }),
+    label: "expected tool call arguments",
     deterministic: true,
     passThreshold: 1,
     role: authoredRequiredRole(),
@@ -216,6 +268,60 @@ export function hostedJudgeScoreDefinition(args: {
   };
 }
 
+/** Version of the hosted rubric-check projection (NOT the question template). */
+export const HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION = "1";
+
+/**
+ * The model every rubric-check DEFINITION names. The row names the rail that
+ * actually answered (Jev, or the fallback model when Jev could not be
+ * reached), outside `definitionHash`, so a fallback on one trial never forks a
+ * criterion's identity across the run.
+ */
+export const HOSTED_RUBRIC_CHECKS_MODEL = "typesafe-ai/jev";
+
+/** One asked rubric-check question, as the backend's verdict describes it. */
+export type HostedRubricCheckDefinitionInput = {
+  /** `c:<criterionId>` for a suite criterion, `q:<questionId>` if authored. */
+  key: string;
+  kind: "boolean" | "choice" | "score";
+  label: string;
+  /** Digest of the rendered question and its pass line, from the backend. */
+  contentDigest: string;
+  passThreshold: number;
+  templateVersion?: number;
+  templateHash?: string;
+};
+
+/**
+ * `judge:rubricChecks:<key>` — non-deterministic and ALWAYS advisory.
+ *
+ * The hash covers the question's content digest (its wording, options, levels
+ * and pass line), its kind and the question template. Rewording a criterion
+ * therefore mints a new definition under the same scorer id: a different
+ * question, honestly, and one a baseline comparison shows as removed and
+ * added. The settings page says so where the wording is edited.
+ */
+export function hostedRubricCheckScoreDefinition(
+  args: HostedRubricCheckDefinitionInput,
+): ScoreDefinition {
+  return {
+    scorerId: hostedRubricCheckScorerId(args.key),
+    idSource: "platform",
+    scorerVersion: HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION,
+    implementationHash: canonicalDigest({
+      kind: args.kind,
+      contentDigest: args.contentDigest,
+      templateVersion: args.templateVersion ?? null,
+      templateHash: args.templateHash ?? null,
+    }),
+    label: `rubric check: ${args.label}`,
+    deterministic: false,
+    passThreshold: args.passThreshold,
+    role: "advisory",
+    model: HOSTED_RUBRIC_CHECKS_MODEL,
+  };
+}
+
 /**
  * Emitted only when the agent-activity guard fired, so a normal run's
  * `evaluationConfigHash` stays unchanged.
@@ -249,6 +355,13 @@ export type HostedScoreDefinitionInputs = {
     matchOptions?: Record<string, unknown>;
     isNegativeTest?: boolean;
   };
+  /**
+   * Present when the case authored tool-call expectations AND compares their
+   * arguments. See `hostedToolArgumentsScoreDefinition`.
+   */
+  toolArguments?: {
+    matchOptions?: Record<string, unknown>;
+  };
   /** Present only once a judge verdict exists (i.e. on the second pass). */
   judge?: {
     threshold: number;
@@ -262,6 +375,8 @@ export type HostedScoreDefinitionInputs = {
   };
   /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
   agentActivityFired?: boolean;
+  /** One per question the rubric-check pass asked (second pass only). */
+  rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
 };
 
 /**
@@ -286,11 +401,17 @@ export function buildHostedScoreDefinitions(
   if (inputs.toolMatch) {
     definitions.push(hostedToolMatchScoreDefinition(inputs.toolMatch));
   }
+  if (inputs.toolArguments) {
+    definitions.push(hostedToolArgumentsScoreDefinition(inputs.toolArguments));
+  }
   if (inputs.judge) {
     definitions.push(hostedJudgeScoreDefinition(inputs.judge));
   }
   if (inputs.agentActivityFired) {
     definitions.push(hostedAgentActivityScoreDefinition());
+  }
+  for (const question of inputs.rubricChecks ?? []) {
+    definitions.push(hostedRubricCheckScoreDefinition(question));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

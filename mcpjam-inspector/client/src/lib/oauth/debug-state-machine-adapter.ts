@@ -1,5 +1,7 @@
 import {
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -137,8 +139,30 @@ async function readProxyError(response: Response): Promise<string | undefined> {
   return reason.slice(0, MAX_PROXY_ERROR_CHARS);
 }
 
-export function createDebugRequestExecutor(): OAuthRequestExecutor {
+interface ProxyFailureContext {
+  requestUrl: string;
+  requestMethod: string;
+  proxyStatus: number;
+}
+
+function diagnosticUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return "[invalid URL]";
+    }
+    // Paths can contain tokens too. Only the origin belongs in diagnostics.
+    return url.origin;
+  } catch {
+    return "[invalid URL]";
+  }
+}
+
+export function createDebugRequestExecutor(
+  onProxyFailure?: (failure: ProxyFailureContext | undefined) => void,
+): OAuthRequestExecutor {
   return async (request) => {
+    onProxyFailure?.(undefined);
     const debugProxyPath = HOSTED_MODE
       ? "/api/web/oauth/debug/proxy"
       : "/api/mcp/oauth/debug/proxy";
@@ -162,6 +186,11 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
 
     if (!proxyResponse.ok) {
       const reason = await readProxyError(proxyResponse);
+      onProxyFailure?.({
+        requestUrl: diagnosticUrl(request.url),
+        requestMethod: request.method,
+        proxyStatus: proxyResponse.status,
+      });
       throw new Error(
         `Backend debug proxy error: ${proxyResponse.status} ${
           proxyResponse.statusText
@@ -266,11 +295,19 @@ function createHostedClientSecretResolver({
  * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
  * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
  *
- * The SDK owns the message and exports it, so matching here cannot drift out of
- * sync with what the machines actually throw.
+ * The missing `registration_endpoint` failure is the same shape: the server
+ * under test offers no dynamic client registration and the user configured no
+ * pre-registered client to fall back to (or strict conformance forbids the
+ * fallback). That is a setup the debugger exists to surface, and the toast
+ * says exactly what to do about it.
+ *
+ * The SDK owns both messages and exports them, so matching here cannot drift
+ * out of sync with what the machines actually throw.
  */
 const UNREPORTED_STEP_FAILURES = new Set([
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
 ]);
 
 function isUnreportedStepFailure(error: string): boolean {
@@ -299,12 +336,20 @@ function isUnreportedStepFailure(error: string): boolean {
  */
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
-  context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
+  context: {
+    protocolVersion: OAuthProtocolVersion;
+    getStep: () => string;
+    takeProxyFailure: () => ProxyFailureContext | undefined;
+  },
 ): InspectorOAuthStateMachineConfig["updateState"] {
   let lastReportedError: string | undefined;
 
   return (updates) => {
     const error = updates.error;
+    // Consume on any error (including suppressed ones) or explicit reset so
+    // a later, unrelated step cannot inherit an earlier proxy failure.
+    const proxyFailure =
+      "error" in updates ? context.takeProxyFailure() : undefined;
     if (
       typeof error === "string" &&
       (error.startsWith("Warning: ") || isUnreportedStepFailure(error))
@@ -334,6 +379,7 @@ function withStepFailureReporting(
             (updates as { currentStep?: string }).currentStep ??
             context.getStep(),
           protocolVersion: context.protocolVersion,
+          ...proxyFailure,
         },
       });
     } else if (!error && "error" in updates) {
@@ -360,6 +406,7 @@ export function createInspectorOAuthStateMachine(
     ? preregisteredClientSecret
     : undefined;
   const resolveHostedClientSecret = createHostedClientSecretResolver(config);
+  let proxyFailure: ProxyFailureContext | undefined;
 
   return createOAuthStateMachine({
     ...machineConfig,
@@ -367,6 +414,11 @@ export function createInspectorOAuthStateMachine(
       protocolVersion: config.protocolVersion,
       getStep: () =>
         (config.getState?.() ?? config.state).currentStep ?? "unknown",
+      takeProxyFailure: () => {
+        const failure = proxyFailure;
+        proxyFailure = undefined;
+        return failure;
+      },
     }),
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     // Explicit non-connect intent. The connect paths fail closed when required
@@ -375,7 +427,9 @@ export function createInspectorOAuthStateMachine(
     // continue, and only because this surface asked for it by name.
     requiredMetadataEnforcement: "observe",
     redirectUrl: getDebugRedirectUrl(),
-    requestExecutor: createDebugRequestExecutor(),
+    requestExecutor: createDebugRequestExecutor((failure) => {
+      proxyFailure = failure;
+    }),
     // The debugger is a local-dev inspection surface: when the server under
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only

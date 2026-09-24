@@ -1,10 +1,19 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "@/lib/toast";
-import type { UpdateStatus } from "@/types/electron";
+import type { UpdateStatus, FailedUpdateStatus } from "@/types/electron";
 
-// Public releases page — repo is github.com/MCPJam/inspector (verified from
-// mcpjam-inspector/package.json `repository.url`).
-const RELEASES_URL = "https://github.com/MCPJam/inspector/releases";
+function showFailure(status: FailedUpdateStatus) {
+  toast.error(
+    status.reason === "shutdown_stuck"
+      ? "Update failed. Force quit MCPJam and reopen it."
+      : "Update failed. Please reopen MCPJam and try again.",
+    {
+      id: `desktop-update-${status.attemptId}`,
+      duration: Infinity,
+      closeButton: true,
+    },
+  );
+}
 
 export function useUpdateNotification() {
   const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
@@ -26,24 +35,23 @@ export function useUpdateNotification() {
    */
   const statusRef = useRef<UpdateStatus>({ kind: "idle" });
 
+  const shownFailure = useRef<string | undefined>(undefined);
   const applyStatus = useCallback((next: UpdateStatus) => {
     statusRef.current = next;
-    // A click that raced a collapse leaves `restartRequested` set with nothing
-    // installing behind it. Only `update-error` used to clear it, and a first
-    // collapse is silent — so the pill would come back stuck on "Updating…"
-    // at the next download. Neither `idle` nor `manual` has an install in
-    // flight; only `downloaded` does, because the main process hands off to
-    // Electron's teardown without a further status.
-    if (next.kind === "idle" || next.kind === "manual") {
+    if (next.kind === "idle" || next.kind === "failed")
       setRestartRequested(false);
+    if (next.kind === "failed") {
+      const key = `${next.attemptId}:${next.reason}`;
+      if (shownFailure.current !== key) {
+        shownFailure.current = key;
+        showFailure(next);
+      }
     }
     setStatus(next);
   }, []);
 
-  const downloadManually = useCallback(() => {
-    window.electronAPI?.app?.openExternal(RELEASES_URL)?.catch((error) => {
-      console.warn("Failed to open releases page", error);
-    });
+  const showUpdateError = useCallback(() => {
+    if (statusRef.current.kind === "failed") showFailure(statusRef.current);
   }, []);
 
   useEffect(() => {
@@ -60,27 +68,9 @@ export function useUpdateNotification() {
       liveEventReceived = true;
       applyStatus(next);
     });
-    api.onUpdateError(() => {
-      // The install did not happen, so let the user ask again. Its own toast
-      // offers the manual download; this re-arms the button behind it.
-      setRestartRequested(false);
-      // Surface a fallback path — auto-update can stall silently on macOS
-      // (Squirrel staging / signing issues), so always offer a manual
-      // download as an escape hatch. Once the main process has given up on
-      // this install there is no later in-app retry to promise, so the copy
-      // says so rather than "try again later".
-      const autoUpdateGaveUp = statusRef.current.kind === "manual";
-      toast.error(
-        autoUpdateGaveUp
-          ? "Automatic update isn't working on this install. Download the new version instead."
-          : "Update failed. Try again later.",
-        {
-          action: {
-            label: "Download manually",
-            onClick: downloadManually,
-          },
-        },
-      );
+    api.onUpdateError((failure) => {
+      liveEventReceived = true;
+      applyStatus(failure);
     });
 
     // Initial snapshot — apply only if a live event hasn't already overtaken it.
@@ -101,9 +91,14 @@ export function useUpdateNotification() {
       window.electronAPI?.update?.removeUpdateErrorListener();
     };
     // Both callbacks are stable, so this stays a mount-once effect.
-  }, [applyStatus, downloadManually]);
+  }, [applyStatus]);
 
   const restartAndInstall = useCallback(() => {
+    if (
+      statusRef.current.kind !== "pending" &&
+      statusRef.current.kind !== "downloaded"
+    )
+      return;
     setRestartRequested(true);
     window.electronAPI?.update?.restartAndInstall();
   }, []);
@@ -123,7 +118,7 @@ export function useUpdateNotification() {
   return {
     status,
     restartRequested,
-    downloadManually,
+    showUpdateError,
     restartAndInstall,
     simulateUpdate,
     simulateUpdateDownloaded,

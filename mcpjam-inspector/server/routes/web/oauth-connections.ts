@@ -12,6 +12,7 @@ import {
 } from "@mcpjam/sdk";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import {
   callerContextFromHono,
   createAuthorizedManager,
@@ -21,6 +22,8 @@ import { webErrorFromRoute, mapRuntimeError } from "./errors.js";
 const connections = new Hono();
 connections.use("*", bearerAuthMiddleware);
 connections.use("*", guestRateLimitMiddleware);
+// MJ-012: see the same line in oauth.ts.
+connections.use("*", passthroughRateLimitMiddleware);
 for (const op of ["", "/label", "/default", "/delete", "/profile"]) {
   connections.post(op || "/", async (c) => {
     try {

@@ -19,17 +19,34 @@
  * (the agent may roam; authority is the caller's bearer either way), which
  * is why this is a default rather than a clamp.
  *
- * Approval policy: operations that open a connection to a saved MCP server
- * inherit the host's `requireToolApproval`, mirroring the blanket approval
- * MCP tools get from the orchestration layer. `list_project_servers` is a
- * pure platform read and never needs approval, like `web_search`.
+ * Approval policy has three floors, and the first is not the host's to lower:
+ *
+ *   - ALWAYS asks: every operation the agent-op catalog marks `tier: "gated"`
+ *     (`routes/v1/agent-op-registry.ts`), plus every WRITE that catalog
+ *     refuses to offer an agent at all. The headless agent turns those into
+ *     proposals a human clicks; in chat the equivalent is the approval pill,
+ *     and a request body saying `requireToolApproval: false` does not remove
+ *     it (MJ-008). Derived from the catalog, not listed here, so the two
+ *     surfaces cannot drift apart.
+ *   - Follows the switch: operations that open a connection to a saved MCP
+ *     server, and the other spends in `APPROVAL_REQUIRED_IDS`.
+ *   - Never asks: pure platform reads like `list_project_servers`.
  *
  * `execute` returns `{ error: string }` instead of throwing so the model can
  * relay problems conversationally instead of breaking the turn. Results are
  * capped before they reach model context (`MODEL_OUTPUT_CAP`).
  */
 import { tool, type ToolSet } from "ai";
-import { needsApprovalFor } from "@/shared/tool-approval";
+import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
+import {
+  AGENT_OP_REGISTRY,
+  EXCLUDED_FROM_AGENT,
+} from "../../routes/v1/agent-op-registry.js";
+import {
+  isToolApprovalSigningAvailable,
+  markServerVerifiedApproval,
+  requiresServerVerifiedApproval,
+} from "../tool-approval-token.js";
 import {
   describePlatformRefusal,
   platformRefusalHint,
@@ -45,7 +62,7 @@ import {
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   listEvalCheckReposOperation,
-  getScenarioOperation,
+  getStudyOperation,
   getEvalIterationTraceOperation,
   getEvalRunDisclosureOperation,
   compareEvalRunOperation,
@@ -63,7 +80,7 @@ import {
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
-  listScenariosOperation,
+  listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   listEvalRunIterationsOperation,
@@ -102,30 +119,30 @@ import {
   updatePersonaOperation,
   listSecretsOperation,
   getSecretOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
+  getSwarmRunInsightsOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -211,8 +228,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   listEvalCheckReposOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
   listChatSessionsOperation,
   // Advertised with its reach NARROWED rather than excluded: see
   // `WORKSPACE_INPUT_CLAMPS` — scenario (visitor) sessions stay unsearchable
@@ -255,23 +271,23 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listSecretsOperation,
   getSecretOperation,
 
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
 
   // ── User testing ────────────────────────────────────────────────────────
   //
@@ -281,13 +297,13 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // assistant turn into a transcript reader. Same line `list_chat_sessions`
   // already draws. The exposure controls are excluded for the reason the tab
   // exists — the share link and access mode are shown inline there.
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -314,9 +330,9 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   connect_eval_check_repo:
     "The pre-rename spelling of connect_eval_github_repo, excluded for the same reason and by the same line.",
-  launch_journey_run:
+  launch_goal_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
-  cancel_journey_run:
+  cancel_goal_run:
     "The Swarms tab has a Stop control with the run in front of you; a chat tool would cancel by id with none of that context.",
   // Swarms authoring writes that REMOVE or SPEND. The reversible half of
   // authoring (create/update persona, journey, swarm) is advertised above —
@@ -365,17 +381,17 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: the section is the better view of it. Available on the API and CLI.",
   list_trace_destination_backfills:
     "Backfill history is operational detail an admin reads while diagnosing an export. Available on the API and CLI.",
-  archive_journey:
+  archive_goal:
     "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
   archive_swarm:
-    "Takes a container off the roster; the tab shows the journeys authored under it.",
+    "Takes a container off the roster; the tab shows the goals authored under it.",
   generate_personas:
     "Runs a model on the organization's account. The create flow in the Swarms tab is where generation belongs — it shows the drafts and lets you pick, where a chat tool would spend and hand back prose.",
-  generate_journeys:
+  generate_goals:
     "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
-  request_wave_insights:
-    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
-  cancel_wave_insights:
+  request_swarm_run_insights:
+    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the swarm run it applies to.",
+  cancel_swarm_run_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
   // Launches a browser and executes the caller's tool. The Apps tab renders
   // the same widget interactively, with the console and network panes beside
@@ -400,27 +416,27 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_chat_session_trace:
     "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
   // Scenarios (user testing).
-  publish_scenario:
+  publish_study:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
-  unpublish_scenario:
+  unpublish_study:
     "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
   // User testing: sessions and transcripts. PRIVACY, not risk — real visitors'
   // conversations, and a chat surface that can page them is a transcript
   // reader wearing an assistant's clothes. Mirrors `list_chat_sessions`.
-  list_user_testing_sessions:
+  list_study_sessions:
     "Visitor conversations; the User Testing tab is where you read them, with the consent context around them.",
-  get_user_testing_session:
+  get_study_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP where the caller asked for it explicitly.",
-  get_user_testing_scenario:
-    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it falls under the same privacy rule as the session reads above, not the aggregate rule that admits metrics and findings. The User Testing tab renders the same findings with the consent context around them.",
+  get_study:
+    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it falls under the same privacy rule as the session reads above, not the aggregate rule that admits metrics and findings. The User Testing tab renders the same findings with the consent context around them. This is a BEHAVIOR CHANGE from the deprecated get_scenario, which was advertised here because it carried settings and no visitor content; one read now carries both, and the stricter half decides. `list_studies` still is.",
   // Exposure controls. Each of these decides who can reach a live scenario or
   // what it may spend; the tab shows the link, the mode and the current caps
   // next to the control, which a chat tool cannot.
-  update_user_testing_scenario:
+  update_study:
     "Changing a scenario's access mode belongs next to the share link the tab already shows.",
-  set_user_testing_guest_execution:
+  set_study_guest_execution:
     "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
-  rotate_user_testing_link:
+  rotate_study_link:
     "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
   rotate_share_link:
     "Immediate and irreversible — everyone holding the old unified share URL loses the ability to redeem it. The UI confirms it.",
@@ -428,15 +444,15 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Share settings belong next to the Share dialog, which already shows the link, mode, and members.",
   set_share_mode:
     "Changing who can open a shared resource belongs next to the share link the UI already shows.",
-  upsert_user_testing_member:
+  upsert_study_member:
     "Granting someone access to a live scenario is a decision about who may talk to your servers.",
-  remove_user_testing_member:
+  remove_study_member:
     "Paired with the invite above; the member list is the tab's own surface.",
-  rebind_user_testing_scenario:
+  rebind_study:
     "Changes what visitors are talking to, under a link they already hold.",
-  request_user_testing_insights:
+  request_study_insights:
     "Spends against the organization's shared daily insights budget. The tab has the button, next to the window it applies to.",
-  cancel_user_testing_insights:
+  cancel_study_insights:
     "Paired with the request above. The wave pair is excluded on the same rule — offering a cancel for a request this surface cannot make is a half-surface, and the tab owns both halves.",
 
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
@@ -562,6 +578,11 @@ export function isMcpjamToolId(id: string): boolean {
   return OPERATIONS_BY_ID.has(id);
 }
 
+/** A workspace operation that only reads platform state. */
+export function isReadOnlyMcpjamToolId(id: string): boolean {
+  return OPERATIONS_BY_ID.get(id)?.readOnly === true;
+}
+
 // Operations that open an ephemeral connection to a user's saved MCP server
 // inherit the host's requireToolApproval. Pure platform API reads (project,
 // eval, scenario) never need approval.
@@ -623,6 +644,72 @@ const APPROVAL_REQUIRED_IDS = new Set([
   uninstallRegistryServerOperation.name,
 ]);
 
+/**
+ * Operations that pause for the user's approval WHATEVER the host's switch
+ * says (MJ-008), derived from the agent-op catalog:
+ *
+ *   - `tier: "gated"` there means "a human must click before this runs" — the
+ *     headless agent can only PROPOSE it. The chat equivalent of that click is
+ *     the approval pill, so the switch may add pills but can never remove one.
+ *   - A WRITE the catalog excludes from the agent altogether
+ *     (`EXCLUDED_FROM_AGENT`, e.g. `create_project_server`) is held to at
+ *     least the same bar: the registry judged it too consequential to even
+ *     propose unattended, and a chat turn is unattended with the switch off.
+ *
+ * Reads never land here, whichever list they are on.
+ */
+const CATALOG_GATED_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  AGENT_OP_REGISTRY.filter((entry) => entry.tier === "gated").map(
+    (entry) => entry.operation.name,
+  ),
+);
+
+export const ALWAYS_APPROVAL_TOOL_IDS: ReadonlySet<string> = new Set(
+  WORKSPACE_OPERATIONS.filter(
+    (operation) =>
+      operation.readOnly !== true &&
+      (CATALOG_GATED_OPERATION_NAMES.has(operation.name) ||
+        Object.prototype.hasOwnProperty.call(
+          EXCLUDED_FROM_AGENT,
+          operation.name,
+        )),
+  ).map((operation) => operation.name),
+);
+
+/** The approval floor a workspace operation is built with. */
+export function workspaceApprovalFloor(id: string): ApprovalFloor {
+  if (ALWAYS_APPROVAL_TOOL_IDS.has(id)) return "always";
+  return APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never";
+}
+
+/**
+ * Drop the always-ask workspace tools from a toolset, for an engine that
+ * cannot resume a server-executed approval (the local-runtime org path
+ * refuses a whole turn that advertises one). Everything else survives.
+ */
+export function withoutServerVerifiedApprovalTools(tools: ToolSet): {
+  tools: ToolSet;
+  removed: string[];
+} {
+  const removed: string[] = [];
+  const kept: ToolSet = {};
+  for (const [name, entry] of Object.entries(tools)) {
+    if (requiresServerVerifiedApproval(entry)) {
+      removed.push(name);
+      continue;
+    }
+    kept[name] = entry;
+  }
+  return removed.length > 0 ? { tools: kept, removed } : { tools, removed };
+}
+
+/**
+ * Why an always-ask operation is refused on a deployment that cannot sign
+ * approvals. Said to the MODEL, so it can tell the user instead of retrying.
+ */
+export const SERVER_APPROVAL_UNAVAILABLE_ERROR =
+  "This operation needs an approval the server can verify, and this deployment has no signing key for tool approvals (INSPECTOR_SERVICE_TOKEN is not set). It was not run.";
+
 // Surface note appended to each operation's description: in-app, an omitted
 // `project` means the chat's project, not the catalog's "most recently
 // updated" default for context-free callers.
@@ -668,8 +755,8 @@ export const WORKSPACE_INPUT_CLAMPS: Readonly<
    * Keep user-testing (`scenario`) transcripts out of in-app chat search.
    *
    * Those are real visitors' conversations with the product, and this surface
-   * already draws that line for the listings (`list_user_testing_sessions` and
-   * `get_user_testing_session` are both in `EXCLUDED_FROM_WORKSPACE` for
+   * already draws that line for the listings (`list_study_sessions` and
+   * `get_study_session` are both in `EXCLUDED_FROM_WORKSPACE` for
    * visitor privacy). Search would walk straight around it: one query would
    * return visitor titles and transcript previews in a chat turn — MORE of
    * those conversations than the excluded listings expose, not less.
@@ -776,17 +863,31 @@ export function buildMcpjamTool(
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;
 
-  // Floors: the ops that open a connection, spend credits or write a server row
-  // follow the switch; everything else is a read of the user's own workspace,
-  // which pausing cannot make safer.
+  // Floors (see `workspaceApprovalFloor`): catalog-gated operations and
+  // agent-excluded writes always ask; connection-opening ops and the other
+  // spends follow the switch; reads of the user's own workspace never ask.
+  const floor = workspaceApprovalFloor(id);
+
+  // An always-ask operation on a deployment that cannot sign approvals FAILS
+  // CLOSED: advertised so the model can say why, but it never runs and never
+  // pauses on a pill whose answer could not be verified.
+  if (floor === "always" && !isToolApprovalSigningAvailable()) {
+    return tool({
+      description: `${operation.description}${AMBIENT_PROJECT_NOTE}`,
+      inputSchema: operation.inputSchema,
+      needsApproval: false,
+      execute: async () => ({ error: SERVER_APPROVAL_UNAVAILABLE_ERROR }),
+    });
+  }
+
   const needsApproval = needsApprovalFor(
-    APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never",
+    floor,
     opts.requireToolApproval === true,
   );
 
   const clamp = WORKSPACE_INPUT_CLAMPS[id];
 
-  return tool({
+  const built = tool({
     description: `${operation.description}${AMBIENT_PROJECT_NOTE}${
       clamp?.descriptionNote ?? ""
     }`,
@@ -832,4 +933,5 @@ export function buildMcpjamTool(
       }
     },
   });
+  return floor === "always" ? markServerVerifiedApproval(built) : built;
 }

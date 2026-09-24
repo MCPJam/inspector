@@ -20,6 +20,7 @@ import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import { HomeTab } from "./components/HomeTab";
@@ -680,6 +681,7 @@ function ActiveBillingUpsellGate() {
 
   return (
     <BillingUpsellGate
+      organizationId={billingOrganizationId}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1893,7 +1895,7 @@ function SwarmsRouteContent() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, goals, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }
@@ -2866,6 +2868,7 @@ export default function App() {
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
+  const hostedOAuthAttempts = useRef(new Set<string>());
   useEffect(() => {
     // Wait for Convex/WorkOS auth to settle before deciding signed-in vs guest
     // bearer. On post-redirect mount the first render sees
@@ -2874,7 +2877,7 @@ export default function App() {
     // anonymous user with no scenarioAccess row and 403s on
     // /web/oauth/complete + /web/oauth/session/progress, then clears the
     // pending marker so the post-settle re-run can't recover.
-    if (isAuthLoading) {
+    if (isAuthLoading || isWorkOsLoading) {
       return;
     }
     const callbackContext = getHostedOAuthCallbackContext();
@@ -2890,11 +2893,15 @@ export default function App() {
     // 2R-iss: RFC 9207 issuer identification from the callback URL.
     const iss = urlParams.get("iss");
 
-    let cancelled = false;
+    const attempt = `${state}:${code ?? error}`;
+    if (hostedOAuthAttempts.current.has(attempt)) return;
+    hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
+    const callbackSearch = window.location.search;
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
-      if (cancelled) return;
+      // Ignore a completion after the user has left or started another attempt.
+      if (window.location.pathname !== "/oauth/callback" || window.location.search !== callbackSearch) return;
       if (errorMessage && callbackContext.serverName) {
         markPendingChatScopeStepUpCancelled(
           callbackContext.serverName,
@@ -3029,13 +3036,18 @@ export default function App() {
         );
       })
       .finally(() => {
-        if (!cancelled) setHostedOAuthHandling(false);
+        setHostedOAuthHandling(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
+  }, [
+    isAuthLoading,
+    isWorkOsLoading,
+    isAuthenticated,
+    workOsUser,
+    getAccessToken,
+    billingLocation.pathname,
+    billingLocation.search,
+  ]);
 
   // Retire any in-memory guest bearer the moment WorkOS auth lands. Without
   // this, a guest token minted before sign-in (or during a brief apiContext
@@ -3283,16 +3295,18 @@ export default function App() {
     setActiveHostId,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    isWorkOsLoading,
     currentActorKey: actorKey,
     hasOrganizations: selectableOrganizations.length > 0,
     isLoadingOrganizations,
     validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
-    requestSignIn: () => {
+    requestSignIn: (returnPath) => {
       // Ordinary app sign-in: remember the whole current URL — project
       // segment, query and hash included — so the round trip through WorkOS
       // returns to the exact page, not to the app's front door.
-      captureAppSignInReturnPath();
+      if (returnPath) writeAppSignInReturnPath(returnPath);
+      else captureAppSignInReturnPath();
       void signIn();
     },
   });
@@ -5054,6 +5068,9 @@ export default function App() {
     (projectRouteState.status === "ready" &&
       projectRouteState.projectId === requestedFirstRunProjectId);
   const shouldRouteToFirstRunOnboarding =
+    !isMcpOAuthCallback &&
+    !isOAuthCallback &&
+    !isDebugCallback &&
     !isHostedChatRoute &&
     pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
@@ -5392,7 +5409,10 @@ export default function App() {
   if (
     !isHostedChatRoute &&
     isAuthenticated &&
-    (currentUser === undefined || (currentUser === null && isEnsuringUser))
+    (currentUser === undefined ||
+      // Session revocation can return a null user before Convex's auth state
+      // changes or WorkOS finishes navigating away. That is expected at logout.
+      (currentUser === null && (isEnsuringUser || isSignOutInProgress())))
   ) {
     return <LoadingScreen />;
   }

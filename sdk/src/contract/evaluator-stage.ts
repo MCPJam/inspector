@@ -142,17 +142,27 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
 /**
  * Where each non-predicate grader's evidence is filed.
  *
- * Two entries, and both are projections rather than authored predicates: the
- * tool-call matcher, and the hosted goal-completion judge.
+ * Projections rather than authored predicates: the tool-call matcher's two
+ * halves, and the hosted judges. `toolCalls:match` is WHICH tools were called
+ * (missing calls, extras past the cap); `toolCalls:arguments` is HOW the
+ * expected ones were called, which is the Tool call stage's question rather
+ * than Selection's.
  */
 export const EVALUATOR_STAGE = {
   "toolCalls:match": "selection",
+  "toolCalls:arguments": "call",
   "judge:goalCompletion": "userValue",
   /**
    * Presentation routing only. Groundedness has no score definition until
    * R2-P2b and cannot author a second chain.
    */
   "judge:groundedness": "userValue",
+  /**
+   * The rubric-check judge's settings row. Its score rows carry one scorer id
+   * per question (`judge:rubricChecks:<key>`), all advisory, all about what
+   * the person got, so every one of them files here too.
+   */
+  "judge:rubricChecks": "userValue",
 } as const satisfies Record<string, UserValueStage>;
 
 /**
