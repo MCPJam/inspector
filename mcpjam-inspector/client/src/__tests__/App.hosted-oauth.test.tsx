@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import {
+  markSignOutInProgress,
+  resetSignOutLatchForTests,
+  SIGN_OUT_SUPPRESSION_WINDOW_MS,
+} from "../lib/auth/sign-out-latch";
 import { createAppRouter } from "../router";
 import { setAppRouter } from "../router-ref";
 import {
@@ -531,6 +536,7 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    resetSignOutLatchForTests();
     clearHostedOAuthPendingState();
     clearScenarioSession();
     localStorage.clear();
@@ -651,11 +657,38 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   afterEach(() => {
+    resetSignOutLatchForTests();
     if (vi.isMockFunction(window.history.replaceState)) {
       vi.mocked(window.history.replaceState).mockRestore();
     }
     vi.unstubAllGlobals();
   });
+
+  it.each(["signing out", "missing user", "expired sign-out"] as const)(
+    "handles a revoked or missing user while %s",
+    (state) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", "/servers");
+      mockWorkOsAuthState.user = { id: "user-1" };
+      mockUseQuery.mockImplementation((ref: string) =>
+        ref === "users:getCurrentUser" ? null : undefined,
+      );
+      if (state === "signing out") markSignOutInProgress();
+      if (state === "expired sign-out") {
+        markSignOutInProgress(Date.now() - SIGN_OUT_SUPPRESSION_WINDOW_MS - 1);
+      }
+      render(<App />);
+      if (state === "signing out") {
+        expect(
+          screen.queryByTestId("user-setup-error"),
+        ).not.toBeInTheDocument();
+        expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      } else {
+        expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+      }
+    },
+  );
 
   it("shows loading before any hosted authorize CTA can render", async () => {
     const view = render(<App />);
