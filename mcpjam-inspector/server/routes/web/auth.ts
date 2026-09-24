@@ -85,7 +85,10 @@ import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
-import { assertSecretsOriginMatches } from "../../utils/secret-origin-binding.js";
+import {
+  assertRecordedSecretsOriginMatches,
+  assertSecretsOriginMatches,
+} from "../../utils/secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -1957,7 +1960,7 @@ export async function createAuthorizedManager(
           auth.serverConfig.registrationMode,
         ) !== "cimd"
       ) {
-        assertSecretsOriginMatches({
+        assertRecordedSecretsOriginMatches({
           boundOrigin: auth.serverConfig.secretsBoundOrigin,
           targetUrl: auth.serverConfig.url,
           serverName: displayServerName,

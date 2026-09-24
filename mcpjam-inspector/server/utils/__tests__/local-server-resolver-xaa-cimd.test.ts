@@ -213,6 +213,32 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
     );
   });
 
+  it("lets an unbound DCR row reach the mint, where registration happens", async () => {
+    // A DCR row is bound only once it stores a confidential registration, and
+    // that registration happens inside the mint. Refusing the unbound row here
+    // would stop it from ever registering.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "dcr",
+          secretsBoundOrigin: undefined,
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "dcr" })
+    );
+  });
+
   it("refuses a mismatched DCR binding before minting", async () => {
     vi.stubGlobal(
       "fetch",

@@ -23,6 +23,7 @@ import {
   fetchXaaDcrAuthorizedTarget,
   type XaaDcrRegistration,
 } from "./xaa-dcr.js";
+import { assertSecretsOriginMatches } from "../utils/secret-origin-binding.js";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -412,6 +413,7 @@ export interface XaaMintServerConfig {
   xaaEmail?: string;
   registrationMode?: RegistrationMode;
   xaaClientAuth?: XaaClientAuthMethod;
+  secretsBoundOrigin?: string;
 }
 
 type EnsureXaaDcrRegistrationFn = typeof ensureXaaDcrRegistration;
@@ -583,6 +585,7 @@ export function buildXaaMintArgs(args: {
     allowPathScopedIssuer: sc.xaaAllowPathScopedIssuer,
     registrationMode: sc.registrationMode,
     xaaClientAuth: sc.xaaClientAuth,
+    secretsBoundOrigin: sc.secretsBoundOrigin,
     confidentialCimdProvider: args.confidentialCimdProvider,
     scope: sc.oauthScopes?.join(" ") || undefined,
     // Mock-login identity: stored override if set, else the XAA IdP mock-login
@@ -613,6 +616,11 @@ export async function mintXaaAccessToken(args: {
   allowPathScopedIssuer?: boolean;
   registrationMode?: RegistrationMode;
   xaaClientAuth?: XaaClientAuthMethod;
+  /**
+   * MJ-003 binding from authorize. Checked when a stored preregistered secret
+   * is resolved; absent is a refusal only if a secret actually comes back.
+   */
+  secretsBoundOrigin?: string | null;
   confidentialCimdProvider?: ConfidentialCimdProvider;
   scope?: string;
   /** Mock-login subject — already resolved (override or signed-in user). */
@@ -746,6 +754,17 @@ export async function mintXaaAccessToken(args: {
         ErrorCode.VALIDATION_ERROR,
         "Client ID is required for pre-registered XAA Connect"
       );
+    }
+    // MJ-003 at spend time. The connect gate only refuses a recorded binding
+    // that points elsewhere, because a public client stores no secret and is
+    // never bound. Once a stored secret comes back, it needs a matching one.
+    // DCR needs no twin of this: a stored registration is reused only when its
+    // fingerprint matches the current resource URL.
+    if (target.clientSecret) {
+      assertSecretsOriginMatches({
+        boundOrigin: args.secretsBoundOrigin,
+        targetUrl: target.resource ?? args.resource,
+      });
     }
     clientId = target.clientId;
     clientSecret = target.clientSecret;

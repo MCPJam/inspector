@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertRecordedSecretsOriginMatches,
   assertSecretsOriginMatches,
   originForCredentialBinding,
   sameCredentialBindingOrigin,
@@ -81,6 +82,37 @@ describe("sameCredentialBindingOrigin", () => {
     expect(sameCredentialBindingOrigin("https://a.example.com", null)).toBe(
       false,
     );
+  });
+});
+
+describe("assertRecordedSecretsOriginMatches", () => {
+  it("lets an unrecorded binding through for the spend-time check", () => {
+    for (const boundOrigin of [undefined, null, "", "   "]) {
+      expect(() =>
+        assertRecordedSecretsOriginMatches({
+          boundOrigin,
+          targetUrl: "https://mcp.example.com/mcp",
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses a recorded binding that names another origin", () => {
+    expect(() =>
+      assertRecordedSecretsOriginMatches({
+        boundOrigin: "https://owner.example.com",
+        targetUrl: "https://moved.example.com/mcp",
+      }),
+    ).toThrow(expect.objectContaining({ status: 403 }));
+  });
+
+  it("refuses a recorded binding that does not parse", () => {
+    expect(() =>
+      assertRecordedSecretsOriginMatches({
+        boundOrigin: "not a url",
+        targetUrl: "https://mcp.example.com/mcp",
+      }),
+    ).toThrow(expect.objectContaining({ status: 403 }));
   });
 });
 
