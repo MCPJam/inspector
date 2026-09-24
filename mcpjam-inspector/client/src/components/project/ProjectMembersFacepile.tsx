@@ -6,7 +6,7 @@ import { ShareProjectDialog } from "./ShareProjectDialog";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { cn } from "@/lib/utils";
-import { User } from "@workos-inc/authkit-js";
+import { User } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
 import type { ProjectVisibility } from "@/state/app-types";
 

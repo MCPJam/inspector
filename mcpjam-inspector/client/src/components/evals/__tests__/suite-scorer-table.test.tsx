@@ -7,6 +7,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { SuiteScorerTable } from "../suite-scorer-table";
 import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => true,
@@ -72,6 +73,75 @@ function renderTable(
   return { ...result, onPredicatesChange, onJudgeConfigChange, nextPredicates };
 }
 
+describe("SuiteScorerTable rubric checks", () => {
+  /** A deployment that grades rubric checks, with this goal-judge policy. */
+  function withRubricChecks(goalEnabled: boolean): SuiteCapabilities {
+    return {
+      judge: judgeCapabilities(),
+      judges: {
+        goalCompletion: {
+          role: "advisory",
+          template: { version: 1, hash: "t" },
+          execution: "wired",
+          calibration: judgeCapabilities().agreement,
+          policy: {
+            contractVersion: 4,
+            effective: { ...GOAL_COMPLETION_DEFAULTS, enabled: goalEnabled },
+            automatic: goalEnabled,
+          },
+        },
+        groundedness: {
+          role: "advisory",
+          template: null,
+          execution: "not_wired",
+          calibration: "unavailable",
+        },
+        rubricChecks: {
+          role: "advisory",
+          template: { version: 1, hash: "r" },
+          execution: "wired",
+          calibration: "unavailable",
+        },
+      },
+    } as unknown as SuiteCapabilities;
+  }
+
+  function rubricRow(container: HTMLElement) {
+    return container.querySelector(
+      '[data-scorer-id="judge:rubricChecks"]',
+    ) as HTMLElement | null;
+  }
+
+  it("pauses the row when the deployment policy turns the goal judge off", () => {
+    // The suite stores no `enabled`, so the policy decides — and rubric
+    // checks ride that judge's job, so they are off with it.
+    const { container } = renderTable({
+      judgeConfig: undefined,
+      capabilities: withRubricChecks(false),
+    });
+    const row = rubricRow(container);
+    expect(row).toBeTruthy();
+    expect(
+      within(row!).getByTestId("on-disabled-reason").textContent,
+    ).toContain("goal-completion judge, which is off");
+    expect(within(row!).getByRole("checkbox")).toHaveProperty("disabled", true);
+  });
+
+  it("leaves the row switchable while the policy keeps the judge on", () => {
+    const { container } = renderTable({
+      judgeConfig: undefined,
+      capabilities: withRubricChecks(true),
+    });
+    const row = rubricRow(container);
+    expect(row).toBeTruthy();
+    expect(within(row!).queryByTestId("on-disabled-reason")).toBeNull();
+    expect(within(row!).getByRole("checkbox")).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+});
+
 describe("SuiteScorerTable", () => {
   it("shows disabled checked boxes for required match rules", () => {
     const { container } = renderTable();
@@ -94,7 +164,12 @@ describe("SuiteScorerTable", () => {
       const group = container.querySelector(
         `[data-stage-group="${stage}"]`,
       ) as HTMLElement;
-      expect(group.textContent).toContain("Required");
+      const observed = group.querySelector(
+        '[data-scorer-row="observed"]',
+      ) as HTMLElement;
+      // A runner check decides nothing: Built-in, never Required.
+      expect(observed.textContent).toContain("Built-in");
+      expect(observed.textContent).not.toContain("Required");
       const details = group.querySelector("details");
       expect(details).toBeTruthy();
       expect(

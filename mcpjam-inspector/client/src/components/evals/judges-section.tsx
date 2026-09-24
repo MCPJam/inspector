@@ -12,6 +12,7 @@ import { Switch } from "@mcpjam/design-system/switch";
 import type { ModelDefinition } from "@/shared/types";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL,
+  RESERVED_JUDGE_SLOTS,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
 
@@ -80,12 +81,19 @@ export function pruneEmpty(
       // `severity: "warn"` would otherwise vanish on an unrelated model reset.
       gc.severity !== undefined),
   );
-  const groundedness = value.groundedness;
-  const hasGroundedness = groundedness !== undefined;
-  if (!hasGoalCompletion && !hasGroundedness) return undefined;
+  // Every other slot is kept whenever it is present: this section edits goal
+  // completion only, and dropping a slot it does not own would read as a
+  // deliberate clear of that judge's settings.
+  const reserved = Object.fromEntries(
+    RESERVED_JUDGE_SLOTS.filter((slot) => value[slot] !== undefined).map(
+      (slot) => [slot, value[slot]],
+    ),
+  ) as Partial<Pick<EvalJudgeConfig, (typeof RESERVED_JUDGE_SLOTS)[number]>>;
+  if (!hasGoalCompletion && Object.keys(reserved).length === 0)
+    return undefined;
   return {
     ...(hasGoalCompletion ? { goalCompletion: gc } : {}),
-    ...(hasGroundedness ? { groundedness } : {}),
+    ...reserved,
   };
 }
 
@@ -138,10 +146,7 @@ export function JudgesSection({
     patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
   ) => {
     const nextGC = { ...(gc ?? {}), ...patch };
-    const nextConfig: EvalJudgeConfig = {
-      goalCompletion: nextGC,
-      ...(value?.groundedness ? { groundedness: value.groundedness } : {}),
-    };
+    const nextConfig: EvalJudgeConfig = { ...value, goalCompletion: nextGC };
     onChange(pruneEmpty(nextConfig));
   };
 

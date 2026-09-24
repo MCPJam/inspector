@@ -11,6 +11,8 @@
  * unit-testable without stubbing globals.
  */
 
+import { isInjectedScriptException } from "./injected-script-frames";
+
 /**
  * Where this install runs. `hosted` is app.mcpjam.com; `self_hosted` covers
  * npx, Docker, and the desktop app. Shipped as a Sentry tag so a quota spike
@@ -209,7 +211,11 @@ export interface FingerprintableEvent {
   environment?: string;
   fingerprint?: string[];
   exception?: {
-    values?: { type?: string; value?: string }[];
+    values?: {
+      type?: string;
+      value?: string;
+      stacktrace?: { frames?: { filename?: string; function?: string }[] };
+    }[];
   };
   tags?: Record<string, unknown>;
   extra?: Record<string, unknown>;
@@ -318,6 +324,63 @@ export function groupOAuthDebuggerStepFailures<T extends FingerprintableEvent>(
   return event;
 }
 
+/**
+ * The browser `beforeSend`: drop injected-script crashes, then group the DOM
+ * mutation conflicts and OAuth-debugger step failures that survive.
+ *
+ * Sentry keeps its own `window.onerror` handler — `initSentry()` passes an
+ * `integrations` array without `defaultIntegrations: false`, so
+ * `globalHandlersIntegration` stays on — and `BROWSER_IGNORE_ERRORS` carries
+ * no entry for a stack overflow. Filtering only PostHog would leave Sentry
+ * opening issues for the same non-bug, which is how INSPECTOR-CLIENT-2GD
+ * arrived with its culprit set to a document route.
+ *
+ * Both reporters therefore share one rule (shared/injected-script-frames.ts)
+ * rather than each getting a message string to ignore: a real stack overflow
+ * in our own code has app frames and must still report from both.
+ *
+ * `origin` is the app's own origin, supplied by the caller. Omitted on a
+ * surface that has no document, where nothing is dropped.
+ */
+export function buildBrowserBeforeSend(origin?: string) {
+  return <T extends FingerprintableEvent>(event: T): T | null => {
+    if (origin !== undefined) {
+      const stacks = (event.exception?.values ?? []).map((value) => {
+        const frames = value.stacktrace?.frames ?? [];
+        return isSynthesizedInitialFrame(frames)
+          ? []
+          : frames.map((frame) => frame.filename);
+      });
+      if (isInjectedScriptException(stacks, origin)) return null;
+    }
+    return groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event));
+  };
+}
+
+/**
+ * Is this stack just the frame Sentry invented because it had none?
+ *
+ * `globalHandlersIntegration` runs `_enhanceEventWithInitialFrame`, which
+ * pushes `{ function: "?", filename: url || getLocationHref() }` — the
+ * document URL — and does so ONLY when the parsed stack came back empty
+ * (@sentry/browser 8.x, integrations/globalhandlers.js).
+ *
+ * A fabricated frame is not attribution. Without this the rule would invert
+ * itself on the Sentry side: the frameless exceptions it promises to spare are
+ * exactly the ones that reach `beforeSend` looking like a lone document frame,
+ * so they would be the only ones it dropped.
+ *
+ * Both conditions are load-bearing. `stripSentryFramesAndReverse` gives any
+ * nameless PARSED frame the same `"?"` placeholder, and the SDK only ever
+ * fabricates into an empty array, so the count and the name together are what
+ * separate an invention from a one-frame stack. A parsed lone `"?"` frame that
+ * matches anyway only ever keeps the event: the value it empties counts as
+ * unattributed (isInjectedScriptException), never as injected.
+ */
+function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
+  return frames.length === 1 && frames[0]?.function === "?";
+}
+
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
   return {
     dsn: ctx.dsn,
@@ -367,6 +430,11 @@ export function buildClientSentryConfig(
      * side. Defaults to false — replay is opt-in, per surface.
      */
     replayEnabled?: boolean;
+    /**
+     * The app's own origin, used to spot frames the browser stamped with the
+     * document. The caller reads it — this module stays globals-free.
+     */
+    documentOrigin?: string;
   },
 ) {
   return {
@@ -376,8 +444,7 @@ export function buildClientSentryConfig(
     // or storage failure that has nothing to do with DOM mutation, and
     // collapsing those by message would merge unrelated defects. The OAuth
     // debugger runs only in the browser client too.
-    beforeSend: <T extends FingerprintableEvent>(event: T) =>
-      groupOAuthDebuggerStepFailures(groupDomMutationConflicts(event)),
+    beforeSend: buildBrowserBeforeSend(ctx.documentOrigin),
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),

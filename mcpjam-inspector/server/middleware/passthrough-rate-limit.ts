@@ -1,20 +1,19 @@
 import { createHash } from "node:crypto";
 import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
-import { getClientIp } from "../utils/client-ip.js";
+import { getAttestedClientIp } from "../utils/client-ip.js";
 import { HOSTED_MODE } from "../config.js";
 
 /**
- * A spike brake on the `unverified_passthrough` branch of `bearerAuthMiddleware`.
+ * A spike brake on the JWT branches of `bearerAuthMiddleware`:
+ * `unverified_passthrough` and `authkit_jwt`.
  *
- * That branch is the one credential class the gateway does not check. An `sk_`
- * key is validated against WorkOS and metered per key; a guest token is
- * validated and metered per guest id. An AuthKit JWT is deliberately NOT
- * verified here — every route it fronts forwards the bearer to Convex, which
- * verifies it against AuthKit's JWKS, and verifying twice would add a JWKS
- * round trip to the hot path to reach the same answer. That reasoning is
- * sound, and it left this branch as the only one that reached the handlers
- * with no budget attached to it at all.
+ * An `sk_` key is validated against WorkOS and metered per key; a guest token
+ * is validated and metered per guest id. A signed-in AuthKit JWT — whether the
+ * gateway verified it (`authkit_jwt`) or let it through for Convex to verify
+ * (`unverified_passthrough`) — has no budget of its own anywhere else, so both
+ * labels are metered here. Verification changes whether the caller is who the
+ * token says; it does not change how fast they may call.
  *
  * ## What this is, and what it is not
  *
@@ -34,6 +33,13 @@ import { HOSTED_MODE } from "../config.js";
  * request and every request gets a fresh budget. The per-IP window is the
  * backstop those rotated requests converge on. Both apply; the token bucket is
  * the tighter one a real client meets first.
+ *
+ * The backstop is keyed on an ATTESTED address only (`getAttestedClientIp`:
+ * Cloudflare's `cf-connecting-ip` on the hosted edge, or the ingress header an
+ * operator names). A forwarding header is a value the caller writes, so keying
+ * on it would hand a token-rotating caller a fresh address per request too.
+ * Every request without an attested address shares ONE pooled window instead,
+ * the pattern `routes/web/bench.ts` and `audio-daily-limit.ts` follow.
  *
  * The token is HASHED before it becomes a map key. It is a credential, and
  * an in-memory structure that can end up in a heap dump has no business
@@ -63,8 +69,10 @@ import { HOSTED_MODE } from "../config.js";
  *     sits underneath it, so the safe direction is the coarser budget rather
  *     than refusing traffic we have simply run out of room to classify.
  *   - THE IP MAP DOES FAIL CLOSED at its cap. Nothing sits under it, and
- *     filling it takes 10k distinct addresses — a distributed flood, which is
- *     the situation a brake exists to bite in.
+ *     because only attested addresses get an entry, filling it takes 10k real
+ *     addresses — a distributed flood, which is the situation a brake exists to
+ *     bite in. Keyed on a claimed header instead, one host could fill it by
+ *     rotating that header and then lock out every new caller.
  *
  * Tokens that already have a window are still charged FIRST, which is the
  * property the ordering comment further down protects.
@@ -98,6 +106,15 @@ const TOKEN_WINDOW_MS = 60_000;
  */
 const IP_LIMIT = 600;
 const IP_WINDOW_MS = 60_000;
+
+/**
+ * The pooled window every request without an attested address shares — one
+ * bucket, not one each, so stripping or rotating a header neither skips the
+ * backstop nor mints a new entry. It covers many callers, so it gets the
+ * multiple the other pooled windows use.
+ */
+const UNATTESTED_IP_LIMIT = 4 * IP_LIMIT;
+const UNATTESTED_IP_KEY = "ip:_unattested";
 
 type Window = { count: number; windowStart: number };
 
@@ -175,6 +192,10 @@ function createFixedWindowMap(limit: number, windowMs: number): FixedWindowMap {
 
 const tokenWindows = createFixedWindowMap(TOKEN_LIMIT, TOKEN_WINDOW_MS);
 const ipWindows = createFixedWindowMap(IP_LIMIT, IP_WINDOW_MS);
+const unattestedWindows = createFixedWindowMap(
+  UNATTESTED_IP_LIMIT,
+  IP_WINDOW_MS
+);
 
 /** The map key for a bearer. Hashed — see the header. */
 function bearerKey(token: string): string {
@@ -194,18 +215,26 @@ function tooMany(c: Context, retryAfterMs: number) {
   );
 }
 
+/** The labels `bearerAuthMiddleware` gives a JWT caller. */
+const METERED_AUTH_METHODS: ReadonlySet<string> = new Set([
+  "unverified_passthrough",
+  "authkit_jwt",
+]);
+
 /**
  * Mounted AFTER `bearerAuthMiddleware`, which is what makes the narrow
- * condition below possible: the label it sets is the only thing that
- * distinguishes an asserted identity from a verified one, and every other
- * branch already carries its own budget.
+ * condition below possible: the label it sets is what distinguishes a JWT
+ * caller from the branches that already carry their own budget.
  */
 export async function passthroughRateLimitMiddleware(
   c: Context,
   next: Next
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
-  if (c.get("authMethod") !== "unverified_passthrough") return next();
+  const authMethod = c.get("authMethod");
+  if (typeof authMethod !== "string" || !METERED_AUTH_METHODS.has(authMethod)) {
+    return next();
+  }
 
   const authorization = c.req.header("authorization");
   // An EMPTY bearer still gets a token key, deliberately. `bearerAuthMiddleware`
@@ -242,12 +271,13 @@ export async function passthroughRateLimitMiddleware(
   }
 
   // The per-IP backstop, charged for EVERY request that got past the token
-  // bucket — including one with no parseable bearer at all.
-  const ip = getClientIp(c);
-  if (ip) {
-    const refusedMs = ipWindows.charge(`ip:${ip}`);
-    if (refusedMs !== null) return tooMany(c, refusedMs);
-  }
+  // bucket — including one with no parseable bearer at all. An attested
+  // address gets its own window; everything else shares the pooled one.
+  const ip = getAttestedClientIp(c);
+  const ipRefusedMs = ip
+    ? ipWindows.charge(`ip:${ip}`)
+    : unattestedWindows.charge(UNATTESTED_IP_KEY);
+  if (ipRefusedMs !== null) return tooMany(c, ipRefusedMs);
 
   // Only NOW does a first-seen token occupy an entry: the IP backstop has
   // already admitted this request, so the rate at which the map can be filled
@@ -263,9 +293,11 @@ export async function passthroughRateLimitMiddleware(
 
 export const PASSTHROUGH_TOKEN_LIMIT = TOKEN_LIMIT;
 export const PASSTHROUGH_IP_LIMIT = IP_LIMIT;
+export const PASSTHROUGH_UNATTESTED_IP_LIMIT = UNATTESTED_IP_LIMIT;
 export const PASSTHROUGH_MAX_ENTRIES = MAX_ENTRIES;
 
 export function resetPassthroughRateLimitForTests(): void {
   tokenWindows.clear();
   ipWindows.clear();
+  unattestedWindows.clear();
 }

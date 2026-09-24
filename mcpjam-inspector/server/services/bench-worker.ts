@@ -1638,7 +1638,15 @@ async function defaultRunConformanceChild(
   const result = await executePersistedConformanceRun({
     convexToken: job.runnerBearer,
     projectId: job.projectId,
-    server: { url: spec.serverUrl } as never,
+    // The benchmarked connector's URL comes off a saved server row, so it is
+    // somebody else's choice of target. The protocol, apps and tasks suites
+    // all dial through this transport — the same guard the hosted conformance
+    // routes use — rather than a bare `{ url }` the suites would have taken to
+    // the global fetch, redirects and all.
+    server: {
+      url: spec.serverUrl,
+      baseFetch: createConformanceFetch("MCP server"),
+    },
     suites: spec.suites,
     source: "benchmark",
     target: {
@@ -1662,6 +1670,9 @@ async function defaultRunConformanceChild(
   });
   return { runId: result.runId };
 }
+
+export const defaultRunConformanceChildForTests = () =>
+  defaultRunConformanceChild;
 
 export type RunAuthProbeArgs = {
   job: ClaimedBenchmarkJob;
