@@ -19,6 +19,7 @@ import {
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
   REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+  RESOURCE_METADATA_NOT_IMPLEMENTED,
 } from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
@@ -273,6 +274,60 @@ describe("OAuth debugger step-failure reporting", () => {
 
     expect(reportCaught).not.toHaveBeenCalled();
     expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
+  // INSPECTOR-CLIENT-2F9: 18 events, 4 users, escalating — every one a third
+  // party's missing metadata document filed as an MCPJam error. RFC 9728 is
+  // required from 2025-06-18 onward, so a resource without one is
+  // nonconforming, which is precisely what the debugger is for.
+  it("ignores a resource server that publishes no protected-resource metadata", () => {
+    const { wrapped, updateState } = wrappedUpdateState(
+      vi.fn(),
+      "request_resource_metadata",
+    );
+    // The wrapped form the machines actually put into flow state.
+    const serverFailure = {
+      error: `Failed to request resource metadata: ${RESOURCE_METADATA_NOT_IMPLEMENTED}`,
+    };
+
+    wrapped(serverFailure);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
+  it("ignores the bare form of the same failure", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({ error: RESOURCE_METADATA_NOT_IMPLEMENTED });
+
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  // Deliberately narrow: the other ways the request can fail may be OURS — the
+  // hosted fetch path breaking surfaces here too — so they must keep reporting.
+  it("still reports a resource-metadata request that failed some other way", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({
+      error:
+        "Failed to request resource metadata: HTTP 500 trying to load well-known OAuth protected resource metadata.",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  // No response at all is a transport failure — our proxy being unreachable
+  // looks exactly like this — so it is not the server's missing document.
+  it("still reports a resource-metadata request that got no response", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({
+      error:
+        "Failed to request resource metadata: No response while loading OAuth protected resource metadata.",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
   });
 
   it("still reports a real failure that follows a warning", () => {
