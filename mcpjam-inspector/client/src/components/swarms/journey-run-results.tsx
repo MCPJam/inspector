@@ -159,45 +159,40 @@ const SESSION_RESULT_META = {
   },
 } satisfies Record<string, SessionResultMeta>;
 
-const EXECUTION_OF_LIFECYCLE = {
-  pending: "pending",
-  running: "running",
-  ran: "succeeded",
-  broke: "failed",
-  limited: "rate_limited",
-  withdrawn: "failed",
-} as const satisfies Record<
-  SwarmSessionVerdict["lifecycle"],
-  SwarmMatrixCellOutcome
->;
-
 /**
  * One status per session chip. Execution and goal grading used to render as
  * two statuses side by side ("Broke" next to "Goal result: Failed"), which read
  * as two verdicts on one session. A goal verdict outranks the execution that
- * produced it; a session that never reached one says it did not run. The
- * neutral labels cover states in between: still executing, being graded, or
- * ran with nothing deciding the goal.
+ * produced it. "Did not run" is reserved for sessions that never produced a
+ * conversation: a session that broke partway through still ran, and while the
+ * judge grades its transcript it can still end up passed or failed. Everything
+ * without a goal verdict keeps a neutral label.
  */
 function sessionResultMeta(
   outcome: SwarmMatrixCellOutcome,
   verdict?: SwarmSessionVerdict,
 ): SessionResultMeta {
-  if (verdict?.verdict === "passed") return SESSION_RESULT_META.goalPassed;
-  if (verdict?.verdict === "failed") return SESSION_RESULT_META.goalFailed;
-  const execution = verdict
-    ? EXECUTION_OF_LIFECYCLE[verdict.lifecycle]
-    : outcome;
-  if (execution === "failed" || execution === "rate_limited") {
+  if (!verdict) {
+    if (outcome === "failed" || outcome === "rate_limited") {
+      return SESSION_RESULT_META.didNotRun;
+    }
+    return outcome === "succeeded"
+      ? { ...CELL_META.pending, label: CELL_META.succeeded.label }
+      : CELL_META[outcome];
+  }
+  if (verdict.verdict === "passed") return SESSION_RESULT_META.goalPassed;
+  if (verdict.verdict === "failed") return SESSION_RESULT_META.goalFailed;
+  if (verdict.lifecycle === "pending" || verdict.lifecycle === "running") {
+    return CELL_META[verdict.lifecycle];
+  }
+  if (
+    verdict.lifecycle === "limited" ||
+    verdict.lifecycle === "withdrawn" ||
+    verdict.reason === "executionFailed"
+  ) {
     return SESSION_RESULT_META.didNotRun;
   }
-  if (execution === "succeeded") {
-    return {
-      ...CELL_META.pending,
-      label: verdict ? swarmVerdictLabel(verdict) : CELL_META.succeeded.label,
-    };
-  }
-  return CELL_META[execution];
+  return { ...CELL_META.pending, label: swarmVerdictLabel(verdict) };
 }
 
 /**

@@ -81,6 +81,31 @@ describe("SwarmHostCell status", () => {
     expect(cell(verdict, "failed")).toHaveTextContent("Did not run");
   });
 
+  it("does not say a session that broke partway through did not run", () => {
+    const grading = deriveSwarmSessionVerdict({
+      ...unrubricked,
+      attempt: { status: "failed" },
+      goalScore: null,
+      grading: { state: "queued" },
+    });
+    expect(grading.lifecycle).toBe("broke");
+    expect(cell(grading, "failed")).toHaveTextContent("Grading");
+  });
+
+  it("gives an ungraded session that broke partway through a neutral label", () => {
+    const el = cell(
+      deriveSwarmSessionVerdict({
+        ...unrubricked,
+        attempt: { status: "failed" },
+        goalScore: null,
+        judge: { automatic: false, role: "required" },
+      }),
+      "failed",
+    );
+    expect(el).toHaveTextContent("Not graded");
+    expect(el).not.toHaveTextContent("Did not run");
+  });
+
   it("says a session is being graded rather than claiming a result", () => {
     const el = cell(
       deriveSwarmSessionVerdict({
