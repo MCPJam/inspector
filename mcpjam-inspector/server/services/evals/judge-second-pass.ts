@@ -52,7 +52,7 @@
 import type { StageEvidence } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
-import { turnsNeedModel } from "@/shared/steps";
+import { resolveCasePromptTurns, turnsNeedModel } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
 import { buildStageAuthoredCase } from "./stage-inputs.js";
@@ -77,6 +77,7 @@ import {
   buildHostedScoreContract,
   type HostedRubricChecksVerdictLike,
 } from "./score-rows.js";
+import { evaluateMultiTurnResults } from "./types.js";
 
 /** Iteration statuses that can still receive a derivation. */
 const DERIVABLE_STATUSES = new Set(["completed", "failed"]);
@@ -622,8 +623,10 @@ export function deriveIterationPayload(args: {
     // pass's tool-match row therefore survived with its definition gone: an
     // unjoinable row, a per-case `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a
     // GATING scorer silently dropped from the verdict.
-    toolMatchAuthored:
-      (iteration.authoredCase?.expectedToolCalls?.length ?? 0) > 0,
+    //
+    // Read from the RESOLVED case, never the raw top-level list: see
+    // `firstPassDeclaredToolMatch`.
+    toolMatchAuthored: firstPassDeclaredToolMatch(iteration.authoredCase),
     // The SAME resolved options and polarity the first pass hashed into
     // `toolCalls:match`. Omitting them would rebuild that definition under a
     // different `implementationHash` and orphan the first pass's row.
@@ -643,6 +646,33 @@ export function deriveIterationPayload(args: {
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
     : { stage };
+}
+
+/**
+ * Whether the FIRST pass declared `toolCalls:match` for this case.
+ *
+ * It declares the scorer when the matcher's expected-call list is non-empty
+ * (`hostedScoreDefinitionInputs`), so this asks the same matcher for that list,
+ * over the turns the runner resolves. The list does not depend on which calls
+ * were made, which is why none are passed: pinned turns and negative tests
+ * contribute nothing, and every other turn's expectations count, not only the
+ * first turn's.
+ *
+ * The raw `expectedToolCalls` this replaced is undefined on a steps-authored
+ * case, whose expectations live in its steps. Reading it dropped the definition
+ * and orphaned the first pass's row.
+ */
+function firstPassDeclaredToolMatch(
+  authoredCase: JudgeSecondPassIterationRow["authoredCase"],
+): boolean {
+  if (!authoredCase) return false;
+  return (
+    evaluateMultiTurnResults(
+      resolveCasePromptTurns(authoredCase),
+      [],
+      authoredCase.isNegativeTest === true,
+    ).expectedToolCalls.length > 0
+  );
 }
 
 /** Narrow on purpose: only `no_agent_activity` redeclares a scorer. */

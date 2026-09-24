@@ -455,14 +455,35 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
     expect(approval("list_project_servers")).toBe(false);
   });
 
-  it("live ops do not require approval when the host policy is off", () => {
+  it("live reads do not require approval when the host policy is off", () => {
     const tools = resolveHostTools(
-      { builtInToolIds: ["call_server_tool"] },
-      { ...ctx, mcpjamPlatformClient: stubClient }
+      { builtInToolIds: ["diagnose_server", "read_server_resource"] },
+      { ...ctx, mcpjamPlatformClient: stubClient },
     );
-    expect(
-      (tools!["call_server_tool"] as { needsApproval?: boolean }).needsApproval
-    ).toBe(false);
+    const approval = (id: string) =>
+      (tools![id] as { needsApproval?: boolean }).needsApproval;
+    expect(approval("diagnose_server")).toBe(false);
+    expect(approval("read_server_resource")).toBe(false);
+  });
+
+  it("gated ops require approval even when the host policy is off", () => {
+    // The host switch may ADD approval to an operation; it never removes it
+    // from one the platform catalog gates (MJ-008).
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [
+          "call_server_tool",
+          "run_eval_suite",
+          "create_project_server",
+        ],
+      },
+      { ...ctx, mcpjamPlatformClient: stubClient, requireToolApproval: false },
+    );
+    const approval = (id: string) =>
+      (tools![id] as { needsApproval?: boolean }).needsApproval;
+    expect(approval("call_server_tool")).toBe(true);
+    expect(approval("run_eval_suite")).toBe(true);
+    expect(approval("create_project_server")).toBe(true);
   });
 });
 

@@ -150,7 +150,7 @@ import {
   isPinnedOnly,
   isPinnedTurn,
   turnsNeedModel,
-  resolvePromptTurns,
+  resolveCasePromptTurns,
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
   type PinnedToolCall,
@@ -159,7 +159,6 @@ import {
 import {
   normalizeSteps,
   promptTurnsToSteps,
-  stepsToPromptTurns,
   type TestStep,
 } from "@/shared/steps";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
@@ -1495,10 +1494,7 @@ function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
   // execution loops still consume `PromptTurn[]`, so bridge steps → turns here
   // (the single resolver every loop reads). Falls back to the legacy
   // promptTurns/probe path when a case carries no steps.
-  const promptTurns =
-    Array.isArray(test.steps) && test.steps.length > 0
-      ? stepsToPromptTurns(normalizeSteps(test.steps))
-      : resolvePromptTurns(test);
+  const promptTurns = resolveCasePromptTurns(test);
   const legacy = deriveLegacyPromptFields(promptTurns);
   return {
     promptTurns,

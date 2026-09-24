@@ -20,7 +20,7 @@
  * and the judge goes last.
  */
 
-import { Gavel, ListChecks, Route as RouteIcon } from "lucide-react";
+import { Cog, Gavel, ListChecks, Route as RouteIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ScorecardRow } from "./case-scorecard-model";
 
@@ -31,6 +31,7 @@ const WHEN: Record<string, string> = {
   snapshot: "Graded once, over the finished transcript",
   judge: "Runs last, after every assertion",
   rubricCheck: "Runs with the judge, after every assertion",
+  builtin: "Built-in runner check, measured on every iteration",
 };
 
 export function whenLabel(
@@ -65,7 +66,13 @@ export function RowMarker({ row }: { row: ScorecardRow }) {
   const judged =
     row.provenance === "judge" || row.provenance === "rubricCheck";
   const Icon =
-    row.provenance === "route" ? RouteIcon : judged ? Gavel : ListChecks;
+    row.provenance === "route"
+      ? RouteIcon
+      : judged
+        ? Gavel
+        : row.provenance === "builtin"
+          ? Cog
+          : ListChecks;
   return (
     <span
       title={title}

@@ -119,4 +119,34 @@ describe("mcp-api local-mode resolver-only path", () => {
       { method: "DELETE" },
     );
   });
+  it("reports failed connection status without sending server configuration", async () => {
+    const record = vi.fn();
+    window.electronAPI = { diagnostics: { record } } as any;
+    authFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ success: false, error: "private-details" }),
+        { status: 403 },
+      ),
+    );
+    try {
+      const result = await testConnection(
+        { url: "https://private.test/mcp" } as unknown as MCPServerConfig,
+        "private-id",
+        { projectId: "private-project" },
+      );
+      expect(result.success).toBe(false);
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          kind: "connect",
+          phase: "failure",
+          status: 403,
+          error: "access_denied",
+        }),
+      );
+      expect(JSON.stringify(record.mock.calls)).not.toContain("private");
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
 });

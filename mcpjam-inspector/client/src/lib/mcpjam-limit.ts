@@ -38,6 +38,13 @@ export type MCPJamLimitKind = "total" | "concurrency";
  * in one case and up to a billing period in the other. */
 export type MCPJamLimitPeriod = "daily" | "monthly";
 
+/** The bucket is not empty, only smaller than this request's worst-case
+ * estimate — sent with `refusalReason: "insufficient_for_request"`. */
+export type MCPJamCreditShortfall = {
+  creditsRemaining: number;
+  creditsRequired: number;
+};
+
 type MCPJamLimitErrorInput = {
   code?: string;
   /** Stable run identity, shared by live streams and persisted failure updates. */
@@ -160,6 +167,48 @@ const findMCPJamLimitOrganizationId = (
   return undefined;
 };
 
+const findShortfallDeep = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): MCPJamCreditShortfall | undefined => {
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+
+  const item = value as Record<string, unknown>;
+  const { creditsRemaining, creditsRequired } = item;
+  if (
+    item.refusalReason === "insufficient_for_request" &&
+    typeof creditsRemaining === "number" &&
+    Number.isSafeInteger(creditsRemaining) &&
+    creditsRemaining > 0 &&
+    typeof creditsRequired === "number" &&
+    Number.isSafeInteger(creditsRequired) &&
+    creditsRequired > creditsRemaining
+  ) {
+    return { creditsRemaining, creditsRequired };
+  }
+
+  for (const nested of Object.values(item)) {
+    const found = findShortfallDeep(nested, seen);
+    if (found) return found;
+  }
+  return undefined;
+};
+
+const findMCPJamCreditShortfall = (
+  args: MCPJamLimitErrorInput,
+): MCPJamCreditShortfall | undefined => {
+  for (const value of [args.details, args.message]) {
+    const candidates =
+      typeof value === "string" ? collectJsonCandidates(value) : [value];
+    for (const candidate of candidates) {
+      const shortfall = findShortfallDeep(candidate);
+      if (shortfall) return shortfall;
+    }
+  }
+  return undefined;
+};
+
 /**
  * Read the period off the SDK catalog rather than a second regex here. The
  * error card already classifies this exact message through `describeError`, so
@@ -211,12 +260,14 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   }
   if (!isMCPJamModelLimitError(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
+  const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
     ...(args.runId ? { runId: args.runId } : {}),
     limitKind: args.limitKind,
     organizationId: findMCPJamLimitOrganizationId(args),
     ...(args.surface ? { surface: args.surface } : {}),
     ...(period ? { period } : {}),
+    ...(shortfall ? { shortfall } : {}),
   });
   return true;
 }
@@ -224,8 +275,12 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
 const MCPJAM_LIMIT_SLUGS = new Set([
   "provider/mcpjam_limit_daily",
   "provider/mcpjam_limit_monthly",
+  "provider/mcpjam_limit_insufficient",
   "provider/mcpjam_limit",
 ]);
+
+const MCPJAM_HOLDS_COMMITTED_MESSAGE =
+  "Other requests in flight are holding your remaining MCPJam credits. Try again in a few seconds.";
 
 /**
  * One plain sentence for a limit refusal, for surfaces that print an error
@@ -233,11 +288,23 @@ const MCPJAM_LIMIT_SLUGS = new Set([
  * carries the actions; without this those surfaces echo the raw JSON body the
  * backend refused with, which reads as a crash. `null` for anything that
  * isn't a limit error, so callers keep their own message.
+ *
+ * A `holds_committed` refusal gets its own line: no dialog opens for it, and
+ * the fix is to retry in a moment, not to buy anything.
  */
 export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {
-  if (!message || !isMCPJamModelLimitError({ message })) return null;
+  if (!message) return null;
+  if (
+    collectJsonCandidates(message).some(
+      (parsed) =>
+        findStringPropertyDeep(parsed, "refusalReason") === "holds_committed",
+    )
+  ) {
+    return MCPJAM_HOLDS_COMMITTED_MESSAGE;
+  }
+  if (!isMCPJamModelLimitError({ message })) return null;
   const described = describeError(message);
   const entry = MCPJAM_LIMIT_SLUGS.has(described.slug)
     ? described
