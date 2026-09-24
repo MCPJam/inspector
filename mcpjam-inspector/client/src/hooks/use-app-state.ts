@@ -458,6 +458,11 @@ export function useAppState({
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
 
+    // The callback owns this marker for as long as its code/error params are
+    // present, even when the user spent longer than the UI timeout approving
+    // access. Callback completion or the restored route will release it.
+    if (hasHostedOAuthCallbackParams()) return;
+
     const elapsedMs = Date.now() - pendingDashboardOAuth.startedAt;
     if (elapsedMs >= PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS) {
       setPendingDashboardOAuth(null);
@@ -474,7 +479,7 @@ export function useAppState({
     }, PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS - elapsedMs);
 
     return () => window.clearTimeout(timeoutId);
-  }, [pendingDashboardOAuth]);
+  }, [oauthCallbackLocation, pendingDashboardOAuth]);
 
   useEffect(() => {
     if (!HOSTED_MODE) return;
