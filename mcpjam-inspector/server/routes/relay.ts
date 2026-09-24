@@ -157,14 +157,17 @@ const RATE_WINDOW_MS = 60_000;
 
 const ipWindows = new Map<string, { count: number; windowStart: number }>();
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of ipWindows) {
-    if (now - entry.windowStart > RATE_WINDOW_MS * 2) {
-      ipWindows.delete(ip);
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [ip, entry] of ipWindows) {
+      if (now - entry.windowStart > RATE_WINDOW_MS * 2) {
+        ipWindows.delete(ip);
+      }
     }
-  }
-}, 5 * 60_000).unref();
+  },
+  5 * 60_000,
+).unref();
 
 function relayRateLimit(c: Context): Response | null {
   if (!HOSTED_MODE) return null;
