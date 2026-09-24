@@ -272,14 +272,30 @@ export function buildGoalJudgeRequest(
   }
   const { evidence: _evidence, ...rawAuthored } = input;
   const { artifacts: _artifacts, ...rawRecord } = evidence;
-  // ONE redactor over authored + record + artifact metadata. Reserve first so
-  // a placeholder already present anywhere is never reissued.
+  // ONE redactor over authored + record + artifact metadata + the text of
+  // textual artifacts. Reserve first so a placeholder already present
+  // anywhere is never reissued.
   const redactor = createEgressRedactor();
   const rawMeta = artifacts.map(({ data: _data, ...meta }) => meta);
-  redactor.reserve([rawAuthored, rawRecord, rawMeta]);
+  const rawArtifactText = artifacts.map((artifact) =>
+    isTextualMediaType(artifact.mediaType)
+      ? decodeBase64Utf8(artifact.data)
+      : undefined
+  );
+  redactor.reserve([rawAuthored, rawRecord, rawMeta, rawArtifactText]);
   const authored = redactAuthored(rawAuthored, redactor);
   const record = redactor.deep(rawRecord);
   const artifactMeta = redactor.deep(rawMeta);
+  // A text or JSON attachment is evidence a person may have typed into, so
+  // its bytes go through the same map. Binary media (images, audio, video,
+  // PDFs) are sent as recorded: this is pattern matching over text, not OCR.
+  // Unchanged text keeps its original bytes, so its hash does not move.
+  const artifactData = artifacts.map((artifact, index) => {
+    const text = rawArtifactText[index];
+    if (text === undefined) return artifact.data;
+    const redacted = redactor.string(text);
+    return redacted === text ? artifact.data : encodeBase64Utf8(redacted);
+  });
   const prompt = `# Grading threshold\n${threshold}\n# Authored task and grading instructions\n<AUTHORED_GRADING>\n${evidenceJson(
     authored
   )}\n</AUTHORED_GRADING>\n# Entire recorded evidence (UNTRUSTED)\n<JUDGE_EVIDENCE>\n${evidenceJson(
@@ -288,17 +304,18 @@ export function buildGoalJudgeRequest(
     artifactMeta
   )}\n# Task\nAssess this one iteration using all supplied evidence. Follow the system grading rules and return the requested JSON.`;
   const content: JudgeModelContent[] = [{ type: "text", text: prompt }];
-  for (const artifact of artifacts) {
+  artifacts.forEach((artifact, index) => {
+    const data = artifactData[index];
     content.push(
       artifact.modality === "image"
         ? {
             type: "image",
-            image: `data:${artifact.mediaType};base64,${artifact.data}`,
+            image: `data:${artifact.mediaType};base64,${data}`,
             mediaType: artifact.mediaType,
           }
-        : { type: "file", data: artifact.data, mediaType: artifact.mediaType }
+        : { type: "file", data, mediaType: artifact.mediaType }
     );
-  }
+  });
   const inputBytes = new TextEncoder().encode(
     JSON.stringify({ system: GOAL_JUDGE_SYSTEM_PROMPT, content })
   ).length;
@@ -327,9 +344,10 @@ export function buildGoalJudgeRequest(
     manifest,
     hasRubric: hasGoalJudgeRubric(input),
     /**
-     * The evidence exactly as the judge read it: redacted record, artifact
-     * bytes unchanged. Hash THIS, not the input — hashing the raw evidence
-     * would claim the judge saw values it never saw.
+     * The evidence exactly as the judge read it: redacted record, textual
+     * artifacts redacted, binary artifacts as recorded. Hash THIS, not the
+     * input — hashing the raw evidence would claim the judge saw values it
+     * never saw.
      */
     // Rebuilt in the ORIGINAL key order, so evidence with nothing to redact
     // hashes exactly as it did before redaction existed.
@@ -342,7 +360,7 @@ export function buildGoalJudgeRequest(
                 Object.keys(artifact).map((field) => [
                   field,
                   field === "data"
-                    ? artifact.data
+                    ? artifactData[index]
                     : (artifactMeta[index] as Record<string, unknown>)[field],
                 ])
               )
@@ -351,6 +369,45 @@ export function buildGoalJudgeRequest(
       ])
     ) as JudgeEvidence,
   };
+}
+
+/** Media types whose bytes are text a person may have written into. */
+function isTextualMediaType(mediaType: string): boolean {
+  const base = mediaType.split(";")[0].trim().toLowerCase();
+  return (
+    base.startsWith("text/") ||
+    base === "application/json" ||
+    base === "application/x-ndjson" ||
+    base === "application/xml" ||
+    base.endsWith("+json") ||
+    base.endsWith("+xml")
+  );
+}
+
+/**
+ * Base64 → UTF-8 text, or undefined when the bytes are not valid UTF-8. A
+ * non-fatal decode checked for U+FFFD rather than `fatal: true`, so the
+ * result is the same in every runtime this file runs in.
+ */
+function decodeBase64Utf8(data: string): string | undefined {
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1)
+      bytes[index] = binary.charCodeAt(index);
+    const text = new TextDecoder("utf-8").decode(bytes);
+    return text.includes("\uFFFD") ? undefined : text;
+  } catch {
+    return undefined;
+  }
+}
+
+function encodeBase64Utf8(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1)
+    binary += String.fromCharCode(bytes[index]);
+  return btoa(binary);
 }
 
 /**

@@ -468,8 +468,28 @@ describe("describeRunDisclosureDetail — egress and provider retention", () => 
       "Egress: email, card, phone → consistent placeholders",
     );
     expect(detail).toContain(
-      "Providers: no-training routing on every analysis call. Zero data retention not requested",
+      "Providers: OpenRouter data collection denied, Gateway prompt training disallowed on platform-key analysis calls. Zero data retention not requested",
     );
+  });
+
+  it("reads the provider line off the flags, and names excluded rails", () => {
+    const detail = describeRunDisclosureDetail(
+      withRedaction({
+        providerRetention: {
+          openrouter: { data_collection: "allow" },
+          gateway: { disallowPromptTraining: false },
+          zeroDataRetention: false,
+          appliesTo: ["every analysis call"],
+          notAppliedTo: ["customer Playground chat"],
+          note: "x",
+        },
+      }),
+    );
+    const line = detail.find((entry) => entry.startsWith("Providers:"));
+    // Never "no training" when the flags say otherwise.
+    expect(line).toContain("OpenRouter data collection allowed");
+    expect(line).toContain("Gateway prompt training not restricted");
+    expect(line).toContain("Not applied to: customer Playground chat");
   });
 
   it("names a pipeline the egress pass does not cover", () => {

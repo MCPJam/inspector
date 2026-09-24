@@ -226,11 +226,23 @@ export function describeRunDisclosureDetail(
   }
   const providerRetention = disclosure.capture.redaction.providerRetention;
   if (providerRetention) {
+    // Read off the flags themselves, never inferred from the field existing:
+    // a backend that relaxed either one must not still show "no training".
+    const openRouter =
+      providerRetention.openrouter.data_collection === "deny"
+        ? "OpenRouter data collection denied"
+        : "OpenRouter data collection allowed";
+    const gateway = providerRetention.gateway.disallowPromptTraining
+      ? "Gateway prompt training disallowed"
+      : "Gateway prompt training not restricted";
     lines.push(
-      "Providers: no-training routing on every analysis call" +
+      `Providers: ${openRouter}, ${gateway} on platform-key analysis calls` +
         (providerRetention.zeroDataRetention
           ? " · zero data retention requested"
-          : ". Zero data retention not requested"),
+          : ". Zero data retention not requested") +
+        (providerRetention.notAppliedTo.length > 0
+          ? `. Not applied to: ${providerRetention.notAppliedTo.join("; ")}`
+          : ""),
     );
   }
   lines.push(

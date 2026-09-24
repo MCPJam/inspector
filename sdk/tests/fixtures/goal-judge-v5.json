@@ -43,6 +43,14 @@
         {
           "name": "uncalled_read_ticket"
         }
+      ],
+      "artifacts": [
+        {
+          "sourceId": "receipt",
+          "modality": "file",
+          "mediaType": "text/plain",
+          "data": "UmVjZWlwdCBlbWFpbGVkIHRvIHNhbUBleGFtcGxlLmNvbQ=="
+        }
       ]
     }
   },
@@ -56,6 +64,7 @@
     "absent": "sam@example.com",
     "placeholder": "[email-a]",
     "placeholderCount": 2,
-    "evidenceHash": "72dbf9cfc0d31ac5024cb2c220be65ab329c5b2a24216301309ff8974cecc1b9"
+    "evidenceHash": "d0cea6ec856166f02e643f6a2a5188bd8b91e3b4f083c32326f5328810524cc4",
+    "artifactText": "Receipt emailed to [email-a]"
   }
 }

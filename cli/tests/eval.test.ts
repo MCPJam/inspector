@@ -3464,7 +3464,7 @@ test("eval run prints the disclosure block in human mode, before the run link", 
     );
     assert.match(
       run.stdout,
-      /Providers: no-training routing on every analysis call — zero data retention NOT requested/
+      /Providers: OpenRouter data collection denied, Gateway prompt training disallowed on platform-key analysis calls — zero data retention NOT requested/
     );
     // "fires automatically" vs "fires only if asked" are different consent
     // stories — the fixture's goalCompletion touchpoint is

@@ -163,6 +163,10 @@ it("matches the hosted v5 contract fixture and template lock", async () => {
   expect(sha256Hex(JSON.stringify(request.evidence))).toBe(
     fixture.redaction.evidenceHash
   );
+  // A text attachment goes through the same map as the prompt.
+  expect(
+    Buffer.from(request.evidence.artifacts![0].data, "base64").toString("utf8")
+  ).toBe(fixture.redaction.artifactText);
   expect(
     interpretGoalJudgeOutput(fixture.output, request.hasRubric).score
   ).toBe(fixture.expectedScore);
