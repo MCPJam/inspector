@@ -468,7 +468,7 @@ describe("describeRunDisclosureDetail — egress and provider retention", () => 
       "Egress: email, card, phone → consistent placeholders",
     );
     expect(detail).toContain(
-      "Providers: no-training routing on every analysis call — zero data retention not requested",
+      "Providers: no-training routing on every analysis call. Zero data retention not requested",
     );
   });
 
@@ -488,7 +488,7 @@ describe("describeRunDisclosureDetail — egress and provider retention", () => 
     );
     expect(
       detail.some((line) =>
-        /not applied to: goal-completion judging/.test(line),
+        /Not applied to: goal-completion judging/.test(line),
       ),
     ).toBe(true);
   });

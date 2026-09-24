@@ -220,7 +220,7 @@ export function describeRunDisclosureDetail(
     lines.push(
       `Egress: ${egress.patterns.join(", ")} → consistent placeholders` +
         (egress.notAppliedTo.length > 0
-          ? ` — not applied to: ${egress.notAppliedTo.join("; ")}`
+          ? `. Not applied to: ${egress.notAppliedTo.join("; ")}`
           : ""),
     );
   }
@@ -230,7 +230,7 @@ export function describeRunDisclosureDetail(
       "Providers: no-training routing on every analysis call" +
         (providerRetention.zeroDataRetention
           ? " · zero data retention requested"
-          : " — zero data retention not requested"),
+          : ". Zero data retention not requested"),
     );
   }
   lines.push(
