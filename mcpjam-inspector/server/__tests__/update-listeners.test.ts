@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// The same `path` the code under test uses: the marker path has to be built,
+// not spelled. See `file` below.
+import path from "path";
 
 const mocks = vi.hoisted(() => ({
   version: "3.10.0",
@@ -65,7 +68,13 @@ vi.mock("@sentry/electron/main", () => ({
 }));
 
 const realPlatform = process.platform;
-const file = "/tmp/userData/.install-update-on-relaunch";
+// Built with `path.join`, not written out, because that is what the code
+// under test does (`update-attempt.ts`, `path.join(userData, …)`) — and
+// `path.join` is platform-dependent while a literal is not. `mocks.files` is
+// keyed by the raw string the source hands it, so on Windows the source writes
+// `\tmp\userData\.install-update-on-relaunch` while a `/tmp/...` literal never
+// matches, and every marker assertion fails there while passing in CI.
+const file = path.join("/tmp/userData", ".install-update-on-relaunch");
 const event = { sender: { id: 1 } };
 let mod: typeof import("../../src/ipc/update/update-listeners.js");
 let window: ReturnType<typeof createWindow>;
