@@ -72,6 +72,7 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
@@ -717,6 +718,7 @@ interface ReconnectServerInternalOptions {
   allowInteractiveOAuthFlow?: boolean;
   select?: boolean;
   suppressErrors?: boolean;
+  suppressSuccessToast?: boolean;
 }
 
 type StatelessProtocolConnectAttempt =
@@ -3934,7 +3936,9 @@ export function useServerState({
             suppressErrorToast: options?.suppressErrorToast,
             suppressSuccessToast: options?.suppressSuccessToast,
           });
-          const oauthResult = await initiateOAuth(oauthOptions);
+          const oauthResult = await initiateOAuth(oauthOptions, {
+            shouldContinue: () => !isStaleOp(formData.name, token),
+          });
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const oauthServerConfig = stripAuthorizationFromHttpConfig(
@@ -4996,9 +5000,27 @@ export function useServerState({
       const queuedScope = tryResolveProjectServer(serverName);
       if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
+      const resolved = tryResolveProjectServer(serverName);
+      autoOAuthEscalation.markFailed({
+        projectId: resolved?.projectId ?? appState.activeProjectId,
+        serverId: resolved?.serverId ?? null,
+        serverName,
+      });
+      // A connect may have marked Auto before its hosted id was available.
+      // Clear that name-keyed fallback as well so Cancel never suppresses the
+      // next deliberate authorization attempt.
+      autoOAuthEscalation.markFailed({
+        projectId: appState.activeProjectId,
+        serverId: null,
+        serverName,
+      });
+      clearPendingOAuthAttempt(serverName);
+      if (readHostedOAuthPendingMarker()?.serverName === serverName) {
+        clearHostedOAuthPendingState();
+      }
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [dispatch]
+    [appState.activeProjectId, dispatch]
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -5387,8 +5409,12 @@ export function useServerState({
             serverId: hostedProjectServerId,
             serverName,
             serverUrl,
+            suppressErrorToast: suppressErrors,
+            suppressSuccessToast: options?.suppressSuccessToast,
           });
-          oauthResult = await initiateOAuth(oauthOptions);
+          oauthResult = await initiateOAuth(oauthOptions, {
+            shouldContinue: () => !isStaleOp(serverName, token),
+          });
         } catch (error) {
           if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
           if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
@@ -5683,6 +5709,8 @@ export function useServerState({
                 serverId: hostedProjectServerId,
                 serverName,
                 serverUrl: oauthOptions.serverUrl,
+                suppressErrorToast: suppressErrors,
+                suppressSuccessToast: options?.suppressSuccessToast,
               });
             },
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
@@ -5894,6 +5922,8 @@ export function useServerState({
         forceOAuthFlow?: boolean;
         connectionIntent?: ConnectionIntent;
         allowInteractiveOAuthFlow?: boolean;
+        suppressErrors?: boolean;
+        suppressSuccessToast?: boolean;
       },
     ) => {
       let connectionIntent = options?.connectionIntent;
@@ -5917,6 +5947,8 @@ export function useServerState({
         connectionIntent,
         allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
         select: true,
+        suppressErrors: options?.suppressErrors,
+        suppressSuccessToast: options?.suppressSuccessToast,
       });
     },
     [reconnectServerInternal]
