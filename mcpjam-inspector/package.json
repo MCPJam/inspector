@@ -243,6 +243,7 @@
     "@mcpjam/design-system": "*",
     "@mcpjam/widget-react": "*",
     "@playwright/test": "1.62.1",
+    "@posthog/rollup-plugin": "^1.6.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
