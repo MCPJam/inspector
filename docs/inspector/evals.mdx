@@ -96,6 +96,8 @@ The trial opens on its **Scorecard**: the same scorers the left column lists, in
 
 Connection, Discovery, Tool call, and Response each lead with a **Built-in** runner check row — a locked row that reports what the stage analysis decided, in the same Expected / Actual form as your evaluators. It never gates a trial and is not counted in the summary line. Tool call and Response runner checks appear only when the case gives the runner a call or response to measure.
 
+When a case expects tool calls and `argumentMatching` is not `"ignore"`, a locked **Arguments match** row also appears under Tool call. It is graded by its own scorer (`toolCalls:arguments`) and reports whether every expected call was made with the expected arguments — naming the tool and the argument key, never the value. The **Route** row at Selection continues to report which tools were called. Runs graded before this split show no Arguments match row and render as before.
+
 The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
 
 The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
