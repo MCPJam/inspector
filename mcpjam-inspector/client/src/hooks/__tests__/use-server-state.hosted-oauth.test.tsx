@@ -260,7 +260,10 @@ describe("useServerState hosted OAuth callback guards", () => {
 
   it("preserves inline toast suppression through a forced OAuth reconnect", async () => {
     const { initiateOAuth } = await import("@/lib/oauth/mcp-oauth");
-    vi.mocked(initiateOAuth).mockResolvedValue({ success: true } as any);
+    vi.mocked(initiateOAuth).mockResolvedValue({
+      success: true,
+      serverConfig: { url: "https://mcp.asana.com/sse" },
+    } as any);
     const { result } = renderHostedServerState();
 
     await act(async () => {
@@ -279,7 +282,47 @@ describe("useServerState hosted OAuth callback guards", () => {
       suppressErrorToast: true,
       suppressSuccessToast: true,
     });
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { outcome: "success", result: { success: true, serverName: "asana" } },
+    {
+      outcome: "failure",
+      result: { success: false, error: "Consent declined" },
+    },
+  ])(
+    "honors toast suppression on an add-account callback $outcome",
+    async ({ result }) => {
+      writeHostedOAuthPendingMarker({
+        surface: "project",
+        initiatingUserId: "user_1",
+        connectionIntent: { kind: "add" },
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        returnPath: "#servers",
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+      });
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      mockHandleOAuthCallback.mockResolvedValue(result);
+      vi.mocked(sonnerToast.error).mockClear();
+
+      renderHostedServerState();
+
+      await waitFor(() => {
+        expect(mockHandleOAuthCallback).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(window.location.search).toBe("");
+      });
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(sonnerToast.error).not.toHaveBeenCalled();
+    },
+  );
 
   // A `?code=` on a route this hook does not own must not be claimed. The
   // GitHub App bind returns to `/settings/integrations/github/callback`, and

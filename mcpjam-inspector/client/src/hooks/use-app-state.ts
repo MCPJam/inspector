@@ -416,9 +416,12 @@ export function useAppState({
   // selection state (selectedServer, multi-select) is intentionally
   // ephemeral.
 
+  const pendingDashboardOAuthConnectionStatus = pendingDashboardOAuth
+    ? appState.servers[pendingDashboardOAuth.serverName]?.connectionStatus
+    : undefined;
+
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
-    const pendingServer = appState.servers[pendingDashboardOAuth.serverName];
     // A failed runtime row is not terminal while an OAuth callback is being
     // resumed. Project hydration can publish the pre-authorization 401 before
     // the callback owner imports the credential and performs its credential-
@@ -426,13 +429,13 @@ export function useAppState({
     // onboarding launch a second OAuth flow and loses its return destination.
     // Success is terminal; genuine callback failures are bounded by the
     // timeout below and are surfaced by the callback recovery owner.
-    if (pendingServer?.connectionStatus === "connected") {
+    if (pendingDashboardOAuthConnectionStatus === "connected") {
       setPendingDashboardOAuth(null);
       return;
     }
 
     if (
-      pendingServer?.connectionStatus !== "failed" ||
+      pendingDashboardOAuthConnectionStatus !== "failed" ||
       hasHostedOAuthCallbackParams()
     ) {
       return;
@@ -453,18 +456,25 @@ export function useAppState({
     }, PENDING_DASHBOARD_OAUTH_FAILURE_SETTLE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [appState.servers, oauthCallbackLocation, pendingDashboardOAuth]);
+  }, [
+    oauthCallbackLocation,
+    pendingDashboardOAuth,
+    pendingDashboardOAuthConnectionStatus,
+  ]);
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
 
-    // The callback owns this marker for as long as its code/error params are
-    // present, even when the user spent longer than the UI timeout approving
-    // access. Callback completion or the restored route will release it.
-    if (hasHostedOAuthCallbackParams()) return;
-
-    const elapsedMs = Date.now() - pendingDashboardOAuth.startedAt;
-    if (elapsedMs >= PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS) {
+    // Time spent approving access at the provider does not count against the
+    // UI timeout: while the callback's code/error params are present, the
+    // clock starts when the callback lands. That still bounds a callback held
+    // behind an auth or project gate that never resolves. Callback completion
+    // or the restored route releases the marker sooner.
+    const remainingMs = hasHostedOAuthCallbackParams()
+      ? PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS
+      : PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS -
+        (Date.now() - pendingDashboardOAuth.startedAt);
+    if (remainingMs <= 0) {
       setPendingDashboardOAuth(null);
       return;
     }
@@ -476,7 +486,7 @@ export function useAppState({
           ? null
           : current,
       );
-    }, PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS - elapsedMs);
+    }, remainingMs);
 
     return () => window.clearTimeout(timeoutId);
   }, [oauthCallbackLocation, pendingDashboardOAuth]);

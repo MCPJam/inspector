@@ -641,6 +641,86 @@ describe("useAppState active organization recovery", () => {
         vi.advanceTimersByTime(30_000);
       });
 
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not count provider approval time against the callback's UI timeout", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+    try {
+      localStorage.setItem(
+        "mcp-hosted-oauth-pending",
+        JSON.stringify({
+          surface: "project",
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+          // The user left for the provider ten minutes before the callback.
+          startedAt: new Date("2026-01-01T00:00:00.000Z").getTime(),
+        }),
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "demo-server",
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(29_999);
+      });
+      expect(result.current.pendingDashboardOAuth?.serverName).toBe(
+        "demo-server",
+      );
+
+      // A callback stuck behind an unresolved gate is still bounded.
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a slow approval's marker once the callback route is restored", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+    try {
+      localStorage.setItem(
+        "mcp-hosted-oauth-pending",
+        JSON.stringify({
+          surface: "project",
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+          startedAt: new Date("2026-01-01T00:00:00.000Z").getTime(),
+        }),
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result, rerender } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
       expect(result.current.pendingDashboardOAuth?.serverName).toBe(
         "demo-server",
       );
@@ -721,6 +801,76 @@ describe("useAppState active organization recovery", () => {
       act(() => {
         vi.advanceTimersByTime(1);
       });
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles a stable OAuth failure while other servers keep updating", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let capturedDispatch: ((action: any) => void) | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    try {
+      localStorage.setItem("mcp-oauth-pending", "oauth-server");
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result, rerender } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          currentActorKey: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      act(() => {
+        capturedDispatch?.({
+          type: "CONNECT_REQUEST",
+          name: "oauth-server",
+          config: { type: "http", url: "https://oauth.example/mcp" },
+          select: true,
+        });
+        capturedDispatch?.({
+          type: "CONNECT_FAILURE",
+          name: "oauth-server",
+          error: "401 Unauthorized",
+        });
+      });
+
+      window.history.replaceState({}, "", "/home");
+      rerender();
+
+      // Each update replaces `appState.servers`; neither may restart the
+      // pending server's settle timer.
+      const otherConfig = { type: "http", url: "https://other.example/mcp" };
+      act(() => {
+        vi.advanceTimersByTime(250);
+        capturedDispatch?.({
+          type: "CONNECT_REQUEST",
+          name: "other-server",
+          config: otherConfig,
+          select: false,
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(200);
+        capturedDispatch?.({
+          type: "CONNECT_SUCCESS",
+          name: "other-server",
+          config: otherConfig,
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+
       expect(result.current.pendingDashboardOAuth).toBeNull();
     } finally {
       vi.useRealTimers();

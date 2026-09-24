@@ -64,6 +64,7 @@ const {
   createAppStateMock,
   mockPlaygroundTabMounts,
   mockPlaygroundTabProps,
+  mockActiveHostServerReconcilerProps,
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
   mockDbUserState,
@@ -153,6 +154,7 @@ const {
     createAppStateMock,
     mockPlaygroundTabMounts: vi.fn(),
     mockPlaygroundTabProps: vi.fn(),
+    mockActiveHostServerReconcilerProps: vi.fn(),
     mockConvexAuthState: {
       isAuthenticated: true,
       isLoading: false,
@@ -504,7 +506,10 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
 // have to thread shared-app-state + preferences mocks deep enough to
 // satisfy `useAutoConnectProjectServers`.
 vi.mock("../components/ActiveHostServerReconciler", () => ({
-  ActiveHostServerReconciler: () => null,
+  ActiveHostServerReconciler: (props: { suspendAutoConnect?: boolean }) => {
+    mockActiveHostServerReconcilerProps(props);
+    return null;
+  },
 }));
 vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,
@@ -609,6 +614,7 @@ describe("App hosted OAuth callback handling", () => {
     vi.mocked(sonnerToast.success).mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
+    mockActiveHostServerReconcilerProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
       () => new Promise<never>(() => {}),
     );
@@ -4628,6 +4634,33 @@ describe("App hosted OAuth callback handling", () => {
       ).toEqual(expect.objectContaining({ status: "completed" }));
     });
     expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+  });
+
+  it("does not let a stale started record pause auto-connect when onboarding cannot open", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "Personal server",
+      }),
+    );
+    window.history.replaceState({}, "", "/servers");
+    // An existing WorkOS account is never eligible for first-run onboarding.
+    mockWorkOsAuthState.user = { id: "user-1" };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockActiveHostServerReconcilerProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ suspendAutoConnect: false }),
+    );
   });
 
   it("restores the connected handoff after a first-run OAuth callback", async () => {

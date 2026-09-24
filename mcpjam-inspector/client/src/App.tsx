@@ -5257,11 +5257,15 @@ export default function App() {
   // the overlay can mount again. Suspending only when it is already visible
   // lets the background reconciler connect the same server and emit its own
   // success toast. A persisted started record means onboarding still owns the
-  // connection until the user completes or dismisses the handoff.
+  // connection, but only while the OAuth return is in flight or onboarding can
+  // still open: a stale record on an ineligible route or account would
+  // otherwise pause auto-connect indefinitely, and the repair effect that
+  // clears it needs a connected server to do so.
   const shouldSuspendFirstRunBackgroundConnections =
     shouldShowFirstRunOverlay ||
     (!firstRunOverlayDismissed &&
-      initialFirstRunServerChoiceState?.status === "started");
+      initialFirstRunServerChoiceState?.status === "started" &&
+      (isReturningFirstRunOAuth || shouldRouteToFirstRunOnboarding));
 
   useLayoutEffect(() => {
     if (shouldRouteToFirstRunOnboarding) {
