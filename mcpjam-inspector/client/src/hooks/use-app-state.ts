@@ -205,6 +205,8 @@ export function useAppState({
   validOrganizations: Array<{ _id: string; myRole?: string }>;
   requestSignIn?: (returnPath?: string) => void | Promise<void>;
 }) {
+  const oauthCallbackLocation = `${window.location.pathname}${window.location.search}`;
+
   useEffect(() => {
     if (!window.electronAPI?.diagnostics) return;
     const report = () =>
@@ -451,7 +453,7 @@ export function useAppState({
     }, PENDING_DASHBOARD_OAUTH_FAILURE_SETTLE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [appState.servers, pendingDashboardOAuth]);
+  }, [appState.servers, oauthCallbackLocation, pendingDashboardOAuth]);
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;

@@ -3694,16 +3694,32 @@ export default function App() {
       // challenge that is currently awaiting the user's decision.
       pendingFirstRunAuthorizationRef.current?.(false);
       pendingFirstRunAuthorizationRef.current = null;
-      const stdioCommand = parseCommandInput(draft.urlOrCommand.trim());
+      firstRunOAuthReturnServerRef.current = null;
+      const authorizationServerName =
+        firstRunConnectionState.status === "authorization-required"
+          ? firstRunConnectionState.serverName
+          : "";
+      const effectiveServerName =
+        draft.name.trim() || authorizationServerName;
+      const savedServer =
+        projectServers[effectiveServerName] ??
+        appState.servers[effectiveServerName];
+      const savedHttpUrl =
+        savedServer?.config && "url" in savedServer.config
+          ? String(savedServer.config.url)
+          : "";
+      const effectiveUrlOrCommand =
+        draft.urlOrCommand.trim() || savedHttpUrl;
+      const stdioCommand = parseCommandInput(effectiveUrlOrCommand);
       const authorizationHeader =
         draft.authentication === "bearer" && draft.bearerToken?.trim()
           ? `Bearer ${draft.bearerToken.trim()}`
           : undefined;
       const formData: ServerFormData = {
-        name: draft.name,
+        name: effectiveServerName,
         type: draft.transport,
         ...(draft.transport === "http"
-          ? { url: draft.urlOrCommand }
+          ? { url: effectiveUrlOrCommand }
           : {
               command: stdioCommand.command,
               args: stdioCommand.args,
@@ -3747,10 +3763,11 @@ export default function App() {
         serverKind: "personal",
       });
     },
-    [],
+    [appState.servers, firstRunConnectionState, projectServers],
   );
 
   const connectFirstRunDemo = useCallback(() => {
+    firstRunOAuthReturnServerRef.current = null;
     const analyticsContext = firstRunAnalyticsContextFromDraft(
       "demo",
       EXCALIDRAW_SERVER_CONFIG,
@@ -3778,8 +3795,12 @@ export default function App() {
       !isAuthenticated ||
       Boolean(projects[activeProjectId]?.sharedProjectId));
   const requestFirstRunOAuthAuthorization = useCallback(
-    (serverName: string) =>
+    (serverName: string, attemptId: number) =>
       new Promise<boolean>((resolve) => {
+        if (firstRunConnectionAttemptRef.current !== attemptId) {
+          resolve(false);
+          return;
+        }
         pendingFirstRunAuthorizationRef.current?.(false);
         pendingFirstRunAuthorizationRef.current = resolve;
         setFirstRunConnectionState((current) => ({
@@ -3838,6 +3859,7 @@ export default function App() {
       serverName: pendingFirstRunConnection.name,
       serverKind: firstRunConnectionState.serverKind,
     });
+    const attemptId = firstRunConnectionAttemptRef.current;
     const analyticsContext = firstRunAnalyticsContextFromDraft(
       firstRunConnectionState.serverKind,
       pendingFirstRunConnection,
@@ -3847,7 +3869,8 @@ export default function App() {
     void handleConnect(pendingFirstRunConnection, {
       suppressErrorToast: true,
       suppressSuccessToast: true,
-      requestOAuthAuthorization: requestFirstRunOAuthAuthorization,
+      requestOAuthAuthorization: (serverName) =>
+        requestFirstRunOAuthAuthorization(serverName, attemptId),
     });
   }, [
     firstRunConnectionState.status,
@@ -4031,6 +4054,7 @@ export default function App() {
     pendingFirstRunAuthorizationRef.current?.(false);
     pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     if (firstRunConnectionState.status !== "idle") {
       const server = appState.servers[firstRunConnectionState.serverName];
@@ -4058,6 +4082,7 @@ export default function App() {
     pendingFirstRunAuthorizationRef.current?.(false);
     pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     firstRunAnalyticsContextRef.current = null;
     setFirstRunConnectionState({ status: "idle" });
@@ -4081,6 +4106,7 @@ export default function App() {
     pendingFirstRunAuthorizationRef.current?.(false);
     pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     firstRunAnalyticsContextRef.current = null;
     setFirstRunConnectionState({ status: "idle" });
@@ -4095,6 +4121,7 @@ export default function App() {
     pendingFirstRunAuthorizationRef.current?.(false);
     pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     markFirstRunServerChoiceDismissed();
     setPendingFirstRunConnection(null);
     firstRunAnalyticsContextRef.current = null;

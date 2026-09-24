@@ -263,7 +263,11 @@ export function FirstRunOnboardingOverlay({
 
       setBearerTokenError(null);
       onConnectOwnServer({
-        name: serverName.trim() || deriveServerName(serverUrlOrCommand),
+        name:
+          serverName.trim() ||
+          (connectionState.status === "authorization-required"
+            ? connectionState.serverName
+            : deriveServerName(serverUrlOrCommand)),
         transport: serverTransport,
         urlOrCommand: serverUrlOrCommand,
         authentication: "bearer",
@@ -272,6 +276,7 @@ export function FirstRunOnboardingOverlay({
     },
     [
       bearerToken,
+      connectionState,
       onConnectOwnServer,
       serverName,
       serverTransport,
