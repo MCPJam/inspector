@@ -1,6 +1,5 @@
-import { swarmLifecycleLabel } from "@mcpjam/sdk/contract";
+import { swarmVerdictLabel } from "@mcpjam/sdk/contract";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
-import { SwarmGoalResult } from "./swarm-report-panel";
 import type { SwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -14,7 +13,6 @@ import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
   type JourneySessionRow,
-  type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { TraceViewer } from "@/components/evals/trace-viewer";
@@ -145,8 +143,65 @@ export function resolveSwarmCellOutcome(args: {
   return "pending";
 }
 
+type SessionResultMeta = { label: string; dot: string; text: string };
+
+const SESSION_RESULT_META = {
+  goalPassed: { label: "Goal passed", dot: "bg-success", text: "text-success" },
+  goalFailed: {
+    label: "Goal failed",
+    dot: "bg-destructive",
+    text: "text-destructive",
+  },
+  didNotRun: {
+    label: "Did not run",
+    dot: "bg-warning",
+    text: "text-warning-foreground",
+  },
+} satisfies Record<string, SessionResultMeta>;
+
+const EXECUTION_OF_LIFECYCLE = {
+  pending: "pending",
+  running: "running",
+  ran: "succeeded",
+  broke: "failed",
+  limited: "rate_limited",
+  withdrawn: "failed",
+} as const satisfies Record<
+  SwarmSessionVerdict["lifecycle"],
+  SwarmMatrixCellOutcome
+>;
+
 /**
- * One session chip: `<host> #<n> · <outcome>`. Kept `data-testid`
+ * One status per session chip. Execution and goal grading used to render as
+ * two statuses side by side ("Broke" next to "Goal result: Failed"), which read
+ * as two verdicts on one session. A goal verdict outranks the execution that
+ * produced it; a session that never reached one says it did not run. The
+ * neutral labels cover states in between: still executing, being graded, or
+ * ran with nothing deciding the goal.
+ */
+function sessionResultMeta(
+  outcome: SwarmMatrixCellOutcome,
+  verdict?: SwarmSessionVerdict,
+): SessionResultMeta {
+  if (verdict?.verdict === "passed") return SESSION_RESULT_META.goalPassed;
+  if (verdict?.verdict === "failed") return SESSION_RESULT_META.goalFailed;
+  const execution = verdict
+    ? EXECUTION_OF_LIFECYCLE[verdict.lifecycle]
+    : outcome;
+  if (execution === "failed" || execution === "rate_limited") {
+    return SESSION_RESULT_META.didNotRun;
+  }
+  if (execution === "succeeded") {
+    return {
+      ...CELL_META.pending,
+      label: verdict ? swarmVerdictLabel(verdict) : CELL_META.succeeded.label,
+    };
+  }
+  return CELL_META[execution];
+}
+
+/**
+ * One session chip: `<host> #<n> · <result>`. Kept `data-testid`
  * "swarm-host-cell" from the old grid so outcome assertions carry over.
  */
 export function SwarmHostCell({
@@ -155,7 +210,6 @@ export function SwarmHostCell({
   sessionIndex,
   outcome,
   verdict,
-  criteria,
   selected,
   onSelect,
 }: {
@@ -170,26 +224,10 @@ export function SwarmHostCell({
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
   verdict?: SwarmSessionVerdict;
-  criteria?: SessionCriteria;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const executionOutcome = verdict
-    ? (
-        {
-          pending: "pending",
-          running: "running",
-          ran: "succeeded",
-          broke: "failed",
-          limited: "rate_limited",
-          withdrawn: "failed",
-        } as const
-      )[verdict.lifecycle]
-    : outcome;
-  const meta = CELL_META[executionOutcome];
-  const executionLabel = verdict
-    ? swarmLifecycleLabel(verdict.lifecycle)
-    : meta.label;
+  const meta = sessionResultMeta(outcome, verdict);
   return (
     <button
       type="button"
@@ -198,7 +236,7 @@ export function SwarmHostCell({
       data-outcome={outcome}
       aria-label={`Open session ${
         sessionIndex + 1
-      } on ${hostLabel} (${executionLabel})`}
+      } on ${hostLabel} (${meta.label})`}
       className={cn(
         // These chips sit in a narrow target column and their parts can exceed
         // it: an execution target's name is free text, and a generated
@@ -226,25 +264,18 @@ export function SwarmHostCell({
       <span
         className={cn("shrink-0 whitespace-nowrap font-semibold", meta.text)}
       >
-        {executionLabel}
+        {meta.label}
       </span>
-      <span className="shrink-0 whitespace-nowrap">
-        <SwarmGoalResult verdict={verdict} />
-      </span>
-      {verdict ? (
-        <SessionEvaluatorCount counts={verdict.counts} />
-      ) : (
-        <SessionCriteriaChip criteria={criteria} />
-      )}
+      {verdict ? <SessionEvaluatorCount counts={verdict.counts} /> : null}
     </button>
   );
 }
 
 /**
- * Graded counterpart to `SessionCriteriaChip`, under the same rule: a run whose
- * pinned rubric had no required criteria has no denominator to report, and
- * `0/0` would claim it was graded against an empty one. Goals decided by the
- * judge alone are the common case, so this branch printed `0/0` on most cells.
+ * A run whose pinned rubric had no required criteria has no denominator to
+ * report, and `0/0` would claim it was graded against an empty one. Goals
+ * decided by the judge alone are the common case, so this printed `0/0` on
+ * most cells.
  */
 function SessionEvaluatorCount({
   counts,
@@ -255,56 +286,6 @@ function SessionEvaluatorCount({
   return (
     <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
       {counts.gatingPassed}/{counts.gating} evaluators passed
-    </span>
-  );
-}
-
-/**
- * Per-cell deterministic rubric verdict: `N/M` passed when graded, a subtle
- * glyph while pending or after a grading failure, and NOTHING when the session
- * carries no stamp.
- *
- * Rendering nothing for an absent stamp is the point. A `0/0` would claim the
- * session was graded against an empty rubric; absence means the run had no
- * rubric at all, which is a different thing and belongs in no denominator.
- */
-function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
-  if (!criteria) return null;
-
-  if (criteria.status === "completed") {
-    const results = criteria.results ?? [];
-    if (results.length === 0) return null;
-    const passed = results.filter((r) => r.passed).length;
-    const allPassed = passed === results.length;
-    return (
-      <span
-        title={`${passed} of ${results.length} evaluators passed`}
-        className={cn(
-          "shrink-0 rounded px-1 font-mono text-[10px] tabular-nums",
-          allPassed
-            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-            : "bg-destructive/10 text-destructive",
-        )}
-      >
-        {passed}/{results.length}
-      </span>
-    );
-  }
-
-  // Pending and failed-grading stay visually quiet — they say something about
-  // the GRADER, not about the session, and shouting them would read as a
-  // product failure.
-  const pending = criteria.status === "pending";
-  return (
-    <span
-      title={
-        pending
-          ? "Evaluators still being graded"
-          : "Evaluators could not be graded"
-      }
-      className="shrink-0 rounded px-1 font-mono text-[10px] text-muted-foreground"
-    >
-      {pending ? "…" : "—"}
     </span>
   );
 }
@@ -365,7 +346,7 @@ export function SwarmSessionsMatrix({
   return (
     <div className="min-w-0" data-testid="swarm-sessions-matrix">
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Sessions
+        Results
       </p>
       <div className="flex flex-wrap gap-1.5">
         {visibleTargets.flatMap((target) => {
@@ -420,7 +401,6 @@ export function SwarmSessionsMatrix({
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
                 verdict={convexSession?.verdict}
-                criteria={convexSession?.criteria}
                 selected={selected}
                 onSelect={() =>
                   onSelect({
