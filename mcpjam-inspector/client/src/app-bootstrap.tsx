@@ -1,7 +1,8 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
 import { StrictMode, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
+import { appRoot as root } from "./app-root";
+import { SignOutBoundary } from "./components/SignOutBoundary";
 import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
@@ -162,7 +163,6 @@ function isServerConnectionHandoff(): boolean {
 
 // If we're in an iframe, render a helpful error message instead of the full Inspector
 if (isInIframe) {
-  const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
       <IframeRouterError />
@@ -195,7 +195,6 @@ if (isInIframe) {
   const handoffWorkosOptions = handoffRuntimeApiHostname
     ? { apiHostname: handoffRuntimeApiHostname }
     : resolveWorkosClientOptions(import.meta.env, window.location, HOSTED_MODE);
-  const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
       <AuthKitProvider
@@ -225,7 +224,6 @@ if (isInIframe) {
   // bundles entirely.
   updateThemeMode(getInitialThemeMode());
   updateThemePreset(getInitialThemePreset());
-  const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
       <PlanLimitDialogPreview />
@@ -237,7 +235,6 @@ if (isInIframe) {
   // App's theme bootstrap doesn't run here, so apply the stored theme directly.
   updateThemeMode(getInitialThemeMode());
   updateThemePreset(getInitialThemePreset());
-  const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
       <OAuthDebugCallback />
@@ -410,16 +407,17 @@ if (isInIframe) {
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
-        <AuthBootstrap>
-          <AppRouterProvider />
-        </AuthBootstrap>
+        <SignOutBoundary>
+          <AuthBootstrap>
+            <AppRouterProvider />
+          </AuthBootstrap>
+        </SignOutBoundary>
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>
   );
 
   // Async bootstrap to initialize session token before rendering
   async function bootstrap() {
-    const root = createRoot(document.getElementById("root")!);
     const skipLocalSessionBootstrap =
       import.meta.env.DEV && window.location.pathname.startsWith("/__e2e/");
 

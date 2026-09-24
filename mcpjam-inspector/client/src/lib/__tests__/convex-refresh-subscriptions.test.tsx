@@ -1,3 +1,5 @@
+import { SignOutBoundary } from "@/components/SignOutBoundary";
+import { showSignOutScreen, useSignOutStore } from "@/stores/sign-out-store";
 import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConvexReactClient, useConvexAuth, useQuery } from "convex/react";
@@ -136,6 +138,7 @@ function jwt(n: number) {
 const pauseQueries = useSessionRefreshStore.getState().pauseQueries;
 beforeEach(() => {
   auth.getAccessToken.mockReset();
+  useSignOutStore.setState({ isSigningOut: false });
   useSessionRefreshStore.setState({
     status: "idle",
     kind: null,
@@ -204,3 +207,36 @@ it.each([false, true])(
   },
   15000,
 );
+
+it("removes even ungated subscriptions before logout revokes the session", async () => {
+  const peer = protocolPeer();
+  auth.getAccessToken.mockResolvedValue(jwt(1));
+  const client = new ConvexReactClient("https://test.convex.cloud", {
+    webSocketConstructor: peer.Socket as unknown as typeof WebSocket,
+    unsavedChangesWarning: false,
+    logger: false,
+  });
+  function UngatedQueries() {
+    useQuery(makeFunctionReference<"query">("orgMetrics:getOrgMetric"), {});
+    useQuery(makeFunctionReference<"query">("billing:getPlanCatalog"), {});
+    return null;
+  }
+  const view = render(
+    <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+      <SignOutBoundary>
+        <UngatedQueries />
+      </SignOutBoundary>
+    </ConvexProviderWithAuthKit>,
+  );
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(2));
+    act(() => {
+      showSignOutScreen();
+      // This is the point the caller can start session revocation.
+      expect(peer.active.size).toBe(0);
+    });
+  } finally {
+    view.unmount();
+    await client.close();
+  }
+});
