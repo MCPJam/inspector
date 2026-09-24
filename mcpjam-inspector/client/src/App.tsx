@@ -20,6 +20,7 @@ import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import { HomeTab } from "./components/HomeTab";
@@ -5408,7 +5409,10 @@ export default function App() {
   if (
     !isHostedChatRoute &&
     isAuthenticated &&
-    (currentUser === undefined || (currentUser === null && isEnsuringUser))
+    (currentUser === undefined ||
+      // Session revocation can return a null user before Convex's auth state
+      // changes or WorkOS finishes navigating away. That is expected at logout.
+      (currentUser === null && (isEnsuringUser || isSignOutInProgress())))
   ) {
     return <LoadingScreen />;
   }

@@ -240,7 +240,9 @@ jobs:
       # more shards are cheap when the expensive part is no longer the install.
       # All four of the places that carry the denominator — this list, the job
       # name, the step name and --shard — must move together, or the job
-      # silently runs the wrong fraction of the suite.
+      # silently runs the wrong fraction of the suite. dependabot-auto-merge.yml
+      # names these jobs too ("Inspector Tests N/6"); it fails safe (holds)
+      # when they drift, but update it with them.
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
 

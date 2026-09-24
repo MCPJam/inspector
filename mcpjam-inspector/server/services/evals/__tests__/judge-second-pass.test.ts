@@ -21,14 +21,19 @@ import {
 } from "../judge-second-pass.js";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
   hostedCriterionId,
 } from "../score-definitions.js";
 import {
   authoredRequiredRole,
+  buildEvaluationConfigSnapshot,
+  canonicalDigest,
   definitionHash,
+  fromCriterionResult,
   type ResolvedScoreDefinition,
 } from "@mcpjam/sdk/contract";
+import { buildHostedScoreContract } from "../score-rows.js";
 import { buildIterationFinishParams } from "../finalize-iteration.js";
 import { evaluateMultiTurnResults } from "../types.js";
 import {
@@ -1556,6 +1561,152 @@ describe("a steps-authored case keeps its tool-call definition through the secon
       expect(mergedRowsJoin(result)).toEqual([]);
     },
   );
+});
+
+/**
+ * A run finalized by one build and judged by the next.
+ *
+ * The tool-call rows are the FIRST pass's: this pass has no matcher output and
+ * never re-posts them. So the definitions it declares for them must be the
+ * ones those rows were minted against, not this build's — or a run that
+ * straddles the deploy that split `toolCalls:arguments` out of
+ * `toolCalls:match` loses its route row to a new hash and gains a gating
+ * definition with no row at all.
+ */
+describe("the second pass declares the tool-call scorers the first pass stored", () => {
+  const judgeVerdict = {
+    status: "scored",
+    verdict: "pass",
+    score: 0.9,
+    threshold: 0.8,
+    judgeTemplateVersion: 2,
+    judgeTemplateHash: "tpl",
+    model: "gpt-x",
+  };
+  const matchOptions = {
+    toolCallOrder: "ignore",
+    maxExtraToolCalls: null,
+    argumentMatching: "partial",
+  };
+
+  async function judge(stored: {
+    evaluationConfig: { definitions: ResolvedScoreDefinition[] };
+    scores: Array<{ scorerId: string; definitionHash: string }>;
+  }) {
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          iterations: [
+            {
+              iterationId: "iter1",
+              status: "completed",
+              authoredCase: {
+                query: "list my files",
+                expectedToolCalls: [{ toolName: "list_files", arguments: {} }],
+              } as never,
+              matchOptions,
+              messages: [{ role: "user", content: "hi" }],
+              metadata: { ...stored, judgeVerdict },
+            },
+          ],
+        }),
+      ),
+    });
+    await runJudgeSecondPass("run1", value);
+    const body = applied[0]!.body;
+    const config = body.evaluationConfig as {
+      definitions: ResolvedScoreDefinition[];
+    };
+    const posted = (body.scores ?? []) as Array<{
+      scorerId: string;
+      definitionHash: string;
+    }>;
+    // What the backend keeps: rows merged by id, the config replaced.
+    const replaced = new Set(posted.map((row) => row.scorerId));
+    const merged = [
+      ...stored.scores.filter((row) => !replaced.has(row.scorerId)),
+      ...posted,
+    ];
+    const hashes = new Set(config.definitions.map((d) => definitionHash(d)));
+    return {
+      config,
+      orphans: merged.filter((row) => !hashes.has(row.definitionHash)),
+      rowless: config.definitions.filter(
+        (d) =>
+          d.role !== "advisory" &&
+          !merged.some((row) => row.definitionHash === definitionHash(d)),
+      ),
+    };
+  }
+
+  test("a run finalized before the split keeps its v2 route row and gains no arguments scorer", async () => {
+    // The v2 definition and row exactly as the previous build minted them.
+    const v2 = {
+      scorerId: HOSTED_TOOL_MATCH_SCORER_ID,
+      idSource: "platform",
+      scorerVersion: "2",
+      implementationHash: canonicalDigest({
+        evaluatorVersion: "2",
+        matchOptions,
+      }),
+      label: "expected tool calls",
+      deterministic: true,
+      passThreshold: 1,
+      role: authoredRequiredRole(),
+    } as const;
+    const stored = buildEvaluationConfigSnapshot([v2]);
+    const row = fromCriterionResult(stored.definitions[0]!, {
+      criterionId: HOSTED_TOOL_MATCH_SCORER_ID,
+      passed: false,
+      reason: "tool-call expectations unmet: 1 argument mismatch(es)",
+    });
+
+    const result = await judge({
+      evaluationConfig: stored,
+      scores: [row],
+    });
+
+    const tools = result.config.definitions.filter((d) =>
+      d.scorerId.startsWith("toolCalls:"),
+    );
+    expect(tools).toEqual(stored.definitions);
+    expect(result.orphans).toEqual([]);
+    // Above all, no gating definition the run has no row for.
+    expect(result.rowless).toEqual([]);
+  });
+
+  test("a run finalized after it keeps both halves, as stored", async () => {
+    const first = buildHostedScoreContract({
+      evaluation: {
+        passed: false,
+        expectedToolCalls: [{ toolName: "list_files", arguments: { a: 1 } }],
+        missing: [],
+        unexpected: [],
+        argumentMismatches: [
+          {
+            toolName: "list_files",
+            expectedArgs: { a: 1 },
+            actualArgs: { a: 2 },
+          },
+        ],
+      },
+      matchOptions,
+    });
+
+    const result = await judge({
+      evaluationConfig: first.evaluationConfig,
+      scores: first.scores,
+    });
+
+    expect(
+      result.config.definitions
+        .filter((d) => d.scorerId.startsWith("toolCalls:"))
+        .map((d) => d.scorerId)
+        .sort(),
+    ).toEqual([HOSTED_TOOL_ARGUMENTS_SCORER_ID, HOSTED_TOOL_MATCH_SCORER_ID]);
+    expect(result.orphans).toEqual([]);
+    expect(result.rowless).toEqual([]);
+  });
 });
 
 describe("the marker carries what the chain cannot", () => {
