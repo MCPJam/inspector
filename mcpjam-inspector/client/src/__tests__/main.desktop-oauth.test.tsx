@@ -48,6 +48,8 @@ it("keeps regular browser and WorkOS callbacks in the app bootstrap", async () =
     await import("../main");
   });
   expect(bootstrap).toHaveBeenCalledOnce();
+  expect(screen.getByRole("img", { name: "MCPJam" })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Loading");
 });
 
 it.each([false, true])(
