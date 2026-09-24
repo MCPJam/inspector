@@ -1,5 +1,6 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { traceConvexQueries } from "./lib/trace-convex-queries";
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppRouterProvider } from "./router";
@@ -343,6 +344,7 @@ if (isInIframe) {
   const convex = new ConvexReactClient(convexUrl, {
     authRefreshTokenLeewaySeconds: 60,
   });
+  traceConvexQueries(convex, convexUrl);
   normalizeInitialLegacyHashBookmark();
 
   const Providers = (
