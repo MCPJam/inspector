@@ -122,7 +122,7 @@ it("sends captured images as model parts and preserves provenance through the pu
   );
   expect(fromEvaluatorResult(toEvaluatorResult(finalized))).toEqual(finalized);
   expect(finalized).toMatchObject({
-    judgeTemplateVersion: 4,
+    judgeTemplateVersion: 5,
     evidenceHash: expect.any(String),
     evidenceManifest: {
       artifactSources: [

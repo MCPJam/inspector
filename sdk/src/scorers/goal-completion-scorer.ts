@@ -211,7 +211,9 @@ export function goalCompletionScorer(
         rationale: result.reason,
         judgeTemplateVersion: GOAL_JUDGE_TEMPLATE_VERSION,
         judgeTemplateHash: sha256Hex(renderGoalJudgeTemplate()),
-        evidenceHash: sha256Hex(JSON.stringify(evidence)),
+        // Hash what the judge READ: the redacted evidence, same as the hosted
+        // judge, so a local and a hosted v5 verdict on one run agree.
+        evidenceHash: sha256Hex(JSON.stringify(request.evidence)),
         evidenceManifest: request.manifest,
         evidence: result.rubricHits,
         model: options.model,

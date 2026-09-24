@@ -135,7 +135,7 @@ describe("the shared full-evidence judge", () => {
   });
 });
 
-it("matches the hosted v4 contract fixture and template lock", async () => {
+it("matches the hosted v5 contract fixture and template lock", async () => {
   const { readFileSync } = await import("node:fs");
   const { sha256Hex } = await import("../src/contract/canonical.js");
   const {
@@ -145,7 +145,7 @@ it("matches the hosted v4 contract fixture and template lock", async () => {
   } = await import("../src/contract/goal-completion.js");
   const fixture = JSON.parse(
     readFileSync(
-      new URL("./fixtures/goal-judge-v4.json", import.meta.url),
+      new URL("./fixtures/goal-judge-v5.json", import.meta.url),
       "utf8"
     )
   );
@@ -153,6 +153,16 @@ it("matches the hosted v4 contract fixture and template lock", async () => {
   const request = buildGoalJudgeRequest(fixture.input);
   expect(request.prompt).toContain("uncalled_read_ticket");
   expect(request.manifest.traceFields).toContain("recordedExtension");
+  // Same redaction as the hosted judge: one map over the authored query and
+  // the trace, and the evidence hash pinned by the backend fixture.
+  expect(request.prompt).not.toContain(fixture.redaction.absent);
+  expect(request.prompt.split(fixture.redaction.placeholder).length - 1).toBe(
+    fixture.redaction.placeholderCount
+  );
+  expect(request.system).toContain("consistent placeholders");
+  expect(sha256Hex(JSON.stringify(request.evidence))).toBe(
+    fixture.redaction.evidenceHash
+  );
   expect(
     interpretGoalJudgeOutput(fixture.output, request.hasRubric).score
   ).toBe(fixture.expectedScore);

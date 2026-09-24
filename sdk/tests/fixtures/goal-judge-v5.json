@@ -1,0 +1,61 @@
+{
+  "templateHash": "a44b6f10f2a10cf9e2ea6edd31552bc9732843553a997c9ec802b873d3d4bad8",
+  "input": {
+    "caseKey": "create-ticket",
+    "gradingKey": "create-ticket#2",
+    "title": "Create ticket",
+    "query": "Create and verify the ticket, then email sam@example.com",
+    "suiteRubric": {
+      "instructions": "Verify durable completion"
+    },
+    "evidence": {
+      "version": 1,
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Create ticket"
+          },
+          {
+            "role": "tool",
+            "content": {
+              "id": "ticket-17",
+              "created": true
+            }
+          },
+          {
+            "role": "tool",
+            "content": {
+              "sentTo": "sam@example.com",
+              "ok": true
+            }
+          }
+        ],
+        "spans": [],
+        "recordedExtension": {
+          "preserved": true
+        }
+      },
+      "toolDefinitions": [
+        {
+          "name": "create_ticket"
+        },
+        {
+          "name": "uncalled_read_ticket"
+        }
+      ]
+    }
+  },
+  "output": {
+    "score": 1,
+    "reason": "The tool created ticket-17",
+    "rubricHits": []
+  },
+  "expectedScore": 0.85,
+  "redaction": {
+    "absent": "sam@example.com",
+    "placeholder": "[email-a]",
+    "placeholderCount": 2,
+    "evidenceHash": "72dbf9cfc0d31ac5024cb2c220be65ab329c5b2a24216301309ff8974cecc1b9"
+  }
+}

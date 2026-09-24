@@ -12,7 +12,7 @@
     "rail": "openrouter"
   },
   "extractionModel": "openai/gpt-5.6-luna",
-  "extractionVersion": 1,
+  "extractionVersion": 2,
   "findings": [
     {
       "basis": "verifiedMechanism",
