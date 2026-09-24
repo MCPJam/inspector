@@ -474,17 +474,16 @@ export function ServerPickerPanel({
                     group.deleteDisabledReason ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          {/* A disabled button gets no hover, so the span
-                              owns it. */}
-                          <span tabIndex={0} className="shrink-0 rounded">
-                            <button
-                              type="button"
-                              aria-label={`Delete ${group.name}`}
-                              disabled
-                              className="pointer-events-none flex size-6 items-center justify-center rounded text-muted-foreground opacity-30"
-                            >
-                              <Trash2 className="size-3" />
-                            </button>
+                          {/* Not a disabled <button>: that gets no hover or
+                              focus, so the tooltip could never open. */}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Delete ${group.name}`}
+                            aria-disabled="true"
+                            className="flex size-6 shrink-0 cursor-not-allowed items-center justify-center rounded text-muted-foreground opacity-30"
+                          >
+                            <Trash2 className="size-3" />
                           </span>
                         </TooltipTrigger>
                         <TooltipContent variant="muted">

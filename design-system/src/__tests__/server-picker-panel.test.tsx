@@ -681,7 +681,9 @@ describe("ServerPickerPanel — removing a group", () => {
         disconnect() {}
       },
     );
-    onTestFinished(() => vi.unstubAllGlobals());
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
     const onDeleteGroup = vi.fn();
     render(
       <ServerPickerPanel
@@ -702,16 +704,16 @@ describe("ServerPickerPanel — removing a group", () => {
     );
 
     const blocked = screen.getByRole("button", { name: "Delete Group 1" });
-    expect(blocked).toBeDisabled();
+    expect(blocked).toHaveAttribute("aria-disabled", "true");
     expect(
       screen.getByRole("button", { name: "Delete Group 2" }),
     ).toBeEnabled();
 
-    // The disabled button gets no pointer events; its wrapper owns the hover.
-    await userEvent.hover(blocked.parentElement!);
+    await userEvent.hover(blocked);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "In use by a test suite.",
     );
+    await userEvent.click(blocked);
     expect(onDeleteGroup).not.toHaveBeenCalled();
   });
 });
