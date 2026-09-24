@@ -1,5 +1,5 @@
 import type { CaptureResult } from "posthog-js";
-import { isInjectedScriptStack } from "../../../shared/injected-script-frames";
+import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
@@ -191,7 +191,7 @@ export function dropInjectedScriptException(
   const exceptions: unknown = event.properties?.$exception_list;
   if (!Array.isArray(exceptions)) return event;
 
-  const filenames = exceptions.flatMap((exception) => {
+  const stacks = exceptions.map((exception) => {
     const frames = (exception as { stacktrace?: { frames?: unknown } })
       ?.stacktrace?.frames;
     return Array.isArray(frames)
@@ -201,7 +201,7 @@ export function dropInjectedScriptException(
       : [];
   });
 
-  return isInjectedScriptStack(filenames, window.location.origin)
+  return isInjectedScriptException(stacks, window.location.origin)
     ? null
     : event;
 }

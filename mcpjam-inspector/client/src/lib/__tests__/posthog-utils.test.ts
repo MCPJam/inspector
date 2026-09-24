@@ -555,6 +555,16 @@ describe("dropInjectedScriptException", () => {
     expect(dropInjectedScriptException(event)).toBe(event);
   });
 
+  // @posthog/core turns an Error.cause into its own $exception_list entry,
+  // with no stacktrace when the cause is a string. That entry is unattributed,
+  // so it keeps the event even though the other entry is all document frames.
+  it("keeps a chained exception whose string cause has no stacktrace", () => {
+    const event = exceptionEvent([{ filename: `${origin}/p/v97d1szz/tasks` }]);
+    const exceptions = event.properties.$exception_list as unknown[];
+    exceptions.push({ type: "Error", value: "string cause" });
+    expect(dropInjectedScriptException(event)).toBe(event);
+  });
+
   it("leaves other events and a null capture alone", () => {
     const pageview = {
       uuid: "1",

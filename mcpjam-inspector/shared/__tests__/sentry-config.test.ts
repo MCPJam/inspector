@@ -366,6 +366,45 @@ describe("surface builders", () => {
     expect(beforeSend(event)).toBe(event);
   });
 
+  // The invented frame erases its value's stack, and an empty value is
+  // unattributed. It must keep the event, not vanish and let the other value's
+  // document frames drop it.
+  it("keeps a chained exception where one value has only the synthesised frame", () => {
+    const origin = "https://app.mcpjam.com";
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted" as const,
+      documentOrigin: origin,
+    }).beforeSend;
+
+    const event = {
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "inner",
+            stacktrace: {
+              frames: [
+                { filename: `${origin}/p/v97d1szz/home`, function: "?" },
+              ],
+            },
+          },
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: {
+              frames: [
+                { filename: `${origin}/p/v97d1szz/playground`, function: "Tk" },
+                { filename: `${origin}/p/v97d1szz/tasks`, function: "Rk" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event)).toBe(event);
+  });
+
   // The same lone document frame, but from a real parsed stack, still drops.
   it("still drops a lone document frame that Sentry did not synthesise", () => {
     const origin = "https://app.mcpjam.com";

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isDocumentFrame,
+  isInjectedScriptException,
   isInjectedScriptStack,
 } from "../injected-script-frames";
 
@@ -60,5 +61,23 @@ describe("isInjectedScriptStack", () => {
 
   it("spares an empty stack, which attributes to nobody", () => {
     expect(isInjectedScriptStack([], ORIGIN)).toBe(false);
+  });
+});
+
+describe("isInjectedScriptException", () => {
+  const injected = [`${ORIGIN}/p/v97d1szz/playground`];
+
+  it("matches when every value is stamped entirely with the document", () => {
+    expect(isInjectedScriptException([injected, injected], ORIGIN)).toBe(true);
+  });
+
+  // A string `cause` arrives with no frames. Pooled with the other value's
+  // frames it would vanish, and the event would drop.
+  it("spares a chain where one value has no frames", () => {
+    expect(isInjectedScriptException([injected, []], ORIGIN)).toBe(false);
+  });
+
+  it("spares an event with no exception values", () => {
+    expect(isInjectedScriptException([], ORIGIN)).toBe(false);
   });
 });

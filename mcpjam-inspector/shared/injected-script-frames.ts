@@ -73,3 +73,20 @@ export function isInjectedScriptStack(
   if (filenames.length === 0) return false;
   return filenames.every((filename) => isDocumentFrame(filename, origin));
 }
+
+/**
+ * Did every value of a (possibly chained) exception come from injected code?
+ *
+ * One entry per exception value, each that value's frame filenames. The rule
+ * applies per value, not to the values' frames pooled together: a value with
+ * no frames — a string `cause`, which PostHog records without a stacktrace —
+ * attributes to nobody, so it keeps the whole event. Pooling would let it
+ * vanish and leave the other values' document frames to drop a real error.
+ */
+export function isInjectedScriptException(
+  stacks: unknown[][],
+  origin: string,
+): boolean {
+  if (stacks.length === 0) return false;
+  return stacks.every((filenames) => isInjectedScriptStack(filenames, origin));
+}

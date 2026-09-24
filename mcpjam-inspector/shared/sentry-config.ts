@@ -11,10 +11,7 @@
  * unit-testable without stubbing globals.
  */
 
-import {
-  isDocumentFrame,
-  isInjectedScriptStack,
-} from "./injected-script-frames";
+import { isInjectedScriptException } from "./injected-script-frames";
 
 /**
  * Where this install runs. `hosted` is app.mcpjam.com; `self_hosted` covers
@@ -278,13 +275,13 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
 export function buildBrowserBeforeSend(origin?: string) {
   return <T extends FingerprintableEvent>(event: T): T | null => {
     if (origin !== undefined) {
-      const filenames = (event.exception?.values ?? []).flatMap((value) => {
+      const stacks = (event.exception?.values ?? []).map((value) => {
         const frames = value.stacktrace?.frames ?? [];
-        return isSynthesizedInitialFrame(frames, origin)
+        return isSynthesizedInitialFrame(frames)
           ? []
           : frames.map((frame) => frame.filename);
       });
-      if (isInjectedScriptStack(filenames, origin)) return null;
+      if (isInjectedScriptException(stacks, origin)) return null;
     }
     return groupDomMutationConflicts(event);
   };
@@ -303,23 +300,15 @@ export function buildBrowserBeforeSend(origin?: string) {
  * exactly the ones that reach `beforeSend` looking like a lone document frame,
  * so they would be the only ones it dropped.
  *
- * All three conditions are load-bearing. `stripSentryFramesAndReverse` gives
- * any nameless PARSED frame the same `"?"` placeholder, and the SDK only ever
+ * Both conditions are load-bearing. `stripSentryFramesAndReverse` gives any
+ * nameless PARSED frame the same `"?"` placeholder, and the SDK only ever
  * fabricates into an empty array, so the count and the name together are what
- * separate an invention from a one-frame stack. The filename matters because
- * discarding a value's frames is not free: with a chained exception, erasing a
- * lone `https://js.stripe.com/v3/` frame here let the remaining values' document
- * frames read as an entirely injected stack and drop a real Stripe failure.
+ * separate an invention from a one-frame stack. A parsed lone `"?"` frame that
+ * matches anyway only ever keeps the event: the value it empties counts as
+ * unattributed (isInjectedScriptException), never as injected.
  */
-function isSynthesizedInitialFrame(
-  frames: { filename?: string; function?: string }[],
-  origin: string,
-): boolean {
-  return (
-    frames.length === 1 &&
-    frames[0]?.function === "?" &&
-    isDocumentFrame(frames[0]?.filename, origin)
-  );
+function isSynthesizedInitialFrame(frames: { function?: string }[]): boolean {
+  return frames.length === 1 && frames[0]?.function === "?";
 }
 
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
