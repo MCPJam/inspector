@@ -737,11 +737,13 @@ describe("groupOAuthDebuggerStepFailures", () => {
   // Review of #5473: the cause of a discovery failure comes after the first
   // period. The first version cut there and merged all of these.
   it("keeps discovery failures with different causes apart", () => {
-    const prefix = "Could not discover authorization server metadata. Last error:";
+    // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532).
+    const prefix = "Could not discover authorization server metadata.";
+    const url = "https://auth.example.com/.well-known/oauth-authorization-server";
     const keys = [
-      `${prefix} undefined`,
-      `${prefix} HTTP 500 from https://auth.example.com/.well-known/oauth-authorization-server`,
-      `${prefix} Failed to fetch`,
+      `${prefix} ${url}/t returned HTTP 404; ${url} returned HTTP 404.`,
+      `${prefix} ${url} returned HTTP 500.`,
+      `${prefix} ${url} failed: Failed to fetch.`,
     ].map((value) =>
       JSON.stringify(fingerprint(stepEvent(value, { step: "request_authorization_server_metadata" }))),
     );
@@ -789,10 +791,10 @@ describe("groupOAuthDebuggerStepFailures", () => {
   it("falls back to the capped message, never a first-sentence cut", () => {
     // No `finding` should reach here — the adapter and this rule ship
     // together — but if one does, it must split rather than merge.
-    const value = `Could not discover authorization server metadata. Last error: ${"x".repeat(300)}`;
+    const value = `Could not discover authorization server metadata. https://a.test/x returned HTTP 404; ${"x".repeat(300)}`;
     const [, , finding] = fingerprint(stepEvent(value, { withFinding: false }))!;
     expect(finding).toBe(value.slice(0, 160));
-    expect(finding).toContain("Last error:");
+    expect(finding).toContain("returned HTTP 404");
   });
 
   it.each(["oauth_debugger_advance", "react_boundary", undefined])(

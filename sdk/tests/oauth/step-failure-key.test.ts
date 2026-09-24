@@ -108,26 +108,34 @@ describe("stepFailureFindingKey", () => {
 
   // Review of #5473: the cause of a discovery failure comes AFTER the first
   // period, so cutting there merged all three into one issue.
+  // The wording `describeAuthorizationServerDiscoveryFailure` writes (#5532):
+  // every URL tried, and what each returned.
+  const discovery = (...attempts: string[]) =>
+    `Could not discover authorization server metadata. ${attempts.join("; ")}.`;
+  const wellKnown =
+    "https://auth.example.com/.well-known/oauth-authorization-server";
+
   it("keeps discovery failures with different causes apart", () => {
-    const prefix =
-      "Could not discover authorization server metadata. Last error:";
     const keys = [
-      `${prefix} undefined`,
-      `${prefix} HTTP 500 from https://auth.example.com/.well-known/oauth-authorization-server`,
-      `${prefix} Failed to fetch`,
+      discovery(
+        `${wellKnown}/t returned HTTP 404`,
+        `${wellKnown} returned HTTP 404`
+      ),
+      discovery(`${wellKnown} returned HTTP 500`),
+      discovery(`${wellKnown} failed: Failed to fetch`),
     ].map(stepFailureFindingKey);
     expect(new Set(keys).size).toBe(3);
   });
 
   it("keeps one discovery cause together across servers' URLs", () => {
-    const prefix =
-      "Could not discover authorization server metadata. Last error:";
     expect(
       stepFailureFindingKey(
-        `${prefix} HTTP 500 from https://a.example/.well-known/x`
+        discovery("https://a.example/.well-known/x returned HTTP 500")
       )
     ).toBe(
-      stepFailureFindingKey(`${prefix} HTTP 500 from https://b.example/other`)
+      stepFailureFindingKey(
+        discovery("https://b.example/other returned HTTP 500")
+      )
     );
   });
 

@@ -279,8 +279,8 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
  * wrong in both directions:
  *
  * - Cut at its first sentence, it MERGES different failures: every era's
- *   machine reports `Could not discover authorization server metadata. Last
- *   error: …`, with the cause after the period.
+ *   machine reports `Could not discover authorization server metadata. …`,
+ *   with what each well-known URL returned after the period.
  * - Whole, it SPLITS one failure: the server under test chooses part of it
  *   (status text, free-form `error_description`, URLs, ids), so one finding
  *   would open a new issue per server wording and per request, unbounded.

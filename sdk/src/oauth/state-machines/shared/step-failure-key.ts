@@ -9,9 +9,9 @@ import { responseFailureFindingKey } from "./response-error.js";
  * Neither the whole message nor a cut of it will do, in opposite directions:
  *
  * - Cutting at the first sentence MERGES different failures. Every era's
- *   machine reports `Could not discover authorization server metadata. Last
- *   error: …`, and the actual cause — every discovery URL 4xx'd, an HTTP 500,
- *   a network or TLS error — comes after the period.
+ *   machine reports `Could not discover authorization server metadata. …`,
+ *   and the actual cause — what each well-known URL returned: a 404, an HTTP
+ *   500, a network or TLS error — comes after the period.
  * - The whole message SPLITS one failure. The server under test chooses part
  *   of the text: `describeResponseFailure` appends its status text and free-
  *   form `error_description`, and passed-through errors can carry URLs and
