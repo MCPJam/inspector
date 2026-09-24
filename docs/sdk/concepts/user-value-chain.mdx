@@ -54,16 +54,21 @@ Two consequences worth keeping in mind:
 
 ## Graders that are not predicates
 
-Four graders file at a link without being checks you write in a list:
+Five graders file at a link without being checks you write in a list:
 
 | Grader | Link | What it is |
 |--------|------|------------|
-| Tool-call matcher | Selection | The `expectedToolCalls` comparison, configured by [match options](/sdk/reference/validators) rather than authored as a predicate |
+| Tool-call selection | Selection | `toolCalls:match` — the `expectedToolCalls` comparison for WHICH tools were called: no expected call missing, extras within `maxExtraToolCalls`. Configured by [match options](/sdk/reference/validators) rather than authored as a predicate. |
+| Tool-call arguments | Tool call | `toolCalls:arguments` — HOW the expected tools were called: every expected call was made with the expected arguments. Declared only when `argumentMatching` is not `"ignore"`. Its reason names the tool and the argument key, never the value. |
 | Goal completion judge | User value | The hosted LLM judge scoring whether the request was satisfied |
 | Groundedness judge | User value | Advisory only, run on demand; it has no score definition and never decides a link |
 | Rubric checks | User value | Advisory only: one row per suite criterion or authored question, graded with the goal completion judge; never decides a link |
 
+The two tool-call graders together pass exactly when the old single row did, so a gate on the pair means what a gate on the old row meant. A case where the right tool was called with the wrong argument now shows Selection passing and **Arguments match** failing at Tool call, rather than Selection failing as if the wrong tool were chosen.
+
 A **gating** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
+
+Runs graded before this split show no Arguments match row and render as before. After upgrading, the first run cannot be gated against a `--baseline` from before it — `eval gate --baseline <older run>` exits 3 (not gateable). Record a new baseline from a run on the current version.
 
 ## What a suite is not measuring
 
