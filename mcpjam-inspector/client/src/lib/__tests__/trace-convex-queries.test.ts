@@ -99,6 +99,39 @@ describe("traced watches", () => {
       expect(e).toBe(failure);
     }
   });
+  it("deduplicates ID-less failures per watch until a successful read", () => {
+    const f = fixture();
+    const noId = new Error("[CONVEX Q(scenarios:listScenarios)] Server Error");
+    f.set(undefined, noId);
+    const watch = f.client.watchQuery(query, {});
+    watch.onUpdate(() => {});
+    f.update();
+    expect(() => watch.localQueryResult()).toThrow(noId);
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    // Other watches report independently even when the safe message matches.
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+    f.set([]);
+    expect(watch.localQueryResult()).toEqual([]);
+    f.set(undefined, noId);
+    expect(() => watch.localQueryResult()).toThrow(noId);
+    expect(reportCaught).toHaveBeenCalledTimes(3);
+  });
+  it("resets after a successful update and reports changed request IDs", () => {
+    const f = fixture();
+    f.set(undefined, failure);
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    f.update();
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    f.set(undefined, new Error(failure.message.replace("abc123", "def456")));
+    f.update();
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+    f.set([]);
+    f.update();
+    f.set(undefined, failure);
+    f.update();
+    expect(reportCaught).toHaveBeenCalledTimes(3);
+  });
   it("does not report authorization refusals", () => {
     const f = fixture();
     const refused = new ConvexError({ kind: "forbidden" });

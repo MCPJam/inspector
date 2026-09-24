@@ -18,7 +18,9 @@ quiet. Existing Sentry enablement and PostHog surface rules still apply.
 
 Duplicate reports use a per-session bounded cache (500 backend/request pairs)
 for caught reports and another at Sentry's beforeSend boundary, which also
-covers automatic global errors. Missing request IDs are not deduplicated.
+covers automatic global errors. Each watch also suppresses consecutive identical
+sanitized messages until a successful cached read. Across watches, failures
+without request IDs are not deduplicated.
 
 ## Staging verification
 

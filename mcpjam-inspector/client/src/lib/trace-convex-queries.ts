@@ -25,6 +25,7 @@ export function traceConvexQueries(
   const watchQuery = client.watchQuery.bind(client);
   client.watchQuery = (query, ...args) => {
     const watch = watchQuery(query, ...args);
+    let lastReportedMessage: string | undefined;
     const report = (error: unknown) => {
       try {
         if (isAuthorizationRefusal(error)) return;
@@ -37,10 +38,13 @@ export function traceConvexQueries(
           : new Error(
               `[CONVEX Q(${getFunctionName(query)})] ${original.message}`,
             );
-        reportCaught(safeQueryError(prefixed), {
+        const safe = safeQueryError(prefixed);
+        if (safe.message === lastReportedMessage) return;
+        reportCaught(safe, {
           source: "convex_query_subscription",
           queryBackend,
         });
+        lastReportedMessage = safe.message;
       } catch {
         // Observability must not change subscription behavior.
       }
@@ -48,6 +52,7 @@ export function traceConvexQueries(
     const inspect = () => {
       try {
         watch.localQueryResult();
+        lastReportedMessage = undefined;
       } catch (error) {
         report(error);
       }
@@ -56,7 +61,9 @@ export function traceConvexQueries(
       ...watch,
       localQueryResult: () => {
         try {
-          return watch.localQueryResult();
+          const result = watch.localQueryResult();
+          lastReportedMessage = undefined;
+          return result;
         } catch (error) {
           report(error);
           throw error;
