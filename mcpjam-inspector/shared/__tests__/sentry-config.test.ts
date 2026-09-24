@@ -232,7 +232,7 @@ describe("surface builders", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
     const beforeSend = buildClientSentryConfig(ctx).beforeSend;
 
-    const dom = beforeSend({
+    const dom = beforeSend<FingerprintableEvent>({
       environment: "prod",
       exception: {
         values: [
@@ -246,7 +246,7 @@ describe("surface builders", () => {
     });
     expect(dom.fingerprint).toEqual(["dom-mutation-conflict", "prod"]);
 
-    const step = beforeSend({
+    const step = beforeSend<FingerprintableEvent>({
       environment: "prod",
       tags: { source: "oauth_debugger_step" },
       extra: { step: "request_client_registration" },
