@@ -1,3 +1,4 @@
+import { recordDesktopActivity } from "@/lib/desktop-diagnostics";
 import { captureHostedOAuthConnection } from "@/lib/apis/web/oauth-connections";
 /**
  * Production OAuth implementation using the SDK state-machine runner with trace support.
@@ -2275,6 +2276,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    recordDesktopActivity({ kind: "oauth_authorize", phase: "start" });
     const authorizationUrlString = authorizationUrl.toString();
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery

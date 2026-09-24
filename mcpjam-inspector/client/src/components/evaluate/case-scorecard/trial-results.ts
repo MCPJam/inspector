@@ -16,7 +16,9 @@ import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
  *                              The only source that can say "error" or
  *                              "skipped" rather than just pass/fail.
  *   the trial chain          — the analyzer's projection, for the route row on
- *                              a run that has no score rows.
+ *                              a run that has no score rows, and the only
+ *                              source a built-in runner check reads: it
+ *                              reports the stage's own verdict and reason.
  *
  * IDENTITY. Rows join by `hostedCriterionId`, the same function the server
  * mints `scorerId` with. It strips check policy, so flipping a check from Gate
@@ -33,12 +35,18 @@ import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 
 import {
   definitionHash,
+  STAGE_REASON_LABELS,
+  STAGE_STATE_LABELS,
   type EvaluationConfigSnapshot,
   type ResolvedScoreDefinition,
   type ScoreResult,
   type ScorerRole,
 } from "@mcpjam/sdk/contract";
-import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
+import type {
+  EvalRunDecisionChain,
+  StageResultRow,
+  UserValueStage,
+} from "@mcpjam/sdk/contract";
 import {
   hostedCriterionId,
   HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
@@ -58,7 +66,12 @@ import {
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { EvalIteration } from "@/components/evals/types";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
+import {
+  RUNNER_OWNED_FAILURE,
+  type RunnerCheckStage,
+} from "@/components/evals/runner-checks";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
+import { stageFloor, type StageFloorTrace } from "./stage-floor";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
@@ -66,6 +79,7 @@ export type TrialRowResultSource =
   | "predicateResult"
   | "scoreRow"
   | "chainSelection"
+  | "chainStage"
   | "judgeCase"
   | "live";
 
@@ -97,11 +111,24 @@ export type TrialRowResult =
       value: number;
       threshold?: number;
     }
-  | { state: "error"; source: "scoreRow" | "judgeCase"; reason: string }
-  | { state: "skipped"; source: "stepResult" | "scoreRow"; reason?: string }
-  | { state: "notApplicable"; source: "scoreRow"; reason?: string }
+  | {
+      state: "error";
+      source: "scoreRow" | "judgeCase" | "chainStage";
+      reason: string;
+    }
+  | {
+      state: "skipped";
+      source: "stepResult" | "scoreRow" | "chainStage";
+      reason?: string;
+    }
+  | {
+      state: "notApplicable";
+      source: "scoreRow" | "chainStage";
+      reason?: string;
+    }
   | { state: "pending"; source: "live" }
-  | { state: "notMeasured" };
+  /** `reason` only when the chain said WHY nothing was measured. */
+  | { state: "notMeasured"; source?: "chainStage"; reason?: string };
 
 export type TrialRowEvidence = {
   step?: EvalStepEvidence;
@@ -116,6 +143,12 @@ export type TrialRowEvidence = {
    * `isRequiredRole`; the row renders one word either way.
    */
   frozenRole?: ScorerRole;
+  /**
+   * A runner check's recorded floor: the sentence a failing tool actually
+   * returned, quoted from the trace (`stageFloor`). Kept apart from `reason`
+   * so it renders with the marks the trace text carries.
+   */
+  floor?: string;
 };
 
 export type JoinedScorecardRow = ScorecardRow & {
@@ -138,6 +171,12 @@ export type TrialFacts = {
   envelope?: StepReplayEnvelope | null;
   /** In-flight statuses, while a run is streaming and nothing is persisted. */
   liveStepStatusById?: Map<string, EvalStepStatus>;
+  /**
+   * The downloaded trace, for the recorded floor a runner check quotes (the
+   * sentence a failing tool actually returned). Optional: without it the row
+   * still says what the chain decided.
+   */
+  trace?: StageFloorTrace | null;
 };
 
 const NOT_MEASURED: TrialRowResult = { state: "notMeasured" };
@@ -305,10 +344,12 @@ export function joinTrialResults(
   // A chain the analyzer withheld (`unverified`) carries no stages at all —
   // and that is the point: it is a refusal to project, not a set of neutral
   // rows. Reading one would be inventing evidence.
-  const selectionStage =
+  const chainStages = new Map<UserValueStage, StageResultRow>(
     trial.chain && trial.chain.status === "verified"
-      ? trial.chain.stages.find((stage) => stage.stage === "selection")
-      : undefined;
+      ? trial.chain.stages.map((row) => [row.stage, row])
+      : [],
+  );
+  const selectionStage = chainStages.get("selection");
 
   return groups.map((group) => ({
     ...group,
@@ -318,6 +359,10 @@ export function joinTrialResults(
         byCriterionId,
         scores,
         selectionStage,
+        chainStages,
+        chain: trial.chain ?? null,
+        trace: trial.trace ?? null,
+        setupFailed: iteration?.status === "setup_failed",
         judgeCase: trial.judgeCase ?? null,
         liveStepStatusById: trial.liveStepStatusById,
         terminal,
@@ -327,7 +372,7 @@ export function joinTrialResults(
       // it as a named scorer — so it has no key and legitimately never
       // receives a narrative. Undefined here means "nothing to match", NOT
       // "match anything".
-      const joinKey = !join
+      const joinKey = !join || join.kind === "stage"
         ? undefined
         : join.kind === "predicate"
         ? `predicate:${join.criterionId}`
@@ -375,6 +420,12 @@ type JoinContext = {
   selectionStage:
     | { state: string; reason?: string }
     | undefined;
+  /** The verified chain's rows; empty when the chain is absent or withheld. */
+  chainStages: Map<UserValueStage, StageResultRow>;
+  chain: EvalRunDecisionChain | null;
+  trace: StageFloorTrace | null;
+  /** The iteration's environment was never prepared. */
+  setupFailed: boolean;
   judgeCase: JudgeCase | null;
   liveStepStatusById: Map<string, EvalStepStatus> | undefined;
   terminal: boolean;
@@ -383,6 +434,19 @@ type JoinContext = {
 function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
   const join = row.join;
   if (!join) return { ...row, result: NOT_MEASURED };
+
+  if (join.kind === "stage") {
+    const result = runnerCheckResult(join.stage, ctx);
+    const floor =
+      result.state === "failed"
+        ? stageFloor(join.stage, ctx.chain, ctx.trace)
+        : null;
+    return {
+      ...row,
+      result,
+      ...(floor ? { evidence: { floor: floor.actual } } : {}),
+    };
+  }
 
   if (join.kind === "step") {
     const replay = ctx.stepRows.get(join.stepId);
@@ -577,6 +641,91 @@ function uncertainIfUndecided(result: TrialRowResult): TrialRowResult {
   };
 }
 
+/** "Failed because the server reported a tool error." — the chain's own words. */
+function chainStageSentence(row: StageResultRow): string {
+  const state = STAGE_STATE_LABELS[row.state];
+  const lead = state.charAt(0).toUpperCase() + state.slice(1);
+  // "Never ran (an earlier stage failed)" already says why.
+  const reason =
+    row.reason &&
+    !(row.state === "notReached" && row.reason === "earlierStageFailed")
+      ? STAGE_REASON_LABELS[row.reason]
+      : undefined;
+  return reason ? `${lead} because ${reason}.` : `${lead}.`;
+}
+
+const SETUP_ABORTED_SENTENCE = `${STAGE_REASON_LABELS.setupAborted
+  .charAt(0)
+  .toUpperCase()}${STAGE_REASON_LABELS.setupAborted.slice(1)}.`;
+
+/**
+ * "Decided by an evaluator: an assertion on the result did not hold." — what a
+ * runner check says when its stage failed for an evaluator's reason.
+ */
+function evaluatorDecidedSentence(row: StageResultRow): string {
+  // A reason newer than this client's catalog has no label; say less rather
+  // than print "undefined".
+  const label = row.reason ? STAGE_REASON_LABELS[row.reason] : undefined;
+  return label ? `Decided by an evaluator: ${label}.` : "Decided by an evaluator.";
+}
+
+/**
+ * What a built-in runner check reports: the stage's own row from the verified
+ * chain, restated, and nothing else.
+ *
+ * It computes no verdict. The state is the chain's, and so is ACTUAL: the
+ * chain's state and reason (the caller adds, as evidence, the sentence a
+ * failing tool actually returned). A chain that is absent or withheld leaves
+ * the row not measured, like any other row with no fact.
+ *
+ * With one exception: a failure is the runner check's only when the stage
+ * failed for the reason the runner owns (`RUNNER_OWNED_FAILURE`). A stage its
+ * evaluators failed — a required assertion, a rejected argument, a widget that
+ * did not render — reads as not decided here, never as passed: the analysis
+ * stops at the first failing reason, so the runner's own check behind it may
+ * never have been read.
+ *
+ * The one fact it takes from outside the chain is the iteration's own
+ * `setup_failed` status: nothing was measured because the environment was
+ * never prepared, and that is an error to show, not a silence. A stage the
+ * setup signals DID measure (a connection that failed on the server's side)
+ * keeps its measured verdict.
+ */
+function runnerCheckResult(
+  stage: RunnerCheckStage,
+  ctx: JoinContext,
+): TrialRowResult {
+  const row = ctx.chainStages.get(stage);
+  const measured = row?.state === "passed" || row?.state === "failed";
+  if (ctx.setupFailed && !measured) {
+    return {
+      state: "error",
+      source: "chainStage",
+      reason: SETUP_ABORTED_SENTENCE,
+    };
+  }
+  if (!row) return NOT_MEASURED;
+  const sentence = chainStageSentence(row);
+  switch (row.state) {
+    case "passed":
+      return { state: "passed", source: "chainStage", reason: sentence };
+    case "failed":
+      return row.reason === RUNNER_OWNED_FAILURE[stage]
+        ? { state: "failed", source: "chainStage", reason: sentence }
+        : {
+            state: "notMeasured",
+            source: "chainStage",
+            reason: evaluatorDecidedSentence(row),
+          };
+    case "notApplicable":
+      return { state: "notApplicable", source: "chainStage", reason: sentence };
+    case "notReached":
+      return { state: "skipped", source: "chainStage", reason: sentence };
+    default:
+      return { state: "notMeasured", source: "chainStage", reason: sentence };
+  }
+}
+
 function liveResult(status: EvalStepStatus): TrialRowResult {
   if (status === "ok") return { state: "passed", source: "live" };
   if (status === "fail") return { state: "failed", source: "live" };
@@ -652,6 +801,9 @@ export function summarizeTrialScorecard(
   };
   for (const group of groups) {
     for (const row of group.rows) {
+      // A runner check is not an evaluator: it reports the stage's verdict,
+      // which the rows that decided it are already counted for.
+      if (row.provenance === "builtin") continue;
       const { state } = row.result;
       if (state === "notMeasured") summary.notMeasured += 1;
       if (state === "pending") summary.pending += 1;

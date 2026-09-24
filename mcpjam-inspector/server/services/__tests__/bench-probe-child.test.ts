@@ -159,18 +159,63 @@ describe("gradeProbeChecks", () => {
         oauth: { resourceMetadata: undefined, discoveryError: "404" },
       }),
     );
+    // This used to assert `detail: "404"` — the raw discovery error echoed
+    // onto the check. See the MJ-001 test below for why it no longer is.
     expect(
       checks.find(
         (check) =>
           check.id === BENCHMARK_PROBE_CHECK_IDS.resourceMetadataDiscoverable,
       ),
-    ).toMatchObject({ outcome: "failed", detail: "404" });
+    ).toMatchObject({
+      outcome: "failed",
+      detail: "No RFC 9728 protected-resource metadata document could be fetched.",
+    });
     expect(
       checks.find(
         (check) =>
           check.id === BENCHMARK_PROBE_CHECK_IDS.authorizationServerAdvertised,
       ),
     ).toMatchObject({ outcome: "could_not_run" });
+  });
+
+  it("never publishes the raw discovery error on a check (MJ-001 residual)", () => {
+    // The discovery fetch goes to a URL the TARGET named in its own
+    // `WWW-Authenticate` challenge, so the error text is chosen by the server
+    // being graded — and this detail lands on a public scorecard rather than in
+    // front of the person who owns the server. The doctor envelope has a
+    // redactor for exactly this string; this route never passes through it.
+    //
+    // The two strings are the finding's own open-versus-closed differential.
+    // Grading must not tell them apart.
+    const closed = gradeProbeChecks(
+      probe({
+        oauth: {
+          resourceMetadata: undefined,
+          discoveryError: "connect ECONNREFUSED 127.0.0.1:6379",
+        },
+      }),
+    );
+    const open = gradeProbeChecks(
+      probe({
+        oauth: {
+          resourceMetadata: undefined,
+          discoveryError:
+            "ssl3_get_record:wrong version number",
+        },
+      }),
+    );
+
+    const detailOf = (checks: ReturnType<typeof gradeProbeChecks>) =>
+      checks.find(
+        (check) =>
+          check.id === BENCHMARK_PROBE_CHECK_IDS.resourceMetadataDiscoverable,
+      )?.detail;
+
+    expect(detailOf(closed)).toBe(detailOf(open));
+    expect(JSON.stringify(closed)).not.toMatch(
+      /ECONNREFUSED|6379|127\.0\.0\.1/,
+    );
+    expect(JSON.stringify(open)).not.toMatch(/ssl3_get_record|wrong version/);
   });
 });
 

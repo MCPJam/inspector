@@ -67,7 +67,13 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
-import { saveLastOwnProviderModelId } from "@/lib/selected-model-storage";
+import {
+  loadLeadModelProviderHint,
+  saveLastOwnProviderModelId,
+  saveLeadModelProviderHint,
+  type LeadModelProviderHint,
+} from "@/lib/selected-model-storage";
+import { resolveModelSelection } from "@/lib/model-selection";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -245,6 +251,7 @@ import {
   readScenarioChatTranscript,
   writeScenarioChatTranscript,
 } from "@/lib/scenario-chat-transcript";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -974,7 +981,7 @@ async function resolveHydratedTurnTraces(
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
-          const response = await fetch(trace.spansBlobUrl);
+          const response = await fetchArtifact(trace.spansBlobUrl);
           if (response.ok) {
             const parsed = (await response.json()) as unknown;
             if (Array.isArray(parsed)) {
@@ -1029,7 +1036,7 @@ async function resolveHydratedWidgetSnapshots(
       }
 
       try {
-        const response = await fetch(snapshot.toolOutputUrl);
+        const response = await fetchArtifact(snapshot.toolOutputUrl);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -2615,6 +2622,32 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
   } = usePersistedModel();
+  // Which provider the lead id was picked under. The id alone is ambiguous —
+  // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
+  // re-picking the SAME id under a different provider (OpenRouter's
+  // `anthropic/claude-sonnet-5`, then the hosted one) leaves `selectedModelId`
+  // unchanged, so only a state change can re-run resolution. Re-read when the
+  // id changes from elsewhere (another tab); a hint for a different id is
+  // ignored at resolution, so a stale one is harmless.
+  const [leadProviderHint, setLeadProviderHint] =
+    useState<LeadModelProviderHint | null>(() => loadLeadModelProviderHint());
+  useEffect(() => {
+    const stored = loadLeadModelProviderHint();
+    // Storage is not the authority when it has nothing for this id. The save
+    // swallows failures (quota exceeded, storage blocked), so after a pick the
+    // in-memory hint can be the only record of it — and replacing it with
+    // storage's null, or with a hint for an older id, would put an OpenRouter
+    // pick straight back on the hosted row (#5472). So: storage wins when it
+    // names this id (another tab picked it), then the state hint when IT names
+    // this id, and storage otherwise.
+    setLeadProviderHint((current) =>
+      stored?.modelId === selectedModelId
+        ? stored
+        : current?.modelId === selectedModelId
+          ? current
+          : stored,
+    );
+  }, [selectedModelId]);
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
@@ -2623,33 +2656,24 @@ export function useChatSession(
     const fallback = getDefaultModel(
       selectableModels.length > 0 ? selectableModels : availableModels,
     );
-    const resolveAvailableModel = (modelId?: string | null) => {
-      if (!modelId) {
-        return null;
-      }
-
-      return (
-        availableModels.find((model) => String(model.id) === modelId) ?? null
+    // Provider-aware: the same id can be a hosted row AND an own-provider row
+    // (#5472), and `resolveModelSelection` uses the hint to pick the one the
+    // user actually chose.
+    const resolveAvailableModel = (modelId?: string | null) =>
+      resolveModelSelection(availableModels, modelId, leadProviderHint);
+    const resolveSelectableModel = (modelId?: string | null) =>
+      resolveModelSelection(
+        availableModels,
+        modelId,
+        leadProviderHint,
+        (model) =>
+          // Keep an out-of-credits model selected so the existing send →
+          // limit-error → out-of-credits modal still fires. The gray-out
+          // must not silently switch the user off it. Other locks (guest,
+          // ollama-no-tools) stay unselectable.
+          !model.disabled ||
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON,
       );
-    };
-    const resolveSelectableModel = (modelId?: string | null) => {
-      if (!modelId) {
-        return null;
-      }
-
-      return (
-        availableModels.find(
-          (model) =>
-            String(model.id) === modelId &&
-            // Keep an out-of-credits model selected so the existing send →
-            // limit-error → out-of-credits modal still fires. The gray-out
-            // must not silently switch the user off it. Other locks (guest,
-            // ollama-no-tools) stay unselectable.
-            (!model.disabled ||
-              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
-        ) ?? null
-      );
-    };
 
     if (initialModelId) {
       return (
@@ -2659,7 +2683,13 @@ export function useChatSession(
     }
     if (!selectedModelId) return fallback;
     return resolveSelectableModel(selectedModelId) ?? fallback;
-  }, [availableModels, initialModelId, selectableModels, selectedModelId]);
+  }, [
+    availableModels,
+    initialModelId,
+    leadProviderHint,
+    selectableModels,
+    selectedModelId,
+  ]);
 
   // Whether the persisted lead selection actually resolved against
   // `availableModels`. It does NOT while an org-managed provider config is in
@@ -2705,6 +2735,13 @@ export function useChatSession(
       if (options?.userInitiated && !isMCPJamProvidedModelMenuItem(model)) {
         saveLastOwnProviderModelId(String(model.id));
       }
+      // Record the provider with the id, before the id, so resolution sees
+      // both together. Every caller here hands over a full definition — the
+      // picker, a history session, an eval hand-off — so each restores the
+      // exact row it means, not the first row that shares its id.
+      const hint = { modelId: String(model.id), provider: model.provider };
+      saveLeadModelProviderHint(hint);
+      setLeadProviderHint(hint);
       setSelectedModelId(String(model.id));
     },
     [initialModelId, setSelectedModelId],
