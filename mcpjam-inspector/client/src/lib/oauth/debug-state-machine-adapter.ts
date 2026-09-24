@@ -6,6 +6,7 @@ import {
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
   isAuthenticatedRequestFailure,
+  isResourceMetadataNotImplemented,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
   type OAuthProtocolVersion,
@@ -301,8 +302,21 @@ function createHostedClientSecretResolver({
  * fallback). That is a setup the debugger exists to surface, and the toast
  * says exactly what to do about it.
  *
- * The SDK owns both messages and exports them, so matching here cannot drift
- * out of sync with what the machines actually throw.
+ * The absent protected-resource-metadata document is the third of the shape.
+ * RFC 9728 is how a resource names the authorization servers allowed to issue
+ * tokens for it, and MCP has required one from 2025-06-18 onward — so a server
+ * without it is nonconforming, and saying so is the entire job of pointing a
+ * debugger at it. INSPECTOR-CLIENT-2F9 is what the missing match cost: 18
+ * events across 4 users, every one a third party's missing document filed as an
+ * MCPJam error, and escalating.
+ *
+ * Only the ABSENT document, not every failed metadata request. An HTTP 500 from
+ * the resource, a network error, a malformed document — some of those can be
+ * ours (the hosted fetch path breaking would surface here too), so
+ * `isResourceMetadataNotImplemented` matches the one case that cannot be.
+ *
+ * The SDK owns all three messages and exports them, so matching here cannot
+ * drift out of sync with what the machines actually throw.
  */
 const UNREPORTED_STEP_FAILURES = new Set([
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
@@ -312,7 +326,9 @@ const UNREPORTED_STEP_FAILURES = new Set([
 
 function isUnreportedStepFailure(error: string): boolean {
   return (
-    UNREPORTED_STEP_FAILURES.has(error) || isAuthenticatedRequestFailure(error)
+    UNREPORTED_STEP_FAILURES.has(error) ||
+    isAuthenticatedRequestFailure(error) ||
+    isResourceMetadataNotImplemented(error)
   );
 }
 

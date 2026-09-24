@@ -129,7 +129,10 @@ export type JourneyRunStatus =
   | "rate_limited"
   // Display-only, derived from the `error` marker. See above.
   | "canceled"
-  | "stale";
+  | "stale"
+  // Display-only: `running` with the report's `undecidedReason` at
+  // `gradingPending` — execution is over, the grades are not in yet.
+  | "grading";
 
 export interface JourneyRunSummary {
   total: number;
