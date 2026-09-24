@@ -149,6 +149,62 @@ describe("useUnifiedConvexAuth", () => {
     });
   });
 
+  it("reports why the server's upstream hop failed", async () => {
+    const relayError = Object.assign(
+      new Error(
+        "guest-session request failed: 503 Service Unavailable (network ENOTFOUND)",
+      ),
+      {
+        status: 503,
+        upstreamFailure: { reason: "network", networkCode: "ENOTFOUND" },
+      },
+    );
+    mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(relayError);
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
+    const [error, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(error).toBe(relayError);
+    // No upstream status on a network failure, so no `upstreamStatus` key.
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: {
+        attempts: 4,
+        httpStatus: 503,
+        upstreamReason: "network",
+        networkCode: "ENOTFOUND",
+      },
+    });
+  });
+
+  it("ignores malformed upstream failure details", async () => {
+    mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(
+      Object.assign(new Error("guest-session request failed: 503"), {
+        status: 503,
+        upstreamFailure: { reason: 42 },
+      }),
+    );
+
+    renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    const [, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: { attempts: 4, httpStatus: 503 },
+    });
+  });
+
   it("does not report guest session bootstrap after unmount", async () => {
     mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
 
@@ -329,6 +385,44 @@ describe("useUnifiedConvexAuth", () => {
         source: "guest_token_refresh",
         level: "warning",
         extra: { attempts: 4, httpStatus: 503 },
+      });
+    });
+
+    it("reports the upstream status when the server's own hop got one", async () => {
+      mockState.getCachedGuestSession.mockReturnValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
+
+      const result = await mountGuest();
+      const relayError = Object.assign(
+        new Error(
+          "guest-session request failed: 503 Service Unavailable (upstream_status 522)",
+        ),
+        {
+          status: 503,
+          upstreamFailure: { reason: "upstream_status", upstreamStatus: 522 },
+        },
+      );
+      mockState.getOrCreateGuestSessionOrThrow.mockReset();
+      mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(relayError);
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.getAccessToken();
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(relayError, {
+        source: "guest_token_refresh",
+        level: "warning",
+        extra: {
+          attempts: 4,
+          httpStatus: 503,
+          upstreamReason: "upstream_status",
+          upstreamStatus: 522,
+        },
       });
     });
 

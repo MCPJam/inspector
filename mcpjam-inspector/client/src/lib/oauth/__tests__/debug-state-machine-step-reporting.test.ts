@@ -23,6 +23,10 @@ import {
 } from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
+import { authFetch } from "@/lib/session-token";
+import type { OAuthRequestExecutor } from "@mcpjam/sdk/browser";
+
+vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
 
 /**
  * Build the machine, then reach the `updateState` the adapter actually handed
@@ -40,17 +44,79 @@ function wrappedUpdateState(updateState = vi.fn(), currentStep = "metadata") {
 
   const passed = createOAuthStateMachine.mock.calls.at(-1)![0] as {
     updateState: (u: Record<string, unknown>) => void;
+    requestExecutor: OAuthRequestExecutor;
   };
-  return { wrapped: passed.updateState, updateState };
+  return { wrapped: passed.updateState, updateState, execute: passed.requestExecutor };
 }
 
 describe("OAuth debugger step-failure reporting", () => {
   beforeEach(() => {
     reportCaught.mockReset();
     createOAuthStateMachine.mockClear();
+    vi.mocked(authFetch).mockReset();
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("adds the failed metadata URL to the existing report without sending credentials", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify({
+      error: "unable to verify the first certificate",
+    }), { status: 500, statusText: "Internal Server Error" }));
+    const failure = await execute({
+      url: "https://user:password@metadata.example/well-known/resource?token=secret#private",
+      method: "GET",
+      headers: { Authorization: "Bearer secret-header" },
+      body: "secret-body",
+    }).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(reportCaught).not.toHaveBeenCalled();
+    wrapped({ httpHistory: [] });
+    wrapped({ error: (failure as Error).message });
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    expect(reportCaught.mock.calls[0][1].extra).toMatchObject({
+      requestUrl: "https://metadata.example",
+      requestMethod: "GET",
+      proxyStatus: 500,
+    });
+    expect(reportCaught.mock.calls[0][0].message).toContain("unable to verify the first certificate");
+    expect(JSON.stringify(reportCaught.mock.calls)).not.toMatch(/password|secret|private/);
+    wrapped({ error: "unrelated step failure" });
+    expect(reportCaught.mock.calls[1][1].extra).not.toHaveProperty("requestUrl");
+  });
+
+  it("omits tokens embedded in the request path from diagnostics", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response("TLS failure", { status: 500 }));
+    await expect(execute({
+      url: "https://metadata.example:8443/secret-path-token/resource",
+      method: "GET",
+      headers: {},
+    })).rejects.toThrow();
+    wrapped({ error: "metadata request failed" });
+    expect(reportCaught.mock.calls[0][1].extra.requestUrl).toBe("https://metadata.example:8443");
+    expect(JSON.stringify(reportCaught.mock.calls)).not.toContain("secret-path-token");
+  });
+
+  it("clears failed request context when a later request succeeds", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(new Response("failure", { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 200, headers: {}, body: {} })));
+    const request = { url: "https://example.test/metadata", method: "GET", headers: {} };
+    await expect(execute(request)).rejects.toThrow();
+    await execute(request);
+    wrapped({ error: "metadata is missing required fields" });
+    expect(reportCaught.mock.calls[0][1].extra).not.toHaveProperty("requestUrl");
+  });
+
+  it("does not leak a malformed URL into telemetry", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response("invalid URL", { status: 400 }));
+    await expect(execute({ url: "password=secret", method: "GET", headers: {} })).rejects.toThrow();
+    wrapped({ error: "metadata request failed" });
+    expect(reportCaught.mock.calls[0][1].extra.requestUrl).toBe("[invalid URL]");
+  });
 
   it("attributes the report to the step the update moves TO", () => {
     const { wrapped } = wrappedUpdateState(vi.fn(), "metadata");

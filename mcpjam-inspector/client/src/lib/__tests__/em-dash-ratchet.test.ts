@@ -119,7 +119,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/sdk-eval-quickstart.tsx", 7],
   ["components/evals/suite-automation-row.tsx", 1],
   ["components/evals/suite-environment-composer-bar.tsx", 2],
-  ["components/evals/suite-grading-model.ts", 2],
+  ["components/evals/suite-grading-model.ts", 1],
   ["components/evals/suite-group-compare.tsx", 1],
   ["components/evals/suite-header.tsx", 1],
   ["components/evals/suite-hero-stats.tsx", 1],

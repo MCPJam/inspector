@@ -3444,6 +3444,67 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       );
     });
 
+    it("splits a wrong argument out of the route, onto the arguments row", async () => {
+      // The right tool, called without the argument the case expects. The
+      // route held; the call did not. v2 failed the ONE tool-call row, filed
+      // at Selection, so this read as the wrong tool being chosen.
+      streamTextMock.mockReturnValueOnce({
+        consumeStream: async () => {},
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: matchedCallMessages,
+        }),
+        steps: Promise.resolve([]),
+        totalUsage: Promise.resolve({
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+        finishReason: Promise.resolve("stop"),
+      });
+      const expected = [{ toolName: "lookup", arguments: { id: "user-42" } }];
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        gradingMode: "dual_write",
+        config: {
+          tests: [
+            {
+              title: "Right tool, wrong argument",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              expectedToolCalls: expected,
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: expected },
+              ],
+              testCaseId: "case-match-row",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-match-row",
+      } as any);
+
+      const { payload, matchRow } = persisted();
+      expect(payload.result).toBe("failed");
+      expect(matchRow).toMatchObject({ passed: true, value: 1 });
+      const argumentsRow = payload.metadata?.scores?.find(
+        (row) => row.scorerId === "toolCalls:arguments",
+      );
+      expect(argumentsRow).toMatchObject({
+        passed: false,
+        rationale: "`lookup` was called with a different `id` than expected",
+      });
+    });
+
     it("on the hosted path", async () => {
       const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
