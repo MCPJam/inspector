@@ -151,9 +151,8 @@ function diagnosticUrl(value: string): string {
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       return "[invalid URL]";
     }
-    // Discovery URLs are useful evidence; credentials, query values and
-    // fragments must never leave the user's debugger in telemetry.
-    return `${url.origin}${url.pathname}`.slice(0, 2048);
+    // Paths can contain tokens too. Only the origin belongs in diagnostics.
+    return url.origin;
   } catch {
     return "[invalid URL]";
   }

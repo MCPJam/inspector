@@ -74,7 +74,7 @@ describe("OAuth debugger step-failure reporting", () => {
     wrapped({ error: (failure as Error).message });
     expect(reportCaught).toHaveBeenCalledTimes(1);
     expect(reportCaught.mock.calls[0][1].extra).toMatchObject({
-      requestUrl: "https://metadata.example/well-known/resource",
+      requestUrl: "https://metadata.example",
       requestMethod: "GET",
       proxyStatus: 500,
     });
@@ -82,6 +82,19 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(JSON.stringify(reportCaught.mock.calls)).not.toMatch(/password|secret|private/);
     wrapped({ error: "unrelated step failure" });
     expect(reportCaught.mock.calls[1][1].extra).not.toHaveProperty("requestUrl");
+  });
+
+  it("omits tokens embedded in the request path from diagnostics", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response("TLS failure", { status: 500 }));
+    await expect(execute({
+      url: "https://metadata.example:8443/secret-path-token/resource",
+      method: "GET",
+      headers: {},
+    })).rejects.toThrow();
+    wrapped({ error: "metadata request failed" });
+    expect(reportCaught.mock.calls[0][1].extra.requestUrl).toBe("https://metadata.example:8443");
+    expect(JSON.stringify(reportCaught.mock.calls)).not.toContain("secret-path-token");
   });
 
   it("clears failed request context when a later request succeeds", async () => {
