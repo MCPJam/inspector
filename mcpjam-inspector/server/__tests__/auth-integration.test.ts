@@ -233,6 +233,54 @@ describe("Auth Integration", () => {
 
       expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
     });
+
+    it("sets Strict-Transport-Security when the request arrived over HTTPS", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+          "x-forwarded-proto": "https",
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.headers.get("Strict-Transport-Security")).toBe(
+        "max-age=31536000",
+      );
+    });
+
+    // The load-bearing half of this pair: sending HSTS over plain
+    // http://localhost pins every localhost service to HTTPS in the
+    // developer's browser, well beyond this port and this process.
+    it("omits Strict-Transport-Security on a plain HTTP request", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+    });
+
+    it("reads the client-facing scheme from a multi-hop x-forwarded-proto", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+          "x-forwarded-proto": "https, http",
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.headers.get("Strict-Transport-Security")).toBe(
+        "max-age=31536000",
+      );
+    });
   });
 
   describe("query parameter authentication for SSE", () => {
