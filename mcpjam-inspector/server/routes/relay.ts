@@ -12,7 +12,7 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * (see client/src/lib/PosthogUtils.ts). Ad blockers block `*.posthog.com` by
  * hostname, which silently drops 25-40% of web events AND breaks feature-flag
  * evaluation (/flags) for those users; first-party traffic to our own origin
- * passes. This route forwards everything under /relay to PostHog Cloud US,
+ * passes. This route forwards supported SDK requests to PostHog Cloud US,
  * per https://posthog.com/docs/advanced/proxy: static assets go to the assets
  * host, ingest/flags/replay go to the ingest host.
  *
@@ -157,17 +157,14 @@ const RATE_WINDOW_MS = 60_000;
 
 const ipWindows = new Map<string, { count: number; windowStart: number }>();
 
-setInterval(
-  () => {
-    const now = Date.now();
-    for (const [ip, entry] of ipWindows) {
-      if (now - entry.windowStart > RATE_WINDOW_MS * 2) {
-        ipWindows.delete(ip);
-      }
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of ipWindows) {
+    if (now - entry.windowStart > RATE_WINDOW_MS * 2) {
+      ipWindows.delete(ip);
     }
-  },
-  5 * 60_000,
-).unref();
+  }
+}, 5 * 60_000).unref();
 
 function relayRateLimit(c: Context): Response | null {
   if (!HOSTED_MODE) return null;
@@ -260,6 +257,27 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
+function supportsRelayRequest(path: string, method: string): boolean {
+  const read = method === "GET" || method === "HEAD";
+  if (/^\/(?:e|i\/v0\/e)\/?$/.test(path)) {
+    return read || method === "POST";
+  }
+  if (/^\/(?:s|flags|i\/v1\/(?:logs|metrics))\/?$/.test(path)) {
+    return method === "POST";
+  }
+  if (/^\/decide\/?$/.test(path)) return read || method === "POST";
+  if (!read) return false;
+  return (
+    /^\/array\/[A-Za-z0-9_-]+\/config(?:\.js)?$/.test(path) ||
+    /^\/static\/(?:[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?\/)?[A-Za-z0-9_-]+\.js$/.test(
+      path,
+    ) ||
+    /^\/api\/(?:surveys|product_tours|web_experiments|early_access_features)\/$/.test(
+      path,
+    )
+  );
+}
+
 const relayRoutes = new Hono();
 
 // Anonymous by design, like PostHog capture. Bounded and validated separately
@@ -286,6 +304,10 @@ relayRoutes.all("*", async (c) => {
 
   const url = new URL(c.req.url);
   const subpath = stripRelayPrefix(url.pathname);
+  if (!supportsRelayRequest(subpath, c.req.method)) {
+    recordResponseStatus(404);
+    return c.json({ error: "not_found" }, 404);
+  }
   // Only /static/* goes to the assets host. Everything else — including
   // /array/<token>/config(.js), the SDK's remote-config fetch — goes to the
   // ingest host, which serves it too and is what posthog-js itself targets
@@ -296,8 +318,7 @@ relayRoutes.all("*", async (c) => {
   // it (events and flags have always flowed). /static is unaffected in
   // practice: every runtime script is compiled into the client bundle
   // (client/src/lib/posthog-bundled-extensions.ts).
-  // Unknown subpaths forward to ingest rather than 404ing here: the
-  // posthog-js endpoint set changes across SDK versions.
+  // Update the supported request set alongside SDK endpoint changes.
   const upstreamBase = subpath.startsWith("/static/")
     ? ASSET_HOST
     : INGEST_HOST;

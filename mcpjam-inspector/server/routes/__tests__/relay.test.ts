@@ -120,6 +120,68 @@ describe("posthog relay proxy", () => {
     expect(mockedFetchUrl(2)).toBe("https://us.i.posthog.com/flags/?v=2");
   });
 
+  describe.each(["/relay", "/tlm"])("%s request compatibility", (prefix) => {
+    it.each([
+      ["GET", "/e/?data=encoded"],
+      ["POST", "/e/"],
+      ["POST", "/i/v0/e/?compression=gzip-js"],
+      ["POST", "/s/?compression=gzip-js"],
+      ["POST", "/flags/?v=2"],
+      ["POST", "/decide/?v=3"],
+      ["GET", "/decide/?v=3"],
+      ["POST", "/i/v1/logs"],
+      ["POST", "/i/v1/metrics"],
+      ["GET", "/array/phc_example/config"],
+      ["GET", "/array/phc_example/config.js"],
+      ["GET", "/static/recorder.js"],
+      ["GET", "/static/1.369.0/recorder.js"],
+      ["GET", "/static/1.434.12/surveys.js"],
+      ["HEAD", "/static/array.js"],
+      ["GET", "/api/surveys/?token=phc_example"],
+      ["GET", "/api/product_tours/?token=phc_example"],
+      ["GET", "/api/web_experiments/?token=phc_example"],
+      ["GET", "/api/early_access_features/?token=phc_example"],
+    ])("forwards %s %s", async (method, path) => {
+      vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+      const response = await createTestApp().request(`${prefix}${path}`, {
+        method,
+        ...(method === "POST" ? { body: "opaque-sdk-payload" } : {}),
+      });
+      expect(response.status).toBe(200);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const host = path.startsWith("/static/")
+        ? "https://us-assets.i.posthog.com"
+        : "https://us.i.posthog.com";
+      expect(mockedFetchUrl()).toBe(`${host}${path}`);
+      expect(mockedFetchInit().method).toBe(method);
+    });
+
+    it.each([
+      ["GET", "/"],
+      ["GET", "/api/projects/"],
+      ["POST", "/api/surveys/"],
+      ["DELETE", "/i/v0/e/"],
+      ["PUT", "/flags/"],
+      ["GET", "/flags/"],
+      ["POST", "/s/unexpected"],
+      ["POST", "/i/v0/e/extra"],
+      ["GET", "/static/recorder.js/extra"],
+      ["POST", "/static/recorder.js"],
+      ["GET", "/static/%72ecorder.js"],
+      ["GET", "/array/phc_example/config/extra"],
+      ["GET", "/array/phc_example%2fother/config"],
+      ["GET", "/api/surveys//"],
+      ["GET", "/launch-engagement"],
+    ])("declines %s %s without forwarding", async (method, path) => {
+      const response = await createTestApp().request(`${prefix}${path}`, {
+        method,
+      });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("strips cookie/host/session-auth headers and forwards the trusted client IP", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
@@ -141,7 +203,14 @@ describe("posthog relay proxy", () => {
     });
 
     const headers = new Headers(mockedFetchInit().headers);
-    for (const name of ["x-mcpjam-edge-secret", "x-mcpjam-edge-secret-previous", "cf-connecting-ip", "cf-ray", "x-inspector-service-token"]) expect(headers.get(name)).toBeNull();
+    for (const name of [
+      "x-mcpjam-edge-secret",
+      "x-mcpjam-edge-secret-previous",
+      "cf-connecting-ip",
+      "cf-ray",
+      "x-inspector-service-token",
+    ])
+      expect(headers.get(name)).toBeNull();
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-mcp-session-auth")).toBeNull();
     expect(headers.get("host")).toBeNull();
