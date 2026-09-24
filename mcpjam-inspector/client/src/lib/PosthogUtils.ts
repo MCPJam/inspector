@@ -1,3 +1,5 @@
+import type { CaptureResult } from "posthog-js";
+import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
@@ -169,6 +171,41 @@ export function sanitizeAnalyticsProperties(
   return properties;
 }
 
+/**
+ * Drop exceptions raised entirely by code the browser injected into the page.
+ *
+ * The rule, and the evidence behind it, lives in
+ * shared/injected-script-frames.ts. Sentry's client config applies the same
+ * one, so the two reporters cannot disagree about what counts as ours.
+ *
+ * Matching on frames rather than on the message is the point: a genuine stack
+ * overflow in our own code — the markdown lexer has produced one — still has
+ * app frames, and still reports.
+ */
+export function dropInjectedScriptException(
+  event: CaptureResult | null,
+): CaptureResult | null {
+  if (event?.event !== "$exception") return event;
+  if (typeof window === "undefined") return event;
+
+  const exceptions: unknown = event.properties?.$exception_list;
+  if (!Array.isArray(exceptions)) return event;
+
+  const stacks = exceptions.map((exception) => {
+    const frames = (exception as { stacktrace?: { frames?: unknown } })
+      ?.stacktrace?.frames;
+    return Array.isArray(frames)
+      ? frames.map(
+          (frame) => (frame as { filename?: unknown } | null)?.filename,
+        )
+      : [];
+  });
+
+  return isInjectedScriptException(stacks, window.location.origin)
+    ? null
+    : event;
+}
+
 // Public vanity landings (caniuse.dev host-compare, score.mcpjam.com score
 // runner) get real Web Analytics: $pageview on SPA route changes plus
 // $pageleave, which is what makes bounce rate and session duration exist in
@@ -334,6 +371,7 @@ export const options = {
   ...getPageviewCaptureOptions(),
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
+  before_send: dropInjectedScriptException,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe

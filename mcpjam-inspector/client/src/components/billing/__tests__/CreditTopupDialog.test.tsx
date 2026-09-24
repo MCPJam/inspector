@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -56,6 +57,16 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+const toastErrorMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/toast", () => ({
+  toast: { success: vi.fn(), error: toastErrorMock },
+}));
+
+const billingStatusState = vi.hoisted(() => ({ canManageBilling: true }));
+vi.mock("@/hooks/useOrganizationBilling", () => ({
+  useCanManageOrganizationBilling: () => billingStatusState.canManageBilling,
+}));
+
 const DEFAULT_PRESETS = [
   {
     packageId: "credits_500",
@@ -86,6 +97,8 @@ describe("CreditTopupDialog", () => {
     startCheckoutMock.mockReset();
     startCheckoutMock.mockResolvedValue({ handedOffToBrowser: false });
     trackMock.mockReset();
+    toastErrorMock.mockReset();
+    billingStatusState.canManageBilling = true;
     presetsState = DEFAULT_PRESETS;
     presetsLoadingState = false;
     isStartingCheckoutState = false;
@@ -280,6 +293,48 @@ describe("CreditTopupDialog", () => {
       "priceCents",
     );
   });
+
+  it.each([
+    { canManageBilling: true, copy: /Upgrade to Pro to continue\./ },
+    {
+      canManageBilling: false,
+      copy: /Ask an organization owner to upgrade to Pro\./,
+    },
+  ])(
+    "toasts refusal copy matching billing rights (canManageBilling=$canManageBilling)",
+    async ({ canManageBilling, copy }) => {
+      billingStatusState.canManageBilling = canManageBilling;
+      const code = "billing_feature_not_included";
+      startCheckoutMock.mockRejectedValue(
+        new ConvexError({
+          code,
+          feature: "evals",
+          plan: "free",
+          upgradePlan: "pro",
+        }),
+      );
+      const user = userEvent.setup();
+      render(
+        <CreditTopupDialog
+          open
+          onOpenChange={vi.fn()}
+          chatSessionId="chat-1"
+          lastUserMessage=""
+          organizationId="org-1"
+          source="chat_banner"
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: /Continue with 500 credits for \$5/ }),
+      );
+
+      await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1));
+      const toasted = toastErrorMock.mock.calls[0]?.[0];
+      expect(toasted).toMatch(copy);
+      expect(toasted).not.toContain(code);
+    },
+  );
 
   it("passes the current page URL as returnUrl so Stripe round-trips back to it", async () => {
     const user = userEvent.setup();

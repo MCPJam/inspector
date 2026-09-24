@@ -195,6 +195,41 @@ describe("useAppState active organization recovery", () => {
     useServerStateMock.mockReturnValue(serverStateValue);
   });
 
+  it("reports actual WorkOS identity, not guest Convex authentication", () => {
+    const record = vi.fn();
+    window.electronAPI = { diagnostics: { record } } as any;
+    const props = {
+      currentUserId: null as string | null,
+      isWorkOsLoading: true,
+      currentActorKey: "guest",
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+      validOrganizations: [],
+    };
+    const hook = renderHook((p) => useAppState(p), { initialProps: props });
+    try {
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "loading" }),
+      );
+      hook.rerender({ ...props, isWorkOsLoading: false });
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "guest" }),
+      );
+      hook.rerender({
+        ...props,
+        isWorkOsLoading: false,
+        currentUserId: "private-user",
+      });
+      expect(record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "signed_in" }),
+      );
+      expect(JSON.stringify(record.mock.calls)).not.toContain("private-user");
+    } finally {
+      hook.unmount();
+      delete window.electronAPI;
+    }
+  });
+
   it("keeps OAuth membership IDs stable until the membership query changes", () => {
     oauthMembershipState.allProjects = [{ _id: "project-1" }];
     const props = {

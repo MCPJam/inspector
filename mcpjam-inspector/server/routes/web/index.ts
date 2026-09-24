@@ -8,6 +8,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -36,6 +37,7 @@ import sharedResources from "./shared-resources.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
+import authSession from "./auth-session.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
@@ -64,6 +66,9 @@ web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // route fronts; client exposure is gated by the `project-environments-enabled`
 // flag. Read-only and narrowly projected (never the full runtime spec).
 web.use("/environments/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Export opens an ephemeral MCP connection per call. It had no bearer
+// middleware of its own, so no limiter below could see who was calling.
+web.use("/export/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
@@ -195,6 +200,34 @@ web.use(
   guestRateLimitMiddleware,
 );
 
+// MJ-012. The one credential class this family never metered.
+//
+// `guestRateLimitMiddleware` returns early when there is no `guestId`, and a
+// signed-in AuthKit JWT has none — so every route above reached its handler
+// with no budget attached to that caller at all. `/api/v1/*` has metered the
+// same class since it was mounted; this is the twin that was missed.
+//
+// Registered here, after the per-family `bearerAuthMiddleware` lines rather
+// than inside each of them: the middleware reads the `authMethod` label auth
+// sets, so it has to run behind it. On a path with no bearer middleware the
+// label is absent and this is a no-op. Order against the guest limiter is
+// immaterial — the two meter disjoint credential classes.
+//
+// It covers exactly the families labelled ABOVE. A sub-router that brings its
+// own `bearerAuthMiddleware` sets the label only after this mount has already
+// run, so it is NOT metered from here and has to mount the limiter alongside
+// its own bearer middleware. Labelling at the `web` level instead would double
+// charge every family above — nothing in this chain is idempotent.
+//
+// The routers that do that today: `/api-keys`, `/oauth`, `/oauth/connections`.
+// `/xaa` is mounted on the root app beside this router, so it carries the
+// limiter in its own protected chain as well.
+//
+// PER-REPLICA and in memory, like every limiter in this directory: the fleet
+// ceiling is 120/min times the replica count. A spike brake, not a budget; the
+// real cap stays the backend's org-keyed limits.
+web.use("*", passthroughRateLimitMiddleware);
+
 web.route("/servers", servers);
 web.route("/tools", tools);
 web.route("/resources", resources);
@@ -272,6 +305,9 @@ web.route("/shared", sharedResources);
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are
 // explicitly rejected with 403 inside the router).
 web.route("/api-keys", apiKeys);
+// Sign-out's session revocation (MJ-011). Brings its own bearer middleware for
+// the same reason `/api-keys` does.
+web.route("/auth-session", authSession);
 
 // Public guest JWKS compatibility endpoint.
 web.get("/guest-jwks", async (c) => {

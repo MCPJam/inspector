@@ -20,10 +20,14 @@
  * projects, the discovery meta-tools. Pausing an observation buys no safety
  * and costs a click, and it is what the setting's own copy promises.
  *
- * `always` survives for a family that must ask whatever the switch says.
- * Nothing sits there today as a FLOOR; the one thing that still asks
- * unconditionally declares it as a function, because the answer depends on
- * which value the model named — a third party's instructions entering the turn
+ * `always` is for what must ask whatever the switch says, because the switch
+ * is a preference the REQUEST carries and these are not preferences. One
+ * family sits there as a floor: the workspace operations the agent-op catalog
+ * gates behind a human click (`built-in-tools/mcpjam.ts`, MJ-008) — a request
+ * body that turns approval off must not be able to turn off the click the
+ * headless agent can never skip. The other thing that asks unconditionally
+ * declares it as a function, because the answer depends on which value the
+ * model named — a third party's instructions entering the turn
  * (`computers/effective-skill-tools.ts`), which is a trust boundary rather
  * than a preference.
  *
@@ -41,9 +45,10 @@
  *
  *  - `never`   — asking buys nothing. Reads, observations, discovery.
  *  - `setting` — every tool that acts: the user's switch decides.
- *  - `always`  — asks whatever the switch says. See the header: no family
- *                declares this as a floor today, and one that wants it should
- *                have to argue why the user's own switch does not apply.
+ *  - `always`  — asks whatever the switch says. See the header: only the
+ *                catalog-gated workspace operations sit here, and a family
+ *                that wants it should have to argue why the user's own switch
+ *                does not apply.
  */
 export type ApprovalFloor = "never" | "setting" | "always";
 

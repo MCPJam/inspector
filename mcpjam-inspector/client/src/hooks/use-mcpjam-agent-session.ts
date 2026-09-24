@@ -44,6 +44,7 @@ import {
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
+import { fetchArtifact } from "@/lib/artifact-urls";
 import {
   getMessageTimestampMs,
   hydrateMessageTimestamps,
@@ -319,7 +320,7 @@ export function useMcpjamAgentSession(
           setHydrating(false);
           return;
         }
-        const transcriptRes = await fetch(blobUrl);
+        const transcriptRes = await fetchArtifact(blobUrl);
         if (!transcriptRes.ok) {
           setInitialMessages([]);
           setHydrating(false);

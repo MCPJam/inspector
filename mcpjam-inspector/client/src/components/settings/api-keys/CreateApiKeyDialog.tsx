@@ -19,6 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  API_KEY_EXPIRY_OPTIONS,
+  DEFAULT_API_KEY_EXPIRY_DAYS,
+  formatExpiryOption,
+} from "@/lib/api-key-expiry";
 
 export interface CreateApiKeyOrganization {
   _id: string;
@@ -32,7 +37,12 @@ export interface CreateApiKeyDialogProps {
   /** MCPJam orgs the user belongs to. The key is scoped to the selected one. */
   organizations: CreateApiKeyOrganization[];
   orgsLoading: boolean;
-  onCreate: (args: { name: string; organizationId: string }) => Promise<void>;
+  onCreate: (args: {
+    name: string;
+    organizationId: string;
+    /** Days until the key stops working. Always set; defaults to 90. */
+    expiresInDays: number;
+  }) => Promise<void>;
 }
 
 export function CreateApiKeyDialog({
@@ -45,12 +55,16 @@ export function CreateApiKeyDialog({
 }: CreateApiKeyDialogProps) {
   const [name, setName] = useState("");
   const [organizationId, setOrganizationId] = useState("");
+  const [expiresInDays, setExpiresInDays] = useState(
+    DEFAULT_API_KEY_EXPIRY_DAYS,
+  );
 
-  // Reset name on open; auto-select the org when there's exactly one (and
-  // clear any stale selection that's no longer in the list).
+  // Reset name and lifetime on open; auto-select the org when there's exactly
+  // one (and clear any stale selection that's no longer in the list).
   useEffect(() => {
     if (!open) return;
     setName("");
+    setExpiresInDays(DEFAULT_API_KEY_EXPIRY_DAYS);
     setOrganizationId((prev) => {
       if (organizations.length === 1) return organizations[0]._id;
       if (prev && organizations.some((o) => o._id === prev)) return prev;
@@ -74,7 +88,7 @@ export function CreateApiKeyDialog({
   const handleSubmit = async () => {
     if (!canCreate) return;
     try {
-      await onCreate({ name: trimmed, organizationId });
+      await onCreate({ name: trimmed, organizationId, expiresInDays });
     } catch {
       /* Error toast handled by caller */
     }
@@ -153,6 +167,29 @@ export function CreateApiKeyDialog({
           <p className="text-xs text-muted-foreground">
             The key acts inside this organization. Requests are scoped to its
             projects and servers.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="api-key-expiry-select">Expires after</Label>
+          <Select
+            value={String(expiresInDays)}
+            onValueChange={(value) => setExpiresInDays(Number(value))}
+            disabled={isCreating}
+          >
+            <SelectTrigger id="api-key-expiry-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {API_KEY_EXPIRY_OPTIONS.map((days) => (
+                <SelectItem key={days} value={String(days)}>
+                  {formatExpiryOption(days)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            The key stops working after this. Create a new one before then.
           </p>
         </div>
 
