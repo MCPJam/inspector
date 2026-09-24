@@ -868,8 +868,7 @@ export const createDebugOAuthStateMachine = (
 
                   break;
                 }
-                // A 4xx means "not here", so try the next URL; a 5xx may be
-                // temporary. Either way it is recorded for the final message.
+                // Any non-2xx: record it and fall through to the next URL.
                 discoveryAttempts.push({ url, status: response.status });
               } catch (error) {
                 discoveryAttempts.push({ url, error });

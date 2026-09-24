@@ -72,7 +72,7 @@ describe("describeAuthorizationServerDiscoveryFailure", () => {
     );
   });
 
-  it("never reads as null", () => {
+  it("says when no URL was tried", () => {
     expect(describeAuthorizationServerDiscoveryFailure([])).toBe(
       "Could not discover authorization server metadata. No well-known URL was tried."
     );
@@ -119,9 +119,10 @@ function makeMachineAtAsMetadata(
 describe.each(DISCOVERY_ERAS)(
   "authorization-server discovery failure (%s)",
   (version) => {
-    const advance = async (machine: {
-      proceedToNextStep: () => Promise<void>;
-    }) => machine.proceedToNextStep().catch(() => {});
+    // `proceedToNextStep` catches step errors into state, so anything that
+    // escapes it is a real failure and should fail the test.
+    const advance = (machine: { proceedToNextStep: () => Promise<void> }) =>
+      machine.proceedToNextStep();
 
     it("reports each URL's status when every one answers 404", async () => {
       const { machine, getState, requestExecutor } = makeMachineAtAsMetadata(
