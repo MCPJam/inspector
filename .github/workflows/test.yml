@@ -42,14 +42,14 @@ jobs:
     if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Checkout pinned backend contract
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: MCPJam/mcpjam-backend
           ref: fa65e60d241941e3e176ceeec77067ef1c0f6864
@@ -84,14 +84,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -131,7 +131,7 @@ jobs:
       # save.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -181,14 +181,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -196,7 +196,7 @@ jobs:
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -256,14 +256,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -271,7 +271,7 @@ jobs:
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -312,14 +312,14 @@ jobs:
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -327,7 +327,7 @@ jobs:
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
         id: node-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -351,7 +351,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
