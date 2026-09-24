@@ -23,6 +23,7 @@ export function isCreditExhaustion(value: unknown): boolean {
         ) ||
         /mcpjam[\w\s-]{0,40}model limit/i.test(item) ||
         /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i.test(item) ||
+        /\bThis request needs about \d+ MCPJam credits\b/i.test(item) ||
         /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i.test(
           item,
         )
@@ -53,6 +54,10 @@ export function isCreditExhaustion(value: unknown): boolean {
         excluded = true;
     }
     if ("limitKind" in item && item.limitKind === "concurrency")
+      excluded = true;
+    // Other in-flight requests hold the last credits; the backend says retry
+    // in seconds. Treating it as exhaustion stopped runs and locked models.
+    if ("refusalReason" in item && item.refusalReason === "holds_committed")
       excluded = true;
     if (item instanceof Error) visit(item.message);
     for (const nested of Object.values(item)) visit(nested);

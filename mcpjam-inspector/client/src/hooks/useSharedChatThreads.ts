@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import type {
   EvalTraceBrowserInteractionStepView,
@@ -294,15 +295,16 @@ export function useSharedChatThread({
   threadId: string | null;
   includeRecordedContext?: boolean;
 }) {
-  const thread = useQuery(
-    "chatSessions:getSession" as any,
+  // Carries the transcript's short-lived artifact link.
+  const thread = useArtifactQuery<SharedChatThread | null>(
+    "chatSessions:getSession",
     threadId
-      ? ({
+      ? {
           sessionId: threadId,
           ...(includeRecordedContext ? { includeRecordedContext: true } : {}),
-        } as any)
+        }
       : "skip",
-  ) as SharedChatThread | null | undefined;
+  );
 
   return { thread };
 }
@@ -312,10 +314,10 @@ export function useSharedChatWidgetSnapshots({
 }: {
   threadId: string | null;
 }) {
-  const snapshots = useQuery(
-    "chatSessions:getWidgetSnapshots" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
-  ) as SharedChatWidgetSnapshot[] | undefined;
+  const snapshots = useArtifactQuery<SharedChatWidgetSnapshot[]>(
+    "chatSessions:getWidgetSnapshots",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { snapshots };
 }
@@ -344,10 +346,10 @@ export function useSharedChatTurnTraces({
 }: {
   threadId: string | null;
 }) {
-  const traces = useQuery(
-    "chatSessions:getSessionTurnTraces" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
-  ) as SharedChatTurnTrace[] | undefined;
+  const traces = useArtifactQuery<SharedChatTurnTrace[]>(
+    "chatSessions:getSessionTurnTraces",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { traces };
 }
@@ -407,10 +409,10 @@ export function useSessionBrowserArtifacts({
 }: {
   threadId: string | null;
 }) {
-  const artifacts = useQuery(
-    "chatSessions:getBrowserArtifacts" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
-  ) as SessionBrowserArtifacts | undefined;
+  const artifacts = useArtifactQuery<SessionBrowserArtifacts>(
+    "chatSessions:getBrowserArtifacts",
+    threadId ? { sessionId: threadId } : "skip",
+  );
 
   return { artifacts };
 }

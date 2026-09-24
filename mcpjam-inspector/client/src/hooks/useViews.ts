@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 
 /**
@@ -57,7 +58,6 @@ export interface ViewBase {
   toolName: string;
   toolState: "output-available" | "output-error";
   toolInput: unknown;
-  toolOutputBlob: string;
   toolOutputUrl: string | null;
   toolErrorText?: string;
   toolMetadata?: unknown;
@@ -115,10 +115,11 @@ export function useViewQueries({
   const enableQuery = isAuthenticated && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
-  const views = useQuery(
-    "views:listAllByProject" as any,
-    enableQuery ? ({ projectId: queryProjectId } as any) : "skip",
-  ) as AnyView[] | undefined;
+  // Each view carries short-lived artifact links (tool output, widget HTML).
+  const views = useArtifactQuery<AnyView[]>(
+    "views:listAllByProject",
+    enableQuery ? { projectId: queryProjectId } : "skip",
+  );
 
   const isLoading = enableQuery && views === undefined;
 

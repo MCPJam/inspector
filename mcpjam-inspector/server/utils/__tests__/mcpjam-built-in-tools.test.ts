@@ -1,12 +1,21 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { ALL_OPERATIONS, PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
+  ALWAYS_APPROVAL_TOOL_IDS,
   buildMcpjamTool,
   EXCLUDED_FROM_WORKSPACE,
   isMcpjamToolId,
   MCPJAM_TOOL_IDS,
+  SERVER_APPROVAL_UNAVAILABLE_ERROR,
   WORKSPACE_INPUT_CLAMPS,
+  withoutServerVerifiedApprovalTools,
+  workspaceApprovalFloor,
 } from "../built-in-tools/mcpjam";
+import {
+  AGENT_OP_REGISTRY,
+  EXCLUDED_FROM_AGENT,
+} from "../../routes/v1/agent-op-registry";
+import { requiresServerVerifiedApproval } from "../tool-approval-token";
 
 // The workspace tools ARE the shared platform operations, executed against a
 // PlatformApiClient. Build a real client over a stubbed fetch and exercise
@@ -610,5 +619,116 @@ describe("live server operations", () => {
     expect(approval("start_eval_description_experiment")).toBe(true);
     // The read closes the loop and spends nothing.
     expect(approval("get_eval_description_experiment")).toBe(false);
+  });
+});
+
+describe("approval floors against the agent-op catalog (MJ-008)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const advertised = new Set<string>(MCPJAM_TOOL_IDS);
+  const readOnly = new Set(
+    ALL_OPERATIONS.filter((op) => op.readOnly === true).map((op) => op.name),
+  );
+  const catalogGated = AGENT_OP_REGISTRY.filter(
+    (entry) => entry.tier === "gated",
+  )
+    .map((entry) => entry.operation.name)
+    .filter((name) => advertised.has(name));
+  const agentExcludedWrites = Object.keys(EXCLUDED_FROM_AGENT).filter(
+    (name) => advertised.has(name) && !readOnly.has(name),
+  );
+
+  function approval(id: string, requireToolApproval: boolean) {
+    const { client } = makeClient({});
+    return (
+      buildMcpjamTool(id, { ...toolOpts, client, requireToolApproval }) as {
+        needsApproval?: boolean;
+      }
+    ).needsApproval;
+  }
+
+  it("asks before every advertised operation the catalog gates, switch or no switch", () => {
+    expect(catalogGated.length).toBeGreaterThan(0);
+    for (const name of catalogGated) {
+      expect(workspaceApprovalFloor(name), name).toBe("always");
+      expect(approval(name, false), name).toBe(true);
+      expect(approval(name, true), name).toBe(true);
+    }
+  });
+
+  it("asks before every advertised write the catalog keeps from the agent", () => {
+    expect(agentExcludedWrites.length).toBeGreaterThan(0);
+    for (const name of agentExcludedWrites) {
+      expect(approval(name, false), name).toBe(true);
+    }
+  });
+
+  it("puts exactly those on the always floor, and no read", () => {
+    expect([...ALWAYS_APPROVAL_TOOL_IDS].sort()).toEqual(
+      [...new Set([...catalogGated, ...agentExcludedWrites])].sort(),
+    );
+    for (const name of ALWAYS_APPROVAL_TOOL_IDS) {
+      expect(readOnly.has(name), name).toBe(false);
+    }
+  });
+
+  it("covers the gated operations that used to run without ever asking", () => {
+    for (const name of [
+      "start_conformance_run",
+      "run_eval_case",
+      "run_eval_suite",
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
+    ]) {
+      expect(approval(name, false), name).toBe(true);
+    }
+  });
+
+  it("marks only always-ask tools as needing a server-verified approval", () => {
+    const { client } = makeClient({});
+    for (const id of MCPJAM_TOOL_IDS) {
+      const built = buildMcpjamTool(id, { ...toolOpts, client });
+      expect(requiresServerVerifiedApproval(built), id).toBe(
+        ALWAYS_APPROVAL_TOOL_IDS.has(id),
+      );
+    }
+  });
+
+  it("withholds only the always-ask tools from an engine that cannot resume them", () => {
+    const { client } = makeClient({});
+    const tools = Object.fromEntries(
+      ["run_eval_suite", "list_project_servers", "diagnose_server"].map(
+        (id) => [id, buildMcpjamTool(id, { ...toolOpts, client })!],
+      ),
+    );
+    const { tools: kept, removed } = withoutServerVerifiedApprovalTools(
+      tools as never,
+    );
+    expect(removed).toEqual(["run_eval_suite"]);
+    expect(Object.keys(kept).sort()).toEqual([
+      "diagnose_server",
+      "list_project_servers",
+    ]);
+  });
+
+  it("fails closed on a hosted deployment with no approval signing key", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const { client, calls } = makeClient({});
+    const gated = buildMcpjamTool("run_eval_suite", { ...toolOpts, client })!;
+
+    // Advertised, so the model can say why, but it neither pauses on a pill
+    // whose answer could not be verified nor reaches the API.
+    expect((gated as { needsApproval?: boolean }).needsApproval).toBe(false);
+    expect(await execTool(gated, { suite: "checkout" })).toEqual({
+      error: SERVER_APPROVAL_UNAVAILABLE_ERROR,
+    });
+    expect(calls).toEqual([]);
+
+    // Nothing else changes.
+    expect(approval("diagnose_server", true)).toBe(true);
+    expect(approval("list_project_servers", true)).toBe(false);
   });
 });
