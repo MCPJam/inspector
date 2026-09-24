@@ -18,6 +18,10 @@
  * suggested fix. It is suppressed entirely on a wave that failed to launch:
  * there is no session for a model to have read, and it will cheerfully report
  * that nothing is wrong.
+ *
+ * The tab ends at the persona cards. It used to go on to the shared
+ * actionable-findings list ("Fix in your MCP server", "Agent and prompt"), and
+ * product asked for that list to be removed here (PLB-29). Evals keep it.
  */
 import { useQuery } from "convex/react";
 import { useEffect, useCallback } from "react";
@@ -27,7 +31,6 @@ import type {
   SwarmJourneyFindings,
   SwarmJourneyFindingsJob,
 } from "@mcpjam/sdk/contract";
-import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 import { useMemo, useState } from "react";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
@@ -260,15 +263,6 @@ export function SwarmFindingsTab({
         onOpenSession={onOpenSession}
         sessionScope={sessionScope}
       />
-      {projectId && (
-        <ActionableFindings
-          hideEmpty
-          surface={{ kind: "journey_run", projectId, runId: wave.anchor.runId }}
-          context={{ rerunLabel: "this swarm" }}
-          boundaryName="swarm-actionable-findings"
-          onOpenSession={onOpenSession}
-        />
-      )}
     </div>
   );
 }
