@@ -3041,7 +3041,9 @@ export function useServerState({
         }
 
         if (!result.success && hostedCallbackContext?.connectionIntent) {
-          toast.error(result.error ?? "Could not connect the account");
+          if (!suppressErrorToast) {
+            toast.error(result.error ?? "Could not connect the account");
+          }
           return;
         }
         if (result.success && hostedCallbackContext?.connectionIntent) {
@@ -3053,7 +3055,9 @@ export function useServerState({
               await guardedReconnectServer(result.serverName, existing.config);
           }
           notifyOAuthConnectionsChanged();
-          toast.success("Account connected");
+          if (!suppressSuccessToast) {
+            toast.success("Account connected");
+          }
           return;
         }
         if (result.success && result.serverConfig && result.serverName) {
@@ -5502,7 +5506,9 @@ export function useServerState({
           if (!HOSTED_MODE)
             await reconnectForAttempt(serverName, server.config);
           notifyOAuthConnectionsChanged();
-          toast.success("Account connected");
+          if (!options?.suppressSuccessToast) {
+            toast.success("Account connected");
+          }
           return { status: "connected" };
         }
         const oauthServerConfig = stripAuthorizationFromHttpConfig(
