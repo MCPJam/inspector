@@ -1,5 +1,6 @@
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
+import { isServerRequestBudgetRefusal } from "@/shared/server-request-budget";
 import { stripHostedRpcLogs } from "./rpc-logs";
 import {
   ingestHostedHttpLogs,
@@ -68,10 +69,94 @@ export function requestIdOfResponse(response: {
   }
 }
 
+/**
+ * A refusal from the per-server request budget on the hosted MCP operation
+ * routes (MJ-012) is retried after the wait it names, a bounded number of
+ * times. A paginated `tools/list` walk, or the `tools/execute` right after one,
+ * can outrun that budget's burst, and its refill takes seconds.
+ *
+ * Retrying is safe on every route behind that budget, `tools/execute`
+ * included: it is checked before the route handler runs, so a refused request
+ * did nothing for a retry to repeat.
+ *
+ * Nothing else is retried. A 429 without the marker (the per-caller limits,
+ * the guest and audio limits, the backend's own), or one that names a longer
+ * wait than this allows, throws exactly as before.
+ */
+const SERVER_REQUEST_BUDGET_MAX_RETRIES = 3;
+const SERVER_REQUEST_BUDGET_MAX_WAIT_SECONDS = 5;
+
+/** How long to wait before retrying `response`, in ms, or `null` to throw. */
+function serverRequestBudgetRetryMs(
+  response: Response,
+  details: Record<string, unknown> | undefined,
+): number | null {
+  if (response.status !== 429 || !isServerRequestBudgetRefusal(details)) {
+    return null;
+  }
+  let retryAfter: string | null | undefined;
+  try {
+    retryAfter = response.headers?.get?.("retry-after");
+  } catch {
+    return null;
+  }
+  // Delta-seconds only: a missing or blank header, or an HTTP date, is not
+  // retried.
+  if (!retryAfter?.trim()) return null;
+  const seconds = Number(retryAfter);
+  if (
+    !Number.isFinite(seconds) ||
+    seconds < 0 ||
+    seconds > SERVER_REQUEST_BUDGET_MAX_WAIT_SECONDS
+  ) {
+    return null;
+  }
+  return seconds * 1000;
+}
+
+/** Resolve after `ms`, or reject as soon as `signal` aborts. */
+function waitBeforeRetry(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const abortReason = () =>
+    signal?.reason ??
+    new DOMException("The operation was aborted.", "AbortError");
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function webPost<TRequest, TResponse>(
   path: string,
   payload: TRequest,
   options?: { signal?: AbortSignal },
+): Promise<TResponse> {
+  return webPostAttempt<TRequest, TResponse>(
+    path,
+    payload,
+    options,
+    SERVER_REQUEST_BUDGET_MAX_RETRIES,
+  );
+}
+
+async function webPostAttempt<TRequest, TResponse>(
+  path: string,
+  payload: TRequest,
+  options: { signal?: AbortSignal } | undefined,
+  retriesLeft: number,
 ): Promise<TResponse> {
   const response = await authFetch(path, {
     method: "POST",
@@ -117,6 +202,12 @@ export async function webPost<TRequest, TResponse>(
       errBody && typeof errBody.details === "object" && errBody.details
         ? (errBody.details as Record<string, unknown>)
         : undefined;
+    const retryMs =
+      retriesLeft > 0 ? serverRequestBudgetRetryMs(response, details) : null;
+    if (retryMs !== null) {
+      await waitBeforeRetry(retryMs, options?.signal);
+      return webPostAttempt(path, payload, options, retriesLeft - 1);
+    }
     const requestId = requestIdOfResponse(response);
     throw new WebApiError(
       response.status,

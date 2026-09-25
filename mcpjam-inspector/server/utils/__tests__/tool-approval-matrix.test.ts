@@ -453,9 +453,26 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: never. `mcpjam.ts` gates only APPROVAL_REQUIRED_IDS, and
-    // `docs/inspector/playground.mdx` promises read-only listing tools never
-    // ask.
+    // Floor: ALWAYS. A write the agent catalog runs directly still changes
+    // state, so it asks whatever the setting says (MJ-008).
+    family: "workspace tool — direct-tier write",
+    name: "create_persona",
+    tools: (flag) => ({
+      create_persona: buildMcpjamTool("create_persona", {
+        client: {} as never,
+        projectId: "proj_1",
+        requireToolApproval: flag,
+      })!,
+    }),
+    expected: {
+      mcpjam: { on: "gate", off: "gate" },
+      byok: { on: "gate", off: "gate" },
+    },
+  },
+  {
+    // Floor: never. `mcpjam.ts` asks only for writes and connection-opening
+    // reads, and `docs/inspector/playground.mdx` promises read-only listing
+    // tools never ask.
     family: "workspace tool — platform read",
     name: "list_project_servers",
     tools: (flag) => ({
