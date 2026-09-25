@@ -244,12 +244,10 @@ describe("hosted doctor transport-detail redaction", () => {
     expect(redacted.probe?.error).toBe(refusal);
   });
 
-  it("passes through detail once the target answered and nothing dialled after it", async () => {
-    // A target that produced an HTTP response is a public responder, so its
-    // diagnostic is the product rather than an oracle — and an MCP-level
-    // failure against it is exactly what the debugger exists to show. This is
-    // the shape where that still holds: no socket was dialled after the probe,
-    // so `connection` is not reporting one.
+  it("reports an answered attempt through its projection once nothing dialled after it", async () => {
+    // A target that produced an HTTP response keeps its status, its latency
+    // and a validated projection of the protocol answer (MJ-001). Summary text
+    // that is not SDK wording is replaced with a fixed sentence.
     const loaded = await loadRedactor(true);
     restore = loaded.restore;
 
@@ -260,7 +258,11 @@ describe("hosted doctor transport-detail redaction", () => {
         status: 200,
         statusText: "OK",
         headers: { "content-type": "application/json" },
-        body: { jsonrpc: "2.0", error: { code: -32600 } },
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32600, message: "not echoed" },
+        },
       },
       12
     );
@@ -271,10 +273,20 @@ describe("hosted doctor transport-detail redaction", () => {
     envelope.checks.connection = envelope.connection;
 
     const redacted = loaded.redact(envelope);
-    expect(redacted.probe!.error).toBe("initialize failed: -32600");
-    expect(redacted.error?.message).toBe("initialize failed: -32600");
-    expect(redacted.probe!.transport.attempts[0].response?.status).toBe(200);
-    expect(redacted.probe!.transport.attempts[0].durationMs).toBe(12);
+    const attempt = redacted.probe!.transport.attempts[0];
+    expect(attempt.response?.status).toBe(200);
+    expect(attempt.durationMs).toBe(12);
+    expect(attempt.response).not.toHaveProperty("body");
+    expect(attempt.response).toMatchObject({
+      bodyOmitted: true,
+      projection: { kind: "jsonrpc_error", code: -32600 },
+    });
+    expect(redacted.probe!.error).not.toBe("initialize failed: -32600");
+    expect(redacted.error?.message).not.toBe("initialize failed: -32600");
+    expect(redacted.connection.detail).toBe(
+      "Server requires OAuth before a connection can be established."
+    );
+    expect(JSON.stringify(redacted)).not.toMatch(/not echoed/);
   });
 
   it("redacts the connect leg's failure even when every probe attempt answered", async () => {
@@ -408,12 +420,13 @@ describe("hosted doctor transport-detail redaction", () => {
 
     const redacted = loaded.redact(envelope);
 
-    // The answered attempt reached a public responder, so its diagnostic is
-    // still the product. The refused one is a socket outcome against whatever
-    // the second transport dialled, and used to ride out on the first's
-    // response.
+    // The answered attempt keeps its response; free-form error text on it is
+    // replaced like any other summary text. The refused one is a socket
+    // outcome against whatever the second transport dialled, and used to ride
+    // out on the first's response.
+    expect(redacted.probe!.transport.attempts[0].response?.status).toBe(200);
     expect(redacted.probe!.transport.attempts[0].error).toBe(
-      "initialize failed: -32600"
+      "The request failed after the server answered."
     );
     expect(redacted.probe!.transport.attempts[1].error).toBe(
       redacted.connection.detail
@@ -482,3 +495,603 @@ describe("hosted doctor transport-detail redaction", () => {
   });
 });
 
+/**
+ * MJ-001: every answer a hosted doctor run received is reported through an
+ * allowlisted projection — status, bounded status text, allowlisted headers
+ * and validated protocol fields — with the body omitted. The fixtures put
+ * `UNEXPECTED_MARKER_*` strings in every place an answer can carry data that
+ * is not on the allowlist; none of them may appear anywhere in the result.
+ */
+describe("hosted doctor answer projection", () => {
+  let restore: (() => void) | undefined;
+
+  afterEach(() => {
+    restore?.();
+    restore = undefined;
+  });
+
+  const MARKER = /UNEXPECTED_MARKER/;
+
+  async function hostedRedactor() {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+    return loaded.redact;
+  }
+
+  /** A doctor result in the shape `runServerDoctor` returns. */
+  function doctorResult(parts: {
+    attempts: ProbeHttpAttempt[];
+    probe?: Record<string, unknown>;
+    connection?: { status: string; detail: string };
+    checks?: Record<string, { status: string; detail: string }>;
+    error?: unknown;
+    initInfo?: unknown;
+    capabilities?: unknown;
+    tools?: unknown[];
+  }) {
+    return {
+      target: { kind: "http", scope: "hosted", label: "Fixture" },
+      generatedAt: "2026-09-25T00:00:00.000Z",
+      status: "ready",
+      probe: {
+        url: "https://mcp.example.test/mcp",
+        protocolVersion: "2025-11-25",
+        status: "ready",
+        transport: { selected: "streamable-http", attempts: parts.attempts },
+        oauth: { required: false, optional: false, registrationStrategies: [] },
+        ...parts.probe,
+      },
+      connection: parts.connection ?? {
+        status: "connected",
+        detail: "Connected and initialized successfully.",
+      },
+      initInfo: parts.initInfo ?? null,
+      capabilities: parts.capabilities ?? null,
+      tools: parts.tools ?? [],
+      toolsMetadata: {},
+      resources: [],
+      resourceTemplates: [],
+      prompts: [],
+      skills: [],
+      checks: {
+        probe: {
+          status: "ok",
+          detail: "HTTP initialize probe succeeded via streamable-http.",
+        },
+        connection: {
+          status: "ok",
+          detail: "Connected and initialized successfully.",
+        },
+        ...parts.checks,
+      },
+      error: parts.error ?? null,
+    };
+  }
+
+  function metadataAttempt(
+    name: "resource_metadata" | "authorization_server_metadata",
+    url: string,
+    body: unknown
+  ): ProbeHttpAttempt {
+    const attempt = answeredAttempt(
+      url,
+      {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body,
+        contentType: "application/json",
+      },
+      3
+    );
+    attempt.name = name;
+    attempt.request.method = "GET";
+    return attempt;
+  }
+
+  const FLAGS = {
+    tools: true,
+    resources: false,
+    prompts: false,
+    logging: true,
+    completions: false,
+    tasks: false,
+    skills: true,
+  };
+  /** The recognized part of the same capabilities, in their MCP shape. */
+  const RECOGNIZED_CAPABILITIES = {
+    tools: { listChanged: true },
+    logging: {},
+    extensions: { "io.modelcontextprotocol/skills": {} },
+  };
+
+  it("projects a valid initialize answer and drops its unknown and nested fields", async () => {
+    const redact = await hostedRedactor();
+    const serverCapabilities = {
+      tools: { listChanged: true, extra: "UNEXPECTED_MARKER_3" },
+      logging: {},
+      experimental: { nested: { deep: "UNEXPECTED_MARKER_4" } },
+      extensions: {
+        "io.modelcontextprotocol/skills": { note: "UNEXPECTED_MARKER_14" },
+      },
+    };
+    const serverInfo = {
+      name: "fixture-server",
+      version: "1.2.3",
+      title: "Fixture Server",
+      extra: "UNEXPECTED_MARKER_5",
+    };
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "https://mcp.example.test/mcp",
+          {
+            status: 200,
+            statusText: "OK",
+            headers: {
+              "content-type": "application/json",
+              "mcp-session-id": "session-1",
+              "x-extra": "UNEXPECTED_MARKER_1",
+              "set-cookie": "sid=UNEXPECTED_MARKER_2",
+            },
+            contentType: "application/json",
+            body: {
+              jsonrpc: "2.0",
+              id: 1,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: serverCapabilities,
+                serverInfo,
+                instructions: "UNEXPECTED_MARKER_6",
+                extra: { nested: ["UNEXPECTED_MARKER_7"] },
+              },
+            },
+          },
+          9
+        ),
+      ],
+      probe: {
+        initialize: {
+          protocolVersion: "2025-06-18",
+          serverInfo,
+          capabilities: serverCapabilities,
+          contentType: "application/json",
+        },
+      },
+      initInfo: {
+        protocolVersion: "2025-06-18",
+        transport: "streamable-http",
+        serverCapabilities,
+        serverVersion: serverInfo,
+        instructions: "UNEXPECTED_MARKER_6",
+        clientCapabilities: { elicitation: {} },
+      },
+      capabilities: serverCapabilities,
+    });
+
+    const redacted = redact(result) as any;
+
+    const identity = {
+      name: "fixture-server",
+      version: "1.2.3",
+      title: "Fixture Server",
+    };
+    const attempt = redacted.probe.transport.attempts[0];
+    expect(attempt.response).toEqual({
+      status: 200,
+      statusText: "OK",
+      headers: {
+        "content-type": "application/json",
+        "mcp-session-id": "session-1",
+      },
+      contentType: "application/json",
+      bodyOmitted: true,
+      projection: {
+        kind: "initialize_result",
+        protocolVersion: "2025-06-18",
+        serverInfo: identity,
+        capabilities: FLAGS,
+      },
+    });
+    expect(attempt.durationMs).toBe(9);
+    expect(redacted.probe.initialize).toEqual({
+      protocolVersion: "2025-06-18",
+      serverInfo: identity,
+      capabilities: RECOGNIZED_CAPABILITIES,
+      contentType: "application/json",
+    });
+    expect(redacted.initInfo).toEqual({
+      protocolVersion: "2025-06-18",
+      transport: "streamable-http",
+      serverCapabilities: RECOGNIZED_CAPABILITIES,
+      serverVersion: identity,
+      clientCapabilities: { elicitation: {} },
+    });
+    expect(redacted.capabilities).toEqual(RECOGNIZED_CAPABILITIES);
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("omits arbitrary HTML and JSON bodies and projects nothing from them", async () => {
+    const redact = await hostedRedactor();
+    const bodies: unknown[] = [
+      "<html><body>UNEXPECTED_MARKER_1</body></html>",
+      { jsonrpc: "2.0", payload: "UNEXPECTED_MARKER_2" },
+      { jsonrpc: "2.0", id: 1, result: { anything: "UNEXPECTED_MARKER_3" } },
+      { arbitrary: { nested: ["UNEXPECTED_MARKER_4"] } },
+      ["UNEXPECTED_MARKER_5"],
+    ];
+
+    for (const body of bodies) {
+      const result = doctorResult({
+        attempts: [
+          answeredAttempt(
+            "https://mcp.example.test/mcp",
+            {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "text/html" },
+              contentType: "text/html",
+              body,
+            },
+            4
+          ),
+        ],
+        probe: {
+          status: "reachable",
+          error:
+            "Server responded to initialize but did not return a recognizable MCP initialize result.",
+        },
+      });
+
+      const redacted = redact(result) as any;
+      const response = redacted.probe.transport.attempts[0].response;
+      expect(response).not.toHaveProperty("body");
+      expect(response).not.toHaveProperty("projection");
+      expect(response.bodyOmitted).toBe(true);
+      expect(redacted.probe.error).toBe(
+        "Server responded to initialize but did not return a recognizable MCP initialize result."
+      );
+      expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+    }
+  });
+
+  it("reduces a JSON-RPC error answer to its code and a fixed message", async () => {
+    const redact = await hostedRedactor();
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "https://mcp.example.test/mcp",
+          {
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            contentType: "application/json",
+            body: {
+              jsonrpc: "2.0",
+              id: 1,
+              error: {
+                code: -32602,
+                message: "UNEXPECTED_MARKER_1",
+                data: { nested: { value: "UNEXPECTED_MARKER_2" } },
+              },
+            },
+          },
+          5
+        ),
+      ],
+    });
+
+    const redacted = redact(result) as any;
+    expect(redacted.probe.transport.attempts[0].response.projection).toEqual({
+      kind: "jsonrpc_error",
+      code: -32602,
+      message: "Invalid params",
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("projects resource and authorization server metadata to the discovery fields", async () => {
+    const redact = await hostedRedactor();
+    const resourceMetadata = {
+      resource: "https://mcp.example.test/mcp",
+      authorization_servers: ["https://auth.example.test"],
+      scopes_supported: ["read", "write"],
+      resource_name: "UNEXPECTED_MARKER_1",
+      extra: { nested: "UNEXPECTED_MARKER_2" },
+    };
+    const authorizationServerMetadata = {
+      issuer: "https://auth.example.test",
+      authorization_endpoint: "https://auth.example.test/authorize",
+      token_endpoint: "https://auth.example.test/token",
+      registration_endpoint: "https://auth.example.test/register",
+      code_challenge_methods_supported: ["S256"],
+      client_id_metadata_document_supported: true,
+      service_documentation: "https://docs.example.test/UNEXPECTED_MARKER_3",
+      extra: "UNEXPECTED_MARKER_4",
+      nested: { list: ["UNEXPECTED_MARKER_5"] },
+    };
+    const challenge = answeredAttempt(
+      "https://mcp.example.test/mcp",
+      {
+        status: 401,
+        statusText: "Unauthorized",
+        headers: {
+          "www-authenticate":
+            'Bearer resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource/mcp"',
+          "x-extra": "UNEXPECTED_MARKER_6",
+        },
+        contentType: "application/json",
+        body: { error: "UNEXPECTED_MARKER_7" },
+      },
+      6
+    );
+    const prmUrl =
+      "https://mcp.example.test/.well-known/oauth-protected-resource/mcp";
+    const asmUrl =
+      "https://auth.example.test/.well-known/oauth-authorization-server";
+    const result = doctorResult({
+      attempts: [
+        challenge,
+        metadataAttempt("resource_metadata", prmUrl, resourceMetadata),
+        metadataAttempt(
+          "authorization_server_metadata",
+          asmUrl,
+          authorizationServerMetadata
+        ),
+      ],
+      probe: {
+        status: "oauth_required",
+        oauth: {
+          required: true,
+          optional: false,
+          wwwAuthenticate: `Bearer resource_metadata="${prmUrl}"`,
+          resourceMetadataUrl: prmUrl,
+          resourceMetadata,
+          authorizationServerMetadataUrl: asmUrl,
+          authorizationServerMetadata,
+          registrationStrategies: ["preregistered", "dcr", "cimd"],
+        },
+      },
+      connection: {
+        status: "skipped",
+        detail: "Server requires OAuth before a connection can be established.",
+      },
+      checks: {
+        probe: {
+          status: "error",
+          detail: "Server requires OAuth before it can be connected.",
+        },
+      },
+      error: {
+        code: "OAUTH_REQUIRED",
+        message:
+          "Server requires OAuth before it can be connected. Run an OAuth login flow first.",
+        details: {
+          registrationStrategies: ["preregistered", "dcr", "cimd"],
+          authorizationServerMetadataUrl: asmUrl,
+          resourceMetadataUrl: prmUrl,
+        },
+      },
+    });
+
+    const redacted = redact(result) as any;
+
+    const projectedResource = {
+      resource: "https://mcp.example.test/mcp",
+      authorization_servers: ["https://auth.example.test"],
+      scopes_supported: ["read", "write"],
+    };
+    const projectedServer = {
+      issuer: "https://auth.example.test",
+      authorization_endpoint: "https://auth.example.test/authorize",
+      token_endpoint: "https://auth.example.test/token",
+      registration_endpoint: "https://auth.example.test/register",
+      code_challenge_methods_supported: ["S256"],
+      client_id_metadata_document_supported: true,
+    };
+    const [answer, prm, asm] = redacted.probe.transport.attempts;
+    expect(answer.response.headers).toEqual({
+      "www-authenticate": `Bearer resource_metadata="${prmUrl}"`,
+    });
+    expect(prm.response.projection).toEqual({
+      kind: "resource_metadata",
+      ...projectedResource,
+    });
+    expect(asm.response.projection).toEqual({
+      kind: "authorization_server_metadata",
+      ...projectedServer,
+    });
+    expect(redacted.probe.oauth).toEqual({
+      required: true,
+      optional: false,
+      wwwAuthenticate: `Bearer resource_metadata="${prmUrl}"`,
+      resourceMetadataUrl: prmUrl,
+      resourceMetadata: projectedResource,
+      authorizationServerMetadataUrl: asmUrl,
+      authorizationServerMetadata: projectedServer,
+      registrationStrategies: ["preregistered", "dcr", "cimd"],
+    });
+    expect(redacted.error).toEqual({
+      code: "OAUTH_REQUIRED",
+      message:
+        "Server requires OAuth before it can be connected. Run an OAuth login flow first.",
+      details: {
+        registrationStrategies: ["preregistered", "dcr", "cimd"],
+        authorizationServerMetadataUrl: asmUrl,
+        resourceMetadataUrl: prmUrl,
+      },
+    });
+    expect(redacted.checks.probe).toEqual({
+      status: "error",
+      detail: "Server requires OAuth before it can be connected.",
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("bounds oversized values and omits a projection over its size budget", async () => {
+    const redact = await hostedRedactor();
+    const longTokens = () =>
+      Array.from(
+        { length: 32 },
+        (_, index) => `${String(index).padStart(3, "0")}${"t".repeat(125)}`
+      );
+    const LONG_CHALLENGE = "a".repeat(4000);
+    const scopes = Array.from({ length: 100 }, (_, index) =>
+      index === 50 ? "UNEXPECTED_MARKER_1" : `scope${index}`
+    );
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "https://mcp.example.test/mcp",
+          {
+            status: 200,
+            statusText: `Custom ${"x".repeat(80)}UNEXPECTED_MARKER_2`,
+            headers: {
+              "content-type": "application/json",
+              "www-authenticate": `Bearer ${LONG_CHALLENGE}UNEXPECTED_MARKER_3`,
+            },
+            contentType: "application/json",
+            body: {
+              jsonrpc: "2.0",
+              id: 1,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: {},
+                serverInfo: {
+                  name: `${"n".repeat(500)}UNEXPECTED_MARKER_4`,
+                  version: "1.0.0",
+                },
+              },
+            },
+          },
+          7
+        ),
+        metadataAttempt(
+          "resource_metadata",
+          "https://mcp.example.test/.well-known/oauth-protected-resource",
+          {
+            resource: "https://mcp.example.test/mcp",
+            scopes_supported: scopes,
+          }
+        ),
+        metadataAttempt(
+          "authorization_server_metadata",
+          "https://auth.example.test/.well-known/oauth-authorization-server",
+          {
+            issuer: "https://auth.example.test",
+            scopes_supported: longTokens(),
+            response_types_supported: longTokens(),
+            grant_types_supported: longTokens(),
+            code_challenge_methods_supported: longTokens(),
+            token_endpoint_auth_methods_supported: longTokens(),
+          }
+        ),
+      ],
+    });
+
+    const redacted = redact(result) as any;
+    const [initialize, prm, asm] = redacted.probe.transport.attempts;
+    expect(initialize.response.statusText.length).toBeLessThanOrEqual(64);
+    expect(
+      initialize.response.headers["www-authenticate"].length
+    ).toBeLessThanOrEqual(2048);
+    expect(
+      initialize.response.projection.serverInfo.name.length
+    ).toBeLessThanOrEqual(128);
+    expect(prm.response.projection.scopes_supported).toHaveLength(32);
+    expect(asm.response.bodyOmitted).toBe(true);
+    expect(asm.response).not.toHaveProperty("projection");
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("keeps SDK summary wording and replaces text that quotes an answer", async () => {
+    const redact = await hostedRedactor();
+    class FixtureHttpError extends Error {
+      code = "CLIENT_HTTP_NOT_IMPLEMENTED";
+      data: Record<string, unknown>;
+      constructor(text: string) {
+        super(`Error POSTing to endpoint: ${text}`);
+        this.name = "FixtureHttpError";
+        this.data = { status: 500, statusText: "Internal Server Error", text };
+      }
+    }
+    const listFailure = new FixtureHttpError(
+      "<html>UNEXPECTED_MARKER_1</html>"
+    );
+    const statusText = `Bad Gateway ${"y".repeat(70)}UNEXPECTED_MARKER_2`;
+    const probeError = `Server responded with HTTP 502 ${statusText} to the initialize probe.`;
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "https://mcp.example.test/mcp",
+          {
+            status: 502,
+            statusText,
+            headers: {},
+          },
+          8
+        ),
+      ],
+      probe: {
+        status: "error",
+        error: probeError,
+        oauth: {
+          required: false,
+          optional: false,
+          registrationStrategies: [],
+          discoveryError:
+            '[\n  {\n    "code": "invalid_type",\n    "message": "UNEXPECTED_MARKER_3"\n  }\n]',
+        },
+      },
+      checks: {
+        probe: {
+          status: "error",
+          detail: probeError,
+        },
+        tools: { status: "error", detail: listFailure.message },
+        resources: { status: "ok", detail: "0 resources discovered." },
+      },
+      error: listFailure,
+    });
+
+    const redacted = redact(result) as any;
+    expect(redacted.probe.error).toMatch(
+      /^Server responded with HTTP 502 Bad Gateway y+ to the initialize probe\.$/
+    );
+    expect(redacted.checks.probe.detail).toBe(redacted.probe.error);
+    expect(redacted.probe.oauth.discoveryError).toBe(
+      "The protected resource metadata document did not match the expected format."
+    );
+    expect(redacted.checks.tools.status).toBe("error");
+    expect(redacted.checks.tools.detail).toMatch(/^Listing tools failed\./);
+    expect(redacted.checks.resources).toEqual({
+      status: "ok",
+      detail: "0 resources discovered.",
+    });
+    expect(redacted.error).toEqual({
+      code: "CLIENT_HTTP_NOT_IMPLEMENTED",
+      message: redacted.checks.tools.detail,
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("returns the local result untouched", async () => {
+    const loaded = await loadRedactor(false);
+    restore = loaded.restore;
+
+    const body = { jsonrpc: "2.0", payload: "UNEXPECTED_MARKER_1" };
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "http://localhost:3000/mcp",
+          { status: 200, statusText: "OK", headers: {}, body },
+          2
+        ),
+      ],
+    });
+
+    const redacted = loaded.redact(result);
+    expect(redacted).toBe(result);
+    expect(redacted.probe.transport.attempts[0].response?.body).toBe(body);
+  });
+});

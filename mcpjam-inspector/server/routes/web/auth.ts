@@ -2845,6 +2845,19 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Rewrites a mapped failure, and the log envelope sent with it, before the
+     * response is built. The hosted validate route uses it to report a status
+     * line in place of the server's own answer (MJ-001).
+     */
+    redactFailure?: (
+      routeError: WebRouteError,
+      error: unknown,
+      logs: Record<string, unknown> | undefined,
+    ) => {
+      routeError: WebRouteError;
+      logs: Record<string, unknown> | undefined;
+    };
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2883,10 +2896,14 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
     // Convex deployment — keeps its 5xx and keeps paging us.
     const routeError = mapTargetServerError(error);
+    const logs = rpcCollector?.buildEnvelope() as
+      | Record<string, unknown>
+      | undefined;
+    const redacted = options?.redactFailure?.(routeError, error, logs);
     return webErrorFromRoute(
       c,
-      routeError,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      redacted?.routeError ?? routeError,
+      redacted ? redacted.logs : logs,
     );
   }
 }
