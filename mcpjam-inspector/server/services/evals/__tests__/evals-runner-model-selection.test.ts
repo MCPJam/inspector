@@ -353,6 +353,63 @@ describe("eval runner reads saved model selections", () => {
     });
   });
 
+  describe("a refused case on a suite run", () => {
+    it("puts the refusal code and reason on that case's pending rows", async () => {
+      convexClient.query.mockImplementation(async (name: string) =>
+        name === "testSuites:getTestSuiteRunDetails"
+          ? {
+              iterations: [
+                {
+                  _id: "iter-refused",
+                  status: "pending",
+                  testCaseId: "case-1",
+                },
+                // Another case's row, and a row already claimed: untouched.
+                { _id: "iter-other", status: "pending", testCaseId: "case-2" },
+                {
+                  _id: "iter-running",
+                  status: "running",
+                  testCaseId: "case-1",
+                },
+              ],
+            }
+          : { status: "running" },
+      );
+      const recorder = {
+        runId: "run-1",
+        suiteId: "suite-1",
+        startIteration: vi.fn(),
+        finishIteration: vi.fn(),
+        finalize: vi.fn(),
+      };
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+        {
+          runId: "run-1",
+          recorder,
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: {
+            providers: [{ providerKey: "openai", apiKey: "sk-org" }],
+          },
+        },
+      );
+
+      expect(recorder.finishIteration).toHaveBeenCalledTimes(1);
+      const finished = recorder.finishIteration.mock.calls[0]![0] as {
+        iterationId?: string;
+        status?: string;
+        error?: string;
+      };
+      expect(finished.iterationId).toBe("iter-refused");
+      expect(finished.status).toBe("setup_failed");
+      expect(finished.error).toMatch(
+        /^Model selection refused — credential_missing: /,
+      );
+      expect(JSON.stringify(finished)).not.toContain("sk-org");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("local selections", () => {
     const LOCAL_OPENAI: ModelSelection = {
       modelId: "openai/gpt-4o",

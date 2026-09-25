@@ -1844,6 +1844,66 @@ async function persistSetupFailedIteration(args: {
 }
 
 /**
+ * The error an iteration row carries when its case's model selection was
+ * refused before execution: the refusal code(s) and reason, in the words the
+ * resolver gave (`credential_missing: the saved org connection …`).
+ */
+export function describeModelRefusalForIteration(
+  refusal: ModelResolutionRefusalError,
+): string {
+  return `Model selection refused — ${refusal.message}`;
+}
+
+/**
+ * Record a case's model refusal on its pre-created rows. The case never
+ * reached a model, so each row finalizes `setup_failed` (the verdict is
+ * withheld, never a server failure) with the refusal as its error. Only the
+ * refused case's PENDING rows are touched; a row another worker already
+ * claimed is left alone.
+ */
+async function persistCaseRefusal(args: {
+  runId: string;
+  convexClient: ConvexHttpClient;
+  recorder: SuiteRunRecorder | null;
+  test: EvalTestCase;
+  refusal: ModelResolutionRefusalError;
+  runStartedAt: number;
+}): Promise<void> {
+  if (!args.test.testCaseId) return;
+  const details = (await args.convexClient.query(
+    "testSuites:getTestSuiteRunDetails" as any,
+    { runId: args.runId },
+  )) as { iterations?: Array<Record<string, unknown>> } | null;
+  const pending = (details?.iterations ?? []).filter(
+    (row) =>
+      row.status === "pending" && row.testCaseId === args.test.testCaseId,
+  );
+  const errorMessage = describeModelRefusalForIteration(args.refusal);
+  await Promise.allSettled(
+    pending.map((row) =>
+      persistSetupFailedIteration({
+        iterationId:
+          typeof row._id === "string"
+            ? row._id
+            : typeof row.iterationId === "string"
+              ? row.iterationId
+              : undefined,
+        runStartedAt: args.runStartedAt,
+        errorMessage,
+        iterationMetadataBase: {},
+        stageCase: buildStageAuthoredCase({
+          test: args.test,
+          turns: args.test.promptTurns,
+          caseNeedsModel: true,
+        }),
+        recorder: args.recorder,
+        convexClient: args.convexClient,
+      }),
+    ),
+  );
+}
+
+/**
  * Un-strand a run that died at run-level connect / tools-list.
  *
  * Pre-created iterations sit `pending` and `blockTerminal` would otherwise
@@ -3895,7 +3955,7 @@ export const runEvalSuiteWithAiSdk = async ({
     const quickRunOutcomes: EvalIterationOutcome[] = [];
 
     // Aggregate results from all tests
-    for (const result of results) {
+    for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
         for (const { evaluation } of outcomes) {
@@ -3918,6 +3978,37 @@ export const runEvalSuiteWithAiSdk = async ({
         // Count as one failed test
         summary.total += 1;
         summary.failed += 1;
+        // A refused model selection never started an iteration, so without
+        // this its pre-created rows would say nothing about why: the refusal
+        // code and reason go on each of that case's pending rows.
+        const refusedTest = tests[resultIndex];
+        if (
+          runId !== null &&
+          refusedTest &&
+          result.reason instanceof ModelResolutionRefusalError
+        ) {
+          try {
+            await persistCaseRefusal({
+              runId,
+              convexClient,
+              recorder,
+              test: refusedTest,
+              refusal: result.reason,
+              runStartedAt: runSetupStartedAt,
+            });
+          } catch (refusalPersistError) {
+            logger.warn(
+              "[evals] Failed to record a model refusal on its rows",
+              {
+                runId,
+                error:
+                  refusalPersistError instanceof Error
+                    ? refusalPersistError.message
+                    : String(refusalPersistError),
+              },
+            );
+          }
+        }
       }
     }
 
