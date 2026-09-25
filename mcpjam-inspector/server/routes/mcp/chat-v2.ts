@@ -48,6 +48,7 @@ import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
+import { getRequestLogger } from "../../utils/request-logger";
 import {
   HOSTED_MODE,
   LOCAL_HARNESS_ENABLED,
@@ -1363,11 +1364,14 @@ chatV2.post("/", async (c) => {
         purpose: isScenarioSession ? "eval" : "chat",
       });
       if (availability.ok && availability.warning) {
-        logger.warn("[chat-v2] harness model not verified", {
-          harness: resolvedExecution.harness,
-          modelId: String(modelDefinition.id),
-          reason: availability.warning,
-        });
+        getRequestLogger(c, "routes.mcp.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
       }
       if (!availability.ok) {
         return c.json(

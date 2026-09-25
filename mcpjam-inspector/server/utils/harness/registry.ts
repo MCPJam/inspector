@@ -646,7 +646,12 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *
  *  Claude Code puts its own native id on the wire (`haiku`, `claude-sonnet-4-5`,
  *  a dated snapshot); the Gateway wants `anthropic/claude-<family>-<major>.<minor>`.
- *  `settings.modelOverrides` bridges that.
+ *  `settings.modelOverrides` bridges that. An Anthropic id OUTSIDE
+ *  haiku/sonnet/opus (the evidence table's `unknown` row, which Playground chat
+ *  may run with a warning) reaches the bridge as its own slug
+ *  (`claude-fable-5`, see `toClaudeCodeModel`) and is overridden to the
+ *  provider-qualified Gateway id verbatim (`anthropic/claude-fable-5`) — so the
+ *  model on the wire is the model that was asked for, never the CLI default.
  *
  *  The companion `CLAUDE_CODE_EFFORT_LEVEL` write this group used to carry is
  *  GONE from the patch: stable exposes a first-class `env` option on
@@ -666,11 +671,16 @@ function gatewayModelOverrideSettingsFor(model) {
   } else {
     if (!model.startsWith("claude-")) return undefined;
     const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-    if (!match) return undefined;
-    const [, family, major, minor] = match;
-    overrides = {
-      [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-    };
+    if (match) {
+      const [, family, major, minor] = match;
+      overrides = {
+        [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
+      };
+    } else if (/^claude-[a-z0-9.-]+$/.test(model)) {
+      overrides = { [model]: \`anthropic/\${model}\` };
+    } else {
+      return undefined;
+    }
   }
   return { modelOverrides: overrides };
 }`;
@@ -758,11 +768,16 @@ const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOve
     } else {
       if (!model.startsWith("claude-")) return undefined;
       const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-      if (!match) return undefined;
-      const [, family, major, minor] = match;
-      overrides = {
-        [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-      };
+      if (match) {
+        const [, family, major, minor] = match;
+        overrides = {
+          [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
+        };
+      } else if (/^claude-[a-z0-9.-]+$/.test(model)) {
+        overrides = { [model]: \`anthropic/\${model}\` };
+      } else {
+        return undefined;
+      }
     }
     return { modelOverrides: overrides };
   }

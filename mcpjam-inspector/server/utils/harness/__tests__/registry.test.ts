@@ -244,6 +244,46 @@ describe("harness registry", () => {
     expect(codex.supportsModel("openai/gpt-5.61-mini")).toBe(true);
   });
 
+  it("the installed bridge overrides an unverified Anthropic id to its own Gateway id", async () => {
+    // Playground chat may run an `unknown` Anthropic id with a warning. The
+    // CLI gets the model's own slug (`toClaudeCodeModel`), and the patched
+    // bridge must map that slug to the provider-qualified Gateway id — if it
+    // omitted the override the wire id would not be the model asked for.
+    const harness = patchClaudeCodeHarnessBootstrap(
+      createClaudeCode({
+        model: "claude-fable-5",
+        auth: {
+          AI_GATEWAY_API_KEY: "test",
+          AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+        },
+      }) as any,
+    );
+    const bootstrap = await harness.getBootstrap?.();
+    const content =
+      bootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
+        ?.content ?? "";
+    const start = content.indexOf("function gatewayModelOverrideSettingsFor(");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const endMarker = "return { modelOverrides: overrides };";
+    const end = content.indexOf(endMarker, start);
+    const closing = content.indexOf("}", end + endMarker.length);
+    const source = content.slice(start, closing + 1);
+    const overridesFor = new Function(
+      `${source}; return gatewayModelOverrideSettingsFor;`,
+    )() as (model: unknown) => { modelOverrides: Record<string, string> } | undefined;
+
+    expect(overridesFor("claude-fable-5")).toEqual({
+      modelOverrides: { "claude-fable-5": "anthropic/claude-fable-5" },
+    });
+    // Unchanged for the verified families…
+    expect(overridesFor("claude-sonnet-4-5")).toEqual({
+      modelOverrides: { "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5" },
+    });
+    // …and still nothing for a non-Anthropic or malformed id.
+    expect(overridesFor("gpt-5")).toBeUndefined();
+    expect(overridesFor("claude-$(id)")).toBeUndefined();
+  });
+
   it("claude-code maps an unverified Anthropic id to itself, never to the CLI default", () => {
     // Playground chat may run an `unknown` pair with a warning; passing no
     // model would silently run the CLI's default under this model's name.

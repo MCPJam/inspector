@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
@@ -7,6 +7,11 @@ import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-log
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
+import {
+  applyHarnessModelLocks,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -21,7 +26,14 @@ import { clientDisplayName } from "@/lib/client-display-name";
 type TargetMatrixHost = Pick<
   HostListItem,
   "hostId" | "name" | "displayName" | "modelId"
->;
+> & {
+  /**
+   * The harness this client runs (`null` = emulated), with its runtime version
+   * when known. When the caller does not supply it the matrix reads it from
+   * the host's config, so the model pickers can disable what it cannot run.
+   */
+  harness?: HarnessModelTarget | null;
+};
 
 type TargetMatrixModel = {
   id: string | number;
@@ -113,7 +125,12 @@ export function EvalTargetMatrix({
   modelSelectionsByHost?: Record<string, ModelSelection>;
   availableModels: readonly TargetMatrixModel[];
   singleClient?: boolean;
-  renderModels?: (hostId: string) => ReactNode;
+  /** Custom models cell. `harness` is the row client's harness target, for
+   *  a picker that must disable the models it cannot run. */
+  renderModels?: (
+    hostId: string,
+    harness: HarnessModelTarget | null | undefined,
+  ) => ReactNode;
   maxTargets: number;
   projectId: string;
   disabled?: boolean;
@@ -125,6 +142,13 @@ export function EvalTargetMatrix({
   onRemoveClient: (hostId: string) => void;
 }) {
   const reduceMotion = useReducedMotion();
+  const readHarnessByHost = useHostHarnessTargets(hostIds);
+  const harnessFor = (hostId: string): HarnessModelTarget | null | undefined => {
+    const host = hosts.find((candidate) => candidate.hostId === hostId);
+    return host?.harness !== undefined
+      ? host.harness
+      : readHarnessByHost[hostId];
+  };
   const rows = buildEvalTargetMatrixRows({
     hostIds,
     hosts,
@@ -218,9 +242,10 @@ export function EvalTargetMatrix({
               </td>
               <td className="py-2 pr-2 align-top">
                 {renderModels ? (
-                  renderModels(row.hostId)
+                  renderModels(row.hostId, harnessFor(row.hostId))
                 ) : modelsEditable ? (
                   <EvalModelPicker
+                    harness={harnessFor(row.hostId)}
                     inModal={inModal}
                     projectId={projectId}
                     value={modelSelectionForHost(
@@ -347,7 +372,9 @@ function EvalModelPicker({
   disabled,
   testId,
   defaultModelId,
+  harness,
 }: {
+  harness?: HarnessModelTarget | null;
   projectId: string;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -367,6 +394,7 @@ function EvalModelPicker({
         testId,
         defaultModelId,
         availableModels,
+        harness,
       }}
     />
   );
@@ -379,7 +407,8 @@ export function EvalModelChoices({
   disabled,
   testId,
   defaultModelId,
-  availableModels,
+  availableModels: catalogModels,
+  harness,
 }: {
   inModal?: boolean;
   value: ModelSelection;
@@ -388,7 +417,18 @@ export function EvalModelChoices({
   testId: string;
   defaultModelId?: string;
   availableModels: ModelDefinition[];
+  /**
+   * The client's harness (`null`/absent = emulated or not known). Models it
+   * cannot run for an eval — unsupported, or not verified on its runtime
+   * version — render disabled with the reason, the same verdict the server's
+   * eval admission reaches.
+   */
+  harness?: HarnessModelTarget | null;
 }) {
+  const availableModels = useMemo(
+    () => applyHarnessModelLocks(catalogModels, [harness], "eval"),
+    [catalogModels, harness],
+  );
   const resolveModel = (id: string): ModelDefinition =>
     availableModels.find((model) => String(model.id) === id) ?? {
       id,

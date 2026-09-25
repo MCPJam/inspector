@@ -28,6 +28,11 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import {
+  harnessModelLockReason,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
 import { cn } from "@/lib/utils";
 
 export function ModelsPill({
@@ -41,6 +46,8 @@ export function ModelsPill({
   budget,
   clientDefaultLabel,
   variant = "pill",
+  harnessTargets,
+  purpose = "eval",
 }: {
   variant?: "pill" | "table";
   projectId: string;
@@ -54,8 +61,28 @@ export function ModelsPill({
   budget?: TargetBudgetContext;
   /** Secondary text on the Client-defaults row (the previewed host's model). */
   clientDefaultLabel?: string | null;
+  /**
+   * The harness each selected client runs (`null`/absent = emulated or not
+   * known yet), with its runtime version when known (else the adapter's pinned
+   * one). A model EVERY client's harness refuses for `purpose` renders
+   * disabled with the reason; one only some refuse stays pickable and those
+   * cells are skipped at resolve time.
+   */
+  harnessTargets?: ReadonlyArray<HarnessModelTarget | null | undefined>;
+  /** Decides whether an unverified harness × model pair is pickable. */
+  purpose?: HarnessModelPurpose;
 }) {
   const { availableModels } = useAvailableModels({ projectId });
+  const harnessLockReasons = useMemo(() => {
+    const byId = new Map<string, string>();
+    if (!harnessTargets || harnessTargets.length === 0) return byId;
+    for (const model of availableModels) {
+      const id = String(model.id);
+      const reason = harnessModelLockReason(id, harnessTargets, purpose);
+      if (reason) byId.set(id, reason);
+    }
+    return byId;
+  }, [availableModels, harnessTargets, purpose]);
   const [open, setOpen] = useState(false);
 
   const explicit = value.explicitModelIds;
@@ -246,7 +273,9 @@ export function ModelsPill({
               {availableModels.map((model) => {
                 const id = String(model.id);
                 const checked = explicit.includes(id);
-                const locked = model.disabled === true;
+                const harnessLockReason = harnessLockReasons.get(id);
+                const locked =
+                  model.disabled === true || harnessLockReason !== undefined;
                 const capBlocked = modelCapBlocked(checked);
                 // A persisted locked model must stay checkable so the user
                 // can remove it. Lock and cap only block adding a new pick.
@@ -262,7 +291,7 @@ export function ModelsPill({
                     )}
                     title={
                       locked
-                        ? model.disabledReason
+                        ? (harnessLockReason ?? model.disabledReason)
                         : capBlocked && budget
                         ? targetProductCapReason(
                             budget.hostCount,
@@ -278,8 +307,20 @@ export function ModelsPill({
                       disabled={optionDisabled}
                       aria-label={compactModelLabel(model.name) || id}
                     />
-                    <span className="min-w-0 flex-1 truncate font-normal">
-                      {compactModelLabel(model.name) || id}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-normal">
+                        {compactModelLabel(model.name) || id}
+                      </span>
+                      {harnessLockReason ? (
+                        <span
+                          className="block truncate text-[10px] text-muted-foreground"
+                          data-testid={
+                            testId ? `${testId}-harness-reason-${id}` : undefined
+                          }
+                        >
+                          {harnessLockReason}
+                        </span>
+                      ) : null}
                     </span>
                   </Label>
                 );

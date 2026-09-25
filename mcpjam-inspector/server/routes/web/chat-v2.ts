@@ -1057,11 +1057,14 @@ chatV2.post("/", async (c) => {
         purpose: isScenarioSession ? "eval" : "chat",
       });
       if (availability.ok && availability.warning) {
-        logger.warn("[chat-v2] harness model not verified", {
-          harness: resolvedExecution.harness,
-          modelId: String(modelDefinition.id),
-          reason: availability.warning,
-        });
+        getRequestLogger(c, "routes.web.chat-v2").event(
+          "chat.harness_model_unverified",
+          {
+            harness: resolvedExecution.harness,
+            modelId: String(modelDefinition.id),
+            reason: availability.warning,
+          },
+        );
       }
       if (!availability.ok) {
         throw new WebRouteError(

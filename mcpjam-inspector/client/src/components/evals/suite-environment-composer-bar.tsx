@@ -49,6 +49,7 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { describeSkippedModelCells } from "@/components/environment-composer/resolve-stacks";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -334,15 +335,18 @@ function EnvironmentModeBar({
         const emptied = !composerHasTarget(next);
         // Resolve BEFORE writing: a failure mid-way leaves at most some
         // deduped ad-hoc rows nothing points at, never a half-updated suite.
-        const environmentIds = emptied
+        const resolved = emptied
           ? null
-          : (
-              await resolveTargets({
-                state: next,
-                liveEnvironments,
-                max: MAX_SUITE_ENVIRONMENTS,
-              })
-            ).environmentIds;
+          : await resolveTargets({
+              state: next,
+              liveEnvironments,
+              max: MAX_SUITE_ENVIRONMENTS,
+            });
+        const skippedSummary = resolved
+          ? describeSkippedModelCells(resolved.skipped)
+          : undefined;
+        if (skippedSummary) toast.warning(skippedSummary);
+        const environmentIds = resolved ? resolved.environmentIds : null;
         await setSuiteEnvironments({
           suiteId: suite._id,
           // The backend rejects an empty array; `null` is how a field clears.

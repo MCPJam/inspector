@@ -7,6 +7,10 @@ import {
 } from "../models-pill";
 import type { ModelSelection } from "../environment-stack";
 
+const extraModels = vi.hoisted(() => ({
+  current: [] as Array<{ id: string; name: string }>,
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: [
@@ -17,6 +21,7 @@ vi.mock("@/hooks/use-available-models", () => ({
         disabled: true,
         disabledReason: "Out of credits",
       },
+      ...extraModels.current,
     ],
   }),
 }));
@@ -214,5 +219,84 @@ describe("ModelsPill", () => {
       includeClientDefaults: false,
       explicitModelIds: ["google/gemini-2.5-flash"],
     });
+  });
+});
+
+describe("ModelsPill — harness × model support", () => {
+  const HARNESS_MODELS = [
+    { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
+    { id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5" },
+  ];
+
+  it("disables, with the reason, a model the client's harness cannot run", async () => {
+    extraModels.current = HARNESS_MODELS;
+    try {
+      const user = userEvent.setup();
+      renderPill(
+        { includeClientDefaults: true, explicitModelIds: [] },
+        { harnessTargets: [{ harnessId: "claude-code" }] }
+      );
+      await user.click(screen.getByRole("button", { name: "Models" }));
+      // Claude Code only runs Anthropic models.
+      expect(
+        screen.getByRole("checkbox", { name: "GPT-5.6 Luna" })
+      ).toBeDisabled();
+      expect(
+        screen.getByTestId("models-harness-reason-openai/gpt-5.6-luna")
+      ).toHaveTextContent("the Claude Code harness can't run this host's model");
+      // Not verified on the pinned runtime ⇒ refused for an eval.
+      expect(
+        screen.getByRole("checkbox", { name: "Claude Fable 5" })
+      ).toBeDisabled();
+      expect(
+        screen.getByTestId("models-harness-reason-anthropic/claude-fable-5")
+      ).toHaveTextContent(/^not verified for claude-code \d+\.\d+\.\d+$/);
+      // Supported stays pickable.
+      expect(
+        screen.getByRole("checkbox", { name: "Claude Sonnet 4.5" })
+      ).toBeEnabled();
+    } finally {
+      extraModels.current = [];
+    }
+  });
+
+  it("keeps a model pickable when some selected client can run it", async () => {
+    extraModels.current = HARNESS_MODELS;
+    try {
+      const user = userEvent.setup();
+      renderPill(
+        { includeClientDefaults: true, explicitModelIds: [] },
+        // An emulated client runs anything; the Codex cell is skipped at
+        // resolve time instead.
+        { harnessTargets: [{ harnessId: "codex" }, null] }
+      );
+      await user.click(screen.getByRole("button", { name: "Models" }));
+      expect(
+        screen.getByRole("checkbox", { name: "GPT-5.6 Luna" })
+      ).toBeEnabled();
+    } finally {
+      extraModels.current = [];
+    }
+  });
+
+  it("allows an unverified pair where the purpose is chat", async () => {
+    extraModels.current = HARNESS_MODELS;
+    try {
+      const user = userEvent.setup();
+      renderPill(
+        { includeClientDefaults: true, explicitModelIds: [] },
+        { harnessTargets: [{ harnessId: "claude-code" }], purpose: "chat" }
+      );
+      await user.click(screen.getByRole("button", { name: "Models" }));
+      expect(
+        screen.getByRole("checkbox", { name: "Claude Fable 5" })
+      ).toBeEnabled();
+      expect(
+        screen.getByRole("checkbox", { name: "GPT-5.6 Luna" })
+      ).toBeDisabled();
+    } finally {
+      extraModels.current = [];
+    }
   });
 });
