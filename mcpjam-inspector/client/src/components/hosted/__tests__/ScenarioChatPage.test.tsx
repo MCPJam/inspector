@@ -3224,9 +3224,21 @@ describe("ScenarioChatPage", () => {
         await screen.findByTestId("scenario-chat-tab"),
       ).toBeInTheDocument();
 
-      await userEvent.click(
-        screen.getByRole("button", { name: "Back to study" }),
-      );
+      // On the left, ahead of the client's name — not among the session's
+      // actions on the right.
+      const back = screen.getByRole("button", { name: "Back to study" });
+      const clientName = screen.getByRole("heading", { level: 1 });
+      expect(
+        back.compareDocumentPosition(clientName) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        back.compareDocumentPosition(
+          screen.getByRole("button", { name: "MCPJam" }),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      await userEvent.click(back);
 
       expect(onExit).toHaveBeenCalledTimes(1);
       expect(readScenarioSession()).toBeNull();
