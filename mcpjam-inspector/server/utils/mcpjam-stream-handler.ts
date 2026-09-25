@@ -1898,6 +1898,37 @@ function attachedNormalized(error: unknown): NormalizedError | undefined {
   return isNormalizedError(candidate) ? candidate : undefined;
 }
 
+/**
+ * The client-facing error chunk text for a mid-stream `provider_not_allowlisted`
+ * failure. Every other mid-stream chunk reaches the client as its bare
+ * sentence, but the client can only choose the allowlist banner (no retry, no
+ * API-key advice) from the code, so this one keeps the structured shape the
+ * non-OK path already delivers.
+ */
+function providerNotAllowlistedErrorText(
+  parsed: ReturnType<typeof parseStreamErrorChunkText>,
+): string {
+  return JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message: parsed.message,
+    ...(parsed.statusCode !== undefined
+      ? { statusCode: parsed.statusCode }
+      : {}),
+    isRetryable: false,
+    ...(parsed.details ? { details: parsed.details } : {}),
+  });
+}
+
+/**
+ * Error chunk text a thrower prepared for the client, when the bare message
+ * would lose what the client needs to render the failure.
+ */
+function attachedClientErrorText(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const text = (error as { clientErrorText?: unknown }).clientErrorText;
+  return typeof text === "string" ? text : undefined;
+}
+
 /** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
 function attachedFailureCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
@@ -2373,6 +2404,9 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
+              ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
+              : {}),
           });
         }
 
@@ -4926,7 +4960,7 @@ export async function runChatEngineLoop(
           promptIndex: traceTurn.promptIndex,
           usage: traceTurn.turnUsage,
         });
-        emitError(safeWriter, errorText);
+        emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.

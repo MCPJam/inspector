@@ -22,6 +22,23 @@ export function isProviderNotAllowlistedCode(
 }
 
 /**
+ * The gateway's own sentences, addressed to the owner of MCPJam's gateway
+ * account. Rows stored before the humanizer dropped `details` for this code
+ * have them folded into the message; they are never the reader's to act on.
+ */
+const UPSTREAM_ALLOWLIST_SENTENCES = [
+  /\s*Your team has restricted access to this provider\.?/gi,
+  /\s*Update your Provider Allowlist settings to enable it\.?/gi,
+];
+
+function withoutUpstreamAllowlistSentences(message: string): string {
+  return UPSTREAM_ALLOWLIST_SENTENCES.reduce(
+    (text, pattern) => text.replace(pattern, ""),
+    message,
+  ).trim();
+}
+
+/**
  * The catalog entry for this refusal. `message` is the backend's sentence,
  * which names the provider; it replaces the catalog's generic one-liner when
  * present.
@@ -30,6 +47,7 @@ export function describeProviderNotAllowlisted(
   message?: string | null,
 ): NormalizedError {
   const base = describeAsSlug(PROVIDER_NOT_ALLOWLISTED_SLUG);
-  const oneLine = message?.trim() || base.oneLine;
+  const oneLine =
+    withoutUpstreamAllowlistSentences(message ?? "") || base.oneLine;
   return { ...base, oneLine, rawMessage: oneLine };
 }

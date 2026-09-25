@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatErrorMessage } from "../chat-helpers";
+import { isProviderNotAllowlistedCode } from "@/lib/provider-not-allowlisted";
 
 describe("formatErrorMessage — provider_not_allowlisted", () => {
   // `/stream`'s non-OK body for a provider MCPJam's hosted gateway has not
@@ -37,5 +38,28 @@ describe("formatErrorMessage — provider_not_allowlisted", () => {
 
     expect(formatted?.message).toBe(error);
     expect(formatted?.isMCPJamPlatformError).toBe(true);
+  });
+
+  it("picks the allowlist banner from the chunk the server re-emits mid-stream", () => {
+    // Exactly what `mcpjam-stream-handler` writes for a mid-stream
+    // `provider_not_allowlisted` chunk (pinned in engine-failure-telemetry).
+    const formatted = formatErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "provider_not_allowlisted",
+          message: body.error,
+          statusCode: 403,
+          isRetryable: false,
+          details: body.details,
+        }),
+      ),
+    );
+
+    expect(isProviderNotAllowlistedCode(formatted?.code)).toBe(true);
+    expect(formatted).toMatchObject({
+      message: body.error,
+      statusCode: 403,
+      isRetryable: false,
+    });
   });
 });

@@ -139,6 +139,32 @@ describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
     expect(result.slug).not.toBe(ERROR_CATALOG["provider/auth_error"].slug);
   });
 
+  it("keeps the provider-naming headline without the gateway's upstream instruction", () => {
+    const result = describeSwarmAttemptFailure(
+      `Backend stream error: 403 ${backendBody}`,
+      "provider_not_allowlisted",
+      "OpenAI",
+    );
+
+    expect(result.oneLine).toBe(
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.',
+    );
+    expect(result.oneLine).not.toMatch(/Update your Provider Allowlist settings/i);
+    expect(result.oneLine).not.toMatch(/Your team has restricted access/i);
+  });
+
+  it("strips the upstream instruction from a row stored with it folded in", () => {
+    const result = describeSwarmAttemptFailure(
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist. Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.',
+      "provider_not_allowlisted",
+      "OpenAI",
+    );
+
+    expect(result.oneLine).toBe(
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist.',
+    );
+  });
+
   it("cards it from the attempt row's stored code too", () => {
     const result = describeSwarmAttemptFailure(
       "The provider is not enabled on MCPJam's gateway.",
