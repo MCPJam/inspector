@@ -73,3 +73,37 @@ export type {
   TaskMode,
   TaskSurface,
 } from "./tasks-policy.js";
+
+// Saved model selection: model + credential source + connection reference +
+// settings + fallback, beside the bare `modelId`. Pure and browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./model-selection.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./model-selection.js";
