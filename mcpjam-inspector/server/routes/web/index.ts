@@ -98,16 +98,7 @@ for (const startsWork of [
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
-// Same reasoning as the conformance ceiling above, one finding later (MJ-001):
-// these two routes open a connection to a URL the caller stored, and the
-// `guestRateLimitMiddleware` on `/servers/*` returns early for anyone who is
-// not a guest — so a signed-in caller was spending our egress unmetered. Keyed
-// per credential rather than per address, because the differential error a
-// scan reads is per request and the accounts are free to create.
-//
-// Listed path-by-path, not as `/servers/*`: the rest of that router is Convex
-// reads and writes with no outbound MCP connection, and metering them on an
-// egress-shaped budget would be the wrong ceiling on the wrong thing.
+// All hosted checks share ten active slots per verified user across replicas.
 for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }

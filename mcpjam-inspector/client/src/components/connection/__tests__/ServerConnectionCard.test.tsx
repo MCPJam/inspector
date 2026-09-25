@@ -1,3 +1,4 @@
+import { serverCheckQueue } from "@/lib/server-check-queue";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import {
   render,
@@ -126,6 +127,20 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("rendering", () => {
+    it("shows Queued without disconnecting a connected card and allows cancellation", async () => {
+      const promises: Promise<unknown>[] = [];
+      await act(async () => {
+        for (let i = 0; i < 11; i++) promises.push(serverCheckQueue.run({ projectId: "queue-project", serverName: i === 10 ? "test-server" : `busy-${i}`, identity: "host" }, signal => new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)))).catch(() => undefined));
+      });
+      render(<ServerConnectionCard server={createServer()} projectId="queue-project" {...defaultProps} />);
+      expect(screen.getByText("Queued")).toBeInTheDocument();
+      const toggle = screen.getByRole("switch");
+      expect(toggle).toHaveAttribute("aria-checked", "true");
+      fireEvent.click(toggle);
+      expect(defaultProps.onDisconnect).toHaveBeenCalledWith("test-server");
+      await act(async () => { serverCheckQueue.cancelAll(); await Promise.all(promises); });
+    });
+
     it("calls explore prefetch hook with projectId and server", () => {
       const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
       const server = createServer();

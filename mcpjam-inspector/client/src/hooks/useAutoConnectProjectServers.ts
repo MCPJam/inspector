@@ -1,3 +1,5 @@
+import { serverCheckQueue, loadServerOrder } from "@/lib/server-check-queue";
+import { HOSTED_MODE } from "@/lib/config";
 import { useEffect, useMemo, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
@@ -180,6 +182,14 @@ export function useAutoConnectProjectServers({
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
+  useEffect(() => {
+    if (!HOSTED_MODE || !projectId) return;
+    if (!suspendAutoConnect && hostScopeKey != null) serverCheckQueue.setScope(projectId, hostScopeKey);
+    const order = loadServerOrder(sharedAppState.activeProjectId) ?? serverNames;
+    serverCheckQueue.setOrder(projectId, [...order]);
+    serverCheckQueue.keepServers(projectId, [...serverNames]);
+    serverCheckQueue.setAutomaticEnabled(projectId, enabled);
+  }, [projectId, enabled, serverNames, sharedAppState.activeProjectId, hostScopeKey, suspendAutoConnect]);
   // Stable key for the catalog, so reordering never looks like a change.
   const catalogNamesKey = useMemo(
     () => serverNames.slice().sort().join("\0"),
@@ -281,6 +291,7 @@ export function useAutoConnectProjectServers({
       reconnectingToastMessage(connectedNow.length),
     );
 
+    if (HOSTED_MODE) serverCheckQueue.markAutomatic(projectId, connectedNow);
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
@@ -348,6 +359,7 @@ export function useAutoConnectProjectServers({
       markAttempted(projectId, scopeKey, `srv:${name}`);
     }
 
+    if (HOSTED_MODE) serverCheckQueue.markAutomatic(projectId, fresh);
     let cancelled = false;
     ensureServersReady(fresh).then(
       (result) => {

@@ -1,3 +1,4 @@
+import { serverCheckScope, withServerCheckSignal } from "../../utils/server-check-scope.js";
 import {
   connectionKey,
   type McpToolConnection,
@@ -2235,7 +2236,7 @@ export async function createAuthorizedManager(
         releasePluginLeases();
         throw error;
       }
-      return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
+      return [id, { ...config, baseFetch: observeConnectionFetch(withServerCheckSignal(baseFetch)) }];
     }),
 
   );
@@ -2547,10 +2548,17 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     options,
   );
 
+  const signal = serverCheckScope.getStore();
+  let disconnecting: Promise<void> | undefined;
+  const disconnect = () => (disconnecting ??= manager.disconnectAllServers());
+  const onAbort = () => { void disconnect().catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    signal?.throwIfAborted();
     return await fn(manager, body);
   } finally {
-    await manager.disconnectAllServers();
+    signal?.removeEventListener("abort", onAbort);
+    await disconnect();
   }
 }
 

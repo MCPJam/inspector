@@ -1,7 +1,12 @@
+import { HOSTED_MODE } from "@/lib/config";
+import { serverCheckQueue } from "@/lib/server-check-queue";
+import { tryGetHostedServerDisplayName } from "./context";
 import { webPost } from "./base";
 import { buildServerRequest } from "./context";
 
 export type HostedServerValidateContext = {
+  /** Internal browser slot already held by a non-interactive connection operation. Never sent on the wire. */
+  queueSignal?: AbortSignal;
   projectId: string;
   serverId: string;
   serverName?: string;
@@ -84,12 +89,12 @@ export interface HostedServerOAuthRequirementResponse {
 }
 
 export async function checkHostedServerOAuthRequirement(
-  serverNameOrId: string
+  serverNameOrId: string,
 ): Promise<HostedServerOAuthRequirementResponse> {
   const request = buildServerRequest(serverNameOrId);
   return webPost<typeof request, HostedServerOAuthRequirementResponse>(
     "/api/web/servers/check-oauth",
-    request
+    request,
   );
 }
 
@@ -103,7 +108,7 @@ export async function validateHostedServer(
    * an MCP connection open for as long as its connect timeout allows, so a
    * caller that gave up and retried would otherwise hold two open at once.
    */
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<HostedServerValidateResponse> {
   const request: Record<string, unknown> = hostedContext
     ? {
@@ -169,9 +174,52 @@ export async function validateHostedServer(
   if (clientCapabilities) {
     request.clientCapabilities = clientCapabilities;
   }
-  return webPost<typeof request, HostedServerValidateResponse>(
-    "/api/web/servers/validate",
-    request,
-    { signal }
+  if (!HOSTED_MODE)
+    return webPost<typeof request, HostedServerValidateResponse>(
+      "/api/web/servers/validate",
+      request,
+      { signal },
+    );
+  const execute = async (checkSignal: AbortSignal) => {
+    // Browser waiting has no timeout. Once dispatched, allow the backend's
+    // 30-second queue window plus the existing 20-second connection budget.
+    const deadline = new AbortController();
+    const timeout = setTimeout(
+      () =>
+        deadline.abort(
+          new DOMException(
+            "Connection attempt timed out. Click Connect to retry.",
+            "TimeoutError",
+          ),
+        ),
+      50_000,
+    );
+    try {
+      return await webPost<typeof request, HostedServerValidateResponse>(
+        "/api/web/servers/validate",
+        request,
+        { signal: AbortSignal.any([checkSignal, deadline.signal]) },
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  if (hostedContext?.queueSignal) return execute(hostedContext.queueSignal);
+  return serverCheckQueue.run(
+    {
+      projectId: String(request.projectId),
+      serverName: String(
+        request.serverName ??
+          tryGetHostedServerDisplayName(String(request.serverId)) ??
+          serverNameOrId,
+      ),
+      identity: JSON.stringify([
+        request.clientInfo,
+        request.supportedProtocolVersions,
+        request.mcpProtocolVersion,
+      ]),
+      signal,
+    },
+    execute,
   );
 }

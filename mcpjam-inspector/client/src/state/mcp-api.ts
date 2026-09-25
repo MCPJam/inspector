@@ -1,3 +1,4 @@
+import { isServerCheckQueueError } from "@/lib/server-check-queue";
 import { observeDesktopOperation } from "@/lib/desktop-diagnostics";
 import type {
   HttpServerConfig,
@@ -21,7 +22,6 @@ import {
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
-const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
 /**
  * Extracts an OAuth access token from an HttpServerConfig's Authorization header.
@@ -63,6 +63,7 @@ function buildHostedValidationContext(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
@@ -71,6 +72,7 @@ function buildHostedValidationContext(
   return {
     projectId: options.projectId,
     serverId,
+    ...(options.queueSignal ? { queueSignal: options.queueSignal } : {}),
     ...(options.serverName ? { serverName: options.serverName } : {}),
     ...(scenarioId ? { accessScope: "chat_v2" } : {}),
     ...(scenarioId ? { scenarioId } : {}),
@@ -138,16 +140,14 @@ async function safeValidateHostedServer(
   try {
     const oauthToken =
       extractOAuthToken(serverConfig) ?? getHostedOAuthToken(serverId);
-    return await withTimeout(
-      validateHostedServer(
+    return await validateHostedServer(
         serverId,
         oauthToken,
         serverConfig.capabilities as Record<string, unknown> | undefined,
         hostedContext,
-      ),
-      HOSTED_VALIDATE_TIMEOUT_MS,
-    );
+      );
   } catch (error) {
+    if (hostedContext?.queueSignal && isServerCheckQueueError(error)) throw error;
     // Preserve the server-attached `normalized` block when the wrapped
     // error is a WebApiError. The string form (kept for back-compat) is
     // populated from the existing normalizer; the rich block flows to
@@ -198,40 +198,13 @@ async function authFetchWithTimeout(
   }
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-): Promise<T> {
-  return await new Promise<T>((resolve, reject) => {
-    const timeoutId = window.setTimeout(() => {
-      reject(
-        new Error(
-          `Connection attempt timed out after ${
-            timeoutMs / 1000
-          } seconds. The server may not exist or is not responding.`,
-        ),
-      );
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        window.clearTimeout(timeoutId);
-        resolve(value);
-      },
-      (error) => {
-        window.clearTimeout(timeoutId);
-        reject(error);
-      },
-    );
-  });
-}
-
 function buildResolverBody(
   serverId: string,
   options: {
     projectId: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ): Record<string, unknown> {
   return {
@@ -251,6 +224,7 @@ export async function testConnection(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ) {
   return observeDesktopOperation("connect", async (setStatus) => {
@@ -364,6 +338,7 @@ export async function reconnectServer(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
+    queueSignal?: AbortSignal;
   },
 ) {
   return observeDesktopOperation("reconnect", async (setStatus) => {
