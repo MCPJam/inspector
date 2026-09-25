@@ -1,5 +1,5 @@
 /**
- * `mcpjam eval run --wait` prints what each iteration actually ran on — the
+ * `mcpjam cloud eval run --wait` prints what each iteration actually ran on — the
  * same line the inspector shows — and a deviation line whenever the record
  * says the run differed from the request. An iteration recorded before
  * execution records existed says "not recorded", never a guess.

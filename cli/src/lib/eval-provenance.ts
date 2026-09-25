@@ -1,5 +1,5 @@
 /**
- * Per-iteration provenance for `mcpjam eval run --wait`: what each iteration
+ * Per-iteration provenance for `mcpjam cloud eval run --wait`: what each iteration
  * actually ran on, in the same words the inspector shows (both print the
  * SDK's `formatExecutionProvenanceLine`), plus a deviation line whenever the
  * execution record says the run differed from what was requested.
