@@ -143,7 +143,7 @@ export function planSuiteClients(
   if (serverless > 0) {
     throw new Error(
       serverless === plan.length
-        ? "Pick a server group for this suite first — without one its runs connect no servers."
+        ? "Pick a server group for this suite first. Without one, its runs connect no servers."
         : `${serverless} of these clients have no server group, so their runs would connect no servers. Pick a server group for the suite first.`,
     );
   }
@@ -168,7 +168,7 @@ function deriveStack(
   const serverAttachmentId = cell.group ?? composition.serverAttachmentId;
   if (!serverAttachmentId) {
     throw new Error(
-      "Pick a server group for this suite first — without one its runs connect no servers.",
+      "Pick a server group for this suite first. Without one, its runs connect no servers.",
     );
   }
   const skillSelection = adhocSkillSelection(composition);
