@@ -4,6 +4,10 @@ import { HostRunner } from "./HostRunner.js";
 import { canonicalizeHostConfigV2 } from "./host-config/canonicalize.js";
 import { canonicalToPublic } from "./host-config/host.js";
 import type { HostConfigInputV2 } from "./host-config/types.js";
+import {
+  assertModelSelection,
+  type ModelSelectionSource,
+} from "./host-config/model-selection.js";
 import type { SelectedEvalClient } from "./eval-reporting-types.js";
 
 export interface EvalSuiteClientOptions {
@@ -37,6 +41,33 @@ export async function abortableSetup<T>(
     return await Promise.race([operation, cancelled]);
   } finally {
     signal.removeEventListener("abort", abort);
+  }
+}
+
+/**
+ * Thrown when a saved client's `modelSelection` names credentials
+ * `runWithClient` cannot use. The runner only has the hosted MCPJam rail (the
+ * caller's MCPJam API key), so an `org` or `local` selection is refused rather
+ * than silently run on MCPJam's key as a bare model id.
+ */
+export class UnsupportedModelSelectionError extends Error {
+  readonly source: Exclude<ModelSelectionSource, "hosted">;
+  readonly modelId: string;
+
+  constructor(
+    source: Exclude<ModelSelectionSource, "hosted">,
+    modelId: string
+  ) {
+    super(
+      `runWithClient only runs hosted MCPJam models; this client's model selection "${modelId}" uses source "${source}" (${
+        source === "org"
+          ? "an organization provider connection"
+          : "a local provider"
+      }), which it cannot honour. Run this client from MCPJam, or save it with a hosted model.`
+    );
+    this.name = "UnsupportedModelSelectionError";
+    this.source = source;
+    this.modelId = modelId;
   }
 }
 
@@ -88,6 +119,27 @@ export async function createSavedClientRunner(
     throw new Error(
       "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, progressive discovery, or interactive approval). Use a client configured for code-connected MCP servers."
     );
+  }
+  // The saved selection says whose credentials serve the model. This runner
+  // only has the hosted MCPJam rail, so anything else is refused here — never
+  // downgraded to the bare id (which would run on MCPJam's key). A hosted
+  // selection runs exactly as a bare id did. The selection is then dropped:
+  // the id below is rewritten to its `mcpjam/` form, which a selection would
+  // (correctly) refuse to agree with.
+  const savedSelection = (config as { modelSelection?: unknown })
+    .modelSelection;
+  delete (config as { modelSelection?: unknown }).modelSelection;
+  if (savedSelection !== undefined) {
+    const selection = assertModelSelection(
+      savedSelection,
+      "client modelSelection"
+    );
+    if (selection.source !== "hosted") {
+      throw new UnsupportedModelSelectionError(
+        selection.source,
+        selection.modelId
+      );
+    }
   }
   let model = String(config.modelId ?? "").replace(/^mcpjam\//, "");
   if (!model.includes("/")) {

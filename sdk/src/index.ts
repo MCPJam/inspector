@@ -925,7 +925,7 @@ export type {
 } from "./EvalTest.js";
 
 // EvalSuite - Groups multiple EvalTests
-export { EvalSuite } from "./EvalSuite.js";
+export { EvalSuite, UnsupportedModelSelectionError } from "./EvalSuite.js";
 export type {
   EvalSuiteClientOptions,
   EvalSuiteConfig,
