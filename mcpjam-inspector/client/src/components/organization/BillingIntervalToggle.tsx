@@ -1,7 +1,7 @@
 import { useId } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
-import type { BillingInterval } from "@/lib/organization-api";
+import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 
 const INTERVALS = ["monthly", "annual"] as const;
 

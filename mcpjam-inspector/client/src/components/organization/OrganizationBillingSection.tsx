@@ -306,8 +306,8 @@ function PlanPriceDisplay({ label }: { label: string }) {
   const suffix = label.endsWith(PER_SEAT_MO_SUFFIX)
     ? PER_SEAT_MO_SUFFIX
     : label.endsWith(PER_MO_SUFFIX)
-    ? PER_MO_SUFFIX
-    : null;
+      ? PER_MO_SUFFIX
+      : null;
   const amount = suffix ? label.slice(0, -suffix.length) : label;
 
   return (
@@ -450,34 +450,53 @@ function ComparePlanRowLabel({
   );
 }
 
+/** Mirrors the marketing pricing page's compare-table descriptions (mcpjam-webapp app/pricing/feature-details.tsx). */
 const V2_ROW_EXPLANATIONS: Record<string, string> = {
   "Included credits":
-    "Credits cover usage across your organization. Free credits reset daily; paid plan credits renew monthly.",
-  Seats: "The number of members who can collaborate in your organization.",
+    "Credits cover usage of MCPJam features, as well as inference for hosted models in chat sessions, for all members of your organization. On paid plans, you can purchase top-up credits to cover additional usage in a given month. Optionally, connect your LLM keys to cover in-session model usage with your own tokens.",
+  Seats:
+    "Seats are the people in your workspace. The table shows each plan’s seat limit; per-seat plans bill for paid seats.",
+  Projects:
+    "Projects group your MCP servers and related testing work in a shared workspace.",
+  "Monthly credit roll-over":
+    "Unused subscription credits carry into the next consecutive paid renewal, up to the cap shown for your plan.",
+  "Additional credits":
+    "Purchase additional credits when you need more than your included allowance. Purchased top-up credits do not expire.",
   BYOK: "Bring your own API keys to use your preferred model providers.",
   Playground:
-    "Connect to an MCP server and interact with its tools, resources, and prompts.",
+    "Interactive workspace for calling MCP tools and inspecting raw requests and responses.",
   "OAuth / XAA Debugger":
-    "Inspect authentication flows and troubleshoot server connections.",
+    "Step through OAuth and XAA handshakes to see exactly where an auth flow breaks.",
   "User Acceptance Testing":
-    "Test your server with realistic user interactions.",
-  Evaluations: "Run repeatable tests to evaluate your MCP server’s behavior.",
+    "Run acceptance flows against a server before you ship a change.",
+  Evaluations:
+    "Score server responses against expected outputs to catch regressions before release.",
   "Eval history": "How long past evaluation results remain available.",
   "Triage Insights": "Review evaluation findings to investigate failures.",
-  "Traces history": "How long recorded traces remain available for inspection.",
-  "SSO / SAML": "Single sign-on with SAML is available on Enterprise.",
+  Swarm:
+    "Run simulated user sessions across personas, goals, and selected clients to test your MCP server at scale.",
+  "CI/CD checks":
+    "Run evaluations in your CI/CD pipeline to catch regressions before release.",
+  Skills:
+    "Load Agent Skills alongside your MCP servers, inspect their definitions in the Skills viewer, and watch a real model use skills and tools together in Playground.",
+  WebMCP:
+    "Connect to WebMCP tools exposed by a website to inspect tool calls and inputs directly, then debug agent behavior against them in Playground.",
+  "Traces history":
+    "How long full request traces stay searchable before they are rolled off.",
+  "SSO / SAML":
+    "Single sign-on connects your workspace to your organization’s identity provider. Availability is shown for each plan.",
   "Role-based access control":
-    "Control member permissions. Enterprise includes custom roles and SCIM provisioning.",
+    "Role-based access control manages permissions in your organization. Team includes Basic RBAC; Enterprise includes Advanced RBAC with custom role definitions.",
   "Data processing agreement":
-    "Enterprise agreements cover how your organization’s data is processed.",
+    "A data processing agreement covering how MCPJam processes personal data. Request a signed DPA through sales on Enterprise.",
   "Uptime SLA":
-    "Enterprise service agreements define availability commitments.",
+    "A contractual uptime SLA for the MCPJam service. Terms are agreed with sales on Enterprise.",
   "Audit log retention":
-    "Retain organization activity records under your Enterprise agreement.",
+    "Review recorded workspace activity for security investigations and accountability.",
   "Auth forensics, SIEM reports":
     "Enterprise reporting supports authentication investigations and security monitoring.",
   "Support tier":
-    "Choose the level of assistance your organization needs, from community to dedicated support.",
+    "The support level available with each plan, from community help to dedicated assistance.",
 };
 
 /**
@@ -1351,12 +1370,12 @@ export function OrganizationBillingSection({
                               const priceLabel = isEnterprisePlan
                                 ? "Custom"
                                 : plan === "free"
-                                ? "$0"
-                                : formatCatalogPrice(
-                                    entry,
-                                    billingInterval,
-                                    planCatalog.currency,
-                                  );
+                                  ? "$0"
+                                  : formatCatalogPrice(
+                                      entry,
+                                      billingInterval,
+                                      planCatalog.currency,
+                                    );
                               const priceSubtext = isEnterprisePlan
                                 ? formatPerSeatCadence(
                                     plan,
@@ -1364,12 +1383,12 @@ export function OrganizationBillingSection({
                                     billingInterval,
                                   )
                                 : plan === "free"
-                                ? "No credit card required"
-                                : formatPerSeatCadence(
-                                    plan,
-                                    entry,
-                                    billingInterval,
-                                  );
+                                  ? "No credit card required"
+                                  : formatPerSeatCadence(
+                                      plan,
+                                      entry,
+                                      billingInterval,
+                                    );
                               const cancellationDateMs =
                                 billingStatus?.stripeCancelAt ??
                                 billingStatus?.stripeCurrentPeriodEnd ??
