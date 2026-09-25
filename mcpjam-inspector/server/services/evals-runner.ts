@@ -117,6 +117,7 @@ import {
 import { isHostedModelDefinition } from "./hosted-model-catalog.js";
 import type { ModelSelection } from "@mcpjam/sdk";
 import {
+  backendModelSelection,
   ModelResolutionRefusalError,
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
@@ -2328,6 +2329,11 @@ async function resolveOrgByokEvalRuntime(args: {
    * request happens to carry do not divert it onto the local path.
    */
   ignoreExplicitModelApiKeys?: boolean;
+  /**
+   * The saved `org` selection, forwarded to `/stream/org/resolve` so the
+   * backend re-checks its connection before handing back any key.
+   */
+  modelSelection?: ModelSelection;
 }): Promise<
   | {
       kind: "cloud";
@@ -2367,6 +2373,7 @@ async function resolveOrgByokEvalRuntime(args: {
     providerKey,
     String(args.modelDefinition.id),
     { bearerToken: args.convexAuthToken },
+    args.modelSelection ? { modelSelection: args.modelSelection } : undefined,
   );
   if (runtime.runtimeLocation === "cloud") {
     return { kind: "cloud", providerKey: runtime.providerKey, target };
@@ -3044,6 +3051,20 @@ const executeTestCase = async (params: {
           orgModelConfigTarget,
         })
       : undefined;
+  // The same selection, sent to the backend as `modelSelection` so its
+  // resolver re-checks it and records it as the requested selection (not
+  // `legacy`): hosted on `/stream` (carrying its `fallback`), org on
+  // `/stream/org` and `/stream/org/resolve` (carrying its `connectionRef`, which
+  // the backend re-resolves before any key is decrypted). A `local` selection
+  // is never sent. The backends that predate selections read request fields by
+  // name and ignore this one, so it is sent unconditionally.
+  const forwardedSelection = selectionRoute
+    ? backendModelSelection(test.selection)
+    : undefined;
+  const hostedSelection =
+    forwardedSelection?.source === "hosted" ? forwardedSelection : undefined;
+  const orgSelection =
+    forwardedSelection?.source === "org" ? forwardedSelection : undefined;
   const modelDefinition = selectionRoute?.modelDefinition ?? promotedModel;
   const resolvedModelId = selectionRoute
     ? selectionRoute.wireModelId
@@ -3068,6 +3089,7 @@ const executeTestCase = async (params: {
           ...(selectionRoute?.rail === "org"
             ? { ignoreExplicitModelApiKeys: true }
             : {}),
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
         });
   if (selectionRoute?.rail === "org" && !orgByokRuntime) {
     // Every reason the org path can be unavailable was refused above; this is
@@ -3180,7 +3202,13 @@ const executeTestCase = async (params: {
         convexAuthToken,
         modelId: resolvedModelId,
         modelDefinition,
-        extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
+        extraBodyFields:
+          jamBillingTarget || hostedSelection
+            ? {
+                ...(jamBillingTarget ?? {}),
+                ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+              }
+            : undefined,
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
@@ -3253,6 +3281,7 @@ const executeTestCase = async (params: {
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
           ...orgByokRuntime.target,
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
         },
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
