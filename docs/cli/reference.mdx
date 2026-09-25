@@ -2410,6 +2410,26 @@ AI-generate test cases from the suite's tools. Included with MCPJam; no customer
 | `--vary-user-styles` | No | Vary query phrasing across a realistic range of user styles |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
 
+#### `cloud eval cases import`
+
+Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
+
+Cases the model could not finish are not created. They come back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts so a person can complete them. To fix one, import only that case's corrected text — re-sending the whole document authors and bills every case in it again.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | One of | Document to import (`-` reads stdin) |
+| `--content <text>` | One of | Document text, instead of `--file` |
+| `--file-name <name>` | No | Name recorded on each case's source (default: `--file`'s basename) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
+| `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
+| `--case-model <id...>` | No | Execution model(s) for the imported cases |
+| `--duplicate-policy <block\|warn\|create_anyway>` | No | What to do with a case that already exists (default `block`) |
+| `--override-reason <text>` | No | Why importing a duplicate is intended (required by `warn` / `create_anyway`) |
+| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
+
 ---
 
 ## `mcp` command

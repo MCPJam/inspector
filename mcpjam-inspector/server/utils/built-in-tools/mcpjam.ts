@@ -489,6 +489,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
   generate_eval_cases:
     "Spends model quota; the Evaluate tab offers it explicitly.",
+  import_eval_cases:
+    "Spends model quota, like generation; Import is the in-app way in.",
 
   // Host and environment administration: re-wires the execution surface.
   // Clients stay OUT of the in-app toolset, and this is the one surface where

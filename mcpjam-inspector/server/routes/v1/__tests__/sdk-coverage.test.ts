@@ -260,6 +260,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "createEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/generate":
     "generateEvalCases",
+  "post /projects/{projectId}/eval-suites/{suiteId}/cases/import":
+    "importEvalCases",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}":
     "getEvalCase",
   "patch /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}":

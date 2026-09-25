@@ -104,7 +104,7 @@ export interface ScenarioFindingsModel extends SwarmFindingsModel {
  * sentiment only when the user SAID they were quitting; it is never inferred
  * from a session that simply stops.
  */
-const SENTIMENT_TITLE: Record<SessionSentiment, string> = {
+export const SENTIMENT_TITLE: Record<SessionSentiment, string> = {
   gave_up: "Gave up",
   frustrated: "Frustrated users",
   neutral: "Neutral users",
@@ -113,7 +113,7 @@ const SENTIMENT_TITLE: Record<SessionSentiment, string> = {
 };
 
 /** Worst first, so the strip opens on the sessions worth reading. */
-const SENTIMENT_ORDER: readonly SessionSentiment[] = [
+export const SENTIMENT_ORDER: readonly SessionSentiment[] = [
   "gave_up",
   "frustrated",
   "neutral",
