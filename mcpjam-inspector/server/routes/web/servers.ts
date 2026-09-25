@@ -49,7 +49,12 @@ servers.post("/validate", async (c) =>
     (manager, body) => validateServerCore(c, manager, body),
     {
       timeoutMs: WEB_CONNECT_TIMEOUT_MS,
-      ...(HOSTED_MODE ? { redactFailure: redactHostedValidateFailure } : {}),
+      ...(HOSTED_MODE
+        ? {
+            redactFailure: redactHostedValidateFailure,
+            redactSuccessLogs: projectHostedConnectFailureLogs,
+          }
+        : {}),
     },
   ),
 );

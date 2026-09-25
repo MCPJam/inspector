@@ -224,8 +224,8 @@ export function redactNormalizedError(
 }
 
 /**
- * The log envelope of a failed hosted connection, reduced like a probe
- * answer: allowlisted headers, bounded status text, received frames without
+ * The log envelope of a hosted connection — failed or successful — reduced
+ * like a probe answer: allowlisted headers, bounded status text, received frames without
  * their content, and transport errors as {@link describeHostedConnectFailure}
  * words them.
  */
