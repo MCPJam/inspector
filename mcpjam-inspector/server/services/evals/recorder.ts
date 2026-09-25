@@ -54,7 +54,7 @@ const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
  * lost. Returns null for any non-billing error so callers fall through to
  * their normal handling.
  */
-function asBillingRouteError(error: unknown): WebRouteError | null {
+export function asBillingRouteError(error: unknown): WebRouteError | null {
   if (!(error instanceof ConvexError)) {
     return null;
   }

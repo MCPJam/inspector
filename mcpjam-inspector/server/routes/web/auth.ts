@@ -2845,6 +2845,13 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Runs on the raw body after it is read and BEFORE it is parsed or any
+     * server is connected. The hook an environment launch uses to resolve its
+     * closed server set and prime the connection batch from it (it may mutate
+     * `rawBody`). A throw is answered like any other failure of the route.
+     */
+    beforeConnect?: (rawBody: Record<string, unknown>) => Promise<void>;
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2854,6 +2861,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     if (options?.rpcLogs !== false) {
       rpcCollector = createHostedRpcLogCollector(rawBody);
+    }
+    if (options?.beforeConnect) {
+      await options.beforeConnect(rawBody);
     }
 
     const result = await runEphemeralConnection(

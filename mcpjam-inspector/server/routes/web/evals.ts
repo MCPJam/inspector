@@ -13,6 +13,10 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  assertEnvironmentQuickRunAdmissible,
+  assertNoConflictingEnvironmentOverrides,
+} from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
@@ -269,39 +273,124 @@ evals.post("/run", async (c) =>
   ),
 );
 
-evals.post("/run-test-case", async (c) =>
-  withEphemeralConnection(
+/**
+ * ENVIRONMENT quick-run preflight for the single-case routes, on the RAW body
+ * — before it is parsed and before anything connects. Resolves the environment
+ * eval-only (the same rule `/run` and `startTestSuiteRun` apply), refuses a
+ * request that also sets what the environment owns and anything a quick run
+ * cannot honor, then primes the connection batch with exactly the
+ * environment's closed server set. The browser never supplies those servers.
+ *
+ * Returns undefined for a legacy request (no `environmentId`), which keeps its
+ * old shape. The SAME resolution is handed to the shared preparation, so the
+ * revision the backend commit asserts is the one the manager connected.
+ */
+async function preflightQuickRunEnvironment(
+  c: Parameters<typeof getConvexBearerForRequest>[0],
+  rawBody: Record<string, unknown>,
+): Promise<ResolvedEnvironmentForLaunch | undefined> {
+  const environmentId = rawBody.environmentId;
+  if (typeof environmentId !== "string" || !environmentId) return undefined;
+  const requestFields = {
+    environmentId,
+    ...(typeof rawBody.projectId === "string" && rawBody.projectId
+      ? { projectId: rawBody.projectId }
+      : {}),
+    ...(typeof rawBody.model === "string" ? { model: rawBody.model } : {}),
+    ...(typeof rawBody.namedHostId === "string"
+      ? { namedHostId: rawBody.namedHostId }
+      : {}),
+    ...(rawBody.hostConfigOverride !== undefined
+      ? { hostConfigOverride: rawBody.hostConfigOverride }
+      : {}),
+    ...(Array.isArray(rawBody.serverIds)
+      ? {
+          serverIds: rawBody.serverIds.filter(
+            (id): id is string => typeof id === "string",
+          ),
+        }
+      : {}),
+  };
+  assertNoConflictingEnvironmentOverrides(requestFields);
+  let resolved: ResolvedEnvironmentForLaunch;
+  try {
+    resolved = await resolveEnvironmentForLaunch(
+      // The DELEGATED JWT: an `sk_` API key 401s Convex's query surface.
+      createConvexClient(await getConvexBearerForRequest(c)),
+      {
+        serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+        projectId: requestFields.projectId!,
+        environmentId,
+      },
+    );
+  } catch (error) {
+    throw translateEnvironmentResolveError(error);
+  }
+  assertNoConflictingEnvironmentOverrides(requestFields, resolved);
+  assertEnvironmentQuickRunAdmissible(resolved);
+  // Live-healed ids, like `/run`: the batch we authorize and connect must
+  // match the ids `resolveServerIdsOrThrow` later looks up.
+  rawBody.serverIds = environmentServerIds(resolved);
+  const serverNames = environmentServerNames(resolved);
+  if (serverNames.length) {
+    rawBody.serverNames = serverNames;
+  } else {
+    delete rawBody.serverNames;
+  }
+  return resolved;
+}
+
+evals.post("/run-test-case", async (c) => {
+  let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
+  return withEphemeralConnection(
     c,
     hostedRunTestCaseSchema,
     (manager, body) =>
       runEvalTestCaseWithManager(manager, {
         ...body,
         convexAuthToken: assertBearerToken(c),
+        ...(preflightEnvironment
+          ? { resolvedEnvironment: preflightEnvironment }
+          : {}),
       }),
     {
       rpcLogs: false,
+      beforeConnect: async (rawBody) => {
+        preflightEnvironment = await preflightQuickRunEnvironment(c, rawBody);
+      },
       // Connect as the host this case runs under, not as whichever one the
       // browser had active — same rule as the suite-run and streaming routes.
-      // The wrapper owns the body, so the lookup is a callback.
-      hostConfigForBody: async (rawBody) =>
-        typeof rawBody.namedHostId === "string" && rawBody.namedHostId
+      // An environment runs as its own client. The wrapper owns the body, so
+      // the lookup is a callback.
+      hostConfigForBody: async (rawBody) => {
+        const hostId =
+          preflightEnvironment?.hostId ??
+          (typeof rawBody.namedHostId === "string" && rawBody.namedHostId
+            ? rawBody.namedHostId
+            : undefined);
+        return hostId
           ? await loadSuiteHostConfig(
               // The DELEGATED JWT, not the raw bearer: an `sk_` API key 401s
               // Convex's query surface, which is why the suite-run route
               // converts too.
               createConvexClient(await getConvexBearerForRequest(c)),
               undefined,
-              rawBody.namedHostId,
+              hostId,
             )
-          : undefined,
+          : undefined;
+      },
     },
-  ),
-);
+  );
+});
 
 evals.post("/stream-test-case", async (c) => {
   const bearerToken = assertBearerToken(c);
   const rawBody = await readJsonBody<Record<string, unknown>>(c);
   const WEB_CALL_TIMEOUT_MS = 60_000;
+
+  // Before parsing: an environment run's servers come from the resolution,
+  // never from the body.
+  const preflightEnvironment = await preflightQuickRunEnvironment(c, rawBody);
 
   const body = parseWithSchema(hostedRunTestCaseSchema, rawBody) as z.infer<
     typeof hostedRunTestCaseSchema
@@ -351,12 +440,15 @@ evals.post("/stream-test-case", async (c) => {
   // attached host must negotiate as THAT host, not as whichever one the
   // browser had active. Only when the body names a host — a plain ad-hoc case
   // run owns its own session and keeps sending the body's pins.
-  const caseHostConfig = body.namedHostId
+  // An environment runs as its own client, whatever host the browser had
+  // active.
+  const caseHostId = preflightEnvironment?.hostId ?? body.namedHostId;
+  const caseHostConfig = caseHostId
     ? await loadSuiteHostConfig(
         // Delegated JWT — see the run-test-case route above.
         createConvexClient(await getConvexBearerForRequest(c)),
         undefined,
-        body.namedHostId,
+        caseHostId,
       )
     : undefined;
   const caseHostPins = caseHostConfig
@@ -418,6 +510,9 @@ evals.post("/stream-test-case", async (c) => {
           serverIds: string[];
         }),
         convexAuthToken: bearerToken,
+        ...(preflightEnvironment
+          ? { resolvedEnvironment: preflightEnvironment }
+          : {}),
       },
       {
         onStreamComplete: () => manager.disconnectAllServers(),

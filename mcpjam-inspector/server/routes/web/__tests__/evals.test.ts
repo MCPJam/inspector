@@ -882,6 +882,146 @@ describe("web routes — evals", () => {
     );
   });
 
+  describe("environment quick runs", () => {
+    const resolvedEnvironment = {
+      environmentRef: { environmentId: "env-1", name: "Prod", revision: 2 },
+      hostId: "host-env",
+      hostConfigId: "cfg-env",
+      effectiveModelId: "openai/gpt-5",
+      modelSource: "environment",
+      selectedServerIds: ["env-srv"],
+      effectiveServerIds: ["env-srv"],
+      servers: [{ serverId: "env-srv", name: "billing" }],
+    };
+
+    it("streams on the environment's servers as its client, whatever the body sent", async () => {
+      environmentQueryMock.mockResolvedValueOnce(resolvedEnvironment);
+      streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+      );
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/stream-test-case",
+        {
+          projectId: "project-1",
+          serverIds: [],
+          testCaseId: "test-case-1",
+          environmentId: "env-1",
+          idempotencyKey: "click-1234567",
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(environmentQueryMock).toHaveBeenCalledWith(
+        "projectEnvironments:resolveEnvironmentForLaunch",
+        {
+          projectId: "project-1",
+          environmentId: "env-1",
+          serverSource: "environment_only",
+        },
+      );
+      // Connected as the environment's client…
+      expect(loadSuiteHostConfigMock).toHaveBeenCalledWith(
+        expect.anything(),
+        undefined,
+        "host-env",
+      );
+      // …with exactly its closed server set, handing the SAME resolution to
+      // the shared preparation.
+      expect(streamEvalTestCaseWithManagerMock.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          environmentId: "env-1",
+          idempotencyKey: "click-1234567",
+          resolvedEnvironment,
+          serverIds: ["env-srv"],
+          serverNames: ["billing"],
+        }),
+      );
+      expect(Object.keys(managerConfigsMock.mock.calls[0]?.[0] ?? {})).toEqual([
+        "env-srv",
+      ]);
+    });
+
+    it("refuses a client configuration override before resolving anything", async () => {
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/run-test-case",
+        {
+          projectId: "project-1",
+          serverIds: [],
+          testCaseId: "test-case-1",
+          environmentId: "env-1",
+          hostConfigOverride: { hostStyle: "chatgpt" },
+        },
+        token,
+      );
+      expect(response.status).toBe(400);
+      expect(environmentQueryMock).not.toHaveBeenCalled();
+      expect(runEvalTestCaseWithManagerMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses an environment that pins a sandbox image, before connecting", async () => {
+      environmentQueryMock.mockResolvedValueOnce({
+        ...resolvedEnvironment,
+        computerEnvironmentId: "image-1",
+      });
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/run-test-case",
+        {
+          projectId: "project-1",
+          serverIds: [],
+          testCaseId: "test-case-1",
+          environmentId: "env-1",
+        },
+        token,
+      );
+      const { status, data } = await expectJson<{
+        message: string;
+        details: { code: string };
+      }>(response);
+      expect(status).toBe(409);
+      expect(data.message).toMatch(/Start run/);
+      expect(data.details.code).toBe("ENV_QUICK_RUN_UNSUPPORTED");
+      expect(managerConfigsMock).not.toHaveBeenCalled();
+      expect(runEvalTestCaseWithManagerMock).not.toHaveBeenCalled();
+    });
+
+    it("runs a buffered quick run with the preflight resolution", async () => {
+      environmentQueryMock.mockResolvedValueOnce(resolvedEnvironment);
+      runEvalTestCaseWithManagerMock.mockResolvedValueOnce({
+        success: true,
+        iteration: { _id: "iter-1" },
+      });
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/run-test-case",
+        {
+          projectId: "project-1",
+          serverIds: [],
+          testCaseId: "test-case-1",
+          environmentId: "env-1",
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(runEvalTestCaseWithManagerMock.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          resolvedEnvironment,
+          serverIds: ["env-srv"],
+        }),
+      );
+    });
+  });
+
   it("rejects direct guest compare quick run bodies", async () => {
     const { app } = createEvalsTestApp();
     const { token } = issueGuestToken();

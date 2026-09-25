@@ -259,6 +259,105 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     },
   );
 
+  describe("environment quick runs (committed iterations)", () => {
+    it("runs every attempt on its committed row and creates none", async () => {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].runs = 2;
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        committedQuickRunIterationIds: ["committed-1", "committed-2"],
+      } as any);
+      expect(
+        convexClient.action.mock.calls.filter(
+          ([name]) => name === "testSuites:startQuickRunIteration",
+        ),
+      ).toHaveLength(0);
+      expect(
+        result?.quickRunIterationOutcomes?.map(
+          (outcome) => outcome.iterationId,
+        ),
+      ).toEqual(["committed-1", "committed-2"]);
+      const finalized = new Set(
+        convexClient.action.mock.calls
+          .filter(([name]) => name === "testSuites:updateTestIteration")
+          .map(([, args]) => args.iterationId),
+      );
+      expect(finalized).toEqual(new Set(["committed-1", "committed-2"]));
+    });
+
+    it("runs nothing, and finalizes the rows, when the commit does not match the attempts", async () => {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].runs = 3;
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        committedQuickRunIterationIds: ["committed-1", "committed-2"],
+      } as any);
+      expect(streamTextMock).not.toHaveBeenCalled();
+      expect(generateTextMock).not.toHaveBeenCalled();
+      expect(result?.quickRunIterationOutcomes ?? []).toEqual([]);
+      expect(
+        convexClient.action.mock.calls.filter(
+          ([name]) => name === "testSuites:startQuickRunIteration",
+        ),
+      ).toHaveLength(0);
+      const stopped = convexClient.action.mock.calls
+        .filter(([name]) => name === "testSuites:updateTestIteration")
+        .map(([, args]) => args.iterationId);
+      expect(stopped.sort()).toEqual(["committed-1", "committed-2"]);
+    });
+
+    it("a stopped run finalizes the committed rows it never started", async () => {
+      const controller = new AbortController();
+      controller.abort(new Error("Eval stream aborted by the client"));
+      await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
+        tools: {},
+        selectedServers: ["srv-1"],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        suiteId: "suite-1",
+        runId: null,
+        abortSignal: controller.signal,
+        committedIterationIds: ["committed-1", "committed-2"],
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 2,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-1",
+        },
+        emit: () => {},
+      } as any);
+      expect(streamTextMock).not.toHaveBeenCalled();
+      const stopped = convexClient.action.mock.calls
+        .filter(([name]) => name === "testSuites:updateTestIteration")
+        .map(([, args]) => [args.iterationId, args.status]);
+      expect(stopped).toEqual([
+        ["committed-1", "cancelled"],
+        ["committed-2", "cancelled"],
+      ]);
+    });
+
+    it("only a single-case quick run may carry committed rows", async () => {
+      await expect(
+        runEvalSuiteWithAiSdk({
+          ...buildQuickRunConfig(),
+          runId: "suite-run",
+          committedQuickRunIterationIds: ["committed-1"],
+        } as any),
+      ).rejects.toThrow(/single-case quick run/);
+    });
+  });
+
   it("finishes a credit-blocked suite as failed while retaining its completed summary", async () => {
     const success = streamTextMock.getMockImplementation()!;
     streamTextMock

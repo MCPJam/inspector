@@ -39,12 +39,26 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  buildQuickRunCommitSnapshot,
   defaultEvalExecutionBudgets,
   resolveSteps,
   runEvalSuiteWithAiSdk,
+  runFrozenSkillOptions,
   streamTestCase,
   type EvalPinnedSkillSource,
+  type EvalTestCase,
 } from "../../services/evals-runner";
+import {
+  assertCommittedExecutionMatchesPreflight,
+  assertEnvironmentQuickRunAdmissible,
+  assertNoConflictingEnvironmentOverrides,
+  commitEnvironmentQuickRun,
+  failCommittedQuickRun,
+  loadCommittedQuickRunSkills,
+  type CommittedQuickRun,
+} from "../../services/evals/quick-run-environment.js";
+import { providerForModelId } from "@/shared/model-provider";
+import { randomUUID } from "node:crypto";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import {
   probeConfigSchema,
@@ -74,6 +88,7 @@ import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize
 import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
+  environmentServerIds,
   environmentServerNames,
   environmentServerRefsForManager,
   resolveEnvironmentForLaunch,
@@ -82,13 +97,11 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
 import { resolveSuiteRunPluginServers } from "../../services/plugins/run-plugin-servers.js";
+import { type RunPinnedSkill } from "../../services/evals/run-plugin-snapshot.js";
 import {
-  assertPinnedSkillFilesReachable,
-  buildRunCapabilitySet,
-  runNeedsEffectiveSkillSurface,
-  type RunPinnedSkill,
-} from "../../services/evals/run-plugin-snapshot.js";
-import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
+  buildPinnedSkillSource,
+  type BuiltPinnedSkillSource,
+} from "../../services/evals/pinned-skill-source.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import {
@@ -699,13 +712,34 @@ export function buildGithubCheckServerOverride(args: {
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
-  model: z.string(),
-  provider: z.string(),
+  /**
+   * ENVIRONMENT quick run: execute the case in this project environment. The
+   * environment decides the model, the client (and its configuration) and the
+   * servers, so a request naming one sends no `model`/`provider`, no
+   * `namedHostId` or `hostConfigOverride`, and no servers of its own; a
+   * conflicting value is refused (see `assertNoConflictingEnvironmentOverrides`).
+   * Case CONTENT (`testCaseOverrides`) and repetitions stay editable.
+   */
+  environmentId: z.string().optional(),
+  /** Required with `environmentId`: the project the environment belongs to. */
+  projectId: z.string().optional(),
+  /**
+   * Makes the environment commit retry-safe: a retried request with the same
+   * key gets the SAME committed iterations back and does not execute them
+   * again. One key per Run click.
+   */
+  idempotencyKey: z.string().min(8).max(200).optional(),
+  /** Legacy runs: the model to execute. Ignored (or refused, if it differs)
+   *  on an environment run. */
+  model: z.string().optional(),
+  provider: z.string().optional(),
   compareRunId: z.string().optional(),
   skipLastMessageRunUpdate: z.boolean().optional(),
-  serverIds: z
-    .array(z.string())
-    .min(1, { message: "At least one server must be selected" }),
+  /**
+   * Legacy runs: the servers to connect (at least one, enforced at
+   * preparation). An environment run connects its own closed set instead.
+   */
+  serverIds: z.array(z.string()).optional(),
   scenarioId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
@@ -2832,40 +2866,24 @@ export async function prepareEvalRun(
         },
       );
 
-      // A pinned supporting file whose blob is gone fails the run BEFORE the
-      // model runs, attributed to the skill and the path. `url: null` is an
-      // unreachable blob, never "no file" — see the assertion's own note.
-      // Hoisted above the `length` guard so it also runs ahead of the harness
-      // adaptation below, which downloads those same blobs: an unreachable one
-      // should report through this assertion's wording, not a fetch failure's.
-      assertPinnedSkillFilesReachable(runPinnedSkills ?? []);
-
-      // Empty is a real answer for the harness (see `pinnedHarnessSkills`), so
-      // this is assigned outside the `length` guard below.
-      pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
-        runPinnedSkills ?? [],
-      );
-
-      if (runPinnedSkills?.length) {
-        pinnedSkillSource = runNeedsEffectiveSkillSurface(runPinnedSkills)
-          ? {
-              kind: "pinned-effective",
-              capabilities: buildRunCapabilitySet({
-                pins: runPinnedSkills,
-                // Straight from `configSnapshot.environmentPluginVersions` —
-                // the run's own record. NOT re-resolved to the plugin's active
-                // version, which is what would let a mid-run re-import change
-                // an in-flight run.
-                pluginVersions: runEnvironmentPluginVersions,
-                pluginServers: runPluginServers,
-                effectiveServerIds: resolvedServerIds,
-                serverNames: environmentLaunch
-                  ? environmentServerNames(environmentLaunch)
-                  : serverNames,
-              }),
-            }
-          : { kind: "pinned", skills: runPinnedSkills };
-      }
+      // The shared pin → skill-channel conversion (environment quick runs use
+      // the same one): unreachable supporting files fail HERE, before the
+      // model runs, and an empty pin set stays empty on both channels.
+      const pinServerNames = environmentLaunch
+        ? environmentServerNames(environmentLaunch)
+        : serverNames;
+      const built = await buildPinnedSkillSource({
+        pins: runPinnedSkills ?? [],
+        // Straight from `configSnapshot.environmentPluginVersions` — the run's
+        // own record. NOT re-resolved to the plugin's active version, which is
+        // what would let a mid-run re-import change an in-flight run.
+        pluginVersions: runEnvironmentPluginVersions,
+        pluginServers: runPluginServers,
+        effectiveServerIds: resolvedServerIds,
+        ...(pinServerNames ? { serverNames: pinServerNames } : {}),
+      });
+      pinnedHarnessSkills = built.pinnedHarnessSkills;
+      pinnedSkillSource = built.pinnedSkillSource;
     } catch (error) {
       await failRunBeforeExecution(convexClient, recorder, runId, {
         reason: (error instanceof Error ? error.message : String(error)).slice(
@@ -2979,20 +2997,172 @@ export type RunEvalTestCaseWithManagerOptions = {
   skipLastMessageRunUpdate?: boolean;
 };
 
-export async function runEvalTestCaseWithManager(
-  clientManager: MCPClientManager,
-  request: RunTestCaseWithManagerRequest,
-  options?: RunEvalTestCaseWithManagerOptions,
+/**
+ * A single-case request as the shared preparation sees it: the parsed body,
+ * plus — for an environment quick run — the route's own preflight resolution.
+ * Reusing that resolution (rather than resolving again) keeps the revision the
+ * commit asserts equal to the one the manager connected.
+ */
+type SingleCaseExecutionRequest = RunTestCaseWithManagerRequest & {
+  resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+};
+
+/**
+ * The runtime case for a single-case run: the persisted case with the
+ * request's CONTENT overrides layered on, and the suite defaults resolved the
+ * same way suite runs resolve them. Execution attribution (`model`,
+ * `provider`, `hostConfigOverride`) comes from the caller, which decides it
+ * from the environment or, for a legacy run, from the request.
+ */
+function buildSingleCaseRuntimeTest(args: {
+  testCase: any;
+  testCaseOverrides: RunTestCaseRequest["testCaseOverrides"];
+  model: string;
+  provider: string;
+  suiteDefaultMatchOptions: MatchOptionsDTO | undefined;
+  suiteDefaultPredicates: Awaited<
+    ReturnType<typeof loadSuiteDefaultPredicates>
+  >;
+  matchOptionsOverride: RunTestCaseRequest["matchOptionsOverride"];
+  hostConfigOverride: Record<string, unknown> | undefined;
+}) {
+  const { testCase, testCaseOverrides } = args;
+  return {
+    title: testCase.title,
+    query: testCaseOverrides?.query ?? testCase.query,
+    runs: testCaseOverrides?.runs ?? 1,
+    model: args.model,
+    provider: args.provider,
+    // Freeze the authored analytics label onto the runtime case. The runner
+    // carries it into each iteration snapshot; reading it live later would
+    // re-attribute historical trials after a case is retagged.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
+    expectedToolCalls:
+      testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
+    isNegativeTest:
+      testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
+    expectedOutput:
+      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
+    steps:
+      (testCaseOverrides?.steps as TestStep[] | undefined) ??
+      (testCase as { steps?: TestStep[] }).steps ??
+      legacyCaseStepsFallback(
+        testCase as { promptTurns?: unknown; advancedConfig?: unknown },
+      ),
+    advancedConfig:
+      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    matchOptions: resolveMatchOptions(
+      args.suiteDefaultMatchOptions,
+      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
+        MatchOptionsDTO | undefined,
+      args.matchOptionsOverride,
+    ),
+    // Thread the predicate gate into the runtime case so the runner
+    // evaluates it. See `resolveCaseSuccessPredicates` for the full
+    // precedence rules — kept as a shared helper so every resolution site
+    // (this one and the suite-run recorder) stays in lockstep.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: args.suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
+        import("@/shared/eval-matching").Predicate[] | undefined,
+      suppressedSuiteStandardCheckIds:
+        testCaseOverrides?.suppressedSuiteStandardCheckIds ??
+        (testCase as { suppressedSuiteStandardCheckIds?: string[] })
+          .suppressedSuiteStandardCheckIds,
+      envelope: (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        import("@/shared/eval-matching").CasePredicates | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
+        .successPredicates as
+        import("@/shared/eval-matching").Predicate[] | undefined,
+    }),
+    hostConfigOverride: args.hostConfigOverride,
+    testCaseId: testCase._id,
+  };
+}
+
+type SingleCaseRuntimeTest = ReturnType<typeof buildSingleCaseRuntimeTest>;
+
+/**
+ * The runtime server environment of an ENVIRONMENT quick run: the connected
+ * refs, plus name → id bindings from the environment's own resolution, so a
+ * pinned tool-call step naming a server resolves to the environment's server
+ * — never to the suite's legacy bindings.
+ */
+function environmentRuntimeEnvironment(
+  resolvedServerIds: string[],
+  resolved: ResolvedEnvironmentForLaunch,
 ) {
+  const ids = environmentServerIds(resolved);
+  const names = environmentServerNames(resolved);
+  const serverBindings = names.flatMap((serverName, index) =>
+    ids[index] ? [{ serverName, projectServerId: ids[index]! }] : [],
+  );
+  return {
+    servers: resolvedServerIds,
+    ...(serverBindings.length > 0 ? { serverBindings } : {}),
+  };
+}
+
+/** Everything a single-case run needs, decided before anything executes. */
+export type PreparedSingleCaseExecution = {
+  convexClient: ConvexHttpClient;
+  convexHttpUrl: string;
+  testCase: any;
+  test: SingleCaseRuntimeTest;
+  resolvedServerIds: string[];
+  runtimeEnvironment: {
+    servers: string[];
+    serverBindings?: Array<{ serverName: string; projectServerId: string }>;
+  };
+  /** The host config the run EXECUTES with. */
+  suiteHostConfig: Record<string, unknown>;
+  suiteHostPolicy: ReturnType<typeof extractHostExecutionPolicy>;
+  suiteInjectOpenAiCompat: boolean;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: { projectId: string };
+  /**
+   * ENVIRONMENT quick runs only: the preflight, what the backend committed,
+   * and the frozen skill channels built from the commit. When
+   * `committed.replayed` is true an earlier request owns these iterations and
+   * the caller must NOT execute them; `frozenSkills` is then absent.
+   */
+  environment?: {
+    resolved: ResolvedEnvironmentForLaunch;
+    committed: CommittedQuickRun;
+    frozenSkills?: BuiltPinnedSkillSource;
+  };
+};
+
+/**
+ * The preparation shared by the streamed and buffered single-case routes
+ * (hosted and local): everything up to — never including — the first model
+ * or tool call.
+ *
+ * An ENVIRONMENT quick run (the request names `environmentId`) resolves the
+ * environment eval-only, connects exactly its closed server set, and COMMITS
+ * every attempt in the backend before returning: rows, reservation, frozen
+ * host config, model attribution and skill pins in one transaction. A failure
+ * anywhere up to the commit leaves nothing behind; a failure after it marks
+ * the committed rows failed before rethrowing. The environment owns the
+ * model, client, servers and client configuration — the request contributes
+ * case content only.
+ *
+ * A LEGACY request (no environment) keeps its old shape during the
+ * transition: the request's model and servers, the suite's host config.
+ */
+export async function prepareSingleCaseExecution(
+  clientManager: MCPClientManager,
+  request: SingleCaseExecutionRequest,
+): Promise<PreparedSingleCaseExecution> {
   const {
     testCaseId,
     model,
     provider,
-    compareRunId,
     serverIds,
     scenarioId,
     accessVersion,
-    skipLastMessageRunUpdate,
     modelApiKeys,
     orgModelConfig,
     convexAuthToken,
@@ -3001,10 +3171,61 @@ export async function runEvalTestCaseWithManager(
     namedHostId,
     hostConfigOverride,
     toolPolicy,
+    environmentId,
+    projectId,
+    idempotencyKey,
   } = request;
-
-  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+
+  let environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
+  if (environmentId) {
+    // Before resolving: a request that also sets the client configuration is
+    // refused without a backend round trip.
+    assertNoConflictingEnvironmentOverrides(request);
+    environmentLaunch =
+      request.resolvedEnvironment &&
+      request.resolvedEnvironment.environmentRef.environmentId === environmentId
+        ? request.resolvedEnvironment
+        : await resolveEnvironmentForLaunch(convexClient, {
+            serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+            projectId: projectId!,
+            environmentId,
+          }).catch((error) => {
+            throw translateEnvironmentResolveError(error);
+          });
+    assertNoConflictingEnvironmentOverrides(request, environmentLaunch);
+    assertEnvironmentQuickRunAdmissible(environmentLaunch);
+    if (!environmentLaunch.effectiveModelId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "This deployment cannot run environment quick runs yet. Retry after the backend deploys.",
+        { reason: "ENVIRONMENT_QUICK_RUN_UNAVAILABLE" },
+      );
+    }
+  } else {
+    if (!model || !provider) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "model and provider are required unless the run names an environment",
+      );
+    }
+    if (!serverIds || serverIds.length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "At least one server must be selected",
+      );
+    }
+  }
+
+  const resolvedServerIds = resolveServerIdsOrThrow(
+    environmentLaunch
+      ? environmentServerRefsForManager(environmentLaunch, clientManager)
+      : serverIds!,
+    clientManager,
+  );
 
   const testCase = await convexClient.query("testSuites:getTestCase" as any, {
     testCaseId,
@@ -3030,22 +3251,24 @@ export async function runEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
-  const suiteHostConfig = await loadSuiteHostConfig(
-    convexClient,
-    testCase.evalTestSuiteId,
-    namedHostId,
-  );
-  const effectiveHostConfig =
-    (hostConfigOverride as Record<string, unknown> | undefined) ??
-    suiteHostConfig;
-  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
-    suiteHostConfig,
-    hostConfigOverride as Record<string, unknown> | undefined,
-  );
-  const suiteHostPolicy = extractHostExecutionPolicy(
-    suiteHostConfig,
-    namedHostId,
-  );
+  // An environment runs AS its client; a legacy run as the suite's (or the
+  // named) host, with the request's one-off override on top.
+  const executionHostId = environmentLaunch?.hostId ?? namedHostId;
+  const liveHostConfig = environmentLaunch
+    ? await loadSuiteHostConfig(
+        convexClient,
+        undefined,
+        environmentLaunch.hostId,
+      )
+    : await loadSuiteHostConfig(
+        convexClient,
+        testCase.evalTestSuiteId,
+        namedHostId,
+      );
+  const legacyHostConfigOverride = environmentLaunch
+    ? undefined
+    : (hostConfigOverride as Record<string, unknown> | undefined);
+  const effectiveHostConfig = legacyHostConfigOverride ?? liveHostConfig;
   // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
   // path); refused only where this deployment cannot seal the policy into the
   // proxy token. Host-executed delivery enforces in-process and mints no token.
@@ -3068,12 +3291,9 @@ export async function runEvalTestCaseWithManager(
   // a computer-backed built-in would therefore execute with the tool silently
   // skipped by `resolveHostTools`. Refused instead — and the message points at
   // running the case inside a suite rather than at pinning an image, which
-  // would change nothing here.
+  // would change nothing here. Before the commit, so a refusal writes nothing.
   const singleCaseAdmission = checkEvalExecutionAdmission({
-    hostConfig:
-      (hostConfigOverride as Record<string, unknown> | undefined) ??
-      suiteHostConfig ??
-      null,
+    hostConfig: effectiveHostConfig ?? null,
     surface: "single-case",
   });
   if (!singleCaseAdmission.ok) {
@@ -3084,73 +3304,30 @@ export async function runEvalTestCaseWithManager(
       { reason: "EVAL_EXECUTION_UNAVAILABLE" },
     );
   }
-  const suiteEnvironment = await loadSuiteEnvironment(
-    convexClient,
-    testCase.evalTestSuiteId,
-  );
-  const runtimeEnvironment = buildRuntimeEnvironmentWithBindings({
-    resolvedServerIds,
-    suiteEnvironment,
+
+  const runtimeEnvironment = environmentLaunch
+    ? environmentRuntimeEnvironment(resolvedServerIds, environmentLaunch)
+    : buildRuntimeEnvironmentWithBindings({
+        resolvedServerIds,
+        suiteEnvironment: await loadSuiteEnvironment(
+          convexClient,
+          testCase.evalTestSuiteId,
+        ),
+      });
+  const test = buildSingleCaseRuntimeTest({
+    testCase,
+    testCaseOverrides,
+    // Provisional for an environment run: the commit below returns the
+    // model and provider the backend projected, and those are what execute.
+    model: environmentLaunch ? environmentLaunch.effectiveModelId! : model!,
+    provider: environmentLaunch
+      ? (providerForModelId(environmentLaunch.effectiveModelId!) ?? "")
+      : provider!,
+    suiteDefaultMatchOptions,
+    suiteDefaultPredicates,
+    matchOptionsOverride,
+    hostConfigOverride: legacyHostConfigOverride,
   });
-  const test = {
-    title: testCase.title,
-    query: testCaseOverrides?.query ?? testCase.query,
-    runs: testCaseOverrides?.runs ?? 1,
-    model,
-    provider,
-    // Freeze the authored analytics label onto the runtime case. The runner
-    // carries it into each iteration snapshot; reading it live later would
-    // re-attribute historical trials after a case is retagged.
-    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
-    expectedToolCalls:
-      testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
-    isNegativeTest:
-      testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
-    expectedOutput:
-      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
-    steps:
-      (testCaseOverrides?.steps as TestStep[] | undefined) ??
-      (testCase as { steps?: TestStep[] }).steps ??
-      legacyCaseStepsFallback(
-        testCase as { promptTurns?: unknown; advancedConfig?: unknown },
-      ),
-    advancedConfig:
-      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
-    matchOptions: resolveMatchOptions(
-      suiteDefaultMatchOptions,
-      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        | MatchOptionsDTO
-        | undefined,
-      matchOptionsOverride,
-    ),
-    // Thread the predicate gate into the runtime case so the runner
-    // evaluates it. See `resolveCaseSuccessPredicates` for the full
-    // precedence rules — kept as a shared helper so all three resolution
-    // sites (this function, `streamEvalTestCaseWithManager`, and the
-    // suite-run recorder) stay in lockstep.
-    successPredicates: resolveCaseSuccessPredicates({
-      suiteDefaults: suiteDefaultPredicates,
-      runOverride: testCaseOverrides?.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
-      suppressedSuiteStandardCheckIds:
-        testCaseOverrides?.suppressedSuiteStandardCheckIds ??
-        (testCase as { suppressedSuiteStandardCheckIds?: string[] })
-          .suppressedSuiteStandardCheckIds,
-      envelope: (testCaseOverrides?.predicates ??
-        (testCase as { predicates?: unknown }).predicates) as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
-      legacyCase: (testCase as { successPredicates?: unknown })
-        .successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
-    }),
-    hostConfigOverride: hostConfigOverride as
-      | Record<string, unknown>
-      | undefined,
-    testCaseId: testCase._id,
-  };
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys".
@@ -3160,17 +3337,17 @@ export async function runEvalTestCaseWithManager(
   let resolvedOrgModelConfig = orgModelConfig;
   const testCaseProjectId =
     typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const testCaseOrgConfigTarget = testCaseProjectId
+  const orgModelConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
     : undefined;
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&
-    testCaseOrgConfigTarget
+    orgModelConfigTarget
   ) {
     try {
       resolvedOrgModelConfig = await resolveOrgModelConfig(
-        testCaseOrgConfigTarget,
+        orgModelConfigTarget,
         {
           bearerToken: convexAuthToken,
           scenarioId,
@@ -3186,16 +3363,169 @@ export async function runEvalTestCaseWithManager(
     }
   }
 
+  let suiteHostConfig = liveHostConfig;
+  let environment: PreparedSingleCaseExecution["environment"];
+  if (environmentLaunch) {
+    const committed = await commitEnvironmentQuickRun(convexClient, {
+      testCaseId,
+      testCaseSnapshot: buildQuickRunCommitSnapshot(
+        test as unknown as EvalTestCase,
+      ),
+      count: test.runs,
+      startedAt: Date.now(),
+      resolved: environmentLaunch,
+      // The caller's key makes a retried request replay; without one, this
+      // request's own key still makes the backend call retry-safe.
+      idempotencyKey: idempotencyKey ?? `quick-run:${randomUUID()}`,
+    });
+    let frozenSkills: BuiltPinnedSkillSource | undefined;
+    if (!committed.replayed) {
+      try {
+        assertCommittedExecutionMatchesPreflight(
+          environmentLaunch,
+          committed.execution,
+        );
+        frozenSkills = await loadCommittedQuickRunSkills(convexClient, {
+          committed,
+          effectiveServerIds: resolvedServerIds,
+          serverNames: environmentServerNames(environmentLaunch),
+        });
+      } catch (error) {
+        // Committed but never started: finalize every row so none is left
+        // running, then report the setup failure itself.
+        await failCommittedQuickRun(
+          convexClient,
+          committed.iterationIds,
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      }
+    }
+    // Execute exactly what was committed: the backend's model attribution
+    // and its frozen host config, never the provisional values above.
+    test.model = committed.execution.model;
+    test.provider = committed.execution.provider;
+    suiteHostConfig = committed.execution.hostConfig;
+    environment = {
+      resolved: environmentLaunch,
+      committed,
+      ...(frozenSkills ? { frozenSkills } : {}),
+    };
+  }
+
+  return {
+    convexClient,
+    convexHttpUrl,
+    testCase,
+    test,
+    resolvedServerIds,
+    runtimeEnvironment,
+    suiteHostConfig,
+    suiteHostPolicy: extractHostExecutionPolicy(
+      suiteHostConfig,
+      executionHostId,
+    ),
+    suiteInjectOpenAiCompat: resolveOpenAiCompatForHostConfig(
+      suiteHostConfig,
+      legacyHostConfigOverride,
+    ),
+    ...(resolvedModelApiKeys ? { modelApiKeys: resolvedModelApiKeys } : {}),
+    ...(resolvedOrgModelConfig
+      ? { orgModelConfig: resolvedOrgModelConfig }
+      : {}),
+    ...(orgModelConfigTarget ? { orgModelConfigTarget } : {}),
+    ...(environment ? { environment } : {}),
+  };
+}
+
+/** Is this iteration row finished? */
+function isTerminalIteration(iteration: unknown): boolean {
+  const status = (iteration as { status?: unknown } | null)?.status;
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "timed_out" ||
+    status === "setup_failed" ||
+    status === "skipped"
+  );
+}
+
+/** The runner options an environment quick run adds (none for legacy). */
+function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
+  committedQuickRunIterationIds?: string[];
+  projectEnvironmentId?: string;
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+} {
+  const environment = prepared.environment;
+  if (!environment) return {};
+  return {
+    committedQuickRunIterationIds: environment.committed.iterationIds,
+    projectEnvironmentId: environment.resolved.environmentRef.environmentId,
+    ...runFrozenSkillOptions({
+      ...(environment.frozenSkills?.pinnedSkillSource
+        ? { pinnedSkillSource: environment.frozenSkills.pinnedSkillSource }
+        : {}),
+      pinnedHarnessSkills: environment.frozenSkills?.pinnedHarnessSkills ?? [],
+    }),
+  };
+}
+
+/**
+ * An environment quick run whose idempotency key was already used: an
+ * earlier request committed — and owns — these iterations. Report where they
+ * stand; never execute them a second time.
+ */
+async function replayedQuickRunIteration(
+  prepared: PreparedSingleCaseExecution,
+): Promise<{ iterationId: string; iteration: unknown }> {
+  const iterationId = prepared.environment!.committed.iterationIds[0]!;
+  const iteration = await prepared.convexClient.query(
+    "testSuites:getTestIteration" as any,
+    { iterationId },
+  );
+  return { iterationId, iteration };
+}
+
+export async function runEvalTestCaseWithManager(
+  clientManager: MCPClientManager,
+  request: SingleCaseExecutionRequest,
+  options?: RunEvalTestCaseWithManagerOptions,
+) {
+  const {
+    testCaseId,
+    compareRunId,
+    skipLastMessageRunUpdate,
+    convexAuthToken,
+    toolPolicy,
+  } = request;
+
+  const prepared = await prepareSingleCaseExecution(clientManager, request);
+  const { convexClient, convexHttpUrl, testCase } = prepared;
+
+  if (prepared.environment?.committed.replayed) {
+    const replay = await replayedQuickRunIteration(prepared);
+    return {
+      success: true,
+      replayed: true,
+      message: isTerminalIteration(replay.iteration)
+        ? "This quick run already completed."
+        : "This quick run is already running in another request.",
+      iteration: replay.iteration,
+    };
+  }
+
   const quickResult = await runEvalSuiteWithAiSdk({
     suiteId: testCase.evalTestSuiteId,
     runId: null,
     config: {
-      tests: [test],
-      environment: runtimeEnvironment,
+      tests: [prepared.test],
+      environment: prepared.runtimeEnvironment,
     },
-    modelApiKeys: resolvedModelApiKeys ?? undefined,
-    orgModelConfig: resolvedOrgModelConfig,
-    orgModelConfigTarget: testCaseOrgConfigTarget,
+    modelApiKeys: prepared.modelApiKeys,
+    orgModelConfig: prepared.orgModelConfig,
+    orgModelConfigTarget: prepared.orgModelConfigTarget,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -3203,15 +3533,20 @@ export async function runEvalTestCaseWithManager(
     recorder: null,
     testCaseId,
     compareRunId,
-    suiteInjectOpenAiCompat,
-    hostExecutionPolicy: suiteHostPolicy,
+    suiteInjectOpenAiCompat: prepared.suiteInjectOpenAiCompat,
+    hostExecutionPolicy: prepared.suiteHostPolicy,
     // PR 4d: see comment on the suite-run wire-up site above.
-    suiteHostConfig,
+    suiteHostConfig: prepared.suiteHostConfig,
     ...(toolPolicy ? { toolPolicy } : {}),
+    ...environmentExecutionOptions(prepared),
   });
 
-  const expectedIterationId =
-    quickResult?.quickRunIterationOutcomes?.[0]?.iterationId;
+  // An environment run answers with ITS committed row, never "the latest
+  // iteration of this case" — which could be another run's, and would report
+  // a rejected or crashed execution as this one's success.
+  const expectedIterationId = prepared.environment
+    ? prepared.environment.committed.iterationIds[0]
+    : quickResult?.quickRunIterationOutcomes?.[0]?.iterationId;
 
   let latestIteration: unknown = null;
   if (expectedIterationId) {
@@ -3220,7 +3555,7 @@ export async function runEvalTestCaseWithManager(
       { iterationId: expectedIterationId },
     );
   }
-  if (!latestIteration) {
+  if (!latestIteration && !prepared.environment) {
     const recentIterations = await convexClient.query(
       "testSuites:listTestIterations" as any,
       { testCaseId },
@@ -3404,7 +3739,7 @@ export async function generateNegativeEvalTestsWithManager(
 
 export async function streamEvalTestCaseWithManager(
   clientManager: MCPClientManager,
-  request: RunTestCaseWithManagerRequest,
+  request: SingleCaseExecutionRequest,
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
@@ -3419,205 +3754,61 @@ export async function streamEvalTestCaseWithManager(
 ): Promise<ReadableStream<Uint8Array>> {
   const {
     testCaseId,
-    model,
-    provider,
     compareRunId,
-    serverIds,
-    scenarioId,
-    accessVersion,
     skipLastMessageRunUpdate,
-    modelApiKeys,
-    orgModelConfig,
     convexAuthToken,
-    testCaseOverrides,
-    matchOptionsOverride,
-    namedHostId,
-    hostConfigOverride,
     toolPolicy,
   } = request;
 
-  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
-  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
-
-  const testCase = await convexClient.query("testSuites:getTestCase" as any, {
-    testCaseId,
-  });
-
-  if (!testCase) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
-  }
-
-  assertTestCaseRunWithinCap(request, 1, {
-    // resolveSteps converts legacy promptTurns/probe rows so multi-turn cases
-    // without persisted `steps` count their real model calls, not a floored 1.
-    modelStepCount: countModelSteps(
-      resolveSteps(testCase as unknown as Parameters<typeof resolveSteps>[0]),
-    ),
-  });
-
-  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
+  // Everything before the first model or tool call, shared with the buffered
+  // route. For an environment run this COMMITS every attempt; a failure here
+  // throws before the stream opens, so the caller gets an HTTP error rather
+  // than an SSE stream that runs nothing.
+  const prepared = await prepareSingleCaseExecution(clientManager, request);
+  const {
     convexClient,
-    testCase.evalTestSuiteId,
-  );
-  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
-    convexClient,
-    testCase.evalTestSuiteId,
-  );
-  const suiteHostConfig = await loadSuiteHostConfig(
-    convexClient,
-    testCase.evalTestSuiteId,
-    namedHostId,
-  );
-  const effectiveHostConfig =
-    (hostConfigOverride as Record<string, unknown> | undefined) ??
-    suiteHostConfig;
-  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
-    suiteHostConfig,
-    hostConfigOverride as Record<string, unknown> | undefined,
-  );
-  const suiteHostPolicy = extractHostExecutionPolicy(
-    suiteHostConfig,
-    namedHostId,
-  );
-  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
-  // path); refused only where this deployment cannot seal the policy into the
-  // proxy token. Host-executed delivery enforces in-process and mints no token.
-  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
-    hasToolPolicy: Boolean(toolPolicy),
-    harness: harnessOfHostConfig(effectiveHostConfig),
-  });
-  if (harnessPolicyRefusal) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      harnessPolicyRefusal,
-      { reason: "TOOL_POLICY_UNSUPPORTED" },
-    );
-  }
-
-  // The same honesty gate the suite path applies, with the surface named: a
-  // single-case run passes `runId: null`, and both sandbox-provisioning sites
-  // require `runId !== null`, so no box is ever booted for it. A host granting
-  // a computer-backed built-in would therefore execute with the tool silently
-  // skipped by `resolveHostTools`. Refused instead — and the message points at
-  // running the case inside a suite rather than at pinning an image, which
-  // would change nothing here.
-  const singleCaseAdmission = checkEvalExecutionAdmission({
-    hostConfig:
-      (hostConfigOverride as Record<string, unknown> | undefined) ??
-      suiteHostConfig ??
-      null,
-    surface: "single-case",
-  });
-  if (!singleCaseAdmission.ok) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      singleCaseAdmission.reason,
-      { reason: "EVAL_EXECUTION_UNAVAILABLE" },
-    );
-  }
-  const suiteEnvironment = await loadSuiteEnvironment(
-    convexClient,
-    testCase.evalTestSuiteId,
-  );
-  const runtimeEnvironment = buildRuntimeEnvironmentWithBindings({
+    convexHttpUrl,
+    testCase,
+    test,
     resolvedServerIds,
-    suiteEnvironment,
-  });
-  const test = {
-    title: testCase.title,
-    query: testCaseOverrides?.query ?? testCase.query,
-    runs: testCaseOverrides?.runs ?? 1,
-    model,
-    provider,
-    // Keep quick and streamed single-case runs identical to suite runs: the
-    // label is authored metadata, but it must be frozen at iteration create.
-    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
-    expectedToolCalls:
-      testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
-    isNegativeTest:
-      testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
-    expectedOutput:
-      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
-    steps:
-      (testCaseOverrides?.steps as TestStep[] | undefined) ??
-      (testCase as { steps?: TestStep[] }).steps ??
-      legacyCaseStepsFallback(
-        testCase as { promptTurns?: unknown; advancedConfig?: unknown },
-      ),
-    advancedConfig:
-      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
-    matchOptions: resolveMatchOptions(
-      suiteDefaultMatchOptions,
-      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        | MatchOptionsDTO
-        | undefined,
-      matchOptionsOverride,
-    ),
-    // Thread the predicate gate into the runtime case so the runner evaluates
-    // it. See `resolveCaseSuccessPredicates` for the full precedence rules.
-    successPredicates: resolveCaseSuccessPredicates({
-      suiteDefaults: suiteDefaultPredicates,
-      runOverride: testCaseOverrides?.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
-      suppressedSuiteStandardCheckIds:
-        testCaseOverrides?.suppressedSuiteStandardCheckIds ??
-        (testCase as { suppressedSuiteStandardCheckIds?: string[] })
-          .suppressedSuiteStandardCheckIds,
-      envelope: (testCaseOverrides?.predicates ??
-        (testCase as { predicates?: unknown }).predicates) as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
-      legacyCase: (testCase as { successPredicates?: unknown })
-        .successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
-    }),
-    hostConfigOverride: hostConfigOverride as
-      | Record<string, unknown>
-      | undefined,
-    testCaseId: testCase._id,
-  };
+    runtimeEnvironment,
+    suiteHostConfig,
+    suiteHostPolicy,
+    suiteInjectOpenAiCompat,
+  } = prepared;
+  const encoder = new TextEncoder();
+  const sseEncode = (event: EvalStreamEvent): Uint8Array =>
+    encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
-  // Resolve org model config: prefer client-sent keys, fall back to org config.
-  // Treat an empty client-provided map as "no keys".
-  const hasClientStreamKeys =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-  const resolvedStreamModelApiKeys = hasClientStreamKeys
-    ? modelApiKeys
-    : undefined;
-  let resolvedStreamOrgModelConfig = orgModelConfig;
-  const streamTestCaseProjectId =
-    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
-    ? { projectId: streamTestCaseProjectId }
-    : undefined;
-  if (
-    !resolvedStreamModelApiKeys &&
-    !resolvedStreamOrgModelConfig &&
-    streamTestCaseOrgConfigTarget
-  ) {
-    try {
-      resolvedStreamOrgModelConfig = await resolveOrgModelConfig(
-        streamTestCaseOrgConfigTarget,
-        {
-          bearerToken: convexAuthToken,
-          scenarioId,
-          accessVersion,
-          serverIds: resolvedServerIds,
-        },
-      );
-    } catch (error) {
-      logger.warn(
-        "[evals] Failed to resolve org model config for stream test case",
-        {
-          testCaseId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-    }
+  if (prepared.environment?.committed.replayed) {
+    // An earlier request with this idempotency key owns these iterations.
+    // Report where they stand; never execute them a second time.
+    const replay = await replayedQuickRunIteration(prepared);
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          sseEncode(
+            isTerminalIteration(replay.iteration)
+              ? {
+                  type: "complete",
+                  iterationId: replay.iterationId,
+                  iteration: replay.iteration,
+                }
+              : {
+                  type: "error",
+                  message:
+                    "This quick run is already running in another request.",
+                  details: JSON.stringify({
+                    reason: "QUICK_RUN_ALREADY_STARTED",
+                    iterationId: replay.iterationId,
+                  }),
+                },
+          ),
+        );
+        controller.close();
+        options?.onStreamComplete?.();
+      },
+    });
   }
 
   // Mirror runEvalSuiteWithAiSdk: when a host policy is present, fetch the
@@ -3669,14 +3860,29 @@ export async function streamEvalTestCaseWithManager(
     modelVisibleMcpToolResults: suiteHostPolicy?.modelVisibleMcpToolResults,
     tasks: singleCaseTasksSeam,
   });
-  const tools = (
-    singleCaseToolOptions
-      ? await clientManager.getToolsForAiSdk(
-          resolvedServerIds,
-          singleCaseToolOptions,
-        )
-      : await clientManager.getToolsForAiSdk(resolvedServerIds)
-  ) as Record<string, any>;
+  let tools: Record<string, any>;
+  try {
+    tools = (
+      singleCaseToolOptions
+        ? await clientManager.getToolsForAiSdk(
+            resolvedServerIds,
+            singleCaseToolOptions,
+          )
+        : await clientManager.getToolsForAiSdk(resolvedServerIds)
+    ) as Record<string, any>;
+  } catch (error) {
+    // After an environment commit nothing may be left running: the rows were
+    // reserved for attempts that now cannot start.
+    releaseRequestAbortListener();
+    if (prepared.environment) {
+      await failCommittedQuickRun(
+        convexClient,
+        prepared.environment.committed.iterationIds,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
+  }
   const streamToolSignals = suiteHostPolicy
     ? applyVisibilityPolicyAndCountSignals(
         tools as Record<string, unknown>,
@@ -3684,10 +3890,6 @@ export async function streamEvalTestCaseWithManager(
         suiteHostPolicy,
       )
     : undefined;
-  const encoder = new TextEncoder();
-
-  const sseEncode = (event: EvalStreamEvent): Uint8Array =>
-    encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -3702,9 +3904,9 @@ export async function streamEvalTestCaseWithManager(
           selectedServers: resolvedServerIds,
           mcpClientManager: clientManager,
           recorder: null,
-          modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
-          orgModelConfig: resolvedStreamOrgModelConfig,
-          orgModelConfigTarget: streamTestCaseOrgConfigTarget,
+          modelApiKeys: prepared.modelApiKeys,
+          orgModelConfig: prepared.orgModelConfig,
+          orgModelConfigTarget: prepared.orgModelConfigTarget,
           convexHttpUrl,
           convexAuthToken,
           convexClient,
@@ -3726,6 +3928,18 @@ export async function streamEvalTestCaseWithManager(
           ...(toolPolicy ? { toolPolicy } : {}),
           toolSignals: streamToolSignals,
           environment: runtimeEnvironment,
+          // Environment runs: the committed rows (the runner creates none),
+          // the environment id, and the frozen skill channels.
+          ...(() => {
+            const { committedQuickRunIterationIds, ...environmentOptions } =
+              environmentExecutionOptions(prepared);
+            return {
+              ...environmentOptions,
+              ...(committedQuickRunIterationIds
+                ? { committedIterationIds: committedQuickRunIterationIds }
+                : {}),
+            };
+          })(),
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));
@@ -3746,16 +3960,10 @@ export async function streamEvalTestCaseWithManager(
         // "Compare run failed for all selected models" (telemetry: rare
         // `result=unknown` / `pending` compare_model_completed events). Poll
         // briefly for the terminal row before emitting.
-        const expectedIterationId = outcomes[0]?.iterationId;
-        const isTerminalIteration = (iter: unknown): boolean => {
-          const status = (iter as { status?: unknown } | null)?.status;
-          return (
-            status === "completed" ||
-            status === "failed" ||
-            status === "cancelled" ||
-            status === "timed_out"
-          );
-        };
+        // An environment run reports ITS committed row — never another run's.
+        const expectedIterationId =
+          prepared.environment?.committed.iterationIds[0] ??
+          outcomes[0]?.iterationId;
         let latestIteration: unknown = null;
         if (expectedIterationId) {
           for (let attempt = 0; attempt < 6; attempt++) {
@@ -3774,7 +3982,18 @@ export async function streamEvalTestCaseWithManager(
             }
           }
         }
-        if (!isTerminalIteration(latestIteration)) {
+        if (
+          prepared.environment &&
+          expectedIterationId &&
+          !isTerminalIteration(latestIteration)
+        ) {
+          // Still finalizing: report the committed row as it stands. Never
+          // the listing fallback below, which can pick another run's row.
+          latestIteration = await convexClient.query(
+            "testSuites:getTestIteration" as any,
+            { iterationId: expectedIterationId },
+          );
+        } else if (!isTerminalIteration(latestIteration)) {
           const recentIterations = await convexClient.query(
             "testSuites:listTestIterations" as any,
             { testCaseId },

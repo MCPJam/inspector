@@ -32,6 +32,15 @@ export interface ResolvedEnvironmentForLaunch {
   hostId: string;
   hostName?: string;
   /**
+   * The model this environment runs: its own `modelId` when set, else its
+   * client's. The backend refuses to resolve an environment with no model
+   * (`ENV_MODEL_REQUIRED`), so this is present on every current backend;
+   * optional for deploy skew only.
+   */
+  effectiveModelId?: string;
+  /** Where {@link effectiveModelId} came from. */
+  modelSource?: "environment" | "host";
+  /**
    * The host's CURRENT config at resolve time, echoed back as
    * `expectedEnvironmentHostConfigId`. An environment pins a `hostId`, never a
    * config, so a host rotation drifts this preview at an unchanged revision —
