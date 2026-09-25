@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { z } from "zod";
+import { SERVER_REQUEST_BUDGET_REASON } from "../../../../shared/server-request-budget.js";
 import {
   afterAll,
   afterEach,
@@ -188,6 +189,7 @@ describe("MJ-012 — /api/web MCP operation routes carry a per-server budget", (
       expect(await res.json()).toEqual({
         code: "RATE_LIMITED",
         message: expect.any(String),
+        details: { reason: SERVER_REQUEST_BUDGET_REASON },
       });
     }
   });

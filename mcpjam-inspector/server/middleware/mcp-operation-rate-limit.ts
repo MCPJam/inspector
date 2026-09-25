@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
 import { HOSTED_MODE } from "../config.js";
+import {
+  SERVER_REQUEST_BUDGET_REASON,
+  type ServerRequestBudgetDetails,
+} from "../../shared/server-request-budget.js";
 
 /**
  * MJ-012. A per-server request budget for the MCP operation routes on
@@ -223,6 +227,15 @@ async function bucketKeys(
 const TOO_MANY_MESSAGE =
   "Too many requests to this server. Slow down and retry.";
 
+/**
+ * Marks the refusal as this budget's, which is how the client tells it apart
+ * from every other 429 and retries it after `Retry-After` — see
+ * `shared/server-request-budget.ts`.
+ */
+const TOO_MANY_DETAILS: ServerRequestBudgetDetails = {
+  reason: SERVER_REQUEST_BUDGET_REASON,
+};
+
 function tooMany(c: Context, waitMs: number) {
   // `requestLogContextMiddleware` reads the code and message off
   // `webErrorMeta` for a RETURNED response.
@@ -235,6 +248,7 @@ function tooMany(c: Context, waitMs: number) {
     {
       code: ErrorCode.RATE_LIMITED,
       message: TOO_MANY_MESSAGE,
+      details: TOO_MANY_DETAILS,
     },
     429,
     {

@@ -12,6 +12,9 @@ import type { ContextVariableMap } from "hono";
 
 vi.mock("../../config.js", () => ({ HOSTED_MODE: true }));
 
+const { SERVER_REQUEST_BUDGET_REASON } =
+  await import("../../../shared/server-request-budget.js");
+
 const {
   MCP_OPERATION_BURST: BURST,
   MCP_OPERATION_MAX_ENTRIES: MAX_ENTRIES,
@@ -147,9 +150,11 @@ describe("one principal, one server", () => {
     ]);
     const refused = responses[BURST];
     expect(refused.headers.get("Retry-After")).toBe(String(REFILL_MS / 1000));
+    // The marker is what tells the client this refusal is retryable.
     expect(await refused.json()).toEqual({
       code: "RATE_LIMITED",
       message: expect.any(String),
+      details: { reason: SERVER_REQUEST_BUDGET_REASON },
     });
   });
 
