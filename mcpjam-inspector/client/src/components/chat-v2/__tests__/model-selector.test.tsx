@@ -814,3 +814,120 @@ describe("model routing selection", () => {
     },
   );
 });
+
+describe("catalog observations", () => {
+  const OBSERVED_AT = 1_790_000_000_000;
+  const toolLess: ModelDefinition = {
+    id: "openai/gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    provider: "openai",
+    hosted: true,
+    releasedAt: 3_000,
+    catalogObservedAt: OBSERVED_AT,
+    observations: { tools: { status: "unsupported", source: "gateway-catalog" } },
+  };
+  const unverified: ModelDefinition = {
+    id: "openai/gpt-new",
+    name: "GPT New",
+    provider: "openai",
+    hosted: true,
+    releasedAt: 2_000,
+    catalogObservedAt: OBSERVED_AT,
+  };
+  const verified: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "GPT-4o",
+    provider: "openai",
+    hosted: true,
+    releasedAt: 1_000,
+    deprecatedAt: Date.UTC(2027, 2, 3),
+    catalogObservedAt: OBSERVED_AT,
+    observations: { tools: { status: "supported", source: "gateway-catalog" } },
+  };
+  const legacy: ModelDefinition = {
+    id: "openai/gpt-legacy",
+    name: "GPT Legacy",
+    provider: "openai",
+    hosted: true,
+  };
+  const catalog = [legacy, verified, unverified, toolLess];
+
+  const option = (name: RegExp) => screen.getByRole("option", { name });
+
+  it("lists a provider's models newest first, undated last, and tags retiring ones", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={vi.fn()}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    const names = screen
+      .getAllByRole("option")
+      .map((row) => row.textContent ?? "");
+    expect(names.map((text) => text.replace(/^openai/, ""))).toEqual([
+      "GPT-5.6 Luna",
+      "GPT New",
+      "GPT-4oRetiring Mar 3, 2027",
+      "GPT Legacy",
+    ]);
+    // No workload: nothing is locked or tagged as unverified.
+    expect(screen.queryByText("Not verified")).not.toBeInTheDocument();
+    expect(option(/gpt-5\.6 luna/i)).not.toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
+  });
+
+  it("disables tool-less and unverified models for eval targets", async () => {
+    const user = userEvent.setup();
+    const onModelChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={onModelChange}
+        workload="evalTarget"
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(option(/gpt-5\.6 luna/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).toHaveTextContent("Not verified");
+    // A row from a catalog without observations stays selectable.
+    expect(option(/gpt legacy/i)).not.toHaveAttribute("aria-disabled", "true");
+
+    await user.click(option(/gpt new/i));
+    expect(onModelChange).not.toHaveBeenCalled();
+    await user.click(option(/gpt legacy/i));
+    expect(onModelChange).toHaveBeenCalledWith(legacy, { userInitiated: true });
+  });
+
+  it("allows an unverified model in MCP chat, tagged not verified", async () => {
+    const user = userEvent.setup();
+    const onModelChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={onModelChange}
+        workload="mcpChat"
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(option(/gpt-5\.6 luna/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).not.toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt new/i)).toHaveTextContent("Not verified");
+
+    await user.click(option(/gpt new/i));
+    expect(onModelChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "openai/gpt-new" }),
+      { userInitiated: true }
+    );
+  });
+});
