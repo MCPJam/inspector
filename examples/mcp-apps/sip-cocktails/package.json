@@ -25,9 +25,9 @@
     "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^0.4.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@workos-inc/node": "^8.0.0",
+    "@workos-inc/node": "^10.13.0",
     "convex": "^1.31.4",
     "jose": "^6.1.0",
     "react": "^19.2.0",
@@ -37,11 +37,11 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^6.1.1",
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.5",
     "cors": "^2.8.5",
     "cross-env": "^10.1.0",
     "express": "^5.1.0",
