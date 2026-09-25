@@ -896,17 +896,50 @@ describe("hosted validate responses (web and v1)", () => {
       const body = (await res.json()) as any;
       const initInfo = body.initInfo;
       expect(JSON.stringify(body)).not.toMatch(MARKER);
-      expect(initInfo).toMatchObject({
+      expect(initInfo).toEqual({
         protocolVersion: "2025-06-18",
+        transport: "streamable-http",
         serverCapabilities: { tools: { listChanged: true } },
         serverVersion: {
           name: "fixture-server",
           version: "1.0.0",
           websiteUrl: "https://mcp.example.test/about",
         },
+        clientCapabilities: expect.any(Object),
+        instructions: `Use search first.${"i".repeat(8175)}`,
       });
-      expect(initInfo.instructions).toMatch(/^Use search first\.i+$/);
-      expect(initInfo.instructions).toHaveLength(8192);
+    },
+  );
+
+  it.each([
+    ["web", 401, webValidate],
+    ["v1", 401, v1Validate],
+    ["web", 503, webValidate],
+    ["v1", 503, v1Validate],
+  ])(
+    "%s: reports an HTTP 200 JSON-RPC error with code %i by its HTTP status",
+    async (_surface, code, validate) => {
+      upstream.current = async (request) => {
+        const message = await readMessage(request);
+        return json({
+          jsonrpc: "2.0",
+          id: message?.id ?? null,
+          error: {
+            code,
+            message: "UNEXPECTED_MARKER_64",
+            data: {
+              cause: { status: 418, statusText: "UNEXPECTED_MARKER_65" },
+            },
+          },
+        });
+      };
+      const res = await validate(routes);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      const body = (await res.json()) as any;
+      expect(JSON.stringify(body)).not.toMatch(MARKER);
+      expect(body.message).toBe(
+        "The MCP server responded with HTTP 200, but not with a valid MCP response.",
+      );
     },
   );
 

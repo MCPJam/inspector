@@ -45,6 +45,12 @@ function read(node: object, key: string): unknown {
   }
 }
 
+/** SDK-local errors, whose `data` the SDK wrote rather than a server. */
+const SDK_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "SdkError",
+  "SdkHttpError",
+]);
+
 /**
  * Breadth-first over an error and the errors it carries: `cause`, the
  * Streamable HTTP attempt kept beside an SSE fallback's failure, and the
@@ -62,32 +68,57 @@ function* errorChain(error: unknown): Generator<object> {
     yield current;
     queue.push(read(current, "cause"), read(current, "streamableCause"));
     const data = read(current, "data");
-    if (isPlainRecord(data)) queue.push(data.cause);
+    if (
+      SDK_ERROR_NAMES.has(String(read(current, "name"))) &&
+      isPlainRecord(data)
+    ) {
+      queue.push(data.cause);
+    }
   }
 }
 
 type StatusLine = { status: number; statusText?: unknown };
 
+/**
+ * The transport errors that keep an HTTP status in `code`. They set no
+ * `name`, so they are known by class. On any other error `code` is not an
+ * HTTP status.
+ */
+const HTTP_CODE_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "StreamableHTTPError",
+  "SseError",
+]);
+
+function className(node: object): string | undefined {
+  const constructor = read(node, "constructor");
+  return typeof constructor === "function" ? constructor.name : undefined;
+}
+
+function httpStatusOf(node: object): number | undefined {
+  return (
+    parseHttpStatus(read(node, "statusCode")) ??
+    parseHttpStatus(read(node, "status")) ??
+    (HTTP_CODE_ERROR_CLASSES.has(className(node) ?? "")
+      ? parseHttpStatus(read(node, "code"))
+      : undefined)
+  );
+}
+
 function statusLineFromChain(error: unknown): StatusLine | undefined {
   for (const node of errorChain(error)) {
-    const status =
-      parseHttpStatus(read(node, "statusCode")) ??
-      parseHttpStatus(read(node, "status")) ??
-      parseHttpStatus(read(node, "code"));
+    const name = read(node, "name");
+    // An auth failure's status is derived from its cause, which the walk
+    // reaches next.
+    if (name === "MCPAuthError") continue;
+    const status = httpStatusOf(node);
     if (status !== undefined) {
       const statusText = read(node, "statusText");
-      const data = read(node, "data");
       return {
         status,
-        statusText:
-          typeof statusText === "string"
-            ? statusText
-            : isPlainRecord(data)
-              ? data.statusText
-              : undefined,
+        statusText: typeof statusText === "string" ? statusText : undefined,
       };
     }
-    if (read(node, "name") === "UnauthorizedError") return { status: 401 };
+    if (name === "UnauthorizedError") return { status: 401 };
   }
   return undefined;
 }
