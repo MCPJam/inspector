@@ -25484,17 +25484,20 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "maxLength": 100
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 2000
           },
           "organizationId": {
             "type": "string",
             "description": "Defaults to the caller's default organization when omitted."
           },
           "icon": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 64
           },
           "visibility": {
             "type": "string",
