@@ -109,6 +109,7 @@ import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
 import {
   createUiChunkProvenanceSigner,
   historyProvenanceContextFor,
+  isMarkedUnverifiedCall,
   presentHistoryForModel,
   toolCallLookupFor,
   type HistoryPresentation,
@@ -1063,9 +1064,9 @@ export interface MCPJamHandlerOptions {
   approvalBinding?: ToolApprovalBinding;
   /**
    * Present the history to the model as `history-provenance.ts` describes
-   * (MJ-009): tool results fenced, content the server could not verify
-   * labelled. Applied to what each step SENDS; the history itself, and so
-   * the persisted transcript, is unchanged. Browser-facing chat sets it.
+   * (MJ-009): tool results fenced, content the server could not verify left
+   * out. Applied to what each step SENDS; the history itself, and so the
+   * persisted transcript, is unchanged. Browser-facing chat sets it.
    */
   historyPresentation?: HistoryPresentation;
   /**
@@ -2960,6 +2961,11 @@ function collectToolCallIds(messages: ModelMessage[]): Set<string> {
  * history for the next model request and would be re-introduced on every
  * step. Client-fulfilled tools (`ui_*`, `page_*`, app tools) are left alone —
  * the browser, not this server, runs those, and it answers them itself.
+ *
+ * Except a call the history marks as not issued by this server (MJ-009): the
+ * browser has nothing to answer for it, so it is answered here too, whatever
+ * its tool, and SILENTLY — re-sending it would ask the browser to run it. The
+ * model is never shown it or its answer (`presentHistoryForModel`).
  */
 async function settleUnapprovedHistoryToolCalls(args: {
   writer: StepContext["writer"];
@@ -2982,6 +2988,8 @@ async function settleUnapprovedHistoryToolCalls(args: {
   }
 
   const byAssistantIdx = new Map<number, ToolCallPart[]>();
+  // Answered without a word to the browser; see the doc comment.
+  const unissued = new Set<string>();
   for (let i = 0; i < messageHistory.length; i++) {
     const msg = messageHistory[i];
     if (msg?.role !== "assistant") continue;
@@ -2997,11 +3005,15 @@ async function settleUnapprovedHistoryToolCalls(args: {
       ) {
         continue;
       }
-      // A registered tool without `execute` is fulfilled by the browser.
-      const registered = (tools as Record<string, { execute?: unknown }>)[
-        part.toolName
-      ];
-      if (registered && typeof registered.execute !== "function") continue;
+      if (isMarkedUnverifiedCall(part.providerOptions)) {
+        unissued.add(part.toolCallId);
+      } else {
+        // A registered tool without `execute` is fulfilled by the browser.
+        const registered = (tools as Record<string, { execute?: unknown }>)[
+          part.toolName
+        ];
+        if (registered && typeof registered.execute !== "function") continue;
+      }
       const bucket = byAssistantIdx.get(i) ?? [];
       bucket.push(part as ToolCallPart);
       byAssistantIdx.set(i, bucket);
@@ -3014,6 +3026,7 @@ async function settleUnapprovedHistoryToolCalls(args: {
     "[mcpjam-stream-handler] client-sent history carried unresolved tool calls with no verified approval; answering without running them",
     {
       count: settled.length,
+      notIssued: unissued.size,
       toolNames: [...new Set(settled.map((part) => part.toolName))],
     },
   );
@@ -3021,6 +3034,7 @@ async function settleUnapprovedHistoryToolCalls(args: {
   // Re-introduce each call on THIS response before answering it — the
   // client's reducer needs a part to attach the answer to.
   for (const part of settled) {
+    if (unissued.has(part.toolCallId)) continue;
     emitToolInput(args.writer, {
       toolCallId: part.toolCallId,
       toolName: part.toolName,
@@ -3051,19 +3065,20 @@ async function settleUnapprovedHistoryToolCalls(args: {
   const answers: ModelMessage[] = [];
   const sortedKeys = [...byAssistantIdx.keys()].sort((a, b) => b - a);
   for (const idx of sortedKeys) {
-    const message = {
+    const content = byAssistantIdx.get(idx)!.map((part): ToolResultPart => ({
+      type: "tool-result",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
+    }));
+    messageHistory.splice(idx + 1, 0, {
       role: "tool",
-      content: byAssistantIdx.get(idx)!.map(
-        (part): ToolResultPart => ({
-          type: "tool-result",
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
-        }),
-      ),
-    } as ModelMessage;
-    messageHistory.splice(idx + 1, 0, message);
-    answers.unshift(message);
+      content,
+    } as ModelMessage);
+    const emitted = content.filter((part) => !unissued.has(part.toolCallId));
+    if (emitted.length > 0) {
+      answers.unshift({ role: "tool", content: emitted } as ModelMessage);
+    }
   }
   await emitToolResults(
     args.writer,
@@ -4376,8 +4391,9 @@ export async function runChatEngineLoop(
     options.approvalBinding ??
     toolApprovalBindingFor({ authHeader, projectId, chatSessionId });
   // Sign what this turn streams as the server's own (MJ-009): assistant text
-  // and reasoning at their end chunks, tool results as they are emitted. A
-  // no-op where provenance is off (local mode, or no signing key).
+  // as it streams, reasoning at its end, the calls the model issues and the
+  // results they get — never for a call the history marks as not issued. A
+  // no-op where nothing can be signed (local mode, or no signing key).
   const provenanceContext = historyProvenanceContextFor(projectId);
   const signChunk = provenanceContext
     ? createUiChunkProvenanceSigner(
