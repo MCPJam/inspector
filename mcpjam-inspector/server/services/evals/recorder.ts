@@ -157,6 +157,11 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
+    /**
+     * The Convex bearer the screenshot and replay uploads authenticate with.
+     * Pure pass-through to `finalizeEvalIteration`.
+     */
+    convexAuthToken?: string;
     /** Explicit harness lifecycle status; never infer it from the verdict. */
     status: IterationStatus;
     startedAt?: number;
@@ -909,11 +914,13 @@ export const startSuiteRunWithRecorder = async ({
     if (billing) {
       throw billing;
     }
+    // `cause` is logged above and recorded on the run; the response carries
+    // only the run id (MJ-020, MJ-021).
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
       "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
-      { runId, cause },
+      { runId },
     );
   }
 

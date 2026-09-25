@@ -138,6 +138,7 @@ import {
   type SessionRow,
 } from "./chat-sessions.js";
 import { joinToolCalls } from "./chat-session-payloads.js";
+import { publicArtifactLink } from "./artifact-links.js";
 
 // ── Caps ────────────────────────────────────────────────────────────────────
 
@@ -2009,8 +2010,10 @@ async function handleTurn(c: Context): Promise<Response> {
               step.toolCallId === item.toolCallId &&
               step.stepIndex === item.stepIndex,
           );
-          if (step?.screenshotUrl) {
-            item.url = step.screenshotUrl;
+          // Screenshot links only as signed `/web/artifact` links (MJ-005).
+          const url = publicArtifactLink(step?.screenshotUrl);
+          if (url) {
+            item.url = url;
             item.status = "ready";
           }
         }

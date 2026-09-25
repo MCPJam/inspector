@@ -2874,6 +2874,9 @@ export async function prepareEvalRun(
               kind: "pinned-effective",
               capabilities: buildRunCapabilitySet({
                 pins: runPinnedSkills,
+                // Pinned files are read from the bytes downloaded above, not
+                // from the prepared links, which a long run can outlast.
+                downloadedPins: pinnedHarnessSkills,
                 // Straight from `configSnapshot.environmentPluginVersions` —
                 // the run's own record. NOT re-resolved to the plugin's active
                 // version, which is what would let a mid-run re-import change
