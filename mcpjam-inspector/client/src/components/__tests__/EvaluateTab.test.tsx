@@ -924,6 +924,41 @@ describe("EvaluateTab", () => {
     );
   });
 
+  it("bounces a missing suite once its own query answers empty", async () => {
+    // The real shape of a deleted (or unauthorized) suite: its query is in
+    // flight first, then `listTestCases` answers []. The existing "invalid
+    // suite routes" spec starts at the answer; this one walks through the
+    // wait, so a guard that also held on an empty answer would fail here
+    // instead of stranding the user on a spinner.
+    mocks.route.current = { type: "suite-overview", suiteId: "gone-suite" };
+    let answered = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+        ...makeQueryState(selectedSuiteId),
+        suiteDetails:
+          answered && selectedSuiteId
+            ? { testCases: [], iterations: [] }
+            : undefined,
+        isSuiteDetailsLoading: !answered && selectedSuiteId === "gone-suite",
+      }),
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    answered = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    await waitFor(() =>
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+        { type: "list" },
+        { replace: true },
+      ),
+    );
+  });
+
   it("passes eval iteration limit disabled state into the suite view", () => {
     mocks.evalIterationQuota = {
       used: 25,
