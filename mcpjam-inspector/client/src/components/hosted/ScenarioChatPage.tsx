@@ -1393,8 +1393,11 @@ export function ScenarioChatPage({
           selectedServerNames={sessionServersActive.map(
             (server) => server.serverName,
           )}
+          // No `showContextPopover`: the token/cost ring is a developer's
+          // gauge. It came along from the hosted Chatbox (#3270) when that
+          // page became this one, and here it showed outside testers an empty
+          // circle with their session's cost behind it.
           minimalMode
-          showContextPopover
           reasoningDisplayMode="hidden"
           hostedContext={{
             scenarioId: session.scenarioId,

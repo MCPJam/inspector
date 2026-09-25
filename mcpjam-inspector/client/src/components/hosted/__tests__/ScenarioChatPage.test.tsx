@@ -668,6 +668,14 @@ describe("ScenarioChatPage", () => {
         reasoningDisplayMode: "hidden",
       }),
     );
+    // Testers don't get the composer's token/cost ring — minimal mode hides
+    // it, and nothing here opts back in.
+    const props = mockChatTabV2.mock.calls.at(-1)?.[0] as {
+      minimalMode?: boolean;
+      showContextPopover?: boolean;
+    };
+    expect(props.minimalMode).toBe(true);
+    expect(props.showContextPopover).toBeUndefined();
   });
 
   it("does not brand the shell as Claude while the link is still redeeming", async () => {
