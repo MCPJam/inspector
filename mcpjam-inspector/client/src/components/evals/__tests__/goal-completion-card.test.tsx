@@ -3,6 +3,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GoalCompletionCard } from "../goal-completion-card";
 import type { EvalIteration, EvalSuiteRun } from "../types";
+import type { ModelDefinition } from "@/shared/types";
+
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
@@ -391,5 +398,76 @@ describe("GoalCompletionCard", () => {
     expect(
       screen.getByText(/openai\/gpt-5\.4-mini @ 0\.85/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
+  const hosted: ModelDefinition = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    hosted: true,
+  };
+  const ineligibleHosted: ModelDefinition = {
+    id: "openai/gpt-5-mini",
+    name: "GPT-5 Mini",
+    provider: "openai",
+    hosted: true,
+    catalogObservedAt: 1_790_000_000_000,
+    judgeEligible: false,
+  };
+  const bareByok: ModelDefinition = {
+    id: "gpt-4o",
+    name: "GPT-4o (own key)",
+    provider: "openai",
+    hosted: false,
+  };
+
+  it("runs with an override for the picked judge-eligible hosted model", async () => {
+    const onRun = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        availableModels={[hosted, ineligibleHosted, bareByok]}
+        onRun={onRun}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    expect(screen.queryByText("GPT-5 Mini")).not.toBeInTheDocument();
+    expect(screen.queryByText("GPT-4o (own key)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
+    expect(screen.getByRole("button", { name: "Judge model" })).toHaveTextContent(
+      "Claude Haiku 4.5",
+    );
+    await user.click(screen.getByRole("button", { name: /Run judge/i }));
+    expect(onRun).toHaveBeenCalledWith(
+      { runOverride: { judgeModel: "anthropic/claude-haiku-4.5" } },
+      false,
+    );
+  });
+
+  it("shows a saved ineligible judge as the current value, disabled", async () => {
+    const user = userEvent.setup();
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: { enabled: true, judgeModel: "openai/gpt-5-mini" },
+            },
+          },
+        })}
+        availableModels={[hosted, ineligibleHosted]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    const current = screen.getByRole("option", { name: /GPT-5 Mini/ });
+    expect(current).toHaveAttribute("aria-disabled", "true");
+    expect(current).toHaveTextContent("Not eligible");
   });
 });

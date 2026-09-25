@@ -7,6 +7,7 @@ import {
   canonicalSelectionModelId,
   caseModelEntry,
   findModelForStoredChoice,
+  modelRowKey,
   modelSelectionFromDefinition,
   storedModelChoice,
 } from "../model-selection";
@@ -417,5 +418,56 @@ describe("case model chips", () => {
         false,
       ),
     ).toEqual({ provider: "openrouter", model: "anthropic/claude-haiku-4.5" });
+  });
+});
+
+describe("modelRowKey", () => {
+  it("keeps one id apart by source and connection", () => {
+    const hosted: ModelDefinition = {
+      id: "openai/gpt-4o",
+      name: "GPT-4o",
+      provider: "openai",
+      hosted: true,
+    };
+    const orgOpenRouter: ModelDefinition = {
+      id: "openai/gpt-4o",
+      name: "openai/gpt-4o",
+      provider: "openrouter",
+      hosted: false,
+      orgProvider: { providerKey: "openrouter", id: "orgprov_1" },
+    };
+    const localOpenRouter: ModelDefinition = {
+      ...orgOpenRouter,
+      orgProvider: undefined,
+    };
+    expect(modelRowKey(hosted)).toBe("hosted:openai:openai/gpt-4o");
+    expect(modelRowKey(orgOpenRouter)).toBe("org:orgprov_1:openai/gpt-4o");
+    expect(modelRowKey(localOpenRouter)).toBe(
+      "local:openrouter:openai/gpt-4o",
+    );
+  });
+
+  it("names the provider key when an org row carries no connection id", () => {
+    expect(
+      modelRowKey({
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        hosted: false,
+        orgProvider: { providerKey: "openai" },
+      }),
+    ).toBe("org:openai:gpt-4o");
+  });
+
+  it("uses custom:<slug> for custom providers", () => {
+    expect(
+      modelRowKey({
+        id: "custom:acme:m1",
+        name: "m1",
+        provider: "custom",
+        customProviderName: "acme",
+        hosted: false,
+      }),
+    ).toBe("local:custom:acme:custom:acme:m1");
   });
 });

@@ -85,6 +85,28 @@ export function providerKeyForModelDefinition(model: ModelDefinition): string {
 }
 
 /**
+ * A picker row's identity: `${source}:${connectionRef?.id ?? providerKey}:${modelId}`.
+ *
+ * The raw row id alone collides: one id can be listed by the hosted catalog
+ * and again under an org OpenRouter connection (or two org connections), and
+ * a picker keyed by id checks, highlights and toggles both rows as one. The
+ * source and connection part keeps them apart. `source` is `hosted` for
+ * MCPJam rows, `org` for rows stamped with an org provider, else `local`;
+ * the connection is the org provider row id when the stamp carries one, else
+ * the provider key (`custom:<slug>` for custom providers).
+ */
+export function modelRowKey(model: ModelDefinition): string {
+  const source = isHostedRow(model)
+    ? "hosted"
+    : model.orgProvider
+      ? "org"
+      : "local";
+  const connection =
+    model.orgProvider?.id?.trim() || providerKeyForModelDefinition(model);
+  return `${source}:${connection}:${String(model.id)}`;
+}
+
+/**
  * Canonical selection `modelId` for a picker row (see the module comment), or
  * `null` when none can be formed.
  */
