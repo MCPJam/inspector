@@ -1,12 +1,10 @@
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
-import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
 import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
-import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Public Evaluate experience. Reuses the shared eval data and mutation layer;
  * legacy Evaluate remains available separately behind evaluate-enabled.
@@ -619,15 +617,10 @@ function EvaluateTabContent({
     async (
       suite: EvalSuite,
       refinement?: string,
-      stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
       options?: GenerationOptions,
     ) => {
       const suiteServers = getEffectiveSuiteServers(suite);
-      if (suiteServers.length === 0) {
-        if (stageCase)
-          throw new Error("Attach servers before generating cases.");
-        return;
-      }
+      if (suiteServers.length === 0) return;
       // Scope generation by the suite's saved server attachment when present.
       // Backend uses this to (a) require per-server cases AND at least one
       // cross-server case when the attachment spans ≥2 servers, and (b) put
@@ -655,14 +648,6 @@ function EvaluateTabContent({
             ? { refinement: refinement.trim() }
             : undefined);
       await handlers.handleGenerateTests(suite._id, suiteServers, {
-        ...(stageCase
-          ? {
-              stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(
-                  normalizeGeneratedDraft(input, suite.defaultPredicates),
-                ),
-            }
-          : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
@@ -714,8 +699,6 @@ function EvaluateTabContent({
             );
           return result;
         },
-        generate: (instructions, stage, options) =>
-          generateTestsForSuite(selectedSuite, instructions, stage, options),
         save: (input) => mutations.createTestCaseMutation(input as any),
       },
     );
@@ -723,7 +706,6 @@ function EvaluateTabContent({
     projectId,
     selectedSuite,
     suiteDetails,
-    generateTestsForSuite,
     mutations.createTestCaseMutation,
     isLoading,
     isAuthenticated,
