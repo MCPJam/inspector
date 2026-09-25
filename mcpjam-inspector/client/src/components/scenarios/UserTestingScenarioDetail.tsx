@@ -74,14 +74,14 @@ import { toast } from "@/lib/toast";
  * header carrying Edit / Open preview / Share. Edit (`/user-testing/:id/edit`)
  * holds Settings — name, description, environment, sharing permissions,
  * ratings — under a plain header: back to the study (named after it), the
- * word "Settings", and no action row. Those three buttons are how you LEAVE
- * the detail page for here or for a tester's view; repeating them on the page
- * they lead to was noise, and the back link naming the study while the title
- * named it again read as two of the same thing.
+ * word "Settings", and no action row. Edit is this page, Open preview is a
+ * look at the study rather than a setting, and sharing has its own card on
+ * Settings; the back link naming the study while the title named it again
+ * read as two of the same thing.
  *
- * Preview embeds the share link, so opening Edit starts a REAL guest session —
- * it shows up in Sessions. The embed tags itself `?surface=preview` so that
- * session is labelled.
+ * Open preview (detail page only) opens the share link in a new tab, tagged
+ * `?surface=preview`: the creator's own run is a real guest session, and the
+ * tag is what labels it as preview traffic in Sessions.
  *
  * Insights are per-scenario — `ScenarioUsagePanel` is scenario-scoped. There is
  * deliberately no project-wide insights view: aggregating across scenarios that
@@ -129,12 +129,18 @@ const SETTINGS_CARD_TITLE =
  *
  * On Edit the header no longer carries the name — the back link already does,
  * and the two side by side read as a duplicate — so this is where it is
- * changed. A draft, reseeded from the stored name while the field is not
- * focused, so a collaborator's rename is picked up without clobbering typing.
+ * changed. It keeps the same guards as the Description field below:
+ *  - "dirty" is measured against the name the draft was SEEDED with, so a
+ *    collaborator's rename that lands while this field is focused is adopted
+ *    on blur rather than overwritten with the old name;
+ *  - a save that finishes after a newer one leaves the field alone;
+ *  - leaving Edit without a blur (browser Back) still saves what was typed.
  *
  * A taken name is said ON the field (the backend's `CONFLICT` on `name`, the
  * same refusal the create flow places), and the draft is kept so it can be
- * corrected. Any other failure toasts and reverts to what is stored.
+ * corrected — unless the field is gone by the time the refusal lands (the
+ * back link's mousedown blurs, then navigates), in which case it toasts, so
+ * the refusal is never silent. Any other failure toasts and reverts.
  */
 function StudyNameField({
   name,
@@ -148,34 +154,96 @@ function StudyNameField({
   const focusedRef = useRef(false);
   // Set by Escape, read by the blur it triggers: discard rather than save.
   const discardRef = useRef(false);
+  // What the draft was last seeded with — see "dirty" above.
+  const seedRef = useRef(name);
+  // Which save owns the field. Only the newest may touch it on completion.
+  const saveGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  // Read after awaits and on unmount, where this render's values are stale.
+  const nameRef = useRef(name);
+  nameRef.current = name;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+
   useEffect(() => {
     if (focusedRef.current) return;
+    seedRef.current = name;
     setDraft(name);
   }, [name]);
 
-  const commit = async () => {
-    focusedRef.current = false;
-    const discard = discardRef.current;
-    discardRef.current = false;
-    const next = draft.trim();
-    // Empty is not a name; unchanged is not a save.
-    if (discard || !next || next === name.trim()) {
-      setDraft(name);
-      setTaken(null);
-      return;
-    }
+  const adoptStored = () => {
+    seedRef.current = nameRef.current;
+    setDraft(nameRef.current);
+  };
+
+  const save = async (next: string) => {
+    const generation = ++saveGenerationRef.current;
+    // Marked before the write, as Description does, so a blur or unmount
+    // while it is in flight does not send it a second time.
+    seedRef.current = next;
     try {
-      await onSave(next);
+      await onSaveRef.current(next);
+      if (generation !== saveGenerationRef.current || !mountedRef.current) {
+        return;
+      }
       setTaken(null);
     } catch (err) {
+      if (generation !== saveGenerationRef.current) return;
       if (isStudyNameTakenError(err)) {
+        if (!mountedRef.current) {
+          toast.error(
+            `A study named "${next}" already exists in this project, so the name was not changed.`,
+          );
+          return;
+        }
+        // Keep the refused name in the field, but measured against what is
+        // actually stored, so leaving it untouched does not read as "saved".
+        seedRef.current = nameRef.current;
         setTaken(next);
         return;
       }
       toast.error(getBillingErrorMessage(err, "Failed to rename the study"));
-      setDraft(name);
+      if (mountedRef.current) adoptStored();
     }
   };
+
+  const commit = () => {
+    focusedRef.current = false;
+    const discard = discardRef.current;
+    discardRef.current = false;
+    const next = draftRef.current.trim();
+    if (discard || !next) {
+      // Empty is not a name, and Escape is not a save.
+      adoptStored();
+      setTaken(null);
+      return;
+    }
+    // Untouched, or already what is stored: adopt the stored name, which may
+    // be a collaborator's rename that landed while this field held focus.
+    if (next === seedRef.current.trim() || next === nameRef.current.trim()) {
+      adoptStored();
+      return;
+    }
+    void save(next);
+  };
+
+  // Leaving Edit unmounts this field without a blur. Save only what the user
+  // really changed, as Description's flush does.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!focusedRef.current) return;
+      focusedRef.current = false;
+      const next = draftRef.current.trim();
+      if (!next || next === seedRef.current.trim()) return;
+      void save(next);
+    };
+    // Mount/unmount only: everything it reads is a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="space-y-2">
@@ -194,7 +262,7 @@ function StudyNameField({
           setTaken(null);
           setDraft(e.target.value);
         }}
-        onBlur={() => void commit()}
+        onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
           if (e.key === "Escape") {
@@ -664,9 +732,9 @@ export function UserTestingScenarioDetail({
   );
 
   // The detail tabs' action row: Edit, Open preview, and the single primary
-  // Share. Not shown on Edit — all three lead AWAY from the detail page, to
-  // Settings or to a tester's view, and Settings is where they lead. Sharing
-  // there lives in its own Sharing permissions card.
+  // Share (a modal over this page). Not shown on Edit: Edit is that page,
+  // Open preview is not a setting, and Settings has its own Sharing
+  // permissions card.
   const headerActions = (
     <>
       <Button
@@ -1002,8 +1070,8 @@ export function UserTestingScenarioDetail({
             >
               <ScenarioFindingsTab
                 scenarioId={scenario.scenarioId}
-                // Insights' empty panel, so an unrun study reads the same on
-                // either tab instead of Findings being a blank frame.
+                // Insights' empty panel, titled for Findings: the same ways to a
+                // first session on either tab, instead of a blank frame.
                 emptyState={
                   <ScenarioShareEmptyPanel
                     scenario={scenario}

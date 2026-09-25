@@ -402,8 +402,8 @@ describe("UserTestingScenarioDetail", () => {
   });
 
   it("keeps the Edit / Open preview / Share row off the Edit route", () => {
-    // All three lead away from the detail page — to Settings, or to a
-    // tester's view. On Settings itself they were noise.
+    // Edit is this page, Open preview is not a setting, and sharing has its
+    // own card here. On Settings the row was noise.
     renderEdit();
 
     expect(screen.queryByTestId("user-testing-edit-button")).toBeNull();
@@ -934,6 +934,126 @@ describe("UserTestingScenarioDetail", () => {
 
       fireEvent.change(field, { target: { value: "Checkout flow 2" } });
       expect(screen.queryByTestId("user-testing-name-taken")).toBeNull();
+    });
+
+    it("saves the name on Enter", async () => {
+      // A real focus: `fireEvent.focus` does not move focus in jsdom, so the
+      // handler's `currentTarget.blur()` would be a no-op and prove nothing.
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name") as HTMLInputElement;
+
+      field.focus();
+      fireEvent.change(field, { target: { value: "Payments GA" } });
+      fireEvent.keyDown(field, { key: "Enter" });
+
+      await waitFor(() =>
+        expect(updateScenarioMock).toHaveBeenCalledWith({
+          scenarioId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+      expect(document.activeElement).not.toBe(field);
+    });
+
+    it("toasts and reverts a rename that fails for another reason", async () => {
+      updateScenarioMock.mockRejectedValueOnce(new Error("network down"));
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Payments GA" } });
+      fireEvent.blur(field);
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
+      expect(field).toHaveValue("Payments beta");
+      expect(screen.queryByTestId("user-testing-name-taken")).toBeNull();
+    });
+
+    it("adopts a collaborator's rename instead of saving the old name back", () => {
+      const { rerender } = renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      // Focused, untouched — and a rename lands from elsewhere.
+      fireEvent.focus(field);
+      rerender(detail({ name: "Their name" }, { editMode: true }));
+      fireEvent.blur(field);
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+      expect(field).toHaveValue("Their name");
+    });
+
+    it("lets an older save's failure leave a newer draft alone", async () => {
+      let rejectFirst: (err: unknown) => void = () => {};
+      updateScenarioMock
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              rejectFirst = reject;
+            }),
+        )
+        .mockImplementationOnce(() => new Promise(() => {}));
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "First try" } });
+      fireEvent.blur(field);
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Second try" } });
+      fireEvent.blur(field);
+
+      rejectFirst(new Error("late failure"));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(field).toHaveValue("Second try");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("saves a typed name when Edit closes without a blur", async () => {
+      const { rerender } = renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Payments GA" } });
+      // Browser Back: the field unmounts, no blur fires.
+      rerender(detail({}, { editMode: false }));
+
+      await waitFor(() =>
+        expect(updateScenarioMock).toHaveBeenCalledWith({
+          scenarioId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+    });
+
+    it("toasts a taken name when the field is gone before the refusal lands", async () => {
+      let rejectSave: (err: unknown) => void = () => {};
+      updateScenarioMock.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectSave = reject;
+          }),
+      );
+      const { rerender } = renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      // The back link's mousedown blurs (starting the save), then navigates.
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Checkout flow" } });
+      fireEvent.blur(field);
+      rerender(detail({}, { editMode: false }));
+      rejectSave(
+        Object.assign(new Error("taken"), {
+          data: { code: "CONFLICT", field: "name" },
+        }),
+      );
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringMatching(/"Checkout flow" already exists/),
+        ),
+      );
     });
 
     it("keeps the description out of the header, where it crowded the tabs", () => {
