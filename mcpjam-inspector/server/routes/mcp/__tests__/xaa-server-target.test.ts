@@ -143,6 +143,7 @@ describe("server-target /proxy/token", () => {
       clientId: "stored-client-id",
       serverUrl: "https://stored-server.example.com",
       xaaAuthzIssuer: null,
+      targetEnforced: true,
     }));
     const app = buildApp(resolver);
 
@@ -171,7 +172,7 @@ describe("server-target /proxy/token", () => {
         clientSecret: "attacker-secret",
         headers: { "X-Evil": "1" },
         scope: "read:tools",
-        resource: "https://mcp.example.com",
+        resource: "https://stored-server.example.com/mcp",
       }),
     });
 
@@ -181,6 +182,8 @@ describe("server-target /proxy/token", () => {
       projectId: "proj_1",
       bearerToken: "user-token",
       clientIp: null,
+      // The resource the token is requested for is the declared target.
+      targetUrl: "https://stored-server.example.com/mcp",
     });
 
     // The token POST went to the server-discovered endpoint, never the
@@ -593,6 +596,7 @@ describe("server-target /negative-tests", () => {
       clientId: "stored-client-id",
       serverUrl: "https://stored-server.example.com",
       xaaAuthzIssuer: null,
+      targetEnforced: true,
     }));
     const app = buildApp(resolver);
 
@@ -613,7 +617,7 @@ describe("server-target /negative-tests", () => {
         serverId: "srv_1",
         projectId: "proj_1",
         audience: "https://issuer.example.com",
-        resource: "https://mcp.example.com",
+        resource: "https://stored-server.example.com/mcp",
         // Attacker values that must be ignored.
         tokenEndpoint: "https://attacker.example.com/exfil",
         clientSecret: "attacker-secret",
@@ -627,6 +631,8 @@ describe("server-target /negative-tests", () => {
       projectId: "proj_1",
       bearerToken: "user-token",
       clientIp: null,
+      // The resource the token is requested for is the declared target.
+      targetUrl: "https://stored-server.example.com/mcp",
     });
 
     expect(tokenPosts.length).toBeGreaterThan(0);
@@ -636,6 +642,45 @@ describe("server-target /negative-tests", () => {
       const form = new URLSearchParams(post.body);
       expect(form.get("client_secret")).toBe("stored-secret");
     }
+  });
+
+  it("does not spend the stored secret for a resource on another origin", async () => {
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      clientId: "stored-client-id",
+      serverUrl: "https://stored-server.example.com",
+      xaaAuthzIssuer: null,
+      targetEnforced: true,
+    }));
+    const app = buildApp(resolver);
+    const tokenPosts: string[] = [];
+    stubDiscoveryAndToken({
+      onTokenPost: (url) => {
+        tokenPosts.push(url);
+      },
+    });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+        resource: "https://elsewhere.example.com/mcp",
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(resolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetUrl: "https://elsewhere.example.com/mcp",
+      }),
+    );
+    expect(tokenPosts).toHaveLength(0);
   });
 
   it("requires a bearer token for server-target negative tests", async () => {
