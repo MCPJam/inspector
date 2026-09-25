@@ -130,7 +130,10 @@ export type JourneyRunStatus =
   | "rate_limited"
   // Display-only, derived from the `error` marker. See above.
   | "canceled"
-  | "stale";
+  | "stale"
+  // Display-only: `running` with the report's `undecidedReason` at
+  // `gradingPending` — execution is over, the grades are not in yet.
+  | "grading";
 
 export interface JourneyRunSummary {
   total: number;
@@ -456,7 +459,12 @@ export interface SwarmWaveSignalCandidate {
   /** Identity component (toolName / criterionId / environmentId / hostId /
    * personaRefId / journeyRefId) — stable across waves; never a label. */
   subjectKind:
-    "tool" | "criterion" | "environment" | "host" | "persona" | "journey";
+    | "tool"
+    | "criterion"
+    | "environment"
+    | "host"
+    | "persona"
+    | "journey";
   subjectId: string;
   /** Display-only. */
   subjectLabel: string;
@@ -675,7 +683,7 @@ export interface SwarmSessionMetrics {
  */
 export function journeySessionRowToThread(
   row: JourneySessionRow,
-  fallbackPersonaName?: string
+  fallbackPersonaName?: string,
 ): SharedChatThread {
   const displayName =
     row.visitorDisplayName ??
@@ -712,7 +720,7 @@ export type SwarmSessionRunGroup = {
 
 function groupSwarmSessionsByKey(
   rows: JourneySessionRow[],
-  keyFor: (row: JourneySessionRow) => string | null | undefined
+  keyFor: (row: JourneySessionRow) => string | null | undefined,
 ): SwarmSessionRunGroup[] {
   const byKey = new Map<string | null, JourneySessionRow[]>();
   for (const row of rows) {
@@ -726,13 +734,13 @@ function groupSwarmSessionsByKey(
     .map(([runId, groupRows]) => {
       const sorted = [...groupRows].sort(
         (a, b) =>
-          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt)
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt),
       );
       return {
         runId,
         rows: sorted,
         latestActivityAt: Math.max(
-          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt)
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt),
         ),
       };
     })
@@ -741,14 +749,14 @@ function groupSwarmSessionsByKey(
 
 /** Cluster flat session pages by parent journey run (newest run first). */
 export function groupSwarmSessionsByRun(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
 }
 
 /** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
 export function groupSwarmSessionsByGoal(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
 }
@@ -871,6 +879,12 @@ export interface LaunchJourneyRunArgs {
    */
   launchKey: string;
   /**
+   * Iterations for THIS run, overriding the journey's stored
+   * `sessionsPerTarget` without rewriting it. Sent for a reused persona whose
+   * saved fan-out differs from what Confirm chose.
+   */
+  sessionsPerTarget?: number;
+  /**
    * Opaque id shared by every run of ONE co-launched wave, so the Overview can
    * group them without inferring a batch from `createdAt` proximity. A solo
    * "Run again" mints its own and is simply a wave of one. Omitted against a
@@ -901,7 +915,13 @@ export class LaunchJourneyRunError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
-  constructor(status: number, message: string, limitDialogRaised = false) {
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "LaunchJourneyRunError";
     this.status = status;
@@ -915,7 +935,7 @@ export class LaunchJourneyRunError extends Error {
  * caller can branch on `.status`.
  */
 export async function launchJourneyRun(
-  args: LaunchJourneyRunArgs
+  args: LaunchJourneyRunArgs,
 ): Promise<LaunchJourneyRunResult> {
   const response = await authFetch(
     `/api/web/swarm/journeys/${encodeURIComponent(args.journeyId)}/runs`,
@@ -931,8 +951,11 @@ export async function launchJourneyRun(
         ...(args.environmentIds?.length
           ? { environmentIds: args.environmentIds }
           : {}),
+        ...(args.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: args.sessionsPerTarget }
+          : {}),
       }),
-    }
+    },
   );
 
   let body: unknown = undefined;
@@ -959,8 +982,8 @@ export async function launchJourneyRun(
       typeof parsed?.code === "string"
         ? parsed.code
         : typeof parsed?.error === "string"
-          ? parsed.error
-          : null;
+        ? parsed.error
+        : null;
     // Raise the wall HERE, while the body still carries the route's `code` —
     // same reasoning as `postGenerate`. Launching a goal run spends model
     // budget like every other action that already shows this dialog.
@@ -973,7 +996,12 @@ export async function launchJourneyRun(
     throw new LaunchJourneyRunError(
       response.status,
       message,
-      limitDialogRaised
+      limitDialogRaised,
+      typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
+      "string"
+        ? (parsed!.details as { code: string }).code
+        : code ?? undefined,
+      parsed?.details,
     );
   }
 
@@ -984,7 +1012,7 @@ export async function launchJourneyRun(
   if (typeof runId !== "string" || runId.length === 0) {
     throw new LaunchJourneyRunError(
       response.status,
-      "Launch accepted but the backend returned no run id"
+      "Launch accepted but the backend returned no run id",
     );
   }
   return { runId };
@@ -1014,32 +1042,32 @@ export class SwarmGenerateError extends Error {
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
   /**
-   * The backend refused because the caller is anonymous (`sign_in_required`).
-   * The surface should offer sign-in, not a retry: retrying is the one thing
-   * that cannot work, since the refusal is about who is asking.
-   *
-   * A flag rather than a status test — a 403 from this route can also mean
-   * "not a member of this project", which sign-in does not fix.
+   * The refusal envelope the route sent, when it had one. A sign-in refusal is
+   * read off `details.code` by `signInRemedyMessage` — deliberately NOT a
+   * `signInRequired` boolean on this class, which would be a second place the
+   * same refusal is recognised, one of which a consumer could read alone and
+   * be wrong. `code` is the route's HTTP-shaped one and says nothing about who
+   * is asking: a 403 here can also mean "not a member of this project", which
+   * signing in does not fix.
    */
-  readonly signInRequired: boolean;
   constructor(
     status: number,
     message: string,
     limitDialogRaised = false,
-    signInRequired = false
+    readonly code?: string,
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;
     this.limitDialogRaised = limitDialogRaised;
-    this.signInRequired = signInRequired;
   }
 }
 
 async function postGenerate<T>(
   path: string,
   body: unknown,
-  fallbackMessage: string
+  fallbackMessage: string,
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "POST",
@@ -1066,8 +1094,8 @@ async function postGenerate<T>(
       typeof body?.code === "string"
         ? body.code
         : typeof body?.error === "string"
-          ? body.error
-          : null;
+        ? body.error
+        : null;
     const normalized = isNormalizedError(body?.normalized)
       ? (body.normalized as NormalizedError)
       : undefined;
@@ -1098,19 +1126,23 @@ async function postGenerate<T>(
     if (limitDialogRaised) {
       throw new SwarmGenerateError(response.status, message, true);
     }
-    // BEFORE the `normalized` branch, and that order is the whole point.
-    // `handleRoute` runs every route error through `mapRuntimeError`, which
-    // backfills `normalized`, so on the real proxy response `normalized` is
-    // always present — a sign-in check below it never ran, and the guest got
-    // the generic error card instead of the Sign in control. The card is not
-    // wanted here anyway: `normalized` exists to feed it, and this refusal has
-    // its own affordance.
+    // BEFORE the `normalized` branch. `handleRoute` runs every route error
+    // through `mapRuntimeError`, which backfills `normalized`, so on the real
+    // proxy response `normalized` is ALWAYS present — a sign-in check placed
+    // below it never ran at all, which is how a guest ended up with the generic
+    // error card instead of the Sign in control.
+    //
+    // A consumer is no longer at that branch's mercy: `signInRemedyMessage`
+    // reads the envelope off either class. The order still decides which
+    // affordance this refusal arrives dressed as, and `normalized` exists to
+    // feed the card this one does not want.
     if (signInRequired) {
       throw new SwarmGenerateError(
         response.status,
         message,
         false,
-        true
+        code ?? undefined,
+        details,
       );
     }
     if (normalized) {
@@ -1122,7 +1154,7 @@ async function postGenerate<T>(
         details,
       );
     }
-    throw new SwarmGenerateError(response.status, message, false, false);
+    throw new SwarmGenerateError(response.status, message);
   }
   return parsed as T;
 }
@@ -1145,7 +1177,7 @@ export async function generateSwarmPersona(
   args: {
     projectId: string;
     journeyCount: number;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
@@ -1153,7 +1185,7 @@ export async function generateSwarmPersona(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate persona"
+    "Failed to generate persona",
   );
 }
 
@@ -1178,7 +1210,7 @@ export async function generateSwarmPersonaBatch(
     journeyCount: number;
     description?: string;
     existingPersonas?: { name: string; role: string }[];
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   personas: {
     persona: SwarmGeneratedPersona;
@@ -1188,7 +1220,7 @@ export async function generateSwarmPersonaBatch(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate personas"
+    "Failed to generate personas",
   );
 }
 
@@ -1199,12 +1231,12 @@ export async function generateSwarmJourneys(
     swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{ journeys: SwarmGeneratedJourney[] }> {
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate goals"
+    "Failed to generate goals",
   );
 }
 
@@ -1216,7 +1248,7 @@ export async function generateSwarmJourneys(
 export async function streamJourneyRun(
   runId: string,
   onEvent: (event: SwarmStreamEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await authFetch(
     `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
@@ -1224,7 +1256,7 @@ export async function streamJourneyRun(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       signal,
-    }
+    },
   );
 
   if (!response.ok) {

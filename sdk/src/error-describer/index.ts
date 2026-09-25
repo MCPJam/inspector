@@ -18,3 +18,5 @@ export {
   summarizeBearerChallenge,
   type BearerChallengeSummary,
 } from "./challenge.js";
+
+export { mcpjamLimitSlugForMessage } from "./describe.js";

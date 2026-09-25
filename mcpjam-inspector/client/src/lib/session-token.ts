@@ -607,9 +607,10 @@ export async function authFetch(
   // those calls don't block on minting a guest session at cold boot and
   // don't trigger guest refresh on unrelated 401s.
   const hostedAuthEligible = shouldAttachHostedAuthorization(input);
-  const hostedAuthHeader = hostedAuthEligible
-    ? await getApiAuthorizationHeader()
-    : null;
+  const hostedAuthHeader =
+    hostedAuthEligible && !callerProvidedAuthorization
+      ? await getApiAuthorizationHeader()
+      : null;
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 

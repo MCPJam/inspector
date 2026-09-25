@@ -131,7 +131,7 @@ describe("JourneyRubricEditor", () => {
     );
 
     await user.type(
-      screen.getByRole("textbox", { name: /name for check 1/i }),
+      screen.getByRole("textbox", { name: /name for evaluator 1/i }),
       "Quick",
     );
 
@@ -145,7 +145,9 @@ describe("JourneyRubricEditor", () => {
         initial={[{ id: "a", predicate: { type: "turnCountUnder", turns: 3 } }]}
       />,
     );
-    const input = screen.getByRole("textbox", { name: /name for check 1/i });
+    const input = screen.getByRole("textbox", {
+      name: /name for evaluator 1/i,
+    });
     // A derived label stored as a value would stop tracking the predicate the
     // moment the author changed the threshold.
     expect(input).toHaveValue("");
@@ -174,9 +176,7 @@ describe("JourneyRubricEditor", () => {
     expect(
       screen.queryByRole("button", { name: "add check" })
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/at most 2 checks/i)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/at most 2 evaluators/i)).toBeInTheDocument();
   });
 
   it("still allows adds below the reserved cap", () => {

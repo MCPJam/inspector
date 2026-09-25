@@ -1,12 +1,10 @@
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
-import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
 import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
-import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Public Evaluate experience. Reuses the shared eval data and mutation layer;
  * legacy Evaluate remains available separately behind evaluate-enabled.
@@ -51,11 +49,7 @@ import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
-import {
-  aggregateSuite,
-  formatRunId,
-  getEffectiveSuiteServers,
-} from "./evals/helpers";
+import { formatRunId, getEffectiveSuiteServers } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
 import {
@@ -359,22 +353,13 @@ function EvaluateTabContent({
     projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
+    perRunMetrics: true,
   });
 
   const selectedSuite = queries.selectedSuite;
   const suiteDetails = queries.suiteDetails;
-  const activeIterations = queries.activeIterations;
-  const sortedIterations = queries.sortedIterations;
   const runsForSelectedSuite = queries.runsForSelectedSuite;
-
-  const suiteAggregate = useMemo(() => {
-    if (!selectedSuite || !suiteDetails) return null;
-    return aggregateSuite(
-      selectedSuite,
-      suiteDetails.testCases,
-      activeIterations,
-    );
-  }, [selectedSuite, suiteDetails, activeIterations]);
+  const metricsByRun = queries.metricsByRun;
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
     [],
@@ -614,15 +599,10 @@ function EvaluateTabContent({
     async (
       suite: EvalSuite,
       refinement?: string,
-      stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
       options?: GenerationOptions,
     ) => {
       const suiteServers = getEffectiveSuiteServers(suite);
-      if (suiteServers.length === 0) {
-        if (stageCase)
-          throw new Error("Attach servers before generating cases.");
-        return;
-      }
+      if (suiteServers.length === 0) return;
       // Scope generation by the suite's saved server attachment when present.
       // Backend uses this to (a) require per-server cases AND at least one
       // cross-server case when the attachment spans ≥2 servers, and (b) put
@@ -650,14 +630,6 @@ function EvaluateTabContent({
             ? { refinement: refinement.trim() }
             : undefined);
       await handlers.handleGenerateTests(suite._id, suiteServers, {
-        ...(stageCase
-          ? {
-              stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(
-                  normalizeGeneratedDraft(input, suite.defaultPredicates),
-                ),
-            }
-          : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
@@ -681,7 +653,16 @@ function EvaluateTabContent({
             selectedSuite,
             suiteDetails?.testCases ?? [],
             runsForSelectedSuite,
-            suiteDetails?.iterations ?? [],
+            // Iterations are not loaded suite-wide here; count the listed
+            // runs' from their metrics (or summaries, while those load).
+            runsForSelectedSuite.reduce(
+              (sum, run) =>
+                sum +
+                (metricsByRun.get(run._id)?.iterationCount ??
+                  run.summary?.total ??
+                  0),
+              0,
+            ),
           ),
         run: async () => {
           if (evalRunsDisabledReason) throw new Error(evalRunsDisabledReason);
@@ -700,8 +681,6 @@ function EvaluateTabContent({
             );
           return result;
         },
-        generate: (instructions, stage, options) =>
-          generateTestsForSuite(selectedSuite, instructions, stage, options),
         save: (input) => mutations.createTestCaseMutation(input as any),
       },
     );
@@ -709,12 +688,12 @@ function EvaluateTabContent({
     projectId,
     selectedSuite,
     suiteDetails,
-    generateTestsForSuite,
     mutations.createTestCaseMutation,
     isLoading,
     isAuthenticated,
     isDirectGuest,
     runsForSelectedSuite,
+    metricsByRun,
     evalRunsDisabledReason,
     handleRerunWithQuota,
   ]);
@@ -818,16 +797,19 @@ function EvaluateTabContent({
   // added without deciding. An agent command is a second door into the same
   // mutations the buttons call, and it passes none of the rendered controls
   // the CI-owned lock lives in — so a lock that only hides affordances is no
-  // lock at all here. `case.create` (generate) and `suite.delete` are both in
-  // the platform's locked set: an agent pointed at a CI-owned suite gets a
-  // `409`, which is the same offer-then-refuse this whole change removes.
+  // lock at all here. `case.create` (generate) is in the platform's locked
+  // set: an agent pointed at a CI-owned suite gets a `409`, which is the same
+  // offer-then-refuse this whole change removes.
   //
-  // `"read"` is not "harmless" — it is "writes no configuration". Running and
-  // cancelling stay readable on a CI-owned suite, because running one from the
-  // app is exactly what locking edits rather than the suite exists to keep.
+  // THE TWO WORDS ARE THE RULE, not a severity ranking. `"edit_config"` writes
+  // the configuration a CI-owned suite's file (or SDK report) owns, and is the
+  // only thing ownership refuses. `"lifecycle"` covers running, cancelling and
+  // DELETING — none of them edits what the suite is, and all three stay
+  // available on a CI-owned suite. Spelling delete `"write"` here is what made
+  // the agent surface refuse the one cleanup path that issue #5381 needed.
   const resolveSuiteEntry = (
     raw: unknown,
-    intent: "read" | "write",
+    intent: "edit_config" | "lifecycle",
   ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
@@ -847,12 +829,12 @@ function EvaluateTabContent({
     });
     if (matches.length === 1) {
       const entry = matches[0];
-      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+      if (intent === "edit_config" && isCiOwnedSuite(entry.suite)) {
         throw createInspectorCommandClientError(
           "invalid_request",
           `Suite "${suiteDisplayName(
             entry.suite,
-          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running and deleting it are still available.`,
         );
       }
       return entry;
@@ -939,7 +921,7 @@ function EvaluateTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "read");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -992,7 +974,7 @@ function EvaluateTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "edit_config");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -1030,7 +1012,7 @@ function EvaluateTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -1208,7 +1190,11 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Test Suite Evaluators"
+        ? route.fromCaseChecks
+          ? (suiteDetails?.testCases.find(
+              (testCase) => testCase._id === route.fromCaseChecks,
+            )?.title ?? "Test case")
+          : "Test Suite Evaluators"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1220,10 +1206,13 @@ function EvaluateTabContent({
    */
   const [generatingCases, setGeneratingCases] = useState<{
     exit: () => void;
+    /** Import review borrows this crumb; without it every surface reads
+     * "Generate test cases". */
+    label?: string;
   } | null>(null);
 
   const renderPlaygroundBreadcrumb = () => {
-    if (generatingCases) return "Generate test cases";
+    if (generatingCases) return generatingCases.label ?? "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
@@ -1408,15 +1397,11 @@ function EvaluateTabContent({
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
             /*
-             * Role AND ownership. `suite.delete` is CI-locked, so offering the
-             * trash on a CI-owned suite is offering a `409`. Answered from the
-             * suite ROW rather than capabilities: this is a grid, and asking
-             * the backend per card would be one query per suite for a question
-             * the row already carries in full.
+             * Role alone. `suite.delete` left the backend's CI-locked set —
+             * deleting a CI-owned suite says what this workspace keeps, not
+             * what CI runs — so ownership no longer has a second vote here.
              */
-            canDeleteSuite={(suite) =>
-              canDeleteArtifact(suite.createdBy) && !isCiOwnedSuite(suite)
-            }
+            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
@@ -1439,11 +1424,13 @@ function EvaluateTabContent({
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
-          iterations={activeIterations}
-          allIterations={sortedIterations}
+          metricsByRun={metricsByRun}
+          metricsLoading={queries.isRunMetricsLoading}
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
-          aggregate={suiteAggregate}
+          // A suite-wide aggregate needs every iteration; Evaluate reads
+          // per-run metrics instead, and nothing it mounts reads this.
+          aggregate={null}
           /*
            * The suite's configuration lives in a repository (a committed suite
            * file, or SDK ingest), so this surface offers no edits for it.
@@ -1555,7 +1542,18 @@ function EvaluateTabContent({
             }
             detailCrumb={
               route.type === "suite-edit" && route.fromCaseChecks
-                ? { label: "Test Suite Evaluators" }
+                ? [
+                    {
+                      label: "Test Case Evaluators",
+                      onClick: () =>
+                        playgroundNavigation.toTestEdit(
+                          route.suiteId,
+                          route.fromCaseChecks!,
+                          { checks: true },
+                        ),
+                    },
+                    { label: "Test Suite Evaluators" },
+                  ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
                   : undefined
@@ -1566,7 +1564,6 @@ function EvaluateTabContent({
                     playgroundNavigation.toTestEdit(
                       route.suiteId,
                       route.fromCaseChecks!,
-                      { checks: true },
                     )
                 : route.type === "test-edit" && route.checks
                   ? () =>
@@ -1601,17 +1598,15 @@ function EvaluateTabContent({
                     : undefined
             }
           >
-            {route.type === "suite-edit" && route.fromCaseChecks
-              ? "Test Case Evaluators"
-              : route.type === "eval-server"
-                ? evalServer?.name
-                : route.type === "test-edit" && route.fromEvalServer
-                  ? (previewCaseTitleFromDraft(
-                      route.fromEvalServer,
-                      route.suiteId,
-                      route.testId,
-                    ) ?? nestedPageLabel)
-                  : renderPlaygroundBreadcrumb()}
+            {route.type === "eval-server"
+              ? evalServer?.name
+              : route.type === "test-edit" && route.fromEvalServer
+                ? (previewCaseTitleFromDraft(
+                    route.fromEvalServer,
+                    route.suiteId,
+                    route.testId,
+                  ) ?? nestedPageLabel)
+                : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

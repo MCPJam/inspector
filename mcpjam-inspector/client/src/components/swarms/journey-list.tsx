@@ -1,4 +1,3 @@
-import { swarmVerdictValueLabel } from "@mcpjam/sdk/contract";
 import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
 import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -96,32 +95,6 @@ export type JourneyRunSelection = {
 
 export type JourneyCellOutcome = "pass" | "fail" | "part" | "running" | "none";
 
-const CELL_STATUS_META: Record<
-  Exclude<JourneyCellOutcome, "none">,
-  { label: string; dot: string; text: string }
-> = {
-  pass: {
-    label: swarmVerdictValueLabel("passed"),
-    dot: "bg-success",
-    text: "text-success",
-  },
-  fail: {
-    label: swarmVerdictValueLabel("failed"),
-    dot: "bg-destructive",
-    text: "text-destructive",
-  },
-  part: {
-    label: swarmVerdictValueLabel("inconclusive"),
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
-  },
-  running: {
-    label: "Running",
-    dot: "bg-muted-foreground animate-pulse",
-    text: "text-muted-foreground",
-  },
-};
-
 /** Trend-segment fills — same palette as the evals RunTrendStrip. */
 const SEGMENT_CLASS: Record<JourneyCellOutcome, string> = {
   none: "bg-muted",
@@ -196,12 +169,6 @@ export function journeyHostOutcome(
       : decision?.verdict === "inconclusive"
         ? "part"
         : "none";
-}
-
-function hostSummaryFor(run: JourneyRun, targetKey: string) {
-  return (
-    run.hostSummaries.find((h) => summaryTargetKey(h) === targetKey) ?? null
-  );
 }
 
 /** Per-journey blocks: each journey shows its own hosts as result cells. */
@@ -515,8 +482,6 @@ function JourneyBlock({
           }
 
           const outcome = journeyHostOutcome(latestRun, col.key);
-          const meta = outcome === "none" ? null : CELL_STATUS_META[outcome];
-          const summary = hostSummaryFor(latestRun, col.key);
           // Oldest → newest, capped like the evals trend strip.
           const trendRuns = [...typedRuns]
             .reverse()
@@ -544,11 +509,6 @@ function JourneyBlock({
                 data-testid="journey-host-cell"
                 data-outcome={outcome}
                 aria-label={`Open runs for ${journey.goal} on ${col.label}`}
-                title={
-                  summary
-                    ? `Latest run on ${col.label}: ${summary.succeeded}/${summary.total} sessions ok`
-                    : undefined
-                }
                 onClick={() => openRun(latestRun, col.key)}
                 className="flex w-full min-w-0 items-center justify-between gap-1.5 rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
               >
@@ -556,21 +516,6 @@ function JourneyBlock({
                   <JourneyHostLogoMark label={col.label} />
                   <span className="truncate text-[11px] font-medium text-foreground/80">
                     {col.label}
-                  </span>
-                </span>
-                <span className="inline-flex shrink-0 items-center gap-1.5">
-                  {meta ? (
-                    <span className={cn("size-1.5 rounded-full", meta.dot)} />
-                  ) : null}
-                  <span
-                    className={cn(
-                      "text-[11px] font-semibold tabular-nums",
-                      meta?.text ?? "text-muted-foreground",
-                    )}
-                  >
-                    {summary
-                      ? `${summary.succeeded}/${summary.total} ok`
-                      : (meta?.label ?? "No data")}
                   </span>
                 </span>
               </button>
@@ -714,7 +659,7 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${criteriaCount === 1 ? "check" : "checks"}`
+              ? `${criteriaCount} ${criteriaCount === 1 ? "evaluator" : "evaluators"}`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -737,7 +682,7 @@ function JourneyGradingEditor({
             value={judgeConfig}
             onChange={setJudgeConfig}
             availableModels={availableModels}
-            bareAutoGradeBlurb="Grade every session automatically against this goal. Uses credits."
+            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />
           <div className="mt-3 border-t border-border/40 pt-3">

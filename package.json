@@ -49,13 +49,14 @@
     "openai-policy:check": "node scripts/sync-openai-policy-manifest.mjs --check",
     "release:status": "changeset status",
     "release:version": "changeset version",
-    "release:publish": "changeset publish"
+    "release:publish": "changeset publish",
+    "check:mirrors": "node scripts/check-authoring-mirror.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
     "@google/design.md": "0.4.0",
     "@types/dagre": "^0.7.54",
-    "concurrently": "^9.1.0",
+    "concurrently": "^10.0.5",
     "@changesets/changelog-github": "^1.0.1"
   },
   "dependencies": {
@@ -65,6 +66,7 @@
     "shell-quote": "^1.8.4",
     "tar": "^7.5.22",
     "ws": "^8.21.3",
-    "ip-address": "^10.7.0"
+    "ip-address": "^10.7.0",
+    "postcss": "^8.5.23"
   }
 }

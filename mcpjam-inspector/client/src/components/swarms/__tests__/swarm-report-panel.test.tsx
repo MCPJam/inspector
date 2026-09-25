@@ -1,4 +1,8 @@
-import { slotView } from "../new-swarm-running-step";
+import {
+  sessionChipTone,
+  sessionGoalResultAttr,
+  slotView,
+} from "../new-swarm-running-step";
 import type { JourneySessionRow } from "@/lib/swarm-api";
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -6,7 +10,7 @@ import {
   assembleSwarmReport,
   deriveSwarmSessionVerdict,
 } from "@mcpjam/sdk/contract";
-import { SwarmGoalResult, SwarmReportPanel } from "../swarm-report-panel";
+import { SwarmReportPanel, SwarmSessionReport } from "../swarm-report-panel";
 import { lifecycleChip, verdictBadge } from "../swarm-verdict-presentation";
 const verdict = (passed: boolean) =>
   deriveSwarmSessionVerdict({
@@ -27,8 +31,7 @@ describe("swarm reporting presentation", () => {
   it("renders a passed goal independently from interrupted execution", () => {
     const v = verdict(true);
     expect(lifecycleChip(v.lifecycle).label).toBe("Broke");
-    render(<SwarmGoalResult verdict={v} />);
-    expect(screen.getByText("Goal result: Passed")).toBeInTheDocument();
+    expect(verdictBadge(v).label).toBe("Passed");
   });
   it("shows execution coverage without claiming an ungraded run never ran", () => {
     const report = assembleSwarmReport({
@@ -112,6 +115,36 @@ it("keeps completed ungraded and broken passed create-flow cells distinct", () =
     });
     expect(view.outcome).toBe(v.lifecycle === "broke" ? "failed" : "succeeded");
     expect(view.verdict).toBe(v);
+    expect(view.headline).toMatch(
+      v.lifecycle === "broke" ? /^Broke:/ : /^Run completed:/,
+    );
   }
   expect(verdictBadge().label).toBe("Unknown");
+});
+
+it("does not print goal result or the value chain on the session report", () => {
+  render(
+    <SwarmSessionReport
+      session={{ verdict: verdict(true) } as JourneySessionRow}
+    />,
+  );
+  expect(screen.queryByText(/Goal result/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/User value chain/)).not.toBeInTheDocument();
+  expect(screen.getByText("Execution: Broke")).toBeInTheDocument();
+});
+
+it("colors a session chip by goal result, not execution", () => {
+  const passedBroke = verdict(true);
+  expect(
+    sessionChipTone({ outcome: "failed", verdict: passedBroke }),
+  ).toContain("border-success");
+  expect(
+    sessionChipTone({
+      outcome: "succeeded",
+      verdict: { ...verdict(false), lifecycle: "ran", verdict: "failed" },
+    }),
+  ).toContain("border-destructive");
+  expect(sessionChipTone({ outcome: "running" })).toContain("border-primary");
+  expect(sessionGoalResultAttr(passedBroke)).toBe("passed");
+  expect(sessionGoalResultAttr()).toBe("unknown");
 });

@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenarioChatPage } from "../ScenarioChatPage";
@@ -17,12 +23,17 @@ import {
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "@/lib/hosted-oauth-resume";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
+import { PROBE_TIMEOUT_MS } from "@/hooks/hosted/use-scenario-server-reachability";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 
 const {
   mockConvexAuthState,
   mockWorkOsAuthState,
   mockGetAccessToken,
   mockSignIn,
+  mockSignUp,
+  mockSignOut,
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
@@ -43,6 +54,8 @@ const {
   },
   mockGetAccessToken: vi.fn(),
   mockSignIn: vi.fn(),
+  mockSignUp: vi.fn(),
+  mockSignOut: vi.fn(),
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
@@ -69,6 +82,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
     signIn: mockSignIn,
+    signUp: mockSignUp,
+    signOut: mockSignOut,
     user: mockWorkOsAuthState.user,
     isLoading: mockWorkOsAuthState.isLoading,
   }),
@@ -150,8 +165,9 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 // jsdom can't put the page inside a real same-origin iframe, so stub the
 // embed detector; the hash-sync helpers keep their real implementations.
 vi.mock("@/lib/embedded-preview", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/embedded-preview")>();
+  const actual = await importOriginal<
+    typeof import("@/lib/embedded-preview")
+  >();
   return {
     ...actual,
     isEmbeddedPreview: () => mockIsEmbeddedPreview(),
@@ -211,6 +227,8 @@ describe("ScenarioChatPage", () => {
     mockWorkOsAuthState.isLoading = false;
     mockGetAccessToken.mockReset();
     mockSignIn.mockReset();
+    mockSignUp.mockReset();
+    mockSignOut.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
@@ -266,6 +284,355 @@ describe("ScenarioChatPage", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("gates account-required links on the backend guest-bearer refusal without loading a preview", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null as any;
+    mockAuthFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "SCENARIO_SIGN_IN_REQUIRED",
+          error: "Sign in to preview this scenario.",
+        }),
+        { status: 401 },
+      ),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/private-token?surface=preview",
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this study",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
+    expect(mockSignUp).toHaveBeenCalledOnce();
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/private-token?surface=preview",
+    );
+    expect(
+      mockPosthogCapture.mock.calls.flat().map(String).join(" "),
+    ).not.toContain("private-token");
+  });
+
+  it("keeps account-required iframe previews free of authentication actions", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    mockAuthFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this study",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create an account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" }),
+    ).toBeInTheDocument();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(mockSignUp).not.toHaveBeenCalled();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "?surface=preview"])(
+    "preserves the return surface through switching accounts and signing in: %s",
+    async (query) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/switch-token${query}`,
+      );
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "FORBIDDEN",
+            details: { code: "SCENARIO_INVITE_ONLY" },
+            message:
+              "This scenario is invite-only - ask the owner to invite you.",
+          },
+          { ok: false, status: 403 },
+        ),
+      );
+      const view = render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Switch accounts" }),
+      );
+      // Sign-out first revokes the session it is leaving (MJ-011), with the
+      // token it is about to discard, then hands over to WorkOS.
+      await waitFor(() => expect(mockSignOut).toHaveBeenCalled());
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/web/auth-session/revoke",
+        expect.objectContaining({
+          method: "POST",
+          keepalive: true,
+          headers: { Authorization: "Bearer workos-token" },
+        }),
+      );
+      const fetchMock = vi.mocked(global.fetch);
+      const revokeIndex = fetchMock.mock.calls.findIndex(
+        ([url]) => url === "/api/web/auth-session/revoke",
+      );
+      expect(fetchMock.mock.invocationCallOrder[revokeIndex]).toBeLessThan(
+        mockSignOut.mock.invocationCallOrder[0],
+      );
+      const returnTo = mockSignOut.mock.calls[0][0].returnTo;
+      const destination = new URL(returnTo);
+      expect(destination.pathname).toBe("/user-testing/scenario/switch-token");
+      expect(destination.search).toBe(query);
+      view.unmount();
+
+      // Follow the logout return as a signed-out visitor, then choose sign-in.
+      window.history.replaceState(
+        {},
+        "",
+        destination.pathname + destination.search,
+      );
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      mockAuthFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+          status: 401,
+        }),
+      );
+      render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe(`/user-testing/scenario/switch-token${query}`);
+    },
+  );
+
+  it.each(["", "?surface=preview"])(
+    "returns from sign-in and redeems with the account bearer: %s",
+    async (query) => {
+      const bootstrap = await (await mockAuthFetch()).json();
+      mockAuthFetch.mockClear();
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "UNAUTHORIZED",
+            details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+          },
+          { ok: false, status: 401 },
+        ),
+      );
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/return-token${query}`,
+      );
+      const view = render(<ScenarioChatPage pathToken="return-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      const destination = localStorage.getItem(
+        SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+      )!;
+      expect(destination).toBe(`/user-testing/scenario/return-token${query}`);
+      expect(mockChatTabV2).not.toHaveBeenCalled();
+      view.unmount();
+      // App's callback suite verifies restoring this destination after AuthKit.
+      window.history.replaceState({}, "", destination);
+      mockWorkOsAuthState.user = { id: "signed-in-tester" };
+      mockConvexAuthState.isAuthenticated = true;
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          ...bootstrap,
+          bootstrap: { ...bootstrap.bootstrap, requiresSignIn: true },
+        }),
+      );
+      render(<ScenarioChatPage pathToken="return-token" />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe(
+          "signed-in-tester",
+        ),
+      );
+      expect(mockAuthFetch).toHaveBeenLastCalledWith(
+        "/api/web/scenarios/redeem",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer workos-token",
+          }),
+          body: JSON.stringify({ scenarioToken: "return-token" }),
+        }),
+      );
+      expect(readScenarioSession()?.surface).toBe(
+        query ? "preview" : "share_link",
+      );
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this study",
+        }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("opens guest-permitted links without an anonymous probe or account sign-in", async () => {
+    const bootstrap = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockClear();
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...bootstrap,
+        bootstrap: {
+          ...bootstrap.bootstrap,
+          mode: "anyone_with_link",
+          requiresSignIn: false,
+          allowGuestAccess: true,
+        },
+      }),
+    );
+    consentAlreadyGiven();
+    render(<ScenarioChatPage pathToken="guest-link" />);
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(
+      new Headers(mockAuthFetch.mock.calls[0][1].headers).has("Authorization"),
+    ).toBe(false);
+    expect(readScenarioSession()?.payload.allowGuestAccess).toBe(true);
+    expect(mockGetAccessToken).not.toHaveBeenCalled();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.anything(),
+    );
+  });
+
+  it("does not carry the account requirement to a different guest-permitted link", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    const view = render(<ScenarioChatPage pathToken="restricted-link" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.payload.requiresSignIn).toBe(true),
+    );
+    mockWorkOsAuthState.user = null;
+    mockConvexAuthState.isAuthenticated = false;
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: false,
+          allowGuestAccess: true,
+          mode: "anyone_with_link",
+        },
+      }),
+    );
+    view.rerender(<ScenarioChatPage pathToken="guest-link" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.shareToken).toBe("guest-link"),
+    );
+    expect(readScenarioSession()?.payload.allowGuestAccess).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("preserves preview return after the URL is stripped and the account logs out", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/preview-token?surface=preview",
+    );
+    const view = render(<ScenarioChatPage pathToken="preview-token" />);
+    await waitFor(() => expect(readScenarioSession()?.surface).toBe("preview"));
+    view.rerender(<ScenarioChatPage />);
+    await waitFor(() => expect(readScenarioSession()?.surface).toBe("preview"));
+    mockWorkOsAuthState.user = null;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/preview-token?surface=preview",
+    );
+    expect(readScenarioSession()).toBeNull();
+  });
+
+  it("clears protected preview data on logout and re-redeems after account changes", async () => {
+    const base = await mockAuthFetch();
+    const body = await base.json();
+    const response = () =>
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: true,
+          allowGuestAccess: false,
+        },
+      });
+    mockAuthFetch.mockClear();
+    mockAuthFetch.mockImplementation(async () => response());
+    const view = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+    );
+    mockWorkOsAuthState.user = null as any;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this study",
+      }),
+    ).toBeInTheDocument();
+    expect(readScenarioSession()).toBeNull();
+    const callsAtLogout = mockAuthFetch.mock.calls.length;
+    mockWorkOsAuthState.user = { id: "different-account" };
+    mockConvexAuthState.isAuthenticated = true;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe(
+        "different-account",
+      ),
+    );
+    expect(mockAuthFetch.mock.calls.length).toBeGreaterThan(callsAtLogout);
+  });
+
+  it("never falls back to guests when the account token expires", async () => {
+    mockGetAccessToken.mockRejectedValue(new Error("Login required"));
+    render(<ScenarioChatPage pathToken="expired-account" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this study",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
   it("applies scenario host style data attributes while keeping MCPJam branding", async () => {
@@ -327,7 +694,7 @@ describe("ScenarioChatPage", () => {
     // The visible placeholder is decorative, so the heading has to carry the
     // shell's name for a screen reader in the meantime.
     expect(
-      screen.getByRole("heading", { name: "Loading scenario" }),
+      screen.getByRole("heading", { name: "Loading study" }),
     ).toBeInTheDocument();
   });
 
@@ -741,6 +1108,89 @@ describe("ScenarioChatPage", () => {
     );
   });
 
+  describe("guest refused a frontier model", () => {
+    function renderGuestLinkScenario() {
+      mockWorkOsAuthState.user = null;
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/user-testing/test/token-guest");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({
+          scenarioId: "sbx_1",
+          accessVersion: 1,
+          bootstrap: {
+            projectId: "ws_1",
+            scenarioId: "sbx_1",
+            name: "Guest Scenario",
+            hostStyle: "claude",
+            mode: "anyone_with_link",
+            allowGuestAccess: true,
+            viewerIsProjectMember: false,
+            systemPrompt: "",
+            modelId: "anthropic/claude-sonnet-4.5",
+            temperature: 0.7,
+            requireToolApproval: false,
+            servers: [],
+          },
+        }),
+      );
+      return render(<ScenarioChatPage pathToken="token-guest" />);
+    }
+
+    afterEach(() => {
+      useFrontierSignInDialogStore.setState({ isOpen: false, override: null });
+    });
+
+    it("shows the scenario sign-in gate instead of the model dialog", async () => {
+      renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(
+        await screen.findByRole("heading", {
+          name: "Sign in to preview this study",
+        }),
+      ).toBeInTheDocument();
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe("/user-testing/scenario/token-guest");
+    });
+
+    it("hands the dialog back once the page unmounts", async () => {
+      const { unmount } = renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      unmount();
+
+      useFrontierSignInDialogStore.getState().open();
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+    });
+
+    it("leaves a signed-in visitor on the model dialog", async () => {
+      consentAlreadyGiven();
+      render(<ScenarioChatPage pathToken="token-signed-in" />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this study",
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("keeps the access denied sign-in path intact", async () => {
     mockConvexAuthState.isAuthenticated = false;
     mockWorkOsAuthState.user = null;
@@ -770,7 +1220,7 @@ describe("ScenarioChatPage", () => {
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/user-testing/test/token-denied",
+      "/user-testing/scenario/token-denied",
     );
   });
 
@@ -917,8 +1367,6 @@ describe("ScenarioChatPage", () => {
         status: 500,
         code: "INTERNAL_ERROR",
         message: "Internal database exploded",
-        rawMessage:
-          "Uncaught Error: Internal database exploded at handler (../../convex/scenarios.ts:1088:6)",
       }),
     );
   });
@@ -1605,7 +2053,8 @@ describe("ScenarioChatPage", () => {
     function latestHostedContext() {
       const calls = mockChatTabV2.mock.calls;
       const last = calls[calls.length - 1]?.[0] as
-        { hostedContext?: Record<string, unknown> } | undefined;
+        | { hostedContext?: Record<string, unknown> }
+        | undefined;
       return last?.hostedContext;
     }
 
@@ -1812,6 +2261,70 @@ describe("ScenarioChatPage", () => {
       // The committed session is the navigation's (version 3), never the
       // resolved-but-stale refresh's (version 8).
       await waitFor(() => expect(readScenarioSession()?.accessVersion).toBe(3));
+    });
+
+    it("ignores an old account refusal and preserves the new account refresh latch", async () => {
+      const view = await renderPostStrip();
+      let refuseOld!: (response: Response) => void;
+      let finishNew!: (response: Response) => void;
+      mockAuthFetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            refuseOld = resolve;
+          }),
+      );
+      const oldRefresh = latestHostedContext()!
+        .refreshAccessSession as () => Promise<unknown>;
+      const oldPending = oldRefresh();
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledOnce());
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 2,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+      mockWorkOsAuthState.user = { id: "new-account" };
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe("new-account"),
+      );
+      mockAuthFetch.mockClear();
+      mockAuthFetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishNew = resolve;
+          }),
+      );
+      const newRefresh = latestHostedContext()!
+        .refreshAccessSession as () => Promise<unknown>;
+      const newPending = newRefresh();
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledOnce());
+      let oldResult: unknown;
+      await act(async () => {
+        refuseOld(
+          createFetchResponse(
+            { code: "SCENARIO_SIGN_IN_REQUIRED" },
+            { ok: false, status: 401 },
+          ),
+        );
+        oldResult = await oldPending;
+      });
+      expect(oldResult).toEqual({ ok: false, reason: "transient" });
+      expect(readScenarioSession()?.authenticatedUserId).toBe("new-account");
+      await act(async () => {
+        const coalesced = newRefresh();
+        finishNew(
+          createFetchResponse({
+            scenarioId: "sbx_recover",
+            accessVersion: 3,
+            bootstrap: bootstrapPayload(),
+          }),
+        );
+        await Promise.all([newPending, coalesced]);
+      });
+      expect(mockAuthFetch).toHaveBeenCalledOnce();
+      expect(readScenarioSession()?.accessVersion).toBe(3);
     });
 
     it("tears down to the denied landing when onAccessRevoked fires", async () => {
@@ -2275,6 +2788,366 @@ describe("ScenarioChatPage", () => {
     });
   });
 
+  describe("a tester is told when a server did not connect", () => {
+    // The reported failure: a scenario built on an Excalidraw server ran a full
+    // session without it. The bootstrap payload lists servers but never touches
+    // them, and the page then hard-coded `connectionStatus: "connected"` for
+    // every row — so the composer showed a green dot for a server nothing had
+    // ever reached, and the first real connection attempt happened inside a
+    // chat turn.
+
+    // Every case here is about reachability, so the tester has consented —
+    // the recording notice blocks the composer first and would otherwise be
+    // the reason under assertion.
+    beforeEach(() => consentAlreadyGiven());
+
+    function writeDrawingScenario() {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Drawing Scenario",
+          description: "Hosted scenario",
+          hostStyle: "cursor",
+          mode: "anyone_with_link",
+          allowGuestAccess: true,
+          viewerIsProjectMember: false,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: false,
+          servers: [
+            {
+              serverId: "srv_excalidraw",
+              serverName: "excalidraw",
+              useOAuth: false,
+              serverUrl: "https://mcp.excalidraw.example/mcp",
+              clientId: null,
+              oauthScopes: null,
+            },
+          ],
+        },
+      });
+    }
+
+    function latestHostedContext() {
+      const calls = mockChatTabV2.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | { hostedContext?: { selectedServerIds?: string[] } }
+        | undefined;
+      return last?.hostedContext;
+    }
+
+    function latestServerConfigs() {
+      const calls = mockChatTabV2.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | {
+            connectedOrConnectingServerConfigs?: Record<
+              string,
+              { connectionStatus?: string }
+            >;
+          }
+        | undefined;
+      return last?.connectedOrConnectingServerConfigs;
+    }
+
+    it("names the unreachable server instead of reporting it connected", async () => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      mockValidateHostedServer.mockRejectedValue(
+        new Error("SSE error: Non-200 status code (502)")
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "failed"
+        )
+      );
+      // Shipping it to the turn anyway costs the whole turn: one server that
+      // fails `listTools` rejects the Promise.all behind the tool set.
+      expect(latestHostedContext()?.selectedServerIds).toEqual([]);
+      // Transport detail is noise to someone who followed a link, but whoever
+      // debugs the scenario still needs it.
+      expect(consoleError).toHaveBeenCalledWith(
+        "[useScenarioServerReachability] server did not connect",
+        expect.objectContaining({
+          serverId: "srv_excalidraw",
+          serverName: "excalidraw",
+        })
+      );
+    });
+
+    it("says nothing when the server answers", async () => {
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "connected"
+        )
+      );
+      expect(
+        screen.queryByText(/couldn't be reached/)
+      ).not.toBeInTheDocument();
+      expect(mockValidateHostedServer).toHaveBeenCalledWith(
+        "srv_excalidraw",
+        undefined,
+        undefined,
+        undefined,
+        expect.any(AbortSignal)
+      );
+    });
+
+    it("retries a blip rather than branding a healthy server unreachable", async () => {
+      // The verdict is final for the session — nothing re-probes, and it drops
+      // the server from the turn — so a 502 or a dropped connection must not
+      // decide it on the first try.
+      mockValidateHostedServer
+        .mockRejectedValueOnce(new Error("Bad Gateway"))
+        .mockResolvedValue({ success: true, status: "connected" });
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "connected"
+        )
+      );
+      expect(mockValidateHostedServer).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+    });
+
+    it("holds the composer until the probe answers", async () => {
+      // Sending while a server is still being checked withholds it from the
+      // turn, which is the same silent failure wearing a different hat: the
+      // model answers with none of the tools the tester was sent here to try.
+      let resolveValidation: (value: unknown) => void = () => {};
+      mockValidateHostedServer.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveValidation = resolve;
+          })
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            scenarioComposerBlocked: true,
+            scenarioComposerBlockedReason: "Connecting to this session's tools…",
+          })
+        )
+      );
+
+      await act(async () => {
+        resolveValidation({ success: true, status: "connected" });
+      });
+
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false })
+        )
+      );
+    });
+
+    it("holds the composer on the very first frame, before the probe registers", async () => {
+      // The hook records "checking" from an effect, so the render that first
+      // has a session still has an empty verdict map. That frame is painted and
+      // interactive: a tester who sends into it ships a server nothing has
+      // reached yet, which is the failure the probe exists to prevent.
+      mockValidateHostedServer.mockImplementation(() => new Promise(() => {}));
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(mockChatTabV2.mock.calls.length).toBeGreaterThan(0);
+      for (const [props] of mockChatTabV2.mock.calls) {
+        expect(props).toMatchObject({
+          scenarioComposerBlocked: true,
+          scenarioComposerBlockedReason: "Connecting to this session's tools…",
+        });
+      }
+      const firstProps = mockChatTabV2.mock.calls[0]?.[0] as {
+        connectedOrConnectingServerConfigs?: Record<
+          string,
+          { connectionStatus?: string }
+        >;
+      };
+      expect(
+        firstProps.connectedOrConnectingServerConfigs?.excalidraw
+          ?.connectionStatus
+      ).toBe("connecting");
+    });
+
+    it("abandons a probe that outlives the page", async () => {
+      // The route holds an MCP connection open for its whole connect timeout.
+      // A tester who closed the tab has no use for the answer, and the
+      // connection should not stay open waiting to give it.
+      let probeSignal: AbortSignal | undefined;
+      mockValidateHostedServer.mockImplementation(
+        (
+          _serverId: string,
+          _oauthAccessToken: unknown,
+          _clientCapabilities: unknown,
+          _hostedContext: unknown,
+          signal?: AbortSignal
+        ) =>
+          new Promise(() => {
+            probeSignal = signal;
+          })
+      );
+      writeDrawingScenario();
+
+      const view = render(<ScenarioChatPage />);
+
+      await waitFor(() => expect(probeSignal).toBeDefined());
+      expect(probeSignal?.aborted).toBe(false);
+
+      view.unmount();
+
+      expect(probeSignal?.aborted).toBe(true);
+    });
+
+    it("keeps a server reported connected when the probe never got to run", async () => {
+      // The request builder refuses to build until `useApiContext` has
+      // published this scenario's ids, and `/redeem` resolves before it does.
+      // Running out of attempts on that race means nothing ever reached the
+      // wire — branding the server unreachable there would show the tester a
+      // failure this session never observed and drop a healthy server from the
+      // turn, which is the same lie this probe exists to remove.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers();
+      mockValidateHostedServer.mockRejectedValue(
+        new BootstrapNotReadyError("provisioning-project")
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      // Long enough to burn every attempt the race is allowed.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+        "connected"
+      );
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+      expect(latestHostedContext()?.selectedServerIds).toEqual([
+        "srv_excalidraw",
+      ]);
+    });
+
+    it("does not wait out a second deadline after the first response is lost", async () => {
+      // The deadline sits above the route's own connect timeout, so reaching it
+      // means the response was lost rather than that the server was slow. A
+      // second full wait buys the same answer while the composer stays shut for
+      // twice as long.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers();
+      mockValidateHostedServer.mockImplementation(() => new Promise(() => {}));
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 1_000);
+      });
+
+      expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
+    });
+
+    it("re-probes a shared server when the tester opens another scenario", async () => {
+      // Opening a second link does not remount this page — the session is
+      // swapped in place — and two scenarios in one project can list the same
+      // server id. The first session's verdict used to carry over, so the
+      // second scenario reported a failure it had never observed, and the
+      // server was never probed for it at all.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      let serverIsDown = true;
+      mockValidateHostedServer.mockImplementation(async () => {
+        if (serverIsDown) {
+          throw new Error("SSE error: Non-200 status code (502)");
+        }
+        return { success: true, status: "connected", initInfo: null };
+      });
+      mockAuthFetch.mockImplementation(
+        async (_path: string, init: RequestInit) => {
+          const { scenarioToken } = JSON.parse(String(init.body)) as {
+            scenarioToken: string;
+          };
+          const scenarioId = scenarioToken === "tok_b" ? "sbx_b" : "sbx_a";
+          return createFetchResponse({
+            scenarioId,
+            accessVersion: 1,
+            bootstrap: {
+              projectId: "ws_1",
+              scenarioId,
+              name: "Drawing Scenario",
+              description: "Hosted scenario",
+              hostStyle: "cursor",
+              mode: "anyone_with_link",
+              allowGuestAccess: true,
+              viewerIsProjectMember: false,
+              systemPrompt: "You are helpful.",
+              modelId: "openai/gpt-5-mini",
+              temperature: 0.4,
+              requireToolApproval: false,
+              servers: [
+                {
+                  serverId: "srv_excalidraw",
+                  serverName: "excalidraw",
+                  useOAuth: false,
+                  serverUrl: "https://mcp.excalidraw.example/mcp",
+                  clientId: null,
+                  oauthScopes: null,
+                },
+              ],
+            },
+          });
+        }
+      );
+
+      const view = render(<ScenarioChatPage pathToken="tok_a" />);
+
+      expect(
+        await screen.findByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
+
+      serverIsDown = false;
+      window.history.replaceState({}, "", "/user-testing/other/tok_b");
+      view.rerender(<ScenarioChatPage pathToken="tok_b" />);
+
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "connected"
+        )
+      );
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+      expect(latestHostedContext()?.selectedServerIds).toEqual([
+        "srv_excalidraw",
+      ]);
+    });
+  });
+
   describe("preview surface", () => {
     it("keeps surface=preview on the session after the URL collapses to /#slug", async () => {
       window.history.replaceState(
@@ -2283,7 +3156,7 @@ describe("ScenarioChatPage", () => {
         "/user-testing/demo/scenario-token?surface=preview",
       );
 
-      render(<ScenarioChatPage pathToken="scenario-token" />);
+      const view = render(<ScenarioChatPage pathToken="scenario-token" />);
 
       expect(
         await screen.findByTestId("scenario-chat-tab"),
@@ -2292,7 +3165,11 @@ describe("ScenarioChatPage", () => {
         expect(window.location.hash).toBe("#resolved-scenario");
       });
       expect(window.location.search).toBe("");
-      expect(readScenarioSession()?.surface).toBe("preview");
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(readScenarioSession()?.surface).toBe("preview"),
+      );
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
         expect.objectContaining({
           hostedContext: expect.objectContaining({

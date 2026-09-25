@@ -7,6 +7,12 @@ import {
   journeyRunVerdictSummarySchema,
 } from "../src/contract/swarm-report.js";
 import { evalVerdictDecisionSchema } from "../src/contract/verdict-policy.js";
+import { STAGE_STATE_LABELS } from "../src/contract/decision-labels.js";
+import {
+  swarmJourneyFindingSchema,
+  swarmJourneyFindingsSchema,
+  swarmJourneyFindingsJobSchema,
+} from "../src/contract/swarm-finding.js";
 const path = new URL("../../docs/reference/openapi.json", import.meta.url);
 const original = readFileSync(path, "utf8");
 const document = JSON.parse(original);
@@ -14,6 +20,9 @@ for (const [name, schema] of Object.entries({
   SwarmSessionVerdict: swarmSessionVerdictSchema,
   JourneyRunVerdictSummary: journeyRunVerdictSummarySchema,
   SwarmReport: swarmReportSchema,
+  SwarmJourneyFinding: swarmJourneyFindingSchema,
+  SwarmJourneyFindings: swarmJourneyFindingsSchema,
+  SwarmJourneyFindingsJob: swarmJourneyFindingsJobSchema,
   EvalVerdictDecision: evalVerdictDecisionSchema,
 })) {
   const { $schema: _schema, ...component } = z.toJSONSchema(schema, {
@@ -22,18 +31,35 @@ for (const [name, schema] of Object.entries({
   document.components.schemas[name] = component;
 }
 const schemas = document.components.schemas;
-schemas.JourneyRun.properties.verdictSummary = {
+schemas.SwarmJourneyFinding.properties.chainStageState.description =
+  Object.entries(STAGE_STATE_LABELS)
+    .map(([key, label]) => "`" + key + "`: " + label)
+    .join("; ");
+schemas.SwarmJourneyFindings.properties.findings.items = {
+  $ref: "#/components/schemas/SwarmJourneyFinding",
+};
+for (const [property, name] of [
+  ["journeyFindings", "SwarmJourneyFindings"],
+  ["journeyFindingsJob", "SwarmJourneyFindingsJob"],
+]) {
+  schemas.InsightsEnvelope.properties[property] = {
+    allOf: [{ $ref: `#/components/schemas/${name}` }],
+    nullable: true,
+  };
+}
+
+schemas.GoalRun.properties.verdictSummary = {
   $ref: "#/components/schemas/JourneyRunVerdictSummary",
 };
-schemas.JourneyRun.properties.report = {
+schemas.GoalRun.properties.report = {
   $ref: "#/components/schemas/SwarmReport",
 };
-schemas.JourneyRunSession.properties.verdict = {
+schemas.GoalRunSession.properties.verdict = {
   $ref: "#/components/schemas/SwarmSessionVerdict",
 };
-schemas.JourneyRunSession.properties.outcome.description =
+schemas.GoalRunSession.properties.outcome.description =
   "Attempt execution lifecycle. Read verdict for the graded goal result.";
-schemas.JourneyRunSession.properties.criteria = {
+schemas.GoalRunSession.properties.criteria = {
   type: "object",
   required: ["status", "generation"],
   properties: {
@@ -54,7 +80,7 @@ schemas.JourneyRunSession.properties.criteria = {
     },
   },
 };
-schemas.JourneyRunSession.properties.observations = {
+schemas.GoalRunSession.properties.observations = {
   type: "array",
   items: {
     type: "object",
@@ -102,11 +128,15 @@ function endObject(text: string, start: number): number {
 }
 let output = original;
 for (const name of [
-  "JourneyRun",
-  "JourneyRunSession",
+  "GoalRun",
+  "GoalRunSession",
   "SwarmSessionVerdict",
   "JourneyRunVerdictSummary",
   "SwarmReport",
+  "SwarmJourneyFinding",
+  "SwarmJourneyFindings",
+  "SwarmJourneyFindingsJob",
+  "InsightsEnvelope",
   "EvalVerdictDecision",
 ]) {
   const marker = `      "${name}": `;

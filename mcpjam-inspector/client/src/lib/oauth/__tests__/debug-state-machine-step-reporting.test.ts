@@ -15,9 +15,18 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
   return { ...actual, createOAuthStateMachine };
 });
 
-import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "@mcpjam/sdk/browser";
+import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+  RESOURCE_METADATA_NOT_IMPLEMENTED,
+} from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
+import { authFetch } from "@/lib/session-token";
+import type { OAuthRequestExecutor } from "@mcpjam/sdk/browser";
+
+vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
 
 /**
  * Build the machine, then reach the `updateState` the adapter actually handed
@@ -35,17 +44,79 @@ function wrappedUpdateState(updateState = vi.fn(), currentStep = "metadata") {
 
   const passed = createOAuthStateMachine.mock.calls.at(-1)![0] as {
     updateState: (u: Record<string, unknown>) => void;
+    requestExecutor: OAuthRequestExecutor;
   };
-  return { wrapped: passed.updateState, updateState };
+  return { wrapped: passed.updateState, updateState, execute: passed.requestExecutor };
 }
 
 describe("OAuth debugger step-failure reporting", () => {
   beforeEach(() => {
     reportCaught.mockReset();
     createOAuthStateMachine.mockClear();
+    vi.mocked(authFetch).mockReset();
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("adds the failed metadata URL to the existing report without sending credentials", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify({
+      error: "unable to verify the first certificate",
+    }), { status: 500, statusText: "Internal Server Error" }));
+    const failure = await execute({
+      url: "https://user:password@metadata.example/well-known/resource?token=secret#private",
+      method: "GET",
+      headers: { Authorization: "Bearer secret-header" },
+      body: "secret-body",
+    }).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(reportCaught).not.toHaveBeenCalled();
+    wrapped({ httpHistory: [] });
+    wrapped({ error: (failure as Error).message });
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    expect(reportCaught.mock.calls[0][1].extra).toMatchObject({
+      requestUrl: "https://metadata.example",
+      requestMethod: "GET",
+      proxyStatus: 500,
+    });
+    expect(reportCaught.mock.calls[0][0].message).toContain("unable to verify the first certificate");
+    expect(JSON.stringify(reportCaught.mock.calls)).not.toMatch(/password|secret|private/);
+    wrapped({ error: "unrelated step failure" });
+    expect(reportCaught.mock.calls[1][1].extra).not.toHaveProperty("requestUrl");
+  });
+
+  it("omits tokens embedded in the request path from diagnostics", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response("TLS failure", { status: 500 }));
+    await expect(execute({
+      url: "https://metadata.example:8443/secret-path-token/resource",
+      method: "GET",
+      headers: {},
+    })).rejects.toThrow();
+    wrapped({ error: "metadata request failed" });
+    expect(reportCaught.mock.calls[0][1].extra.requestUrl).toBe("https://metadata.example:8443");
+    expect(JSON.stringify(reportCaught.mock.calls)).not.toContain("secret-path-token");
+  });
+
+  it("clears failed request context when a later request succeeds", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(new Response("failure", { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 200, headers: {}, body: {} })));
+    const request = { url: "https://example.test/metadata", method: "GET", headers: {} };
+    await expect(execute(request)).rejects.toThrow();
+    await execute(request);
+    wrapped({ error: "metadata is missing required fields" });
+    expect(reportCaught.mock.calls[0][1].extra).not.toHaveProperty("requestUrl");
+  });
+
+  it("does not leak a malformed URL into telemetry", async () => {
+    const { wrapped, execute } = wrappedUpdateState();
+    vi.mocked(authFetch).mockResolvedValue(new Response("invalid URL", { status: 400 }));
+    await expect(execute({ url: "password=secret", method: "GET", headers: {} })).rejects.toThrow();
+    wrapped({ error: "metadata request failed" });
+    expect(reportCaught.mock.calls[0][1].extra.requestUrl).toBe("[invalid URL]");
+  });
 
   it("attributes the report to the step the update moves TO", () => {
     const { wrapped } = wrappedUpdateState(vi.fn(), "metadata");
@@ -139,6 +210,27 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenCalledWith(serverFault);
   });
 
+  it("ignores an authorization server that offers no dynamic registration", () => {
+    // The server under test advertises no registration_endpoint and the user
+    // configured no pre-registered client to fall back to. That is a setup the
+    // debugger exists to surface, not an MCPJam fault, so the toast stands on
+    // its own and nothing reaches Sentry.
+    const { wrapped, updateState } = wrappedUpdateState(
+      vi.fn(),
+      "register_client",
+    );
+
+    for (const error of [
+      REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+      REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
+    ]) {
+      wrapped({ error });
+      expect(updateState).toHaveBeenCalledWith({ error });
+    }
+
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
   it("ignores an authenticated request failure from the server under test", () => {
     const { wrapped, updateState } = wrappedUpdateState(
       vi.fn(),
@@ -153,6 +245,60 @@ describe("OAuth debugger step-failure reporting", () => {
 
     expect(reportCaught).not.toHaveBeenCalled();
     expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
+  // INSPECTOR-CLIENT-2F9: 18 events, 4 users, escalating — every one a third
+  // party's missing metadata document filed as an MCPJam error. RFC 9728 is
+  // required from 2025-06-18 onward, so a resource without one is
+  // nonconforming, which is precisely what the debugger is for.
+  it("ignores a resource server that publishes no protected-resource metadata", () => {
+    const { wrapped, updateState } = wrappedUpdateState(
+      vi.fn(),
+      "request_resource_metadata",
+    );
+    // The wrapped form the machines actually put into flow state.
+    const serverFailure = {
+      error: `Failed to request resource metadata: ${RESOURCE_METADATA_NOT_IMPLEMENTED}`,
+    };
+
+    wrapped(serverFailure);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
+  it("ignores the bare form of the same failure", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({ error: RESOURCE_METADATA_NOT_IMPLEMENTED });
+
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  // Deliberately narrow: the other ways the request can fail may be OURS — the
+  // hosted fetch path breaking surfaces here too — so they must keep reporting.
+  it("still reports a resource-metadata request that failed some other way", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({
+      error:
+        "Failed to request resource metadata: HTTP 500 trying to load well-known OAuth protected resource metadata.",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  // No response at all is a transport failure — our proxy being unreachable
+  // looks exactly like this — so it is not the server's missing document.
+  it("still reports a resource-metadata request that got no response", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_resource_metadata");
+
+    wrapped({
+      error:
+        "Failed to request resource metadata: No response while loading OAuth protected resource metadata.",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
   });
 
   it("still reports a real failure that follows a warning", () => {

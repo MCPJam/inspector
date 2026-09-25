@@ -193,6 +193,9 @@ export type JudgeSecondPassIterationRow = {
     caseType?: string;
     steps?: readonly TestStep[];
     promptTurns?: ReadonlyArray<{ expectedToolCalls?: readonly unknown[] }>;
+    /** Legacy turn sources `resolveCasePromptTurns` falls back to. */
+    query?: string;
+    advancedConfig?: unknown;
   };
   /**
    * The backend's OWN derived shape, still served beside the raw case for D7's
@@ -298,6 +301,7 @@ export async function markJudgeStageFanout(report: {
   goalCompletionJobId: string | number;
   outcomes: Array<{ iterationId: string; outcome: JudgeDerivationOutcome }>;
   failed?: boolean;
+  noop?: boolean;
 }): Promise<{ outcome: string }> {
   return await postJson<{ outcome: string }>("/runs/judge-stage-fanout", {
     ...report,
@@ -351,6 +355,7 @@ export async function markMetadataAttributionStageFanout(report: {
   metadataAttributionJobId: string | number;
   outcomes: Array<{ iterationId: string; outcome: JudgeDerivationOutcome }>;
   failed?: boolean;
+  noop?: boolean;
 }): Promise<{ outcome: string }> {
   return await postJson<{ outcome: string }>(
     "/runs/metadata-attribution-stage-fanout",

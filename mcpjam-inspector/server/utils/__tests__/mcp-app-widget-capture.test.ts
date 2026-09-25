@@ -318,6 +318,31 @@ describe("captureMcpAppWidgetSnapshots — skipToolCallIds", () => {
     expect(readResource).toHaveBeenCalledTimes(1);
     expect(snapshots?.[0]?.widgetHtmlBlobId).toBe("html-1");
   });
+
+  test("uploads the widget HTML as text, never as text/html", async () => {
+    const { manager } = makeManager();
+    const { client } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn(async () => okJson({ storageId: "html-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await captureMcpAppWidgetSnapshots({
+      messages: widgetToolMessages("call-1"),
+      mcpClientManager: manager,
+      convexClient: client,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "text/plain; charset=utf-8",
+    );
+    const body = init.body as Blob;
+    expect(body.type).toBe("text/plain; charset=utf-8");
+    expect(await body.text()).toBe("<html>widget</html>");
+  });
 });
 
 // INSPECTOR-CLIENT-227: tool `_meta` arrives verbatim from the connected

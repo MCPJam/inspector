@@ -514,7 +514,7 @@ List the built-in templates usable with `mcpjam cloud clients create --template`
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-Clients that exist only as the private backing of a User Testing scenario are
+Clients that exist only as the private backing of a study are
 omitted, matching the Clients tab.
 
 ### `cloud clients get`
@@ -525,7 +525,7 @@ omitted, matching the Clients tab.
 | `--project <id-or-name>` | No | Project name or ID |
 
 Returns the resolved config, the `configId` every edit takes, and `impact` — the
-live environments, scenario attachments and active legacy journeys a config edit
+live environments, study attachments and active goals a config edit
 would follow.
 
 ### `cloud clients create`
@@ -619,7 +619,7 @@ This REPLACES the server set: every server you leave out is detached.
 
 ## `cloud environments` commands
 
-Manage **project environments** in your hosted MCPJam projects. A project environment is a named, live-editable execution bundle — one host, optionally a standalone server group, optionally a pinned skill selection and pinned plugin versions — that eval suites and journeys run against.
+Manage **project environments** in your hosted MCPJam projects. A project environment is a named, live-editable execution bundle — one host, optionally a standalone server group, optionally a pinned skill selection and pinned plugin versions — that eval suites and goals run against.
 
 <Note>
 A project environment is not a Computer sandbox image (those are `mcpjam cloud images`), and not the STDIO environment variables you pass with `--env`.
@@ -1028,7 +1028,7 @@ Stop the local Inspector if it is running.
 
 ## `cloud tunnel`
 
-Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and scenarios can target it. Requires an `sk_` API key or a prior `mcpjam cloud login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
+Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and studies can target it. Requires an `sk_` API key or a prior `mcpjam cloud login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
 
 ```bash
 # HTTP target
@@ -2409,6 +2409,26 @@ AI-generate test cases from the suite's tools. Included with MCPJam; no customer
 | `--negative <n>` | No | How many negative (no-tool) cases |
 | `--vary-user-styles` | No | Vary query phrasing across a realistic range of user styles |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
+
+#### `cloud eval cases import`
+
+Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
+
+Cases the model could not finish are not created. They come back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts so a person can complete them. To fix one, import only that case's corrected text — re-sending the whole document authors and bills every case in it again.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | One of | Document to import (`-` reads stdin) |
+| `--content <text>` | One of | Document text, instead of `--file` |
+| `--file-name <name>` | No | Name recorded on each case's source (default: `--file`'s basename) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
+| `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
+| `--case-model <id...>` | No | Execution model(s) for the imported cases |
+| `--duplicate-policy <block\|warn\|create_anyway>` | No | What to do with a case that already exists (default `block`) |
+| `--override-reason <text>` | No | Why importing a duplicate is intended (required by `warn` / `create_anyway`) |
+| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
 
 ---
 

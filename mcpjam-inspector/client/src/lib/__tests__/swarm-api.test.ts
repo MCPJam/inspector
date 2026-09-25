@@ -19,6 +19,7 @@ import type {
   JourneyRollup,
   JourneySessionRow,
 } from "@/lib/swarm-api";
+import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -56,6 +57,41 @@ describe("launchJourneyRun", () => {
       projectId: "proj-1",
       launchKey: "lk-abc",
     });
+  });
+
+  it("puts the per-run iterations override on the wire", async () => {
+    // The whole chain — confirm step, launchJourney, this function, the REST
+    // route, the backend validator — is spread across two repos and four
+    // hops, and a field dropped at any of them fails silently: the run just
+    // uses the journey's own fan-out. Assert the body, not the call.
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-3" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+
+    expect(JSON.parse(authFetchMock.mock.calls[0]![1].body)).toEqual({
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+  });
+
+  it("omits the override when the caller did not choose one", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-4" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-plain",
+    });
+
+    expect(
+      JSON.parse(authFetchMock.mock.calls[0]![1].body)
+    ).not.toHaveProperty("sessionsPerTarget");
   });
 
   it("url-encodes the journeyId path segment", async () => {
@@ -506,10 +542,14 @@ describe("generateSwarmPersonaBatch — sign-in refusal", () => {
       message: "Sign in to generate personas and journeys.",
       details: { ok: false, code: "sign_in_required", feature: "swarm generation" },
     });
-    expect(err.signInRequired).toBe(true);
+    // Asserted through the consumer's question rather than a field on the
+    // class: `signInRemedyMessage` is the one owner of "is this a sign-in
+    // refusal", so a class that stopped carrying the envelope would fail here
+    // even while every field it does carry still looked right.
+    expect(signInRemedyMessage(err)).toBe(
+      "Sign in to generate personas and journeys.",
+    );
     expect(err.status).toBe(403);
-    // The backend's own copy reaches the surface verbatim.
-    expect(err.message).toBe("Sign in to generate personas and journeys.");
   });
 
   it("survives the `normalized` block the real proxy always attaches", async () => {
@@ -517,20 +557,33 @@ describe("generateSwarmPersonaBatch — sign-in refusal", () => {
     // `handleRoute` runs every route error through `mapRuntimeError`, which
     // backfills `normalized`, and `webErrorFromRoute` serializes it — so on the
     // response a guest actually receives, `normalized` is ALWAYS there. With
-    // the sign-in check below that branch, this threw `WebApiError` instead,
-    // and the create flow — which recognized the refusal only on
-    // `SwarmGenerateError` — drew the generic error card.
+    // the sign-in check below that branch, this threw `WebApiError` instead.
+    //
+    // Every field below is load-bearing: `isNormalizedError` is a full
+    // structural check (slug, oneLine, docsAnchor, severity, rawMessage and
+    // both arrays), and a fixture missing any one of them leaves `normalized`
+    // undefined — which is a test that passes whichever order the branches are
+    // in, and so pins nothing. The assertion that sees the ordering is the
+    // CLASS one inside `refusalFrom`: both classes now carry the envelope, so
+    // `signInRemedyMessage` answers the same either way.
     const err = await refusalFrom({
       code: "UNAUTHORIZED",
       message: "Sign in to generate personas and journeys.",
       details: { ok: false, code: "SIGN_IN_REQUIRED" },
       normalized: {
+        slug: "unauthorized",
         title: "Sign in to generate personas and journeys.",
-        detail: "Sign in to generate personas and journeys.",
+        oneLine: "Sign in to generate personas and journeys.",
+        docsAnchor: "#unauthorized",
+        severity: "error",
+        rawMessage: "Sign in to generate personas and journeys.",
+        likelyCauses: [],
+        nextSteps: [],
       },
     });
-    expect(err.signInRequired).toBe(true);
-    expect(err.message).toBe("Sign in to generate personas and journeys.");
+    expect(signInRemedyMessage(err)).toBe(
+      "Sign in to generate personas and journeys.",
+    );
   });
 
   it("does NOT flag a 403 that signing in cannot fix", async () => {
@@ -538,6 +591,6 @@ describe("generateSwarmPersonaBatch — sign-in refusal", () => {
       code: "FORBIDDEN",
       message: "You are not a member of this project.",
     });
-    expect(err.signInRequired).toBe(false);
+    expect(signInRemedyMessage(err)).toBeNull();
   });
 });

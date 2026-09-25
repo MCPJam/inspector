@@ -3,6 +3,7 @@ import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
 import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
+import { WIDGET_HTML_STORAGE_CONTENT_TYPE } from "@/shared/widget-snapshot";
 import { logger } from "./logger";
 import { injectOpenAICompat } from "./widget-helpers.js";
 
@@ -250,9 +251,11 @@ async function uploadWidgetHtmlBlob(
     return undefined;
   }
 
+  // Text, not `text/html` — see WIDGET_HTML_STORAGE_CONTENT_TYPE.
   const response = await fetch(uploadUrl, {
     method: "POST",
-    body: new Blob([html], { type: "text/html" }),
+    headers: { "Content-Type": WIDGET_HTML_STORAGE_CONTENT_TYPE },
+    body: new Blob([html], { type: WIDGET_HTML_STORAGE_CONTENT_TYPE }),
   });
 
   if (!response.ok) {

@@ -22,6 +22,20 @@ import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
+  PlatformGoal,
+  PlatformGoalArchived,
+  PlatformGoalRun,
+  PlatformGoalRunCanceled,
+  PlatformGoalRunLaunched,
+  PlatformGoalRunSession,
+  PlatformStudy,
+  PlatformStudyDeleted,
+  PlatformStudyDetail,
+  PlatformStudyInsightsRequested,
+  PlatformStudySession,
+  PlatformStudySessionDetail,
+  PlatformStudySummary,
+  PlatformStudyUpdated,
   PlatformChatSession,
   PlatformChatSessionDetail,
   PlatformChatSessionTrace,
@@ -54,6 +68,7 @@ import type {
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
+  PlatformEvalCasesImported,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
   PlatformEvalVerdictPolicyDefaults,
@@ -97,6 +112,9 @@ import type {
   PlatformSwarmArchived,
   PlatformSwarmFinding,
   PlatformSwarmOverview,
+  PlatformSwarmRunInsights,
+  PlatformSwarmRunInsightsCanceled,
+  PlatformSwarmRunInsightsRequested,
   PlatformWaveInsights,
   PlatformWaveInsightsCanceled,
   PlatformWaveInsightsRequested,
@@ -235,6 +253,31 @@ export interface PlatformApiClientOptions {
    */
   evalVocabulary?: 1 | 2;
   /**
+   * Which spelling this client reads the public API's resource-noun VALUES in
+   * (`docs/public-api-vocabulary-consolidation.md`).
+   *
+   * `1` (the default, and what an omitted option means) is byte-for-byte the
+   * documented contract: a session's `sourceType` is `"scenario"`, a share's
+   * `resourceType` is `"scenario"`, and a session's `parentRef.kind` is
+   * `"scenario"` or `"journeyRun"`. `2` sends
+   * `x-mcpjam-api-vocabulary: 2` on EVERY request, under which those read
+   * `"study"`, `"study"`, and `"study"`/`"goalRun"` — the spellings the rest
+   * of the API already uses.
+   *
+   * A VALUE is why this exists at all. Operation names, routes, types and
+   * field names each moved behind a deprecated alias, because a caller reaches
+   * them by a name it chose. `sourceType` is one field with one string in it,
+   * and a client switching on `"scenario"` has no second name to fall back to.
+   *
+   * OPT IN, never inferred, for the same reason as the eval header: a
+   * deployment that predates the negotiation ignores it and answers in
+   * vocabulary 1, which a caller expecting 2 would then misread. Read
+   * `getProjectCapabilities().apiVocabulary` first.
+   *
+   * Applied after `extraHeaders`, like every header this client owns.
+   */
+  apiVocabulary?: 1 | 2;
+  /**
    * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
    *
    * The platform stamps a run's `source` itself, and everything arriving over
@@ -323,6 +366,31 @@ export const RUN_LAUNCH_HEADERS = {
  * predates the negotiation ignores it — see {@link PlatformApiClientOptions.evalVocabulary}.
  */
 export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
+
+/**
+ * The resource-noun VALUE negotiation, `routes/v1/api-vocabulary.ts`.
+ *
+ * A SEPARATE header from the eval one, which is eval-scoped by name and moves
+ * on its own schedule. Sent only when the client was constructed with
+ * `apiVocabulary: 2`; absent means vocabulary 1, and a server that predates
+ * the negotiation ignores it — see
+ * {@link PlatformApiClientOptions.apiVocabulary}.
+ */
+export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
+
+/**
+ * `study` → `scenario`, the stored spelling, before a noun VALUE goes on the
+ * wire.
+ *
+ * The share and session methods take either spelling, but the server accepts
+ * `study` only under vocabulary 2 — vocabulary 1 deliberately refuses it (a
+ * 404 on a share path, a 400 on a session filter). `scenario` is accepted
+ * under both, so sending it works whichever vocabulary this client speaks.
+ * Responses are unaffected: they follow the negotiated header.
+ */
+function storedNounValue(value: string): string {
+  return value === "study" ? "scenario" : value;
+}
 
 /**
  * The API boundary's own caps, mirrored here.
@@ -611,6 +679,8 @@ export class PlatformApiClient {
   private readonly launchHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
+  /** The noun-value vocabulary every request declares; `1` sends no header. */
+  private readonly apiVocabulary: 1 | 2;
   /**
    * The options this client was built from, kept so {@link withEvalVocabulary}
    * can derive a sibling that differs in exactly one thing. Never mutated.
@@ -620,6 +690,7 @@ export class PlatformApiClient {
   constructor(options: PlatformApiClientOptions) {
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
+    this.apiVocabulary = options.apiVocabulary ?? 1;
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
@@ -632,8 +703,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-        : DEFAULT_PLATFORM_USER_AGENT;
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -663,6 +734,22 @@ export class PlatformApiClient {
     return new PlatformApiClient({
       ...this.constructorOptions,
       evalVocabulary: vocabulary,
+    });
+  }
+
+  /**
+   * The same step for the resource-noun values.
+   *
+   * Separate from {@link withEvalVocabulary} because the two negotiations are
+   * separate: a caller may speak vocabulary 2 for eval authoring and 1 for the
+   * nouns, or the reverse, and a deployment may advertise one without the
+   * other. Chaining both is `.withEvalVocabulary(2).withApiVocabulary(2)`.
+   */
+  withApiVocabulary(vocabulary: 1 | 2): PlatformApiClient {
+    if (vocabulary === this.apiVocabulary) return this;
+    return new PlatformApiClient({
+      ...this.constructorOptions,
+      apiVocabulary: vocabulary,
     });
   }
 
@@ -773,8 +860,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -1335,7 +1422,7 @@ export class PlatformApiClient {
           q: params.q,
           scope: params.scope,
           sourceType: params.sourceTypes?.length
-            ? params.sourceTypes.join(",")
+            ? params.sourceTypes.map(storedNounValue).join(",")
             : undefined,
           status: params.status,
           limit: params.limit,
@@ -1346,6 +1433,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link listStudies}. Calls the deprecated `/scenarios` alias. */
   listScenarios(
     params: { projectId: string },
     options?: RequestOptions
@@ -1358,6 +1446,11 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getStudy}, which also returns the environment id and
+   * the insights envelope. Calls the deprecated `/scenarios/{id}` alias, which
+   * carries neither.
+   */
   getScenario(
     params: { projectId: string; scenarioId: string },
     options?: RequestOptions
@@ -3445,7 +3538,7 @@ export class PlatformApiClient {
     );
   }
 
-  generateEvalCases(
+  async generateEvalCases(
     params: {
       projectId: string;
       suiteId: string;
@@ -3453,13 +3546,107 @@ export class PlatformApiClient {
     },
     options?: RequestOptions
   ): Promise<PlatformEvalCasesGenerated> {
-    return this.request(
+    const started = await this.request<
+      PlatformEvalCasesGenerated & { jobId?: string }
+    >(
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/generate`,
       { body: params.body },
       options
+    );
+    return this.awaitAuthoringJob(params, started, {}, "Generation", options);
+  }
+
+  /**
+   * AI-author eval cases from a document the caller supplies, then persist the
+   * ones that came back clean.
+   *
+   * Shares the authoring job with generation, so the reply is the same shape:
+   * `created` for the cases that landed, `skipped` for drafts the model could
+   * not finish, and `reviewUrl` to hand a person the unfinished ones.
+   */
+  async importEvalCases(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCasesImported> {
+    const { duplicatePolicy, overrideReason } = params.body as {
+      duplicatePolicy?: string;
+      overrideReason?: string;
+    };
+    const started = await this.request<
+      PlatformEvalCasesImported & { jobId?: string }
+    >(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/import`,
+      { body: params.body },
+      options
+    );
+    return this.awaitAuthoringJob(
+      params,
+      started,
+      {
+        ...(duplicatePolicy ? { duplicatePolicy } : {}),
+        ...(overrideReason ? { overrideReason } : {}),
+      },
+      "Import",
+      options
+    );
+  }
+
+  /**
+   * Follow an authoring job to its end and commit it.
+   *
+   * The start call answers 202 with a job id whenever the work outran the
+   * route's own short wait, so both authoring entry points have to poll. The
+   * refusal on timeout names the job id deliberately: starting a second job
+   * re-authors and re-bills every case in the document.
+   */
+  private async awaitAuthoringJob<T>(
+    params: { projectId: string; suiteId: string },
+    started: T & { jobId?: string },
+    commitBody: Record<string, unknown>,
+    label: string,
+    options?: RequestOptions
+  ): Promise<T> {
+    if (!started.jobId) return started;
+    const jobPath = `/projects/${encodeURIComponent(
+      params.projectId
+    )}/eval-suites/${encodeURIComponent(
+      params.suiteId
+    )}/authoring/${encodeURIComponent(started.jobId)}`;
+    const deadline = Date.now() + 10 * 60_000;
+    while (Date.now() < deadline) {
+      options?.signal?.throwIfAborted();
+      const status = await this.request<{ status: string; error?: string }>(
+        "GET",
+        jobPath,
+        {},
+        options
+      );
+      if (status.status === "completed") {
+        return this.request(
+          "POST",
+          `${jobPath}/commit`,
+          { body: commitBody },
+          options
+        );
+      }
+      if (status.status !== "pending")
+        throw new Error(status.error ?? `${label} ${status.status}.`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error(
+      `${label} is still running. Resume authoring job ${
+        started.jobId
+      }; do not start another ${label.toLowerCase()}.`
     );
   }
 
@@ -3663,6 +3850,279 @@ export class PlatformApiClient {
   // journey or run id belonging to another of your projects reads as 404
   // rather than crossing over.
 
+  // ── Goals ───────────────────────────────────────────────────────────────
+  //
+  // What a swarm executes. The `*Journey*` methods below are DEPRECATED
+  // compatibility delegates: they keep calling the `/journeys` and
+  // `/journey-runs` routes and keep returning their `PlatformJourney*` shapes,
+  // which spell the owning id `journeyId`, the batch `waveId` and the
+  // per-target count `sessionsPerTarget`. Removed at GA.
+
+  listGoals(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformGoal>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/goals`,
+      {},
+      options
+    );
+  }
+
+  listGoalRuns(
+    params: {
+      projectId: string;
+      goalId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformGoalRun>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}/runs`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getGoalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoalRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options
+    );
+  }
+
+  listGoalRunSessions(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformGoalRunSession>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * Launch a goal. Returns as soon as the run exists — **202**, not a
+   * finished run: a fan-out can take hours, so poll `getGoalRun` or watch
+   * `listGoalRunSessions`.
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, and you want to pass one. A launch
+   * spends model credits, so a retry after a dropped response must not run the
+   * goal twice; replaying a key returns the ORIGINAL run with
+   * `deduped: true`. Omit it and every call starts a new run — the server has
+   * nothing to match a retry against, so it treats each as a new launch.
+   *
+   * Behind the `sandboxes-enabled` beta flag — launching creates exposure and
+   * spend, so an unflagged organization gets a 403 here.
+   */
+  launchGoalRun(
+    params: {
+      projectId: string;
+      goalId: string;
+      swarmRunId?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGoalRunLaunched> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}/runs`,
+      {
+        body: {
+          ...(params.swarmRunId ? { swarmRunId: params.swarmRunId } : {}),
+          ...(params.environmentIds?.length
+            ? { environmentIds: params.environmentIds }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Stop a running goal run.
+   *
+   * Idempotent: cancelling an already-cancelled run succeeds with
+   * `alreadyCanceled: true` rather than conflicting. A run that finished on
+   * its own is a 409 — reporting success there would tell you that you stopped
+   * something that had already completed.
+   *
+   * NOT behind the beta flag, unlike launching: stopping a run must keep
+   * working for an organization that has lost it.
+   */
+  cancelGoalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoalRunCanceled> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  getGoal(
+    params: { projectId: string; goalId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoal> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}`,
+      {},
+      options
+    );
+  }
+
+  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  createGoal(
+    params: {
+      projectId: string;
+      goal: string;
+      personaId: string;
+      iterations: number;
+      maxTurns: number;
+      setupWrites?: boolean;
+      name?: string;
+      swarmId?: string;
+      environmentIds?: string[];
+      serverAttachmentId?: string;
+      hostIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGoal> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/goals`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * `null` CLEARS a field; omitting it leaves it alone. That tri-state is the
+   * only way to say "stop fanning this goal out across environments".
+   *
+   * `iterations` and `maxTurns` must move together — they are one
+   * config object upstream, so a partial update would need a read-modify-write
+   * that could silently clobber a concurrent edit.
+   */
+  updateGoal(
+    params: {
+      projectId: string;
+      goalId: string;
+      name?: string;
+      goal?: string;
+      environmentIds?: string[] | null;
+      serverAttachmentId?: string | null;
+      hostIds?: string[];
+      iterations?: number;
+      maxTurns?: number;
+      setupWrites?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGoal> {
+    const { projectId, goalId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(
+        goalId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * ARCHIVES the goal. Its runs, sessions and scorecards stay readable —
+   * deleting the results of work that already happened is not what anyone
+   * means by removing a goal from their list.
+   */
+  archiveGoal(
+    params: { projectId: string; goalId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGoalArchived> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goals/${encodeURIComponent(params.goalId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft goals for a persona. The persona is passed BY VALUE, not by id:
+   * the create flow drafts a persona and its goals before either exists,
+   * so requiring a saved persona would force you to keep a draft you may
+   * discard. Nothing is saved here either.
+   */
+  generateGoals(
+    params: {
+      projectId: string;
+      persona: { name: string; role: string; notes?: string };
+      serverAttachmentId?: string;
+      environmentId?: string;
+      goalCount?: number;
+      description?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGenerationDrafts> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/goals/generate`,
+      { body },
+      options
+    );
+  }
+
+  getGoalRunScorecard(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformRunScorecard> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/goal-runs/${encodeURIComponent(params.runId)}/scorecard`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * @deprecated Use {@link listGoals}. Calls the deprecated `/journey` route.
+   */
   listJourneys(
     params: { projectId: string },
     options?: RequestOptions
@@ -3675,6 +4135,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link listGoalRuns}. Calls the deprecated `/journey` route.
+   */
   listJourneyRuns(
     params: {
       projectId: string;
@@ -3694,6 +4157,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getGoalRun}. Calls the deprecated `/journey` route.
+   */
   getJourneyRun(
     params: { projectId: string; runId: string },
     options?: RequestOptions
@@ -3708,6 +4174,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link listGoalRunSessions}. Calls the deprecated `/journey` route.
+   */
   listJourneyRunSessions(
     params: {
       projectId: string;
@@ -3740,6 +4209,8 @@ export class PlatformApiClient {
    *
    * Behind the `sandboxes-enabled` beta flag — launching creates exposure and
    * spend, so an unflagged organization gets a 403 here.
+   *
+   * @deprecated Use {@link launchGoalRun}. Calls the deprecated `/journey` route.
    */
   launchJourneyRun(
     params: {
@@ -3777,6 +4248,8 @@ export class PlatformApiClient {
    *
    * NOT behind the beta flag, unlike launching: stopping a run must keep
    * working for an organization that has lost it.
+   *
+   * @deprecated Use {@link cancelGoalRun}. Calls the deprecated `/journey` route.
    */
   cancelJourneyRun(
     params: { projectId: string; runId: string },
@@ -4174,7 +4647,7 @@ export class PlatformApiClient {
       endpointUrl: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
       includeContent?: boolean;
       projectIds?: string[];
       compression?: "gzip" | "none";
@@ -4213,7 +4686,7 @@ export class PlatformApiClient {
       endpointUrl?: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
       includeContent?: boolean;
       projectIds?: string[];
       allProjects?: boolean;
@@ -4350,6 +4823,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getGoal}. Calls the deprecated `/journey` route.
+   */
   getJourney(
     params: { projectId: string; journeyId: string },
     options?: RequestOptions
@@ -4365,6 +4841,9 @@ export class PlatformApiClient {
   }
 
   /** IDEMPOTENT ON `options.idempotencyKey`. */
+  /**
+   * @deprecated Use {@link createGoal}. Calls the deprecated `/journey` route.
+   */
   createJourney(
     params: {
       projectId: string;
@@ -4397,6 +4876,8 @@ export class PlatformApiClient {
    * `sessionsPerTarget` and `maxTurns` must move together — they are one
    * config object upstream, so a partial update would need a read-modify-write
    * that could silently clobber a concurrent edit.
+   *
+   * @deprecated Use {@link updateGoal}. Calls the deprecated `/journey` route.
    */
   updateJourney(
     params: {
@@ -4428,6 +4909,8 @@ export class PlatformApiClient {
    * ARCHIVES the journey. Its runs, sessions and scorecards stay readable —
    * deleting the results of work that already happened is not what anyone
    * means by removing a journey from their list.
+   *
+   * @deprecated Use {@link archiveGoal}. Calls the deprecated `/journey` route.
    */
   archiveJourney(
     params: { projectId: string; journeyId: string },
@@ -4469,12 +4952,17 @@ export class PlatformApiClient {
     );
   }
 
-  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  /**
+   * IDEMPOTENT ON `options.idempotencyKey`.
+   *
+   * `iterations` is the per-target session count. The route also accepts the
+   * pre-rename `sessionsPerTarget` — this method sends the canonical one.
+   */
   createSwarm(
     params: {
       projectId: string;
       name: string;
-      sessionsPerTarget: number;
+      iterations: number;
       maxTurns: number;
       setupWrites?: boolean;
       description?: string;
@@ -4498,7 +4986,7 @@ export class PlatformApiClient {
       name?: string;
       description?: string | null;
       environmentIds?: string[] | null;
-      sessionsPerTarget?: number;
+      iterations?: number;
       maxTurns?: number;
       setupWrites?: boolean;
     },
@@ -4516,7 +5004,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * ARCHIVES the container. Journeys authored under it keep working and keep
+   * ARCHIVES the container. Goals authored under it keep working and keep
    * their `swarmId` — the reference is authoring provenance, not ownership.
    */
   archiveSwarm(
@@ -4567,6 +5055,8 @@ export class PlatformApiClient {
    * the create flow drafts a persona and its journeys before either exists,
    * so requiring a saved persona would force you to keep a draft you may
    * discard. Nothing is saved here either.
+   *
+   * @deprecated Use {@link generateGoals}. Calls the deprecated `/journey` route.
    */
   generateJourneys(
     params: {
@@ -4602,12 +5092,15 @@ export class PlatformApiClient {
   ): Promise<PlatformSwarmOverview> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/journeys-overview`,
+      `/projects/${encodeURIComponent(params.projectId)}/goals-overview`,
       {},
       options
     );
   }
 
+  /**
+   * @deprecated Use {@link getGoalRunScorecard}. Calls the deprecated `/journey` route.
+   */
   getJourneyRunScorecard(
     params: { projectId: string; runId: string },
     options?: RequestOptions
@@ -4628,7 +5121,7 @@ export class PlatformApiClient {
   ): Promise<PlatformPage<PlatformSwarmFinding>> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/journey-findings`,
+      `/projects/${encodeURIComponent(params.projectId)}/goal-findings`,
       {},
       options
     );
@@ -4642,7 +5135,7 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/journey-findings/${encodeURIComponent(params.findingId)}/dismiss`,
+      )}/goal-findings/${encodeURIComponent(params.findingId)}/dismiss`,
       {},
       options
     );
@@ -4656,12 +5149,72 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/journey-findings/${encodeURIComponent(params.findingId)}/undismiss`,
+      )}/goal-findings/${encodeURIComponent(params.findingId)}/undismiss`,
       {},
       options
     );
   }
 
+  getSwarmRunInsights(
+    params: { projectId: string; swarmRunId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmRunInsights> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarm-runs/${encodeURIComponent(params.swarmRunId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Request an LLM pass over a swarm run. Answers **202** — generation is
+   * scheduled, not done; poll `getSwarmRunInsights`.
+   *
+   * SPENDS against the org's `insightsPerDay` ledger, which is SHARED with
+   * user-testing window insights. `force` regenerates over a swarm run that
+   * already has insights and spends again; the usual reason to reach for it is
+   * a caller that did not poll.
+   */
+  requestSwarmRunInsights(
+    params: { projectId: string; swarmRunId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmRunInsightsRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarm-runs/${encodeURIComponent(params.swarmRunId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /**
+   * Cancel an in-flight generation. The recovery path when a request was made
+   * by mistake or its runner went silent — without it a swarm run stuck
+   * `pending` can only be re-requested with `force`, which spends again.
+   */
+  cancelSwarmRunInsights(
+    params: { projectId: string; swarmRunId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSwarmRunInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/swarm-runs/${encodeURIComponent(params.swarmRunId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * @deprecated Use {@link getSwarmRunInsights}. Calls the deprecated `/waves`
+   * route, which answers with `waveId`.
+   */
   getWaveInsights(
     params: { projectId: string; waveId: string },
     options?: RequestOptions
@@ -4677,13 +5230,8 @@ export class PlatformApiClient {
   }
 
   /**
-   * Request an LLM pass over a wave. Answers **202** — generation is
-   * scheduled, not done; poll `getWaveInsights`.
-   *
-   * SPENDS against the org's `insightsPerDay` ledger, which is SHARED with
-   * user-testing window insights. `force` regenerates over a wave that already
-   * has insights and spends again; the usual reason to reach for it is a
-   * caller that did not poll.
+   * @deprecated Use {@link requestSwarmRunInsights}. Calls the deprecated
+   * `/waves` route.
    */
   requestWaveInsights(
     params: { projectId: string; waveId: string; force?: boolean },
@@ -4700,9 +5248,8 @@ export class PlatformApiClient {
   }
 
   /**
-   * Cancel an in-flight generation. The recovery path when a request was made
-   * by mistake or its runner went silent — without it a wave stuck `pending`
-   * can only be re-requested with `force`, which spends again.
+   * @deprecated Use {@link cancelSwarmRunInsights}. Calls the deprecated
+   * `/waves` route.
    */
   cancelWaveInsights(
     params: { projectId: string; waveId: string },
@@ -4752,6 +5299,7 @@ export class PlatformApiClient {
    * `overridesIgnored: true`) — changing an existing scenario is
    * `updateUserTestingScenario`.
    */
+  /** @deprecated Use {@link publishStudy}. Calls the deprecated `/scenario` alias. */
   publishScenario(
     params: {
       projectId: string;
@@ -4785,6 +5333,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link unpublishStudy}. Calls the deprecated `/scenario` alias. */
   unpublishScenario(
     params: { projectId: string; environmentId: string },
     options?: RequestOptions
@@ -4799,7 +5348,429 @@ export class PlatformApiClient {
     );
   }
 
-  // ── User testing ────────────────────────────────────────────────────────
+  // ── Studies ─────────────────────────────────────────────────────────────
+  //
+  // A **study** is the product noun: one project environment published for
+  // outside testers. `publishStudy` creates one (keyed by environment, because
+  // the study does not exist yet); everything else here is keyed by the study.
+  //
+  // The `listScenarios`/`getScenario` reads above and the `*UserTestingScenario`
+  // methods below are DEPRECATED compatibility delegates. They keep calling the
+  // old routes and keep returning the old shapes, so existing callers are
+  // unaffected. They are not wrappers over these — the two surfaces spell their
+  // ids differently and the old detail read carries strictly less.
+  //
+  // AUTHORIZATION DIFFERS from the rest of this client: these gate on the
+  // WORKSPACE role rather than the project role, and workspace MEMBERSHIP is
+  // enough for most of them — mode changes, renames, member edits and link
+  // rotation included. Only guest execution and rebinding need project ADMIN.
+  // A legacy workspace with no organization hard-denies delegated (`sk_`)
+  // callers entirely — a documented limitation, not a bug you can grant your
+  // way out of.
+
+  listStudies(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformStudySummary>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/studies`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * One study's full read: execution settings, the environment it publishes,
+   * and the insights envelope.
+   *
+   * `environmentId` and `insights` are OPTIONAL because they depend on the
+   * CALLER, not on the study. Both are gated on workspace membership while the
+   * study itself is visible more widely, so a share-link guest — and any server
+   * predating the envelope — gets the settings without them rather than an
+   * error. Treat an absent `insights` as `not_available`, never as "no
+   * findings".
+   */
+  getStudy(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<PlatformStudyDetail> {
+    return this.request(
+      "GET",
+      this.studyPath(params.projectId, params.studyId),
+      {},
+      options
+    );
+  }
+
+  /**
+   * Publish an environment as a study.
+   *
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the study is never briefly live in a wider mode than you
+   * asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`), because re-applying `mode` would let a routine
+   * idempotent publish widen a study someone had narrowed by hand.
+   */
+  publishStudy(
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformStudy> {
+    const { projectId, environmentId } = params;
+    // Explicit picks, not a rest spread: TypeScript's structural typing lets a
+    // wider object through, and the route's schema is strict — an unknown key
+    // forwarded here turns a valid publish into a 400.
+    const body = Object.fromEntries(
+      Object.entries({
+        name: params.name,
+        description: params.description,
+        mode: params.mode,
+      }).filter(([, value]) => value !== undefined)
+    );
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        projectId
+      )}/environments/${encodeURIComponent(environmentId)}/study`,
+      // Bodyless when there is nothing to send — the common case.
+      Object.keys(body).length > 0 ? { body } : {},
+      options
+    );
+  }
+
+  /**
+   * `studyId` names WHICH study to take down. An environment may back several
+   * and the route refuses to guess between them, so it is required once one
+   * does — and omitting it is the whole contract while it backs a single
+   * study, which is the common case.
+   *
+   * The pre-rename `?scenarioId=` is still read by the route, but this method
+   * sends the canonical spelling.
+   */
+  unpublishStudy(
+    params: { projectId: string; environmentId: string; studyId?: string },
+    options?: RequestOptions
+  ): Promise<PlatformStudyDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/study`,
+      params.studyId ? { query: { studyId: params.studyId } } : {},
+      options
+    );
+  }
+
+  /**
+   * Edit a study. SINGLE-CONCERN: send `mode` on its own, or `name` and
+   * `description` together — never both. Identity and exposure are separate
+   * mutations upstream, so a mixed request would have to apply them in
+   * sequence, and a failure between the two leaves the study half-updated on
+   * the half that decides who can reach it.
+   */
+  updateStudy(
+    params: {
+      projectId: string;
+      studyId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformStudyUpdated> {
+    const { projectId, studyId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.studyPath(projectId, studyId),
+      { body },
+      options
+    );
+  }
+
+  /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  listStudySessions(
+    params: {
+      projectId: string;
+      studyId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformStudySession>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/sessions`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * One session's transcript, PAGED and projected to role + text + timing.
+   *
+   * These are real people's conversations with your product. The API never
+   * hands back the stored blob URL, so a caller cannot pass "read this
+   * transcript" onward as an unrevocable capability.
+   */
+  getStudySession(
+    params: {
+      projectId: string;
+      studyId: string;
+      sessionId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformStudySessionDetail> {
+    return this.request(
+      "GET",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/sessions/${encodeURIComponent(params.sessionId)}`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getStudyMetrics(
+    params: { projectId: string; studyId: string; population?: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/metrics`,
+      {
+        query: params.population ? { population: params.population } : {},
+      },
+      options
+    );
+  }
+
+  /**
+   * Usage breakdown. Read `scan.truncated` before quoting any rate from this:
+   * true means the rates were computed over the most recent N sessions rather
+   * than all of them, and dropping the flag turns a conditional statistic into
+   * an unconditional claim.
+   */
+  getStudyUsage(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/usage`,
+      {},
+      options
+    );
+  }
+
+  listStudyFindings(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<Record<string, unknown>>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/findings`,
+      {},
+      options
+    );
+  }
+
+  /** Also how you learn the CURRENT window id, which the insights read takes. */
+  getStudySignals(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(params.projectId, params.studyId)}/signals`,
+      {},
+      options
+    );
+  }
+
+  getStudyInsights(
+    params: { projectId: string; studyId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/windows/${encodeURIComponent(params.windowId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Ask a model to analyze the study's current window. **202** — scheduled,
+   * not done. SPENDS against the organization's daily insights budget, which
+   * is SHARED with swarm-run insights.
+   */
+  requestStudyInsights(
+    params: { projectId: string; studyId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformStudyInsightsRequested> {
+    return this.request(
+      "POST",
+      `${this.studyPath(params.projectId, params.studyId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  cancelStudyInsights(
+    params: { projectId: string; studyId: string; windowId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.studyPath(params.projectId, params.studyId)}/insights`,
+      { body: { windowId: params.windowId } },
+      options
+    );
+  }
+
+  dismissStudyFinding(
+    params: { projectId: string; studyId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.studyFindingAction(params, "dismiss", options);
+  }
+
+  undismissStudyFinding(
+    params: { projectId: string; studyId: string; findingId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.studyFindingAction(params, "undismiss", options);
+  }
+
+  /**
+   * Replace the guest-execution caps.
+   *
+   * A full replacement, not a patch: these only mean something as a SET, and
+   * raising one while leaving a stale sibling behind produces a combination
+   * nobody chose. Project ADMIN.
+   */
+  setStudyGuestExecution(
+    params: {
+      projectId: string;
+      studyId: string;
+      guestExecution: PlatformGuestExecution;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "PUT",
+      `${this.studyPath(params.projectId, params.studyId)}/guest-execution`,
+      { body: params.guestExecution },
+      options
+    );
+  }
+
+  /**
+   * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
+   * working and every session on it dies. There is no rotating back.
+   */
+  rotateStudyLink(
+    params: { projectId: string; studyId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.studyPath(params.projectId, params.studyId)}/rotate-link`,
+      {},
+      options
+    );
+  }
+
+  /** Upsert by email, so re-inviting someone is not an error. */
+  upsertStudyMember(
+    params: {
+      projectId: string;
+      studyId: string;
+      email: string;
+      sendInviteEmail?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    const { projectId, studyId, ...body } = params;
+    return this.request(
+      "PUT",
+      `${this.studyPath(projectId, studyId)}/members`,
+      { body },
+      options
+    );
+  }
+
+  removeStudyMember(
+    params: { projectId: string; studyId: string; member: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/members/${encodeURIComponent(params.member)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Point a study at a DIFFERENT environment, keeping its link, members and
+   * session history. The alternative — unpublish and republish — mints a new
+   * link, which means re-sharing it with everyone who had the old one.
+   */
+  rebindStudy(
+    params: { projectId: string; studyId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.studyPath(params.projectId, params.studyId)}/rebind`,
+      { body: { environmentId: params.environmentId } },
+      options
+    );
+  }
+
+  private studyPath(projectId: string, studyId: string): string {
+    return `/projects/${encodeURIComponent(
+      projectId
+    )}/studies/${encodeURIComponent(studyId)}`;
+  }
+
+  private studyFindingAction(
+    params: { projectId: string; studyId: string; findingId: string },
+    action: "dismiss" | "undismiss",
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.studyPath(
+        params.projectId,
+        params.studyId
+      )}/findings/${encodeURIComponent(params.findingId)}/${action}`,
+      {},
+      options
+    );
+  }
+
+  // ── User testing (deprecated compatibility methods) ─────────────────────
+  //
+  // Superseded by the `*Study*` methods above. Kept calling the old
+  // `/user-testing/scenarios` routes with their old `scenarioId` spelling, so
+  // an embedder holding a reference to one is unaffected. Deleted at GA.
   //
   // What a published scenario produced, and who may reach it. `publishScenario`
   // above creates one (keyed by environment, because the scenario does not
@@ -4823,6 +5794,7 @@ export class PlatformApiClient {
    * `overridesIgnored: true`), because re-applying `mode` would let a routine
    * idempotent publish widen a scenario someone had narrowed by hand.
    */
+  /** @deprecated Use {@link publishStudy}. A duplicate of `publishScenario`. */
   publishUserTestingScenario(
     params: {
       projectId: string;
@@ -4851,6 +5823,8 @@ export class PlatformApiClient {
    * lower-privilege viewer — and any server predating the envelope — gets the
    * scenario without it rather than an error. Treat absence as
    * `not_available`, never as "no findings".
+   *
+   * @deprecated Use {@link getStudy}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   getUserTestingScenario(
     params: { projectId: string; scenarioId: string },
@@ -4870,6 +5844,8 @@ export class PlatformApiClient {
    * mutations upstream, so a mixed request would have to apply them in
    * sequence, and a failure between the two leaves the scenario half-updated
    * on the half that decides who can reach it.
+   *
+   * @deprecated Use {@link updateStudy}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   updateUserTestingScenario(
     params: {
@@ -4891,6 +5867,9 @@ export class PlatformApiClient {
   }
 
   /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  /**
+   * @deprecated Use {@link listStudySessions}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   listUserTestingSessions(
     params: {
       projectId: string;
@@ -4914,6 +5893,8 @@ export class PlatformApiClient {
    * These are real people's conversations with your product. The API never
    * hands back the stored blob URL, so a caller cannot pass "read this
    * transcript" onward as an unrevocable capability.
+   *
+   * @deprecated Use {@link getStudySession}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   getUserTestingSession(
     params: {
@@ -4936,6 +5917,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getStudyMetrics}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   getUserTestingMetrics(
     params: { projectId: string; scenarioId: string; population?: string },
     options?: RequestOptions
@@ -4955,6 +5939,8 @@ export class PlatformApiClient {
    * true means the rates were computed over the most recent N sessions rather
    * than all of them, and dropping the flag turns a conditional statistic into
    * an unconditional claim.
+   *
+   * @deprecated Use {@link getStudyUsage}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   getUserTestingUsage(
     params: { projectId: string; scenarioId: string },
@@ -4968,6 +5954,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link listStudyFindings}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   listUserTestingFindings(
     params: { projectId: string; scenarioId: string },
     options?: RequestOptions
@@ -4981,6 +5970,9 @@ export class PlatformApiClient {
   }
 
   /** Also how you learn the CURRENT window id, which the insights read takes. */
+  /**
+   * @deprecated Use {@link getStudySignals}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   getUserTestingSignals(
     params: { projectId: string; scenarioId: string },
     options?: RequestOptions
@@ -4993,6 +5985,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link getStudyInsights}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   getUserTestingInsights(
     params: { projectId: string; scenarioId: string; windowId: string },
     options?: RequestOptions
@@ -5012,6 +6007,8 @@ export class PlatformApiClient {
    * Ask a model to analyze the scenario's current window. **202** — scheduled,
    * not done. SPENDS against the organization's daily insights budget, which
    * is SHARED with swarm wave insights.
+   *
+   * @deprecated Use {@link requestStudyInsights}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   requestUserTestingInsights(
     params: { projectId: string; scenarioId: string; force?: boolean },
@@ -5025,6 +6022,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link cancelStudyInsights}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   cancelUserTestingInsights(
     params: { projectId: string; scenarioId: string; windowId: string },
     options?: RequestOptions
@@ -5037,6 +6037,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link dismissStudyFinding}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   dismissUserTestingFinding(
     params: { projectId: string; scenarioId: string; findingId: string },
     options?: RequestOptions
@@ -5044,6 +6047,9 @@ export class PlatformApiClient {
     return this.userTestingFindingAction(params, "dismiss", options);
   }
 
+  /**
+   * @deprecated Use {@link undismissStudyFinding}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   undismissUserTestingFinding(
     params: { projectId: string; scenarioId: string; findingId: string },
     options?: RequestOptions
@@ -5057,6 +6063,8 @@ export class PlatformApiClient {
    * A full replacement, not a patch: these only mean something as a SET, and
    * raising one while leaving a stale sibling behind produces a combination
    * nobody chose. Project ADMIN.
+   *
+   * @deprecated Use {@link setStudyGuestExecution}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   setUserTestingGuestExecution(
     params: {
@@ -5080,6 +6088,8 @@ export class PlatformApiClient {
   /**
    * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
    * working and every session on it dies. There is no rotating back.
+   *
+   * @deprecated Use {@link rotateStudyLink}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   rotateUserTestingLink(
     params: { projectId: string; scenarioId: string },
@@ -5097,6 +6107,9 @@ export class PlatformApiClient {
   }
 
   /** Upsert by email, so re-inviting someone is not an error. */
+  /**
+   * @deprecated Use {@link upsertStudyMember}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   upsertUserTestingMember(
     params: {
       projectId: string;
@@ -5115,6 +6128,9 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * @deprecated Use {@link removeStudyMember}. Calls the deprecated `/user-testing/scenarios` alias.
+   */
   removeUserTestingMember(
     params: { projectId: string; scenarioId: string; member: string },
     options?: RequestOptions
@@ -5134,6 +6150,8 @@ export class PlatformApiClient {
    * Point a scenario at a DIFFERENT environment, keeping its link, members and
    * session history. The alternative — unpublish and republish — mints a new
    * link, which means re-sharing it with everyone who had the old one.
+   *
+   * @deprecated Use {@link rebindStudy}. Calls the deprecated `/user-testing/scenarios` alias.
    */
   rebindUserTestingScenario(
     params: { projectId: string; scenarioId: string; environmentId: string },
@@ -5176,7 +6194,9 @@ export class PlatformApiClient {
   ): string {
     return `/projects/${encodeURIComponent(
       projectId
-    )}/shares/${encodeURIComponent(resourceType)}/${encodeURIComponent(
+    )}/shares/${encodeURIComponent(
+      storedNounValue(resourceType)
+    )}/${encodeURIComponent(
       resourceId
     )}`;
   }
@@ -5184,7 +6204,7 @@ export class PlatformApiClient {
   getShareSettings(
     params: {
       projectId: string;
-      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceType: "scenario" | "study" | "conformanceRun" | "evalRun";
       resourceId: string;
     },
     options?: RequestOptions
@@ -5200,7 +6220,7 @@ export class PlatformApiClient {
   setShareMode(
     params: {
       projectId: string;
-      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceType: "scenario" | "study" | "conformanceRun" | "evalRun";
       resourceId: string;
       mode: "project_members" | "invited_only" | "anyone_with_link";
       allowGuestAccess?: boolean;
@@ -5229,7 +6249,7 @@ export class PlatformApiClient {
   rotateShareLink(
     params: {
       projectId: string;
-      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceType: "scenario" | "study" | "conformanceRun" | "evalRun";
       resourceId: string;
     },
     options?: RequestOptions
@@ -5307,6 +6327,12 @@ export class PlatformApiClient {
       // Owned in both directions: an edge credential that injected the
       // header would make a vocabulary-1 body mean something else.
       delete headers[EVAL_VOCABULARY_HEADER];
+    }
+    // The noun-value negotiation, on the same terms and for the same reason.
+    if (this.apiVocabulary === 2) {
+      headers[API_VOCABULARY_HEADER] = "2";
+    } else {
+      delete headers[API_VOCABULARY_HEADER];
     }
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.

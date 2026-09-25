@@ -111,6 +111,8 @@ export interface RunAssistantTurnOptions {
 
   /** See `PrepareChatV2Options.approvalMode`. Default `"prompt"`. */
   approvalMode?: "prompt" | "auto-deny";
+  /** See `MCPJamHandlerOptions.clientSuppliedHistory`. Default false. */
+  clientSuppliedHistory?: boolean;
   /**
    * Required-tool-approval policy on the underlying engine. Forwarded
    * verbatim to `handleMCPJamFreeChatModel` so the dispatch-time
@@ -189,6 +191,8 @@ export interface RunAssistantTurnOptions {
   onToolCall?: MCPJamHandlerOptions["onToolCall"];
   onToolResult?: MCPJamHandlerOptions["onToolResult"];
   onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
+  yieldAfterStep?: boolean;
   /**
    * PR 5b-followup-2: structured-error pass-through. Eval's backend
    * stream runner uses this to surface guardrail detail (429
@@ -547,6 +551,7 @@ function buildHandlerOptions(
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }
       : {}),
+    ...(opts.clientSuppliedHistory ? { clientSuppliedHistory: true } : {}),
     onConversationComplete: wrappedOnConversationComplete,
     ...(opts.onStreamComplete
       ? { onStreamComplete: opts.onStreamComplete }
@@ -559,6 +564,12 @@ function buildHandlerOptions(
     ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
     ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
     ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
+    ...(opts.durableCheckpoint
+      ? {
+          durableCheckpoint: opts.durableCheckpoint,
+          yieldAfterStep: opts.yieldAfterStep,
+        }
+      : {}),
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),

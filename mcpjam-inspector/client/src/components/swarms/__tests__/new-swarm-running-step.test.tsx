@@ -235,6 +235,38 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     return chips;
   };
 
+  it("keeps session report copy off the chip and the live pane", async () => {
+    sessionsFixture = [
+      {
+        ...failedSessionFixture,
+        chatSessionId: "synth_run-1_env_env-1_0",
+        verdict: {
+          lifecycle: "ran",
+          verdict: "passed",
+          grading: { state: "settled" },
+        },
+        observations: [
+          {
+            evaluatorId: "standard:noToolErrors",
+            predicateType: "noToolErrors",
+            role: "advisory",
+            status: "passed",
+          },
+        ],
+      },
+    ];
+    await renderPaneAndSelectSession();
+    expect(screen.queryByText(/Goal result/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/User value chain/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not established/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Execution:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No tool errors/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/advisory/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("new-swarm-running-session")[0],
+    ).toHaveAttribute("data-goal-result", "passed");
+  });
+
   it("subscribes only to the selected run in a ten-run wave", async () => {
     render(
       <NewSwarmRunningStep
@@ -942,7 +974,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
 });
 
 describe("NewSwarmRunningStep — frame copy", () => {
-  it("does not claim checks passed when only execution completed", () => {
+  it("does not claim evaluators passed when only execution completed", () => {
     expect(
       swarmCellHeadline({
         outcome: "succeeded",
@@ -1027,7 +1059,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         primary: "3/3 pass",
         goal: "Refund a charge",
       }),
-    ).toBe("Run completed: All checks passed");
+    ).toBe("Run completed: All evaluators passed");
     expect(
       swarmCellHeadline({
         outcome: "rate_limited",

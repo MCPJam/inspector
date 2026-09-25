@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import type { MCPJamLimitKind, MCPJamLimitPeriod } from "@/lib/mcpjam-limit";
+import type {
+  MCPJamCreditShortfall,
+  MCPJamLimitKind,
+  MCPJamLimitPeriod,
+} from "@/lib/mcpjam-limit";
 
 export type MCPJamLimitAuthStatus = "loading" | "guest" | "signedIn";
 
@@ -7,24 +11,20 @@ export type MCPJamLimitAuthStatus = "loading" | "guest" | "signedIn";
  * variant is preserved across the loading→signedIn auth race. */
 export type MCPJamLimitIntent = "guest" | "topup";
 
-/**
- * Where the wall was raised. Picks which variant of the dialog renders:
- * `"swarm"` gets `AllowanceLimitDialogView`, anything else (or nothing) gets
- * the credits wall. The split exists because the swarm wall's two dropped
- * actions dead-end there — no swarm screen mounts the model picker the BYOK
- * link drives, and an own key can't lift the limit anyway, since generation
- * and persona turns are always MCPJam-billed.
- */
-export type MCPJamLimitSurface = "chat" | "swarm";
+/** Swarm selects its billing copy/actions; scenario testers see an owner notice. */
+export type MCPJamLimitSurface = "chat" | "swarm" | "scenario";
 
 export interface MCPJamLimitNotifyInput {
+  runId?: string;
   limitKind?: MCPJamLimitKind;
   organizationId?: string;
   surface?: MCPJamLimitSurface;
   period?: MCPJamLimitPeriod;
+  shortfall?: MCPJamCreditShortfall;
 }
 
 interface MCPJamLimitDialogState {
+  notifiedRunIds: ReadonlySet<string>;
   isOpen: boolean;
   hasPendingLimit: boolean;
   outOfCreditsHit: boolean;
@@ -34,6 +34,7 @@ interface MCPJamLimitDialogState {
   organizationId: string | null;
   surface: MCPJamLimitSurface | null;
   period: MCPJamLimitPeriod | null;
+  shortfall: MCPJamCreditShortfall | null;
   /** Stash the full notify input rather than just a boolean: future fields
    * on the limit signal should be forwarded to setAuthStatus's deferred
    * resolve without each addition needing a store change. */
@@ -53,8 +54,34 @@ const intentForAuth = (
   return null;
 };
 
+// A shortfall leaves credits a cheaper model can still spend, so it must not
+// gray out the MCPJam models the dialog tells the user to try. An earlier
+// exhaustion latch for the same organization is stale by then and is cleared;
+// another organization's latch is left alone.
+const latchFor = (
+  state: Pick<
+    MCPJamLimitDialogState,
+    "outOfCreditsHit" | "outOfCreditsOrganizationId"
+  >,
+  input: MCPJamLimitNotifyInput,
+) => {
+  if (!input.shortfall) {
+    return {
+      outOfCreditsHit: true,
+      outOfCreditsOrganizationId: input.organizationId ?? null,
+    };
+  }
+  const latchIsForAnotherOrg =
+    !!input.organizationId &&
+    !!state.outOfCreditsOrganizationId &&
+    state.outOfCreditsOrganizationId !== input.organizationId;
+  if (!state.outOfCreditsHit || latchIsForAnotherOrg) return {};
+  return { outOfCreditsHit: false, outOfCreditsOrganizationId: null };
+};
+
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
+    notifiedRunIds: new Set<string>(),
     isOpen: false,
     hasPendingLimit: false,
     outOfCreditsHit: false,
@@ -64,34 +91,40 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     organizationId: null,
     surface: null,
     period: null,
+    shortfall: null,
     pendingInput: null,
     notifyLimitHit: (input = {}) =>
       set((state) => {
+        if (input.runId && state.notifiedRunIds.has(input.runId)) return state;
+        const notifiedRunIds = input.runId
+          ? new Set([...state.notifiedRunIds, input.runId])
+          : state.notifiedRunIds;
         if (state.authStatus === "loading") {
           return {
+            notifiedRunIds,
             hasPendingLimit: true,
-            outOfCreditsHit: true,
-            outOfCreditsOrganizationId: input.organizationId ?? null,
+            ...latchFor(state, input),
             pendingInput: input,
           };
         }
         const intent = intentForAuth(state.authStatus, input);
         if (!intent) {
           return {
+            notifiedRunIds,
             hasPendingLimit: false,
-            outOfCreditsHit: true,
-            outOfCreditsOrganizationId: input.organizationId ?? null,
+            ...latchFor(state, input),
           };
         }
         return {
+          notifiedRunIds,
           hasPendingLimit: false,
-          outOfCreditsHit: true,
-          outOfCreditsOrganizationId: input.organizationId ?? null,
+          ...latchFor(state, input),
           isOpen: true,
           intent,
           organizationId: input.organizationId ?? null,
           surface: input.surface ?? null,
           period: input.period ?? null,
+          shortfall: input.shortfall ?? null,
           pendingInput: null,
         };
       }),
@@ -108,13 +141,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         return {
           authStatus,
           hasPendingLimit: false,
-          outOfCreditsHit: true,
-          outOfCreditsOrganizationId: input.organizationId ?? null,
+          ...latchFor(state, input),
           isOpen: true,
           intent,
           organizationId: input.organizationId ?? null,
           surface: input.surface ?? null,
           period: input.period ?? null,
+          shortfall: input.shortfall ?? null,
           pendingInput: null,
         };
       }),
@@ -141,6 +174,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         organizationId: null,
         surface: null,
         period: null,
+        shortfall: null,
         pendingInput: null,
       }),
   }),

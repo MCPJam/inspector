@@ -1,3 +1,4 @@
+import { looksLikeErrorPage } from "@/shared/error-page";
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -426,8 +427,14 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         typeof parsed.walletLocked === "boolean"
           ? parsed.walletLocked
           : undefined;
+      // `holds_committed` arrives as `limitKind: "total"`, but it is the
+      // concurrency case: other in-flight requests hold the last credits and
+      // the backend says retry shortly. Rendering it as a spent allowance
+      // hid it entirely, since the out-of-credits dialog is not raised for it.
       const limitKind =
-        parsed.limitKind === "total" || parsed.limitKind === "concurrency"
+        parsed.refusalReason === "holds_committed"
+          ? "concurrency"
+          : parsed.limitKind === "total" || parsed.limitKind === "concurrency"
           ? parsed.limitKind
           : undefined;
       // `retryAfterMs` is only meaningful for the concurrency banner (which
@@ -538,35 +545,6 @@ const RAW_PAYLOAD_MAX = 4000;
  * order mark, whitespace, HTML comments, an XML declaration. Gateways and
  * proxies prepend these freely.
  */
-const HTML_PREAMBLE = /^(?:﻿|\s|<!--[\s\S]*?-->|<\?xml[\s\S]*?\?>)+/i;
-
-/** Markup that can only be a document, once any preamble is stripped. */
-const MARKUP_OPENER = /^<(?:!doctype\s+html|html|head|body|title)\b/i;
-
-/**
- * The one marker conclusive wherever it appears. `<html>` is NOT: error text
- * quotes it ("expected <html> but the tool returned a number"), and treating
- * that as a document would summarize a perfectly readable message away.
- */
-const DOCTYPE_MARKER = /<!doctype\s+html/i;
-
-/**
- * Detection has to survive bodies that are not well-formed documents. A
- * truncated or streamed response never reaches `</html>`; a proxy may prepend
- * a comment or an XML declaration; a fragment may begin at `<head>` with no
- * doctype at all. Matching only "starts with `<html`" or "ends with
- * `</html>`" let all of those through to be rendered as raw markup — the
- * exact failure this function exists to prevent.
- *
- * The start-anchored check runs against the preamble-stripped body so that
- * ordinary prose which merely mentions a tag ("expected `<html>` here") is not
- * mistaken for a document.
- */
-function looksLikeErrorPage(trimmed: string): boolean {
-  if (DOCTYPE_MARKER.test(trimmed)) return true;
-  if (/<\/html>\s*$/i.test(trimmed)) return true;
-  return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
-}
 
 /**
  * `code` carried by a formatted upstream-error-page failure.

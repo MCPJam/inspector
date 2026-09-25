@@ -128,35 +128,24 @@ export function signInRequiredMessage(error: unknown): string | null {
  * The sign-in remedy carried by a THROWN transport error, whichever error type
  * the route happened to raise.
  *
- * One owner, because the alternative already shipped a bug: the swarm proxy can
- * throw `SwarmGenerateError` (which has a `signInRequired` flag) or
- * `WebApiError` (which does not, but carries the backend's envelope in
- * `details`), and a consumer that recognized only the first showed a guest the
- * generic error card. A consumer asking this question should not have to know
- * which type it got, nor re-derive the answer from `details` itself.
+ * One owner, because the alternative already shipped a bug: the swarm proxy
+ * raises `SwarmGenerateError` on some paths and `WebApiError` on others, and a
+ * consumer that recognized only one of them showed a guest the generic error
+ * card. Both carry the backend's refusal envelope verbatim in `details`, so
+ * this reads the ONE thing that is true of both — `details.code` — rather than
+ * a per-class flag a consumer could read alone and be wrong about.
  *
  * Returns the refusal's own copy, or `null` when this is not a sign-in refusal.
  */
 export function signInRemedyMessage(error: unknown): string | null {
   if (!error || typeof error !== "object") return null;
-  const candidate = error as {
-    signInRequired?: unknown;
-    message?: unknown;
-    details?: unknown;
-  };
-  const message =
-    typeof candidate.message === "string" && candidate.message.length > 0
-      ? candidate.message
-      : FALLBACK_MESSAGE;
-  // The flag, where the throwing path set one.
-  if (candidate.signInRequired === true) return message;
-  // Otherwise the backend's own envelope, forwarded verbatim in `details`.
+  const candidate = error as { message?: unknown; details?: unknown };
   const details = candidate.details;
-  if (details && typeof details === "object") {
-    const code = (details as { code?: unknown }).code;
-    if (isSignInRequiredCode(code)) return message;
-  }
-  return null;
+  if (!details || typeof details !== "object") return null;
+  if (!isSignInRequiredCode((details as { code?: unknown }).code)) return null;
+  return typeof candidate.message === "string" && candidate.message.length > 0
+    ? candidate.message
+    : FALLBACK_MESSAGE;
 }
 
 /** Convenience predicate for call sites that do not need the copy. */

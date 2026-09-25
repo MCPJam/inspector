@@ -136,6 +136,11 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
   navigateApp: navigateAppMock,
 }));
 
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
+
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => attachments.value,
   useProjectServers: () => ({ servers: [], isLoading: false }),

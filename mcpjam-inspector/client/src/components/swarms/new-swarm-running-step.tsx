@@ -1,3 +1,4 @@
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 /**
  * Running step of the New swarm create flow.
  *
@@ -14,11 +15,11 @@
  * cancels it. A finished (or stopped) run goes to Findings on its own — see
  * `COMPLETION_TOAST_DWELL_MS`.
  */
-import { lifecycleChip, verdictBadge } from "./swarm-verdict-presentation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
+import { isCreditExhaustion } from "@/shared/credit-exhaustion";
 import {
   StopSwarmRunButton,
   useStopSwarmRun,
@@ -181,7 +182,7 @@ export function swarmCellHeadline(args: {
   if (args.outcome === "succeeded") {
     const checks = args.primary.match(/^(\d+)\/(\d+) pass$/);
     return checks && Number(checks[1]) > 0 && checks[1] === checks[2]
-      ? "Run completed: All checks passed"
+      ? "Run completed: All evaluators passed"
       : `Run completed: ${goal}`;
   }
   if (args.outcome === "rate_limited") {
@@ -326,11 +327,13 @@ function streamMatchesColumn(
 
 function RunLiveBridge({
   runId,
+  organizationId,
   streamEnabled,
   hostName,
   onSnapshot,
 }: {
   runId: string;
+  organizationId?: string;
   streamEnabled: boolean;
   hostName: (hostId: string) => string | undefined;
   onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
@@ -346,6 +349,17 @@ function RunLiveBridge({
     { journeyRunId: runId } as any,
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
+  useEffect(() => {
+    for (const attempt of run?.attempts ?? []) {
+      notifyMCPJamLimitError({
+        runId,
+        organizationId,
+        code: attempt.errorCode ?? undefined,
+        message: attempt.errorMessage,
+        surface: "swarm",
+      });
+    }
+  }, [runId, organizationId, run?.attempts]);
   const runStatus = run?.status ?? "running";
   // Convex supplies the whole matrix's progress over its shared connection.
   // Only the selected trace needs SSE: one stream per row exhausts the
@@ -388,21 +402,43 @@ function RunLiveBridge({
   return null;
 }
 
-function cellTone(outcome: CellView["outcome"]): string {
-  switch (outcome) {
-    case "succeeded":
-      return "border-emerald-500/30 bg-emerald-500/10";
-    case "failed":
-      return "border-destructive/40 bg-destructive/10";
-    case "rate_limited":
-      return "border-amber-500/40 bg-amber-500/10";
+/**
+ * Goal result owns the chip fill. Execution stays on the headline
+ * (`Running:` / `Broke:`) so a broken-but-passed session reads green and a
+ * completed-but-failed one reads red — without a second "Goal result:" label.
+ */
+export function sessionChipTone(args: {
+  outcome: CellView["outcome"];
+  verdict?: JourneySessionRow["verdict"];
+}): string {
+  const goal = args.verdict?.verdict;
+  if (goal === "passed") return "border-success/40 bg-success/10";
+  if (goal === "failed") return "border-destructive/40 bg-destructive/10";
+  if (goal === "inconclusive") return "border-warning/40 bg-warning/10";
+  if (
+    args.verdict &&
+    (args.verdict.grading.state === "queued" ||
+      args.verdict.grading.state === "running")
+  ) {
+    return "border-pending/40 bg-pending/10";
+  }
+  switch (args.outcome) {
     case "running":
-      return "border-primary/40 bg-primary/5";
     case "queued":
       return "border-primary/40 bg-primary/5";
+    case "rate_limited":
+      return "border-warning/40 bg-warning/10";
+    case "failed":
+      return "border-destructive/40 bg-destructive/10";
     default:
       return "border-border/50 bg-muted/15";
   }
+}
+
+export function sessionGoalResultAttr(
+  verdict?: JourneySessionRow["verdict"],
+): string {
+  return verdict?.verdict ?? "unknown";
 }
 
 export function slotView(args: {
@@ -430,7 +466,16 @@ export function slotView(args: {
       limited: "rate_limited",
       withdrawn: "failed",
     } as const;
-    return { outcome: execution[verdict.lifecycle], headline: goal, verdict };
+    const mapped = execution[verdict.lifecycle];
+    return {
+      outcome: mapped,
+      headline: swarmCellHeadline({
+        outcome: mapped,
+        primary: mapped,
+        goal,
+      }),
+      verdict,
+    };
   }
 
   if (outcome === "running") {
@@ -546,7 +591,8 @@ function collectSessionSlots(args: {
       index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      SwarmCellLiveStatus | undefined;
+      | SwarmCellLiveStatus
+      | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
@@ -623,6 +669,7 @@ function mergeStreams(
 const COMPLETION_TOAST_DWELL_MS = 1800;
 
 export function NewSwarmRunningStep({
+  organizationId,
   runs,
   fallbackColumns,
   environments = [],
@@ -633,6 +680,7 @@ export function NewSwarmRunningStep({
   onRunsComplete,
 }: {
   projectId: string;
+  organizationId?: string;
   runs: SwarmLaunchedRun[];
   /** Columns from the Describe-step environments — always shown. */
   fallbackColumns: SwarmRunningColumn[];
@@ -900,15 +948,7 @@ export function NewSwarmRunningStep({
     return () => window.clearTimeout(timer);
   }, [allTerminal, chrome]);
 
-  /**
-   * The first non-success terminal, humanized — what the run banner explains.
-   *
-   * Every attempt of a rate-limited run carries the same provider refusal, so
-   * showing one is showing all of them. Rendered through the shared humanizer
-   * rather than raw, because rows written before the runner started
-   * sanitizing still hold the full `swarm-agent <url> failed (429): {...}`
-   * envelope.
-   */
+  /** Every terminal failure cause, including limits alongside other failures. */
   const runFailure = useMemo(() => {
     // This banner summarizes waves without a successful attempt. Failed
     // attempts may still have recorded conversations and executed tools.
@@ -921,24 +961,43 @@ export function NewSwarmRunningStep({
     ) {
       return null;
     }
+    const groups = new Map<
+      string,
+      {
+        kind: string;
+        code: string | null | undefined;
+        info: ReturnType<typeof humanizeSwarmAttemptError>;
+        count: number;
+      }
+    >();
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
           continue;
         }
-        // A structured code alone is enough — the humanizer maps recognized
-        // sandbox codes without any stored message.
         if (!attempt.errorMessage && !attempt.errorCode) continue;
-        return {
-          kind: attempt.status,
-          info: humanizeSwarmAttemptError(
-            attempt.errorMessage,
-            attempt.errorCode,
-          ),
-        };
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        const key = attempt.errorCode || `${attempt.status}:${info.message}`;
+        const group = groups.get(key);
+        if (group) group.count++;
+        else
+          groups.set(key, {
+            kind: attempt.status,
+            code: attempt.errorCode,
+            info,
+            count: 1,
+          });
       }
     }
-    return null;
+    const causes = [...groups.values()];
+    if (!causes.length) return null;
+    const severe = causes.find(
+      (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+    );
+    return { ...(severe ?? causes[0]), causes };
   }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
@@ -1003,11 +1062,70 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? (only ?? null) : null };
+    return { count, label: labels.size === 1 ? only ?? null : null };
   }, [snapshots]);
 
+  // The other half of that split: sessions MCPJam's own account limit stopped.
+  // Skipping them above is right — no provider throttled anything — but on a
+  // run where other sessions succeeded, the run banner stays silent too, and
+  // the amber chips would be left unexplained.
+  const accountLimit = useMemo(() => {
+    let count = 0;
+    let message: string | null = null;
+    let exhausted = 0;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed")
+          continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        const code = attempt.errorCode ?? info.code;
+        if (
+          isCreditExhaustion({ code, message: attempt.errorMessage }) &&
+          ![
+            "holds_committed",
+            "wallet_locked",
+            "budget_reached",
+            "admission_invalid",
+          ].includes(info.refusalReason ?? "") &&
+          !/in-flight|hold the remaining credits/i.test(info.message)
+        )
+          exhausted += 1;
+        // The whole-run finalize writes a code and no message; any sibling
+        // that stored the backend's sentence says it better.
+        if (!message && attempt.errorMessage) message = info.message;
+      }
+    }
+    return count === 0 ? null : { count, message, exhausted };
+  }, [snapshots]);
+
+  // The account-limit callout owns its cause — count, breakdown and the top-up
+  // links — so the grouped banner states every OTHER cause, once. A run whose
+  // only cause is the limit shows the callout alone.
+  const bannerFailure = useMemo(() => {
+    if (!runFailure) return null;
+    const causes = accountLimit
+      ? runFailure.causes.filter(
+          (cause) =>
+            !isAccountLimit(cause.info.message, cause.code ?? cause.info.code),
+        )
+      : runFailure.causes;
+    if (!causes.length) return null;
+    const lead =
+      causes.find(
+        (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+      ) ?? causes[0];
+    return { ...lead, causes };
+  }, [accountLimit, runFailure]);
+
   const selectedRunStatus = selection
-    ? (snapshots[selection.runId]?.status ?? "running")
+    ? snapshots[selection.runId]?.status ?? "running"
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1022,6 +1140,7 @@ export function NewSwarmRunningStep({
     chrome === "wizard" ||
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
+    accountLimit !== null ||
     runFailure !== null;
 
   return (
@@ -1033,6 +1152,7 @@ export function NewSwarmRunningStep({
         <RunLiveBridge
           key={run.runId}
           runId={run.runId}
+          organizationId={organizationId}
           streamEnabled={selection?.runId === run.runId}
           hostName={hostName}
           onSnapshot={onSnapshot}
@@ -1127,8 +1247,62 @@ export function NewSwarmRunningStep({
                   </p>
                 </div>
               ) : null}
+              {/* Account limits remain visible even when another cause failed. */}
+              {accountLimit ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-account-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {accountLimit.exhausted > 0 && allTerminal
+                      ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
+                      : "Sessions stopped at an organization usage limit."}
+                  </p>
+                  <p className="mt-0.5">
+                    {`${succeeded} completed, ${Math.max(
+                      0,
+                      failed +
+                        rateLimited -
+                        accountLimit.count -
+                        (providerRateLimit?.count ?? 0),
+                    )} failed, ${
+                      accountLimit.count
+                    } stopped at an organization usage limit${
+                      providerRateLimit
+                        ? `, ${providerRateLimit.count} stopped at a provider limit`
+                        : ""
+                    }.`}
+                  </p>
+                  <p className="mt-0.5">
+                    {accountLimit.exhausted > 0
+                      ? "Out of MCPJam credits. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
+                      : accountLimit.message ?? "Review your organization's usage limits before retrying."}
+                  </p>
+                  {accountLimit.exhausted > 0 && (
+                    <p className="mt-0.5">
+                      Completed results are saved. Buying credits does not
+                      automatically restart this run.
+                    </p>
+                  )}
+                  {accountLimit.exhausted > 0 && (
+                    <Button
+                      variant="link"
+                      onClick={() =>
+                        notifyMCPJamLimitError({
+                          code: "mcpjam_rate_limit",
+                          organizationId,
+                          surface: "swarm",
+                        })
+                      }
+                    >
+                      View credit options
+                    </Button>
+                  )}
+                </div>
+              ) : null}
 
-              {runFailure ? (
+              {bannerFailure ? (
                 <div
                   className={cn(
                     "rounded-md border px-3 py-2 text-sm",
@@ -1137,8 +1311,8 @@ export function NewSwarmRunningStep({
                     // that needs re-running. Destructive red stays for failures
                     // the user has to go and repair — an expired sign-in in front
                     // of an XAA-protected server is not an incident.
-                    runFailure.kind === "rate_limited" ||
-                      runFailure.info.rerunnable
+                    bannerFailure.kind === "rate_limited" ||
+                      bannerFailure.info.rerunnable
                       ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
                       : "border-destructive/40 bg-destructive/10 text-destructive",
                   )}
@@ -1146,17 +1320,22 @@ export function NewSwarmRunningStep({
                   role="status"
                 >
                   <p className="font-medium">
-                    {runFailure.kind === "rate_limited"
+                    {bannerFailure.kind === "rate_limited"
                       ? "No sessions completed successfully — requests were rate-limited."
-                      : runFailure.info.rerunnable
+                      : bannerFailure.info.rerunnable
                       ? "This run's authorization needs re-running."
                       : "No sessions completed successfully."}
                   </p>
-                  <p className="mt-0.5">{runFailure.info.message}</p>
-                  {runFailure.info.canTopUp ? (
+                  {bannerFailure.causes.map((cause, index) => (
+                    <p className="mt-0.5" key={index}>
+                      {cause.count} {cause.count === 1 ? "session" : "sessions"}
+                      : {cause.info.message}
+                    </p>
+                  ))}
+                  {bannerFailure.causes.some((cause) => cause.info.canTopUp) ? (
                     <p className="mt-0.5 text-[13px] opacity-90">
-                      Add credit or connect your own provider key (BYOK) to run
-                      now.
+                      View your credit options to continue testing. Your own API
+                      key does not cover Swarm generation.
                     </p>
                   ) : null}
                 </div>
@@ -1253,7 +1432,7 @@ export function NewSwarmRunningStep({
                                 aria-label={`Watch ${run.personaName} on ${column.label} session 1`}
                                 className={cn(
                                   "flex items-center gap-1 rounded-lg border px-2.5 py-2",
-                                  cellTone("queued"),
+                                  sessionChipTone({ outcome: "queued" }),
                                 )}
                               >
                                 <PersonaPixelAvatar
@@ -1283,6 +1462,9 @@ export function NewSwarmRunningStep({
                                       type="button"
                                       data-testid="new-swarm-running-session"
                                       data-outcome={slot.view.outcome}
+                                      data-goal-result={sessionGoalResultAttr(
+                                        slot.view.verdict,
+                                      )}
                                       aria-pressed={selected}
                                       aria-label={`Watch ${
                                         run.personaName
@@ -1302,7 +1484,10 @@ export function NewSwarmRunningStep({
                                       className={cn(
                                         "flex items-center gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                                         "hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                        cellTone(slot.view.outcome),
+                                        sessionChipTone({
+                                          outcome: slot.view.outcome,
+                                          verdict: slot.view.verdict,
+                                        }),
                                         selected &&
                                           "ring-2 ring-primary ring-offset-1 ring-offset-background",
                                       )}
@@ -1316,29 +1501,6 @@ export function NewSwarmRunningStep({
                                       />
                                       <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
                                         {slot.view.headline}
-                                        {slot.view.verdict && (
-                                          <span className="block text-[10px] text-muted-foreground">
-                                            <span>
-                                              {
-                                                lifecycleChip(
-                                                  slot.view.verdict.lifecycle,
-                                                ).label
-                                              }
-                                            </span>
-                                            {" · "}
-                                            <span
-                                              className={
-                                                verdictBadge(slot.view.verdict)
-                                                  .tone
-                                              }
-                                            >
-                                              {
-                                                verdictBadge(slot.view.verdict)
-                                                  .label
-                                              }
-                                            </span>
-                                          </span>
-                                        )}
                                       </p>
                                     </button>
                                   );

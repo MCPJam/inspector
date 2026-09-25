@@ -1,3 +1,4 @@
+import { connectionErrorMessage } from "./connection-error-message.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
@@ -980,7 +981,7 @@ export class MCPClientManager {
    * @param options - Schema options
    * @returns AiSdkTool compatible with Vercel AI SDK's generateText()
    */
-  async getToolsForAiSdk(
+  async getToolsForAiSdkByServer(
     serverIds?: string[] | string,
     options: {
       schemas?: ToolSchemaOverrides | "automatic";
@@ -1020,7 +1021,7 @@ export class MCPClientManager {
        */
       toolDescriptionOverrides?: Readonly<Record<string, string>>;
     } = {}
-  ): Promise<AiSdkTool> {
+  ): Promise<Record<string, AiSdkTool>> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
@@ -1118,12 +1119,17 @@ export class MCPClientManager {
       })
     );
 
-    // Flatten (last-in wins for name collisions)
-    const flattened: AiSdkTool = {};
-    for (const toolset of perServerTools) {
-      Object.assign(flattened, toolset);
-    }
-    return flattened;
+    return Object.fromEntries(
+      ids.map((id, index) => [id, perServerTools[index]])
+    );
+  }
+
+  async getToolsForAiSdk(
+    serverIds?: string[] | string,
+    options: Parameters<MCPClientManager["getToolsForAiSdkByServer"]>[1] = {}
+  ): Promise<AiSdkTool> {
+    const perServer = await this.getToolsForAiSdkByServer(serverIds, options);
+    return Object.assign({}, ...Object.values(perServer));
   }
 
   /**
@@ -2763,7 +2769,8 @@ export class MCPClientManager {
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
         trimmedRefresh,
-        trimmedClientSecret
+        trimmedClientSecret,
+        config.onTokensRotated
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider
@@ -2890,9 +2897,11 @@ export class MCPClientManager {
           // `describeError` degrades from a specific transport slug to
           // message-regex guessing.
           throw new Error(
-            `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
-              error
-            )}`,
+            connectionErrorMessage(
+              url,
+              [error],
+              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(error)}`,
+            ),
             { cause: error }
           );
         }
@@ -3002,7 +3011,11 @@ export class MCPClientManager {
       // `transport/*` slug instead of message-regex guessing.
       throw attachStreamableCause(
         new Error(
-          `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          connectionErrorMessage(
+            url,
+            [streamableError, error],
+            `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          ),
           { cause: error }
         ),
         streamableError
@@ -4242,9 +4255,7 @@ export class MCPClientManager {
      * call's day-long timer with nothing to end it: the await driver's own
      * deadline abandons the in-flight promise rather than aborting its request.
      */
-    readRequestOptions:
-      | { signal?: AbortSignal; timeout?: number }
-      | undefined;
+    readRequestOptions: { signal?: AbortSignal; timeout?: number } | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
     // Resolve the era from what the connection actually negotiated — the same
@@ -4457,9 +4468,9 @@ export class MCPClientManager {
       await this.ensureConnected(serverId);
       const client = this.getClientOrThrow(serverId);
       const list = await client.listTools();
-      const tool = list.tools.find((candidate) => candidate.name === toolName) as
-        | { outputSchema?: unknown }
-        | undefined;
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { outputSchema?: unknown } | undefined;
       outputSchema = tool?.outputSchema;
     } catch {
       return;

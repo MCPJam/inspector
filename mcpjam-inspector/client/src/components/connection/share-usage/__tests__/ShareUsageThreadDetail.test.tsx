@@ -30,6 +30,8 @@ const {
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
     runAttemptStatus: undefined as unknown,
+    messagesBlobUrl: "https://storage.example.com/thread.json",
+    analysisPhase: undefined as string | undefined,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -62,7 +64,13 @@ const {
 // the panel's own suite cannot check, since it is handed the id directly.
 vi.mock("convex/react", () => ({
   useAction: () => mockRequestJudge,
+  useMutation: () => vi.fn().mockResolvedValue({ queued: true }),
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
+}));
+
+// Analyze now is offered to members only; the check is a Convex query.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -78,7 +86,8 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
       runAttemptStatus: mockThreadState.runAttemptStatus,
-      messagesBlobUrl: "https://storage.example.com/thread.json",
+      analysisPhase: mockThreadState.analysisPhase,
+      messagesBlobUrl: mockThreadState.messagesBlobUrl,
       modelId: "openai/gpt-oss-120b",
       recordedContext: {
         toolSnapshots: [
@@ -240,6 +249,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     mockHostConfigState.config = { hostStyle: "claude" };
     global.fetch = vi.fn().mockResolvedValue({
@@ -268,13 +278,99 @@ describe("ShareUsageThreadDetail", () => {
     global.fetch = originalFetch;
   });
 
+  it("fetches the transcript once per transcript, not once per link to it", async () => {
+    // Artifact links expire and are re-minted with a new expiry for the same
+    // object. A renewed link is not new content: refetching would swap the
+    // viewer (and its live widgets) for the loading state for nothing.
+    const signedLink = (storageId: string, expiresAt: number) => {
+      const body = btoa(
+        JSON.stringify({ v: 1, s: storageId, k: "json", e: expiresAt }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+    };
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    try {
+      mockThreadState.messagesBlobUrl = signedLink(
+        "kg-transcript",
+        1_800_000_000,
+      );
+      const { rerender } = render(
+        <ShareUsageThreadDetail threadId="thread-1" />,
+      );
+      await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      mockThreadState.messagesBlobUrl = signedLink(
+        "kg-transcript",
+        1_800_003_600,
+      );
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      mockThreadState.messagesBlobUrl = signedLink("kg-next", 1_800_003_600);
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    } finally {
+      mockThreadState.messagesBlobUrl =
+        "https://storage.example.com/thread.json";
+    }
+  });
+
+  it("retries a failed transcript load when a renewed link arrives", async () => {
+    // The flip side of fetching once per transcript: a load that FAILED (an
+    // expired link nothing renewed in time, a transient 5xx) must be retried
+    // by the next link to the same transcript, not stay failed until reload.
+    const signedLink = (expiresAt: number) => {
+      const body = btoa(
+        JSON.stringify({ v: 1, s: "kg-retry", k: "json", e: expiresAt }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      return `https://test.convex.site/web/artifact?t=${body}.c2ln`;
+    };
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    } as Response);
+    try {
+      mockThreadState.messagesBlobUrl = signedLink(1_800_000_000);
+      const { rerender } = render(
+        <ShareUsageThreadDetail threadId="thread-1" />,
+      );
+      expect(
+        await screen.findByText("Failed to fetch messages: 503"),
+      ).toBeInTheDocument();
+
+      mockThreadState.messagesBlobUrl = signedLink(1_800_003_600);
+      rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+      await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(
+        screen.queryByText("Failed to fetch messages: 503"),
+      ).not.toBeInTheDocument();
+    } finally {
+      mockThreadState.messagesBlobUrl =
+        "https://storage.example.com/thread.json";
+      consoleError.mockRestore();
+    }
+  });
+
   it("keeps the configured transcript after a ratings failure and retries on session change", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockScoreState.error = true;
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
     await waitFor(() => expect(mockTraceViewer).toHaveBeenCalledWith(expect.objectContaining({
       hostSnapshot: expect.objectContaining({ hostStyle: "claude" }),
-      widgetPolicy: "placeholder", frame: "none", interactive: false,
+      widgetPolicy: "live", frame: "none", interactive: false,
     })));
     expect(mockTraceViewer.mock.lastCall?.[0].renderAssistantTurnFooter).toBeUndefined();
     mockScoreState.error = false;
@@ -290,6 +386,24 @@ describe("ShareUsageThreadDetail", () => {
     expect(mockTraceViewer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+  });
+
+  it("offers Analyze now in the header of a User Testing session still waiting on its pass", async () => {
+    mockThreadState.analysisPhase = "owed";
+    const { rerender } = render(
+      <ShareUsageThreadDetail threadId="thread-1" />,
+    );
+    expect(
+      await screen.findByTestId("share-usage-analyze-now"),
+    ).toHaveTextContent("Analyze now");
+    // Final: nothing Analyze now could change, so no button.
+    mockThreadState.analysisPhase = "final";
+    rerender(<ShareUsageThreadDetail threadId="thread-1" />);
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("share-usage-analyze-now"),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("links a direct session to its Playground conversation", async () => {
@@ -317,7 +431,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockTraceViewer).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-          widgetPolicy: "placeholder",
+          widgetPolicy: "live",
         }),
       );
     });
@@ -371,12 +485,12 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("uses the inspector renderer with the pinned host and read-only widgets", async () => {
+  it("uses the inspector renderer with the pinned host and live MCP Apps", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
       expect(mockTraceViewer).toHaveBeenCalledWith(
-        expect.objectContaining({ frame: "none", widgetPolicy: "placeholder", interactive: false, hostSnapshot: expect.objectContaining({ hostStyle: "claude" }), adaptedTrace: expect.objectContaining({ messages: expect.any(Array) }) }),
+        expect.objectContaining({ frame: "none", widgetPolicy: "live", interactive: false, hostSnapshot: expect.objectContaining({ hostStyle: "claude" }), adaptedTrace: expect.objectContaining({ messages: expect.any(Array) }) }),
       );
     });
   });
@@ -826,6 +940,7 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     // The transcript must load: the Trace tab only exists once the detail is
     // past its loader.
@@ -951,6 +1066,7 @@ describe("ShareUsageThreadDetail — session identity header", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.analysisPhase = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     mockHostConfigState.config = null;
     mockCopyToClipboard.mockResolvedValue(true);

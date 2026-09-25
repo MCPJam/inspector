@@ -1,268 +1,410 @@
 import { ipcMain, BrowserWindow, autoUpdater, app } from "electron";
 import log from "electron-log";
+import type {
+  UpdateStatus,
+  UpdateFailureReason,
+} from "../../../shared/desktop-update.js";
+import {
+  attemptPath,
+  installedVersionMatches,
+  newAttempt,
+  readAttempt,
+  removeAttempt,
+  saveAttempt,
+  updateVersion,
+  type UpdateAttempt,
+} from "./update-attempt.js";
+import { flushUpdateReports, reportUpdateFailure } from "./update-reporting.js";
 
-export type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "pending"; version?: string; installRequested: boolean }
-  | { kind: "downloaded"; version: string; releaseNotes?: string }
-  // Auto-update announced a newer version and then failed to produce an
-  // installable build. The button stays, but it now sends the user to the
-  // releases page instead of pretending an install is one click away.
-  | { kind: "manual"; version?: string };
-
-// Watchdog for a `pending` that is not going anywhere.
-//
-// Two timeouts, because "the user is staring at a spinner" and "a download is
-// quietly running in the background" deserve different patience. Both are
-// exposed as `let` so tests can shorten them.
-//
-// INSTALL: the user clicked and is watching a spinner. Thirty seconds, not
-// minutes — anything a person waits through with no progress and no answer
-// IS the reported bug, whatever the clock says. It costs a slow download
-// nothing to be retired here: `update-downloaded` always wins, so a build
-// that lands late still flips the pill back to a working Restart.
-export const DEFAULT_STALLED_INSTALL_TIMEOUT_MS = 30_000;
-// DOWNLOAD: nobody clicked, so we can wait longer — but not forever. Before
-// this existed a download that started and never landed left the Update
-// button on screen for the life of the process with nothing behind it.
+export type { UpdateStatus } from "../../../shared/desktop-update.js";
+export { RELAUNCH_MARKER_MAX_AGE_MS } from "./update-attempt.js";
 export const DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
-// QUIT: the staged build is real and `quitAndInstall()` returned without
-// throwing, so the app should be on its way out. If this timer ever fires the
-// process is still alive, which means Squirrel took the install and did
-// nothing with it — silently, since a throw or an `error` event would have
-// been handled elsewhere. The renderer is sitting on "Updating…" with no
-// status left to clear it, so this is the ONLY thing standing between that
-// user and a spinner that runs for the life of the process.
 export const DEFAULT_STALLED_QUIT_TIMEOUT_MS = 30_000;
-let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
-let stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
-let stalledQuitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
-
-// How many collapsed downloads it takes before we stop offering the in-app
-// install at all. One collapse can be a dropped connection; the next poll
-// deserves a chance. Two is a pattern — that install cannot self-update, and
-// re-arming the button just gives the user something to click that will never
-// work (BUG: 17 clicks in 124 seconds, INSPECTOR desktop 2.45.0).
-const MANUAL_FALLBACK_AFTER_COLLAPSES = 2;
-
-// A refused EXTRA check, not a failed download.
-//
-// update-electron-app polls `checkForUpdates()` on a blind 10-minute
-// `setInterval`, and Electron's CheckForUpdates has no dedupe of its own.
-// Squirrel's `checkForUpdatesCommand` is a RACCommand with
-// `allowsConcurrentExecution = NO`, so a poll that lands mid-download is
-// refused on the spot and errors in `RACCommandErrorDomain`.
-//
-// That error describes the POLL, not the download: the download is still
-// running and can still land. Collapsing on it would tell a user on a slow
-// link that the update failed — a ~137MB macOS build has to sustain about
-// 1.9 Mbit/s just to beat the interval — and after two of them it would
-// retire the in-app install for a download that was working fine. The
-// watchdog is the backstop for a download that really is stuck.
-const CONCURRENT_CHECK_ERROR_DOMAIN = "RACCommandErrorDomain";
-// Windows has no NSError domain. Squirrel.Windows refuses the very same
-// overlapping poll from `spawnUpdate`, which throws a plain Error that
-// Electron re-emits verbatim, so the message is the only thing that tells it
-// apart from a download that really failed.
-const CONCURRENT_CHECK_MESSAGE = /AutoUpdater process .* is already running/i;
-
-function isRefusedConcurrentCheck(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) {
-    return false;
-  }
-  const { domain, message } = error as { domain?: unknown; message?: unknown };
-  return (
-    domain === CONCURRENT_CHECK_ERROR_DOMAIN ||
-    (typeof message === "string" && CONCURRENT_CHECK_MESSAGE.test(message))
-  );
-}
+export const UPDATE_POLL_INTERVAL_MS = 10 * 60_000;
 
 let currentStatus: UpdateStatus = { kind: "idle" };
-let isQuittingForUpdate = false;
+let attempt: UpdateAttempt | undefined;
 let trustedWindow: BrowserWindow | null = null;
-let updateListenersRegistered = false;
-let stalledInstallTimer: ReturnType<typeof setTimeout> | null = null;
-// Absolute deadline for the download that is currently `pending`. One per
-// download: a click may bring it forward, never push it out.
-let stalledDownloadDeadline: number | null = null;
-let collapsedDownloads = 0;
-// Armed only after a `quitAndInstall()` that returned without throwing.
-let stalledQuitTimer: ReturnType<typeof setTimeout> | null = null;
+let listenersRegistered = false;
+let terminal = false;
+let isQuittingForUpdate = false;
+let installingOnQuit = false;
+// Never reset this latch after an error. Electron registers a native observer
+// before attempting the install; calling twice can crash even if the first threw.
+let quitAndInstallCalled = false;
+let downloadTimer: ReturnType<typeof setTimeout> | undefined;
+let quitTimer: ReturnType<typeof setTimeout> | undefined;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+let downloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
+let quitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
+let generation = 0;
 
-function clearStalledInstallWatchdog(): void {
-  if (stalledInstallTimer !== null) {
-    clearTimeout(stalledInstallTimer);
-    stalledInstallTimer = null;
-  }
-  stalledDownloadDeadline = null;
+function markerPath(): string {
+  return attemptPath(app.getPath("userData"));
+}
+function clearDownloadTimer(): void {
+  clearTimeout(downloadTimer);
+  downloadTimer = undefined;
+}
+function clearQuitTimer(): void {
+  clearTimeout(quitTimer);
+  quitTimer = undefined;
+}
+function stopPolling(): void {
+  clearInterval(pollTimer);
+  pollTimer = undefined;
+}
+function ensureAttempt(): UpdateAttempt {
+  return (attempt ??= newAttempt(app.getVersion()));
+}
+function persist(): boolean {
+  return !app.isPackaged || (!!attempt && saveAttempt(markerPath(), attempt));
+}
+function report(reason: UpdateFailureReason): void {
+  const a = ensureAttempt();
+  if (app.isPackaged) reportUpdateFailure(a, reason);
 }
 
-function clearStalledQuitWatchdog(): void {
-  if (stalledQuitTimer !== null) {
-    clearTimeout(stalledQuitTimer);
-    stalledQuitTimer = null;
+function setStatus(status: UpdateStatus): void {
+  currentStatus = status;
+  // Only our trusted application window should receive update diagnostics.
+  const win = trustedWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send("update-status", status);
+  if (status.kind === "failed") win.webContents.send("update-error", status);
+}
+
+function finishFailure(reason: UpdateFailureReason): void {
+  report(reason);
+  clearDownloadTimer();
+  clearQuitTimer();
+  stopPolling();
+  terminal = true;
+  isQuittingForUpdate = false;
+  installingOnQuit = false;
+  const a = ensureAttempt();
+  a.phase = "failed";
+  a.failure = reason;
+  // Even if storage failed, keep the in-memory failure visible and never loop.
+  persist();
+  setStatus({
+    kind: "failed",
+    attemptId: a.id,
+    version: a.targetVersion,
+    reason,
+  });
+}
+
+function startDownloadTimer(): void {
+  if (downloadTimer !== undefined) return;
+  downloadTimer = setTimeout(() => {
+    downloadTimer = undefined;
+    handleFailure("download_timeout");
+  }, downloadTimeoutMs);
+}
+
+function recover(): void {
+  const a = ensureAttempt();
+  clearDownloadTimer();
+  clearQuitTimer();
+  stopPolling();
+  isQuittingForUpdate = false;
+  installingOnQuit = false;
+  a.retries = 1;
+  a.phase = "recovering";
+  a.at = Date.now();
+  if (!persist()) {
+    finishFailure("marker_write_failed");
+    return;
+  }
+  setStatus({ kind: "recovering", attemptId: a.id, version: a.targetVersion });
+  const currentGeneration = generation;
+  // Report the failed attempt before leaving, with a hard upper bound even if
+  // Sentry's own flush never settles. Never force-exit or skip browser cleanup.
+  void flushUpdateReports().then(() => {
+    if (
+      generation !== currentGeneration ||
+      terminal ||
+      currentStatus.kind !== "recovering"
+    )
+      return;
+    try {
+      app.relaunch();
+      quitTimer = setTimeout(
+        () => finishFailure("shutdown_stuck"),
+        quitTimeoutMs,
+      );
+      app.quit();
+    } catch {
+      finishFailure("restart_failed");
+    }
+  });
+}
+
+function handleFailure(reason: UpdateFailureReason): void {
+  if (terminal || currentStatus.kind === "recovering") return;
+  const a = ensureAttempt();
+  const wasInstallingOnQuit = installingOnQuit;
+  const failureReason =
+    reason === "install_timeout" && (a.retries === 1 || wasInstallingOnQuit)
+      ? "shutdown_stuck"
+      : reason;
+  report(failureReason);
+  clearDownloadTimer();
+  clearQuitTimer();
+  isQuittingForUpdate = false;
+  installingOnQuit = false;
+  if (
+    app.isPackaged &&
+    a.userRequested &&
+    a.retries === 0 &&
+    !wasInstallingOnQuit
+  ) {
+    recover();
+  } else {
+    finishFailure(failureReason);
+    if (wasInstallingOnQuit) {
+      // Let the original before-quit handler unwind before finishing a quit
+      // that had been prevented while waiting for the native installer.
+      const currentGeneration = generation;
+      setTimeout(() => {
+        if (generation === currentGeneration) app.quit();
+      }, 0);
+    }
   }
 }
 
-/**
- * The last thing between the user and a spinner that never stops.
- *
- * `quitAndInstall()` is fire-and-forget: it hands the staged build to Squirrel
- * and, on success, the app is gone before this timer can fire. The failure
- * mode it covers is the silent one — Squirrel accepts the install, the process
- * keeps running, and NOTHING comes back. No throw (the call sites already
- * catch those), no `error` event, no status change. `isQuittingForUpdate`
- * stays true so every later click is ignored as "install already underway",
- * and the renderer keeps `restartRequested` because only `update-error`,
- * `idle` or `manual` clear it. That is the reported bug in its purest form:
- * "Updating…", forever, on a build that really was downloaded.
- *
- * So: unstick the flag and hand over the releases page, which is the one path
- * left that we know works.
- */
-function startStalledQuitWatchdog(): void {
-  clearStalledQuitWatchdog();
-  const timeoutMs = stalledQuitTimeoutMs;
-  stalledQuitTimer = setTimeout(() => {
-    stalledQuitTimer = null;
-    // Re-check at fire time: a real quit never gets here, and an `error` that
-    // arrived first has already cleared the flag and answered the user.
-    if (!isQuittingForUpdate) {
+function install(onQuit = false): void {
+  if (
+    !app.isPackaged ||
+    terminal ||
+    isQuittingForUpdate ||
+    currentStatus.kind !== "downloaded"
+  )
+    return;
+  const a = ensureAttempt();
+  a.phase = "installing";
+  a.at = Date.now();
+  installingOnQuit = onQuit;
+  if (!persist()) {
+    handleFailure("marker_write_failed");
+    return;
+  }
+  if (quitAndInstallCalled) {
+    handleFailure("install_refused");
+    return;
+  }
+  quitAndInstallCalled = true;
+  isQuittingForUpdate = true;
+  try {
+    autoUpdater.quitAndInstall();
+    // The call can synchronously emit an error. Do not re-arm a watchdog after
+    // its error handler has already switched to recovery or failure.
+    if (isQuittingForUpdate) {
+      quitTimer = setTimeout(
+        () => handleFailure("install_timeout"),
+        quitTimeoutMs,
+      );
+    }
+  } catch {
+    handleFailure("install_threw");
+  }
+}
+
+function restoreAttempt(): void {
+  const loaded = readAttempt(markerPath());
+  if (loaded.kind === "none") return;
+  if (loaded.kind === "invalid") {
+    // Never infer authorization to restart from an old or malformed marker.
+    attempt = newAttempt(app.getVersion());
+    attempt.retries = 1;
+    finishFailure("marker_invalid");
+    if (removeAttempt(markerPath())) {
+      terminal = false;
+      attempt = undefined;
+    }
+    return;
+  }
+  attempt = loaded.attempt;
+  if (installedVersionMatches(attempt, app.getVersion())) {
+    if (!removeAttempt(markerPath())) {
+      finishFailure("marker_write_failed");
       return;
     }
-    log.error(
-      `Install never quit the app (no response for ${timeoutMs}ms); offering manual download`,
-    );
-    isQuittingForUpdate = false;
-    // Deliberately not `escalateToManualDownload()` — that one refuses to
-    // touch a `downloaded` status, which is exactly the status we are in.
-    const version =
-      currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
-    setStatus({ kind: "manual", version });
-    broadcastUpdateError();
-  }, timeoutMs);
-}
-
-function startStalledInstallWatchdog(timeoutMs: number): void {
-  const now = Date.now();
-  // A click means "someone is watching now", not "start the clock over". If
-  // the download already has a deadline the click can only bring it forward,
-  // otherwise clicking at minute 19 of a 20-minute budget buys five more.
-  const remaining =
-    stalledDownloadDeadline === null ? null : stalledDownloadDeadline - now;
-  const effectiveMs =
-    remaining === null
-      ? timeoutMs
-      : Math.max(Math.min(remaining, timeoutMs), 0);
-  clearStalledInstallWatchdog();
-  stalledDownloadDeadline = now + effectiveMs;
-  stalledInstallTimer = setTimeout(() => {
-    stalledInstallTimer = null;
-    stalledDownloadDeadline = null;
-    // Re-check at fire-time: if anything succeeded or moved on, do nothing.
-    if (currentStatus.kind === "pending") {
-      // Always audible: a watchdog firing means nothing at all came back,
-      // which the user cannot discover any other way.
-      collapsePendingDownload(`no progress for ${effectiveMs}ms`, {
-        alwaysNotify: true,
-      });
+    attempt = undefined;
+    return;
+  }
+  if (attempt.phase === "failed") {
+    setStatus({
+      kind: "failed",
+      attemptId: attempt.id,
+      reason: attempt.failure!,
+      version: attempt.targetVersion,
+    });
+    // A deliberate later launch can check again, but never auto-install from
+    // this failed attempt. The stored error remains available via the snapshot.
+    if (!removeAttempt(markerPath())) {
+      terminal = true;
+      return;
     }
-  }, effectiveMs);
-}
-
-/**
- * A `pending` that will never become `downloaded`, retired.
- *
- * Called from every event that means "this check is over and it did not hand
- * us an installable build": `update-not-available`, `error`, and the
- * watchdog. Retiring it is the whole point — the shipped bug was that
- * `pending` was treated as sticky, so a download that died left a live
- * "Update" pill wired to nothing. Clicking it set `installRequested`, the
- * next updater event cleared it, and the label flickered `Update → Updating…
- * → Update` forever with no error and no progress.
- *
- * On macOS the two events are not the matched pair they look like:
- * `update-available` is a KVO side effect of SQRLUpdater entering its
- * Downloading state, while `update-not-available` is *this check* completing
- * without a `SQRLDownloadedUpdate` in hand (see Electron's
- * auto_updater_mac.mm). A download that starts and then dies without an
- * NSError produces exactly `update-available` … `update-not-available`, which
- * is why the sticky-pending path was reachable at all.
- */
-function collapsePendingDownload(
-  reason: string,
-  // Notify even when the collapse is still recoverable. Callers that saw a
-  // real updater `error` in a packaged build pass true, so the "always tell
-  // packaged users" rule from the earlier fix survives this change.
-  { alwaysNotify = false }: { alwaysNotify?: boolean } = {},
-): void {
-  if (currentStatus.kind !== "pending") {
+    attempt = undefined;
     return;
   }
-  clearStalledInstallWatchdog();
-  const userWasWaiting = currentStatus.installRequested;
-  const version = currentStatus.version;
-  collapsedDownloads += 1;
-  log.error(
-    `Update download collapsed (${reason}); collapse #${collapsedDownloads}, user waiting: ${userWasWaiting}`,
+  if (loaded.kind === "expired") {
+    // Expiry revokes unattended recovery, not verification: a successful
+    // update is still successful when the user reopens the app next week.
+    finishFailure("recovery_expired");
+    if (removeAttempt(markerPath())) {
+      terminal = false;
+      attempt = undefined;
+    }
+    return;
+  }
+  if (attempt.phase === "installing") {
+    handleFailure("version_unchanged");
+    return;
+  }
+  if (attempt.userRequested && attempt.retries === 1) {
+    attempt.phase = "downloading";
+    attempt.at = Date.now();
+    if (!persist()) {
+      finishFailure("marker_write_failed");
+      return;
+    }
+    setStatus({
+      kind: "pending",
+      installRequested: true,
+      version: attempt.targetVersion,
+    });
+    startDownloadTimer();
+    return;
+  }
+  // An interrupted first download does not authorize an unattended install.
+  if (!removeAttempt(markerPath())) {
+    finishFailure("marker_write_failed");
+    return;
+  }
+  attempt = undefined;
+}
+
+function handleUpdaterError(reason: UpdateFailureReason): void {
+  if (
+    !isQuittingForUpdate &&
+    !installingOnQuit &&
+    (currentStatus.kind === "idle" || currentStatus.kind === "failed")
+  ) {
+    log.warn("Update check failed; will retry on the next poll");
+    return;
+  }
+  handleFailure(reason);
+}
+
+export function setupAutoUpdaterEvents(): void {
+  autoUpdater.on("checking-for-update", () =>
+    log.info("Checking for updates..."),
   );
-
-  // Someone who clicked is owed an answer now, not on the next poll.
-  const goesManual =
-    userWasWaiting || collapsedDownloads >= MANUAL_FALLBACK_AFTER_COLLAPSES;
-  // One collapse can be a dropped connection: drop back to idle and let
-  // update-electron-app's next poll try again. What must NOT happen is
-  // staying in `pending`, which is what left a live button wired to a
-  // download that had already died.
-  setStatus(goesManual ? { kind: "manual", version } : { kind: "idle" });
-  if (goesManual || alwaysNotify) {
-    broadcastUpdateError();
-  }
+  autoUpdater.on("update-available", () => {
+    if (
+      terminal ||
+      currentStatus.kind === "recovering" ||
+      currentStatus.kind === "downloaded"
+    )
+      return;
+    const a = ensureAttempt();
+    setStatus({
+      kind: "pending",
+      installRequested: a.userRequested,
+      version: a.targetVersion,
+    });
+    startDownloadTimer();
+  });
+  autoUpdater.on("update-not-available", () => {
+    if (
+      terminal ||
+      currentStatus.kind === "recovering" ||
+      currentStatus.kind === "downloaded"
+    )
+      return;
+    clearDownloadTimer();
+    if (currentStatus.kind === "pending") handleFailure("no_update");
+    else setStatus({ kind: "idle" });
+  });
+  autoUpdater.on("error", (error: Error & { domain?: string }) => {
+    // An overlapping native check is not evidence that the download failed.
+    if (
+      error.domain === "RACCommandErrorDomain" ||
+      /AutoUpdater process .* is already running/i.test(error.message)
+    )
+      return;
+    handleUpdaterError(
+      error.message?.includes("No update available, can't quit and install")
+        ? "install_refused"
+        : "updater_error",
+    );
+  });
+  autoUpdater.on("update-downloaded", (_event, releaseNotes, releaseName) => {
+    if (terminal || currentStatus.kind === "recovering" || isQuittingForUpdate)
+      return;
+    clearDownloadTimer();
+    stopPolling();
+    const a = ensureAttempt();
+    a.targetVersion = updateVersion(releaseName || "");
+    setStatus({
+      kind: "downloaded",
+      version: releaseName || "new version",
+      releaseNotes: releaseNotes || "",
+    });
+    if (a.userRequested) install();
+  });
+  if (app.isPackaged) restoreAttempt();
 }
 
-/**
- * The updater cannot recover on its own, so stop waiting for it.
- *
- * Reached when a check is STILL being refused after a download was already
- * retired: Squirrel is parked on a download that will never finish, so no
- * later check can succeed and `pending` can never come back. Without this the
- * user is left with no button, no toast and no link at all.
- */
-function escalateToManualDownload(reason: string): void {
-  if (currentStatus.kind === "manual" || currentStatus.kind === "downloaded") {
+export function startUpdatePolling(): void {
+  if (
+    !app.isPackaged ||
+    !["darwin", "win32"].includes(process.platform) ||
+    pollTimer !== undefined ||
+    terminal ||
+    currentStatus.kind === "recovering" ||
+    currentStatus.kind === "downloaded"
+  )
     return;
+  const version = app.getVersion();
+  try {
+    autoUpdater.setFeedURL({
+      url: `https://update.electronjs.org/MCPJam/inspector/${process.platform}-${process.arch}/${version}`,
+      headers: {
+        "User-Agent": `mcpjam-inspector/${version} (${process.platform}: ${process.arch})`,
+      },
+      serverType: "default",
+    });
+    const check = () => {
+      if (
+        terminal ||
+        currentStatus.kind === "downloaded" ||
+        currentStatus.kind === "recovering"
+      )
+        return;
+      try {
+        autoUpdater.checkForUpdates();
+      } catch {
+        handleUpdaterError("updater_error");
+      }
+    };
+    pollTimer = setInterval(() => {
+      // A recovery may start in pending before its first check. Only the first
+      // check should run then; never start another check during a download.
+      if (currentStatus.kind !== "pending") check();
+    }, UPDATE_POLL_INTERVAL_MS);
+    check();
+  } catch {
+    handleFailure("updater_error");
   }
-  log.error(`Auto-update cannot recover (${reason}); offering manual download`);
-  clearStalledInstallWatchdog();
-  setStatus({ kind: "manual" });
-  broadcastUpdateError();
 }
 
-/**
- * Shared tail of the real and the simulated `error` handler.
- *
- * A `pending` is retired; anything else only needs a re-broadcast so a
- * renderer that missed the last status catches up. `manual` deliberately gets
- * no toast — the pill already points at the releases page, and the updater can
- * keep failing on every 10-minute poll for the life of the process.
- */
-function retireAfterUpdaterError(
-  reason: string,
-  { alwaysNotify = false }: { alwaysNotify?: boolean } = {},
-): void {
-  if (currentStatus.kind === "pending") {
-    collapsePendingDownload(reason, { alwaysNotify });
-    return;
-  }
-  broadcast();
-  if (alwaysNotify && currentStatus.kind !== "manual") {
-    broadcastUpdateError();
-  }
-}
-
-function isTrustedSender(senderId: number): boolean {
+function isTrusted(senderId: number): boolean {
   return (
-    trustedWindow !== null &&
+    !!trustedWindow &&
     !trustedWindow.isDestroyed() &&
     senderId === trustedWindow.webContents.id
   );
@@ -270,341 +412,90 @@ function isTrustedSender(senderId: number): boolean {
 
 export function setTrustedUpdateWindow(window: BrowserWindow): void {
   trustedWindow = window;
-
-  if (currentStatus.kind === "idle") {
-    return;
-  }
-
   if (window.webContents.isLoading()) {
     window.webContents.once("did-finish-load", () => {
-      if (!window.isDestroyed()) {
-        window.webContents.send("update-status", currentStatus);
-      }
+      if (trustedWindow === window) setStatus(currentStatus);
     });
-    return;
-  }
-
-  window.webContents.send("update-status", currentStatus);
+  } else setStatus(currentStatus);
 }
 
-function broadcast(): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send("update-status", currentStatus);
-    }
-  }
-}
-
-function broadcastUpdateError(): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send("update-error");
-    }
-  }
-}
-
-function setStatus(next: UpdateStatus): void {
-  currentStatus = next;
-  broadcast();
-}
-
-export function setupAutoUpdaterEvents(): void {
-  autoUpdater.on("checking-for-update", () => {
-    log.info("Checking for updates...");
-  });
-
-  autoUpdater.on("update-available", () => {
-    // Once an install has proven it cannot apply an update, re-arming the
-    // in-app button on the next poll just hands the user the same dead
-    // control again. `manual` already points them somewhere that works, so
-    // it outranks a fresh `update-available` for the rest of the session.
-    if (currentStatus.kind === "manual") {
-      log.info(
-        "Update available, but auto-update already failed on this install — keeping the manual download",
-      );
-      return;
-    }
-    if (currentStatus.kind === "pending") {
-      // Already downloading. Re-announcing must not restart the stall
-      // deadline: a poll every 10 minutes would push a 20-minute watchdog out
-      // forever, and the button-that-does-nothing would be back.
-      log.info("Update available, download already in progress");
-      return;
-    }
-    if (currentStatus.kind === "downloaded") {
-      // A staged build outranks a fresh announcement. update-electron-app
-      // never stops polling after a download, so without this a poll would
-      // walk `downloaded` back to `pending` — and now that `pending` is no
-      // longer sticky, the poll's own `update-not-available` would then
-      // collapse it. The user would watch "Restart to update" disappear for
-      // a build that is on disk and installs on next launch.
-      log.info("Update available, but a build is already staged — keeping it");
-      return;
-    }
-    log.info("Update available, downloading...");
-    setStatus({ kind: "pending", installRequested: false });
-    // Armed on ENTERING pending, not only when the user clicks: a download
-    // that dies quietly used to leave the button up for the life of the
-    // process with nothing behind it.
-    startStalledInstallWatchdog(stalledDownloadTimeoutMs);
-  });
-
-  autoUpdater.on("update-not-available", () => {
-    log.info("No updates available");
-    // A `pending` that ends here produced no installable build — retire it.
-    // A `downloaded` one is real and survives a later check; `manual` has
-    // already told the user where to go.
-    if (currentStatus.kind === "pending") {
-      collapsePendingDownload("update-not-available");
-      return;
-    }
-    if (currentStatus.kind === "idle") {
-      setStatus({ kind: "idle" });
-      return;
-    }
-    log.info(
-      `Keeping visible update status after update-not-available: ${currentStatus.kind}`,
-    );
-  });
-
-  autoUpdater.on("error", (error) => {
-    // Before anything else: a refused EXTRA check says nothing about the
-    // download, so leave an in-flight one alone — status and watchdog stay.
-    if (isRefusedConcurrentCheck(error)) {
-      if (currentStatus.kind === "pending") {
-        log.info(
-          "Ignoring update check refused while a download is already in flight",
-        );
-        return;
-      }
-      if (currentStatus.kind === "idle" && collapsedDownloads > 0) {
-        // Squirrel is still holding the download we already retired, so every
-        // later check is refused too and `pending` never comes back. Nothing
-        // else in this file can surface that, so hand over the manual link.
-        escalateToManualDownload("checks still refused after a collapse");
-        return;
-      }
-      log.info("Ignoring update check refused while the updater is busy");
-      return;
-    }
-    log.error("Auto-updater error:", error);
-    const wasQuittingForUpdate = isQuittingForUpdate;
-    isQuittingForUpdate = false;
-    // A real error is an answer, and it reaches the user through the path
-    // below — so the silent-quit watchdog has nothing left to catch.
-    clearStalledQuitWatchdog();
-
-    // Always notify users in packaged builds — Bug 2: previously we only
-    // broadcast when the user had clicked, so download failures before any
-    // click silently swallowed the error and the button kept inviting clicks.
-    retireAfterUpdaterError("updater error", {
-      alwaysNotify: app.isPackaged || wasQuittingForUpdate,
-    });
-  });
-
-  autoUpdater.on("update-downloaded", (_event, releaseNotes, releaseName) => {
-    clearStalledInstallWatchdog();
-    // A build that actually landed clears the history that pushed us to the
-    // manual fallback — `downloaded` always wins.
-    collapsedDownloads = 0;
-    log.info(`Update downloaded: ${releaseName}`);
-    const installRequested =
-      currentStatus.kind === "pending" ? currentStatus.installRequested : false;
-    setStatus({
-      kind: "downloaded",
-      version: releaseName || "new version",
-      releaseNotes: releaseNotes || "",
-    });
-    if (installRequested && !isQuittingForUpdate) {
-      log.info("User had requested install — restarting now");
-      isQuittingForUpdate = true;
-      try {
-        autoUpdater.quitAndInstall();
-        // Returning is not succeeding — see startStalledQuitWatchdog.
-        startStalledQuitWatchdog();
-      } catch (error) {
-        // quitAndInstall can throw on macOS when the staged build is
-        // mis-signed or Squirrel's staging dir is corrupted. Don't leave the
-        // quitting flag stuck — surface the error so the user can retry.
-        log.error("quitAndInstall threw:", error);
-        isQuittingForUpdate = false;
-        broadcastUpdateError();
-      }
-    }
-  });
-}
-
-export function registerUpdateListeners(mainWindow: BrowserWindow): void {
-  setTrustedUpdateWindow(mainWindow);
-
-  if (updateListenersRegistered) {
-    return;
-  }
-  updateListenersRegistered = true;
-
-  ipcMain.handle("app:get-update-status", (event) => {
-    if (!isTrustedSender(event.sender.id)) {
-      log.warn(
-        `Ignoring get-update-status from untrusted sender (id: ${event.sender.id})`,
-      );
-      return { kind: "idle" } satisfies UpdateStatus;
-    }
-    return currentStatus;
-  });
-
+export function registerUpdateListeners(window: BrowserWindow): void {
+  setTrustedUpdateWindow(window);
+  if (listenersRegistered) return;
+  listenersRegistered = true;
+  ipcMain.handle("app:get-update-status", (event) =>
+    isTrusted(event.sender.id) ? currentStatus : { kind: "idle" },
+  );
   ipcMain.on("app:restart-for-update", (event) => {
-    if (!isTrustedSender(event.sender.id)) {
-      log.warn(
-        `Ignoring restart-for-update from untrusted sender (id: ${event.sender.id})`,
-      );
+    if (!isTrusted(event.sender.id) || terminal || isQuittingForUpdate) return;
+    if (currentStatus.kind !== "pending" && currentStatus.kind !== "downloaded")
       return;
-    }
-    if (currentStatus.kind === "downloaded") {
-      // The same guard `update-downloaded` and `installUpdateOnQuit` already
-      // carry, and this handler is the one that was missing it. `quitAndInstall`
-      // is NOT idempotent: with a window still open Electron registers this
-      // AutoUpdater on the window list and waits for the windows to close, so a
-      // second call re-registers the same observer and Chromium reports
-      // "Observers can only be added once!" via DumpWithoutCrashing
-      // (INSPECTOR-ELECTRON-GT).
-      //
-      // Nothing here clears the status, so the button stays live for the whole
-      // teardown — which is exactly the window a double-click lands in. The
-      // renderer disables it too; this is the half that also covers a resend
-      // from anywhere else.
-      if (isQuittingForUpdate) {
-        log.info("Install already underway — ignoring repeat restart request");
-        return;
-      }
-      log.info("Restarting app to install update...");
-      isQuittingForUpdate = true;
-      try {
-        autoUpdater.quitAndInstall();
-        // The click path the bug report came through: if this install goes
-        // nowhere, nothing else will ever clear the spinner.
-        startStalledQuitWatchdog();
-      } catch (error) {
-        log.error("quitAndInstall threw:", error);
-        isQuittingForUpdate = false;
-        broadcastUpdateError();
-      }
-    } else if (currentStatus.kind === "pending") {
-      log.info("Update still downloading — queuing install for completion");
+    const a = ensureAttempt();
+    a.userRequested = true;
+    if (currentStatus.kind === "downloaded") install();
+    else {
+      // Clicking does not shorten the download's original twenty-minute budget.
       setStatus({ ...currentStatus, installRequested: true });
-      // Bring the deadline forward to the shorter someone-is-watching
-      // timeout, but never past the download's own deadline (Bug 1).
-      startStalledInstallWatchdog(stalledInstallTimeoutMs);
-    } else {
-      // `manual` lands here too. The renderer opens the releases page instead
-      // of sending this, so a click that arrives anyway raced the status
-      // change — and the collapse that set `manual` already broadcast the
-      // error this branch would repeat.
-      log.info("Restart requested but no update is staged");
+      if (!persist()) finishFailure("marker_write_failed");
     }
   });
-
   if (!app.isPackaged) {
     ipcMain.on("app:simulate-update", (event) => {
-      if (!isTrustedSender(event.sender.id)) {
-        log.warn(
-          `Ignoring simulate-update from untrusted sender (id: ${event.sender.id})`,
-        );
-        return;
-      }
-      log.info("Simulating update available (dev mode)");
+      if (!isTrusted(event.sender.id)) return;
+      clearDownloadTimer();
+      clearQuitTimer();
+      terminal = false;
+      attempt = newAttempt(app.getVersion());
       setStatus({ kind: "pending", installRequested: false });
-      startStalledInstallWatchdog(stalledDownloadTimeoutMs);
+      startDownloadTimer();
     });
-
     ipcMain.on("app:simulate-update-downloaded", (event) => {
-      if (!isTrustedSender(event.sender.id)) {
-        log.warn(
-          `Ignoring simulate-update-downloaded from untrusted sender (id: ${event.sender.id})`,
-        );
-        return;
-      }
-      // Same success cleanup the real `update-downloaded` handler does, so a
-      // simulated success does not leave the previous download's deadline or
-      // collapse count behind for the next simulated run.
-      clearStalledInstallWatchdog();
-      collapsedDownloads = 0;
-      log.info("Simulating update downloaded (dev mode)");
-      const installRequested =
-        currentStatus.kind === "pending" && currentStatus.installRequested;
+      if (!isTrusted(event.sender.id)) return;
+      clearDownloadTimer();
+      terminal = false;
       setStatus({
         kind: "downloaded",
         version: "99.0.0",
-        releaseNotes: "Simulated update for testing",
+        releaseNotes: "Simulated update",
       });
-      if (installRequested) {
-        log.info("User had requested install — would restart now (dev mode)");
-      }
     });
-
     ipcMain.on("app:simulate-update-error", (event) => {
-      if (!isTrustedSender(event.sender.id)) {
-        log.warn(
-          `Ignoring simulate-update-error from untrusted sender (id: ${event.sender.id})`,
-        );
-        return;
-      }
-      log.error("Auto-updater error:", new Error("Simulated update failure"));
-      // Runs the real handler's tail so QA sees the shipped retirement path,
-      // including the second collapse that flips the pill to the manual
-      // download.
-      retireAfterUpdaterError("simulated updater error");
+      if (isTrusted(event.sender.id)) finishFailure("updater_error");
     });
   }
 }
 
 export function installUpdateOnQuit(): boolean {
-  if (!app.isPackaged) {
+  if (
+    !app.isPackaged ||
+    terminal ||
+    isQuittingForUpdate ||
+    currentStatus.kind !== "downloaded"
+  )
     return false;
-  }
-  if (currentStatus.kind === "downloaded" && !isQuittingForUpdate) {
-    log.info("Staged update found at quit — installing before exit");
-    isQuittingForUpdate = true;
-    try {
-      autoUpdater.quitAndInstall();
-      return true;
-    } catch (error) {
-      // Same failure mode as the click-path quitAndInstall guards: a
-      // mis-signed staged build or corrupted Squirrel staging dir can
-      // throw synchronously. Don't trap the user in a quit-loop — log and
-      // fall through to the normal shutdown path. The window may already
-      // be tearing down so we don't bother broadcasting.
-      log.error("installUpdateOnQuit: quitAndInstall threw:", error);
-      isQuittingForUpdate = false;
-      return false;
-    }
-  }
-  return false;
+  install(true);
+  return isQuittingForUpdate;
 }
 
-// Test-only reset
 export function __resetUpdateStateForTests(): void {
-  clearStalledInstallWatchdog();
-  clearStalledQuitWatchdog();
+  generation++;
+  clearDownloadTimer();
+  clearQuitTimer();
+  stopPolling();
   currentStatus = { kind: "idle" };
-  isQuittingForUpdate = false;
+  attempt = undefined;
   trustedWindow = null;
-  updateListenersRegistered = false;
-  collapsedDownloads = 0;
-  stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
-  stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
-  stalledQuitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
+  listenersRegistered = false;
+  terminal = false;
+  isQuittingForUpdate = false;
+  installingOnQuit = false;
+  quitAndInstallCalled = false;
+  downloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
+  quitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
 }
-
-// Test-only timeout override so the watchdog test doesn't have to advance
-// a full minute of fake timers.
-export function __setStalledInstallTimeoutForTests(ms: number): void {
-  stalledInstallTimeoutMs = ms;
-}
-
 export function __setStalledDownloadTimeoutForTests(ms: number): void {
-  stalledDownloadTimeoutMs = ms;
+  downloadTimeoutMs = ms;
 }
-
 export function __setStalledQuitTimeoutForTests(ms: number): void {
-  stalledQuitTimeoutMs = ms;
+  quitTimeoutMs = ms;
 }

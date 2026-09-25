@@ -3,6 +3,7 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import { logger } from "./logger.js";
 
 // One-shot guard so a misconfigured deployment logs once, not per request.
@@ -174,6 +175,8 @@ export async function fetchRuntimeServerSecrets(args: {
   bearerToken: string;
   projectId: string;
   serverId: string;
+  /** HTTP destination from authorize; null only for stdio. Missing HTTP URLs fail closed. */
+  expectedTargetUrl: string | null | undefined;
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
@@ -200,6 +203,19 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
   const RUNTIME_REVEAL_TIMEOUT_MS = 10_000;
+  // A scenario grant authorizes using an MCP server, not downloading its
+  // credentials. Convex requires infrastructure authentication in addition
+  // to the viewer's bearer before delivering scenario secrets to this process.
+  const scenarioServiceToken = args.scenarioId
+    ? process.env.INSPECTOR_SERVICE_TOKEN
+    : undefined;
+  if (args.scenarioId && !scenarioServiceToken) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing INSPECTOR_SERVICE_TOKEN for scenario secret delivery",
+    );
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -210,6 +226,9 @@ export async function fetchRuntimeServerSecrets(args: {
   try {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...(scenarioServiceToken
+        ? { "x-inspector-service-token": scenarioServiceToken }
+        : {}),
     };
     if (args.workosApiKeyActingAs) {
       const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
@@ -287,9 +306,17 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
 
+  const revealedHeaders = parseRecord(body.headers);
+  if (args.expectedTargetUrl !== null && revealedHeaders) {
+    assertSecretsOriginMatches({
+      boundOrigin: body.secretsBoundOrigin,
+      targetUrl: args.expectedTargetUrl,
+      serverName: args.serverId,
+    });
+  }
   return {
     env: parseRecord(body.env),
-    headers: parseRecord(body.headers),
+    headers: revealedHeaders,
   };
 }
 
