@@ -25,7 +25,7 @@ const PRESENTATION: Record<ShownKind, { Icon: LucideIcon; label: string }> = {
   "tool-run": { Icon: Wrench, label: "Ran tool" },
   "prompt-example": {
     Icon: MessageSquareQuote,
-    label: "Prompt example — assistant",
+    label: "Prompt example (assistant)",
   },
 };
 
