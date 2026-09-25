@@ -99,6 +99,12 @@ export const ErrorCode = {
   // re-authenticating with MCPJam will not change the outcome — the user has
   // to reconnect the upstream server.
   UPSTREAM_AUTH_FAILED: "UPSTREAM_AUTH_FAILED",
+  // The caller's AuthKit session has been revoked (signed out, or ended by the
+  // identity provider) — 401, and signing in again is the only remedy (MJ-011).
+  // Publicly it collapses onto UNAUTHORIZED with `details.reason:
+  // "SESSION_REVOKED"`, the v1 convention for a specific 401; the mapping sits
+  // in `routes/v1/envelope.ts` beside UPSTREAM_AUTH_FAILED's.
+  SESSION_REVOKED: "SESSION_REVOKED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

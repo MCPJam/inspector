@@ -28,6 +28,7 @@ import {
   verifyAuthKitToken,
   AuthKitConfigError,
 } from "../../services/authkit-jwt.js";
+import { assertSessionServable } from "../../middleware/session-revocation.js";
 import {
   resolveApiKeyReadiness,
   ApiKeyReadinessError,
@@ -122,6 +123,11 @@ interface SessionContext {
  * here — unlike other `/api/web/*` routes, nothing downstream re-checks it.
  * Verification (and the resulting 401) happens before any WorkOS or
  * binding-endpoint side effect.
+ *
+ * The same holds for the session behind the token (MJ-011): a revoked session
+ * is a 401 `SESSION_REVOKED`, and while the revoked-session list is loading or
+ * stale these routes answer 503 rather than act on a session they cannot
+ * check.
  */
 async function resolveSessionContext(c: any): Promise<SessionContext> {
   const bearer = assertBearerToken(c);
@@ -145,6 +151,10 @@ async function resolveSessionContext(c: any): Promise<SessionContext> {
       "Invalid or expired session token",
     );
   }
+  assertSessionServable(session.sid, {
+    requireFresh: true,
+    path: c.req.path,
+  });
   return { userId: session.sub };
 }
 
