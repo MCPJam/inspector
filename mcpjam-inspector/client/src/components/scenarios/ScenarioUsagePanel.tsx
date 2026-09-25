@@ -68,12 +68,34 @@ const SESSIONS_TRAFFIC_FILTER = withHideSynthetic(EMPTY_USAGE_FILTER);
  */
 type RatingFilterValue = "all" | "low" | "neutral" | "high" | "none";
 
-const RATING_FILTER_LABELS: Record<RatingFilterValue, string> = {
-  all: "All ratings",
-  low: "Low (≤2)",
-  neutral: "Neutral (3)",
-  high: "High (≥4)",
-  none: "No feedback",
+type RatingFilterOption = { value: RatingFilterValue; label: string };
+
+/**
+ * The options, in menu order, for the widget this study asks testers to use.
+ *
+ * Thumbs reuse the SAME buckets rather than a filter of their own: the backend
+ * scores a thumbs-down as 1 (negative) and a thumbs-up as 5 (positive), so
+ * "Thumbs down" is `low` and "Thumbs up" is `high`. What changes is only what
+ * the menu may offer — a thumbs study cannot produce a neutral turn, and
+ * star-count labels on it describe a scale its testers never saw.
+ */
+const RATING_FILTER_OPTIONS: Record<
+  "stars" | "thumbs",
+  readonly RatingFilterOption[]
+> = {
+  stars: [
+    { value: "all", label: "All ratings" },
+    { value: "low", label: "Low (≤2)" },
+    { value: "neutral", label: "Neutral (3)" },
+    { value: "high", label: "High (≥4)" },
+    { value: "none", label: "No feedback" },
+  ],
+  thumbs: [
+    { value: "all", label: "All ratings" },
+    { value: "high", label: "Thumbs up" },
+    { value: "low", label: "Thumbs down" },
+    { value: "none", label: "No feedback" },
+  ],
 };
 
 /**
@@ -141,7 +163,19 @@ export function ScenarioUsagePanel({
     [scenario.scenarioId],
   );
 
-  const [ratingFilter, setRatingFilter] = useState<RatingFilterValue>("all");
+  // Absent ⇒ stars, matching the backend normalizer and the Settings toggle.
+  const ratingStyle =
+    scenario.chatUi?.surfaces?.perTurnFeedback?.style === "thumbs"
+      ? "thumbs"
+      : "stars";
+  const ratingOptions = RATING_FILTER_OPTIONS[ratingStyle];
+  const [ratingChoice, setRatingFilter] = useState<RatingFilterValue>("all");
+  // A choice the current style does not offer (the style changed under an
+  // open filter — "Neutral" on a study now rated by thumbs) reads as "all"
+  // rather than filtering by a bucket the menu can no longer show or clear.
+  const ratingFilter = ratingOptions.some((o) => o.value === ratingChoice)
+    ? ratingChoice
+    : "all";
   const sessionsFilter = useMemo(
     () => buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
     [ratingFilter],
@@ -251,11 +285,9 @@ export function ScenarioUsagePanel({
                     <SelectValue placeholder="Ratings" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(
-                      Object.keys(RATING_FILTER_LABELS) as RatingFilterValue[]
-                    ).map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {RATING_FILTER_LABELS[value]}
+                    {ratingOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

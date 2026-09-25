@@ -171,6 +171,83 @@ describe("ScenarioUsagePanel rating filter", () => {
     ).toBe(false);
   });
 
+  it("offers thumbs, not star counts, on a study rated by thumbs", () => {
+    render(
+      <ScenarioUsagePanel
+        scenario={
+          {
+            ...SCENARIO,
+            chatUi: {
+              surfaces: { perTurnFeedback: { enabled: true, style: "thumbs" } },
+            },
+          } as unknown as ScenarioSettings
+        }
+      />
+    );
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All ratings",
+      "Thumbs up",
+      "Thumbs down",
+      "No feedback",
+    ]);
+    // A thumbs study never produces a neutral turn.
+    expect(screen.queryByText("Neutral (3)")).toBeNull();
+
+    // Same buckets the backend scores thumbs into: down is 1, up is 5.
+    fireEvent.click(screen.getByText("Thumbs down"));
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "feedbackBucket", value: "negative" },
+      ])
+    );
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Thumbs up"));
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "feedbackBucket", value: "positive" },
+      ])
+    );
+  });
+
+  it("keeps the star buckets on a study rated by stars", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All ratings",
+      "Low (≤2)",
+      "Neutral (3)",
+      "High (≥4)",
+      "No feedback",
+    ]);
+  });
+
+  it("drops a choice the new rating style cannot offer", () => {
+    const { rerender } = render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Neutral (3)"));
+    expect(
+      lastFilters().chips.some((chip) => chip.key === "feedbackBucket")
+    ).toBe(true);
+
+    rerender(
+      <ScenarioUsagePanel
+        scenario={
+          {
+            ...SCENARIO,
+            chatUi: { surfaces: { perTurnFeedback: { style: "thumbs" } } },
+          } as unknown as ScenarioSettings
+        }
+      />
+    );
+
+    expect(
+      lastFilters().chips.some((chip) => chip.key === "feedbackBucket")
+    ).toBe(false);
+  });
+
   it("re-checks the returned page so a live update cannot leak through", () => {
     useUsageInsightsMock.mockReturnValue({
       threads: [
