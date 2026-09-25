@@ -2,7 +2,6 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { RunIterationControl } from "./run-iteration-control";
 import { EvalModelChoices } from "./eval-target-matrix";
 import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
-import { resolveAuthoringIssue } from "@/lib/mcpjam-agent/eval-workspace";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, Loader2, Trash2 } from "lucide-react";
@@ -81,26 +80,6 @@ function isModelContractError(message: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** The one line that stands in for the detail, so it says what is inside. */
-function describeDraftNotes(authoring: {
-  issues: ReadonlyArray<{ blocking: boolean; resolution?: string }>;
-  additions: ReadonlyArray<unknown>;
-}): string {
-  const blocking = authoring.issues.filter(
-    (issue) => issue.blocking && !issue.resolution,
-  ).length;
-  const notes = authoring.issues.length - blocking + authoring.additions.length;
-  const parts = [
-    blocking === 1
-      ? "1 step MCPJam could not write"
-      : blocking > 1
-        ? `${blocking} steps MCPJam could not write`
-        : "",
-    notes === 1 ? "1 note" : notes > 1 ? `${notes} notes` : "",
-  ].filter(Boolean);
-  return parts.length ? parts.join(", ") : "Notes on this case";
 }
 
 export function describeEvalDraftError(message: string): string {
@@ -466,111 +445,6 @@ export function EvalGeneratedDrafts({
                         ? prompt.prompt
                         : "Open this draft to review its steps and assertions."}
                     </p>
-                  </div>
-                )}
-                {draft.authoring && (
-                  <div className="space-y-3 text-sm">
-                    {/*
-                      One sentence, then everything else folded away. A case
-                      that named two missing tools produced six red paragraphs
-                      and three change notes, each restating the contract, and
-                      the one thing the reader had to do was buried in it. The
-                      detail still has to be reachable — a blocking issue is
-                      cleared by writing in its box — but it is not the first
-                      thing on the page.
-                    */}
-                    {blockedReason && (
-                      <p className="text-destructive">
-                        MCPJam could not finish this case. Fix the steps above,
-                        then add it to the suite.
-                      </p>
-                    )}
-                    {checkSummary && (
-                      <p className="text-muted-foreground">{checkSummary}</p>
-                    )}
-                    {draft.authoring.source && (
-                      <details>
-                        <summary>
-                          Source: {draft.authoring.source.fileName}, lines{" "}
-                          {draft.authoring.source.startLine}–
-                          {draft.authoring.source.endLine}
-                        </summary>
-                        <pre className="whitespace-pre-wrap rounded bg-muted p-3">
-                          {draft.authoring.source.excerpt}
-                        </pre>
-                      </details>
-                    )}
-                    {(draft.authoring.issues.length > 0 ||
-                      draft.authoring.additions.length > 0) && (
-                      <details className="space-y-3">
-                        <summary className="cursor-pointer text-muted-foreground">
-                          {checkSummary
-                            ? `${draft.authoring.issues.length} ${
-                                draft.authoring.issues.length === 1
-                                  ? "thing"
-                                  : "things"
-                              } MCPJam was unsure about`
-                            : describeDraftNotes(draft.authoring)}
-                        </summary>
-                        <div className="space-y-3 pt-2">
-                          {draft.authoring.issues.map((issue, index) => (
-                      <div key={index}>
-                        <p
-                          className={
-                            issue.blocking && !issue.resolution
-                              ? "text-destructive"
-                              : "text-muted-foreground"
-                          }
-                        >
-                          {issue.stepId ? `${issue.stepId}: ` : ""}
-                          {issue.message}
-                        </p>
-                        {issue.blocking && (
-                          <textarea
-                            aria-label={`Resolution for ${issue.message}`}
-                            placeholder="Explain the evidence or edits that resolve this issue (at least 10 characters)."
-                            className="w-full rounded-md border bg-background p-2"
-                            value={
-                              draft.issueResolutions?.[index] ??
-                              issue.resolution ??
-                              ""
-                            }
-                            disabled={locked}
-                            onChange={(event) =>
-                              resolveAuthoringIssue(
-                                scope,
-                                draft.id,
-                                index,
-                                event.target.value,
-                              )
-                            }
-                          />
-                            )}
-                            </div>
-                          ))}
-                          {draft.authoring.additions.length > 0 && (
-                            // The changes are already IN the steps above; this
-                            // names them. Not always additions, either: the
-                            // model removes a step whose tool does not exist.
-                            <div className="space-y-1">
-                              <p className="font-medium text-foreground">
-                                What MCPJam changed:
-                              </p>
-                              <ul className="list-disc space-y-1 pl-5">
-                                {draft.authoring.additions.map((addition) => (
-                                  <li key={addition.id}>
-                                    <span className="font-mono text-[11px]">
-                                      {addition.path}
-                                    </span>
-                                    : {addition.explanation}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      </details>
-                    )}
                   </div>
                 )}
                 <footer className="flex flex-wrap items-center gap-2">
