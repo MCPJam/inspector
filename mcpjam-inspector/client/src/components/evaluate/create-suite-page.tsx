@@ -132,7 +132,9 @@ export function CreateSuitePage({
   const { capable: composeCapable, pending: composePending } =
     useEvalComposeCapable(projectId);
   const composeMode = composeCapable || composePending;
-  const resolveTargets = useComposerResolver(projectId ?? "");
+  const resolveTargets = useComposerResolver(projectId ?? "", {
+    requireServerAttachment: true,
+  });
   const composerEnvironments = useProjectEnvironments(
     composeMode ? projectId : null,
   );

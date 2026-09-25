@@ -76,7 +76,24 @@ vi.mock("@/hooks/useClients", () => ({
   }),
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
-  ServerPicker: () => <div data-testid="server-group-picker" />,
+  ServerPicker: ({
+    value,
+    onChange,
+    disabled,
+  }: {
+    value: string | null;
+    onChange: (id: string) => void;
+    disabled?: boolean;
+  }) => (
+    <button
+      type="button"
+      data-testid="server-group-picker"
+      disabled={disabled}
+      onClick={() => onChange("group-1")}
+    >
+      {value ?? "none"}
+    </button>
+  ),
 }));
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -160,26 +177,44 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     );
   });
 
-  it("converts a legacy suite on the first edit", async () => {
+  it("refuses to convert a legacy suite without a server group", async () => {
+    // The suite's legacy group is NOT seeded: an environment suite does not
+    // read it, and copying it is how a converted suite ran with no servers.
+    renderBar({
+      serverAttachmentId: "legacy-group",
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+    expect(screen.getByTestId("server-group-picker")).toHaveTextContent("none");
+
+    fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(toastError.mock.calls[0][0]).toMatch(/pick a server or group/i);
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
+  });
+
+  it("converts a legacy suite once a server group is picked", async () => {
     renderBar({
       hostAttachments: [
         { namedHostId: "host-1", enabledOptionalServerIds: [] },
       ] as any,
     });
 
-    fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    fireEvent.click(screen.getByTestId("server-group-picker"));
 
     await waitFor(() => expect(setSuiteEnvironmentsMock).toHaveBeenCalled());
-    // Both clients: the seeded one plus the edit — converting must not drop
-    // what the suite was already running.
+    // The seeded client keeps running, now with the picked group.
     expect(ensureAdhocMock).toHaveBeenCalledWith({
       projectId: "proj-1",
-      stacks: [{ hostId: "host-1" }, { hostId: "host-2" }],
+      stacks: [{ hostId: "host-1", serverAttachmentId: "group-1" }],
     });
     expect(setSuiteEnvironmentsMock).toHaveBeenCalledWith({
       suiteId: "suite-1",
-      environmentIds: ["adhoc-host-1", "adhoc-host-2"],
+      environmentIds: ["adhoc-host-1"],
     });
     // The legacy client write is NOT also fired — one axis per mode.
     expect(onUpdateMock).not.toHaveBeenCalled();
@@ -191,10 +226,13 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
         data: { message: "Pinning plugin versions requires an admin." },
       }),
     );
-    renderBar();
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
 
-    fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
+    fireEvent.click(screen.getByTestId("server-group-picker"));
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
@@ -210,16 +248,19 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
         },
       }),
     );
-    renderBar();
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
 
-    fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
-    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
+    fireEvent.click(screen.getByTestId("server-group-picker"));
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(toastError.mock.calls[0][0]).toMatch(/pinned by an enabled schedule/i);
     await waitFor(() =>
-      expect(screen.getByTestId("suite-env-clients-picker")).toHaveTextContent(
-        /pick/i,
+      expect(screen.getByTestId("server-group-picker")).toHaveTextContent(
+        "none",
       ),
     );
   });

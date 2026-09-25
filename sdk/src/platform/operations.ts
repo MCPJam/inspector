@@ -3212,6 +3212,19 @@ async function composeRunEnvironment(
   signal: AbortSignal | undefined,
   options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
+  // `hostServers` used to mean "run against the client's current server
+  // list". Eval runs no longer have such a list: since the backend made eval
+  // launches group-only, an environment without a server group resolves to NO
+  // servers and the launch is refused (`ENV_NO_SERVERS`). Accepting the flag
+  // would only compose that refused environment, so it is rejected up front,
+  // before any group is resolved or created, with the replacement named.
+  // Still declared in the schema so an older caller gets this sentence
+  // instead of an unknown-key error.
+  if (stack.hostServers === true) {
+    throw operationInputError(
+      "`hostServers` is no longer supported for eval runs: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Pass `server`/`servers` (resolved to a server group) or `serverGroup` instead."
+    );
+  }
   // Once, before the fan-out: every model cell shares one server group, and
   // resolving inside the loop would re-list (and race to create) per cell.
   const pinned = await materializeComposeServers(
@@ -3225,25 +3238,11 @@ async function composeRunEnvironment(
   // for presence alone would clear this guard and then compose the exact
   // unpinned environment it exists to refuse.
   const pinnedGroup = pinned.serverGroup?.trim();
-  // Asking to follow the host AND to pin is a contradiction, and resolving it
-  // silently would drop one of the two things the caller said. The CLI rejects
-  // the pair too; repeated here because `execute` is reachable without it.
-  if (
-    stack.hostServers === true &&
-    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
-  ) {
+  // The server is the thing under test, so a composed RUN has to say which
+  // one, as a server group.
+  if (!pinnedGroup) {
     throw operationInputError(
-      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
-    );
-  }
-  // The server is the thing under test, so a composed RUN has to say which one.
-  // Without a pin the run reads the host's list at execution time, and editing
-  // that shared host silently repoints every eval composed against it — the
-  // failure this guard exists to stop. Following the host stays available, but
-  // only as something the caller asked for out loud.
-  if (!pinnedGroup && stack.hostServers !== true) {
-    throw operationInputError(
-      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+      "A composed eval run must say which servers to test: pass `server`/`servers` (resolved to a server group) or `serverGroup`."
     );
   }
   const choices = expandComposeModelChoices(pinned);
@@ -3798,13 +3797,13 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required: an eval run takes its servers from a server group alone."
       ),
     hostServers: z
       .boolean()
       .optional()
       .describe(
-        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
+        "No longer supported — rejected. Eval runs take their servers from a server group alone; pass `server`/`servers` or `serverGroup` instead."
       ),
     server: z
       .string()

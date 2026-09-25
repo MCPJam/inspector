@@ -24,7 +24,7 @@ import {
   type EnvironmentStack,
   type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
-import { isNamedEnvironment } from "@/lib/environment-label";
+import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -49,6 +49,7 @@ export type EnsureAdhocEnvironmentsFn = (args: {
 
 export type ComposerResolveErrorCode =
   | "NO_TARGETS"
+  | "NO_SERVER_GROUP"
   | "TOO_MANY_TARGETS"
   | "UNRESOLVED_ENVIRONMENT"
   | "ADHOC_UNAVAILABLE"
@@ -188,6 +189,14 @@ export async function resolveComposerEnvironments(args: {
    * must not send `modelId` — an older validator would reject the arg.
    */
   modelMatrixEnabled?: boolean;
+  /**
+   * EVAL surfaces only. An eval run takes its servers from the environment's
+   * server group alone, so a target without one (and without a plugin pin
+   * contributing servers) would run with no tools; refuse it here instead of
+   * minting it. Journeys, scenarios and swarms fall back to the client's own
+   * servers and leave this off.
+   */
+  requireServerAttachment?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -198,6 +207,7 @@ export async function resolveComposerEnvironments(args: {
     computersEnabled,
     max,
     modelMatrixEnabled = false,
+    requireServerAttachment = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -219,6 +229,12 @@ export async function resolveComposerEnvironments(args: {
         throw new ComposerResolveError(
           "UNRESOLVED_ENVIRONMENT",
           "One of the selected environments is no longer available. Remove it and pick another.",
+        );
+      }
+      if (requireServerAttachment && lacksEvalServerSource(env)) {
+        throw new ComposerResolveError(
+          "NO_SERVER_GROUP",
+          `"${environmentLabel(env)}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
         );
       }
       environments.push(env);
@@ -282,6 +298,12 @@ export async function resolveComposerEnvironments(args: {
   }
 
   const fields = sharedFields(state.stack, skillsEnabled, computersEnabled);
+  if (requireServerAttachment && !fields.serverAttachmentId) {
+    throw new ComposerResolveError(
+      "NO_SERVER_GROUP",
+      "Pick a server or group. An eval run takes its servers from the group alone, so without one it would connect no servers.",
+    );
+  }
 
   type Cell = { hostId: string; modelId: string | undefined; key: string };
   const cells: Cell[] = [];
@@ -385,6 +407,32 @@ export async function resolveComposerEnvironments(args: {
   }
 
   return { environmentIds, environments, createdIds, reusedIds };
+}
+
+/**
+ * An environment an EVAL run would launch with no servers: no server group,
+ * and no plugin pin contributing one. The backend refuses to launch these
+ * (`ENV_NO_SERVERS`); eval surfaces refuse to create them first.
+ */
+export function lacksEvalServerSource(
+  env: Pick<ProjectEnvironmentView, "serverAttachmentId" | "pluginVersionIds">,
+): boolean {
+  return !env.serverAttachmentId && !(env.pluginVersionIds?.length ?? 0);
+}
+
+/**
+ * Whether a composer state names an eval target that would run with no
+ * servers — the check an eval form gates submit on, before resolution.
+ */
+export function composerMissingServerGroup(
+  state: EnvironmentComposerState,
+  liveEnvironments: readonly ProjectEnvironmentView[],
+): boolean {
+  if (isComposeMode(state)) return !state.stack.serverAttachmentId;
+  return state.environmentIds.some((id) => {
+    const env = liveEnvironments.find((e) => e.environmentId === id);
+    return env ? lacksEvalServerSource(env) : false;
+  });
 }
 
 function normalizeModelSelection(selection: ModelSelection): ModelSelection {

@@ -14,7 +14,17 @@ import { useEnsureAdhocEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
-export function useComposerResolver(rawProjectId: string): (args: {
+export function useComposerResolver(
+  rawProjectId: string,
+  options: {
+    /**
+     * Eval surfaces pass `true`: see `resolveComposerEnvironments`. Swarms and
+     * User Testing leave it off — their targets fall back to the client's own
+     * servers.
+     */
+    requireServerAttachment?: boolean;
+  } = {},
+): (args: {
   state: EnvironmentComposerState;
   liveEnvironments: ProjectEnvironmentView[];
   max: number;
@@ -27,6 +37,7 @@ export function useComposerResolver(rawProjectId: string): (args: {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const modelMatrixEnabled = useModelMatrixCapability(projectId);
+  const requireServerAttachment = options.requireServerAttachment === true;
 
   return useCallback(
     ({ state, liveEnvironments, max }) =>
@@ -39,13 +50,15 @@ export function useComposerResolver(rawProjectId: string): (args: {
         computersEnabled,
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
+        requireServerAttachment,
       }),
     [
       computersEnabled,
       ensureAdhocEnvironments,
       modelMatrixEnabled,
       projectId,
+      requireServerAttachment,
       skillsEnabled,
-    ]
+    ],
   );
 }

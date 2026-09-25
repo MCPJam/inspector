@@ -85,12 +85,51 @@ it("keeps inherited models and preserves server scope for a new model", () => {
     planRunMatrix(suite, environments, {
       claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
     })[0].stack,
-  ).toMatchObject({
+  ).toEqual({
     hostId: "claude",
     modelId: "opus",
     serverAttachmentId: "servers",
-    skillSelection: null,
   });
+});
+
+it("never derives a new cell's servers from the suite's legacy group", () => {
+  // The environment has no group; the suite's legacy field does. An
+  // environment suite does not read that field, so copying it would be a
+  // guess — the cell must be refused instead.
+  const [cell] = planRunMatrix(
+    { ...suite, serverAttachmentId: "legacy-group" },
+    [{ ...environments[0], serverAttachmentId: undefined }],
+    { claude: { includeClientDefaults: false, explicitModelIds: ["opus"] } },
+  );
+  expect(cell.stack).not.toHaveProperty("serverAttachmentId");
+  expect(cell.missingGroup).toBe(true);
+});
+
+it("blocks a new cell when the client's setups disagree", () => {
+  const plan = planRunMatrix(
+    { ...suite, environmentIds: ["env", "env-2"] },
+    [
+      environments[0],
+      { ...environments[0], environmentId: "env-2", serverAttachmentId: "b" },
+    ],
+    { claude: { includeClientDefaults: false, explicitModelIds: ["opus"] } },
+  );
+  expect(plan).toHaveLength(1);
+  expect(plan[0].blocked).toMatch(/setups differ/);
+});
+
+it("blocks a new cell whose template carries what a one-run change can't copy", () => {
+  const [cell] = planRunMatrix(
+    suite,
+    [
+      {
+        ...environments[0],
+        secretSelection: { mode: "explicit", secretIds: ["secret"] },
+      },
+    ],
+    { claude: { includeClientDefaults: false, explicitModelIds: ["opus"] } },
+  );
+  expect(cell.blocked).toMatch(/grants project secrets/);
 });
 it("resolves changed combinations only at launch without modifying the suite", async () => {
   ensure.mockResolvedValue([{ environment: { environmentId: "new-env" } }]);
@@ -206,4 +245,59 @@ it("blocks a client default when the client has no model", () => {
     screen.getByText("Choose at least one client and model."),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
+});
+
+it("blocks Start when an attached environment has no server group", () => {
+  const onStart = vi.fn();
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={suite}
+      cases={cases}
+      environments={[{ ...environments[0], serverAttachmentId: undefined }]}
+      hostNamesById={new Map()}
+      onStart={onStart}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByText(/would connect no servers/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
+});
+
+it("launches a suite without environments through its own configuration", async () => {
+  // No environments are composed from the legacy fields: the runtime knows
+  // where a legacy suite keeps its servers, this dialog does not.
+  const onStart = vi.fn();
+  const legacy = {
+    ...suite,
+    environmentIds: undefined,
+    hostAttachments: [
+      {
+        namedHostId: "claude",
+        enabledOptionalServerIds: [],
+        hostName: "Claude",
+        resolvedServerNames: [],
+      },
+    ],
+  } as unknown as EvalSuite;
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={legacy}
+      cases={cases}
+      environments={[]}
+      hostNamesById={new Map()}
+      onStart={onStart}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Change model" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+  await waitFor(() => expect(onStart).toHaveBeenCalled());
+  const [launched, options] = onStart.mock.calls[0];
+  expect(launched.environmentIds).toBeUndefined();
+  expect(options).not.toHaveProperty("ephemeralEnvironment");
+  expect(ensure).not.toHaveBeenCalled();
 });
