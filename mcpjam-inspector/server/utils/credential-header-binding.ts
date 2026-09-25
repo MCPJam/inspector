@@ -125,20 +125,39 @@ export function bindCredentialHeaders(
         : input.toString();
     let headers = new Headers(init?.headers ?? fromRequest?.headers);
     let method = (init?.method ?? fromRequest?.method ?? "GET").toUpperCase();
-    let body = init?.body;
+    // A `Request` input carries its own body and options; every hop is sent
+    // as (url, init), so they are lifted into the init here — a body is read
+    // once into a buffer, which also makes it replayable across a 307/308.
+    let body: RequestInit["body"] = init?.body;
+    if (
+      body === undefined &&
+      fromRequest?.body &&
+      method !== "GET" &&
+      method !== "HEAD"
+    ) {
+      body = await fromRequest.clone().arrayBuffer();
+    }
     const redirectMode = init?.redirect ?? fromRequest?.redirect ?? "follow";
+    // Of a Request's remaining options only its abort signal means anything
+    // to a server-side fetch; the rest (cache, referrer, …) are browser-only.
+    const requestInit: RequestInit = {
+      ...(fromRequest ? { signal: fromRequest.signal } : {}),
+      ...init,
+    };
 
     if (redirectMode !== "follow") {
       return baseFetch(url, {
-        ...init,
+        ...requestInit,
         method,
+        body,
         headers: strip(headers, url),
+        redirect: redirectMode,
       });
     }
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const response = await baseFetch(url, {
-        ...init,
+        ...requestInit,
         method,
         body,
         headers: strip(headers, url),
@@ -171,7 +190,11 @@ export function bindCredentialHeaders(
       } else if (
         body !== undefined &&
         body !== null &&
-        typeof body !== "string"
+        typeof body !== "string" &&
+        !(body instanceof ArrayBuffer) &&
+        !ArrayBuffer.isView(body) &&
+        !(body instanceof URLSearchParams) &&
+        !(body instanceof Blob)
       ) {
         throw new Error(
           "A redirect would need the request body replayed, which is not possible for a streamed body.",

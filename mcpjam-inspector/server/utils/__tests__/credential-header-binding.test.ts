@@ -226,6 +226,47 @@ describe("bindCredentialHeaders", () => {
     expect(new Headers(calls[0]!.headers).get("x-api-key")).toBe("k");
   });
 
+  it("keeps a Request input's body and redirect mode", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const inner = vi.fn(async (input: any, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      return String(input) === "https://owner.example.com/mcp"
+        ? new Response(null, {
+            status: 307,
+            headers: { Location: "https://owner.example.com/mcp2" },
+          })
+        : new Response("ok");
+    }) as unknown as typeof fetch;
+    const bound = bindCredentialHeaders(inner, binding);
+
+    await bound(
+      new Request("https://owner.example.com/mcp", {
+        method: "POST",
+        body: '{"jsonrpc":"2.0"}',
+        headers: { "x-api-key": "k", "content-type": "application/json" },
+      }),
+    );
+    // The body survives, and is replayed on the 307 hop.
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.init.method).toBe("POST");
+      expect(new TextDecoder().decode(call.init.body as ArrayBuffer)).toBe(
+        '{"jsonrpc":"2.0"}',
+      );
+    }
+
+    calls.length = 0;
+    await bound(
+      new Request("https://owner.example.com/mcp", {
+        redirect: "error",
+        headers: { "x-api-key": "k" },
+      }),
+    );
+    // A Request's own `redirect: "error"` reaches the underlying fetch.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.redirect).toBe("error");
+  });
+
   it("gives up on an endless redirect chain", async () => {
     const inner = vi.fn(
       async () =>
