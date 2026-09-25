@@ -31,6 +31,7 @@
  * connections, never a key.
  */
 import {
+  assertModelSelection,
   isLegacySelection,
   selectionFromLegacyModelId,
   validateModelSelection,
@@ -111,7 +112,13 @@ export type ResolveLocalModelSelectionInput = {
    * The org provider key the legacy fields of the same record derive
    * (`deriveOrgProviderKey`), used to find the org connection in a resolved
    * org config. The org config does not carry provider row ids, so the
-   * connection's id itself is checked by the backend on `/stream/org`.
+   * connection's id itself is checked by the backend: the runner forwards
+   * the selection ({@link backendModelSelection}) as `modelSelection` on
+   * `/stream/org` and `/stream/org/resolve`, and a backend that understands
+   * it re-resolves the `connectionRef` before decrypting any key (a deleted
+   * or re-created connection is `credential_missing`). A backend that
+   * predates selections ignores the field, and the request runs as the
+   * legacy `providerKey` + `model` pair it always was.
    */
   orgProviderKey?: string;
   /** Whether the run has an organization/project to resolve org connections in. */
@@ -267,6 +274,28 @@ export function fallbackProhibitedRefusal(
     reason: `the ${attempted.rail} attempt failed and this selection does not permit a ${attempted.fallbackRail} fallback`,
     evidence: { rail: attempted.rail, fallbackRail: attempted.fallbackRail },
   };
+}
+
+/**
+ * The selection the runner forwards to the backend as the request body's
+ * `modelSelection`: a `hosted` one to `/stream`, an `org` one to `/stream/org`
+ * and `/stream/org/resolve`, so the backend resolver re-checks it (and records
+ * it as the requested selection instead of `legacy`). A `local` selection is
+ * never sent: it runs on this request's own key and names nothing the backend
+ * could resolve. `undefined` for none.
+ *
+ * Validated (and normalized) with the SDK validator first, which rejects any
+ * field outside the selection shape, so nothing but the saved choice (never a
+ * key) can ride along. An invalid selection throws rather than being dropped:
+ * dropping it would send the request as legacy and skip the backend's
+ * connection re-check.
+ */
+export function backendModelSelection(
+  selection: ModelSelection | undefined,
+): ModelSelection | undefined {
+  if (selection === undefined) return undefined;
+  const validated = assertModelSelection(selection, "modelSelection");
+  return validated.source === "local" ? undefined : validated;
 }
 
 /**
