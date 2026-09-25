@@ -1689,7 +1689,9 @@ export async function createAuthorizedManager(
             `Credentials for "${displayServerName}" are being refreshed by another request.${
               retryAfterSeconds === null
                 ? " Try again shortly."
-                : ` Try again in ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}.`
+                : ` Try again in ${retryAfterSeconds} second${
+                    retryAfterSeconds === 1 ? "" : "s"
+                  }.`
             }`,
             errorDetails,
           );
@@ -2217,7 +2219,9 @@ export async function createAuthorizedManager(
   // Each server owns its capture even when two configs use the same URL.
   // Install before construction: the manager starts connecting eagerly.
   const connectionsByKey = new Map(
-    Object.values(connectionsByServerId).flat().map((connection) => [connection.key, connection]),
+    Object.values(connectionsByServerId)
+      .flat()
+      .map((connection) => [connection.key, connection]),
   );
   const observedConfigs = Object.fromEntries(
     connectionEntries.map(([id, config]) => {
@@ -2226,11 +2230,18 @@ export async function createAuthorizedManager(
       const authorization = batch.results[serverId];
       let baseFetch = config.baseFetch ?? hostedMcpBaseFetch();
       try {
-        if (authorization?.ok && authorization.accessLevel === "project_member" &&
-            authorization.serverConfig.transportType === "http") {
+        if (
+          authorization?.ok &&
+          authorization.accessLevel === "project_member" &&
+          authorization.serverConfig.transportType === "http"
+        ) {
           baseFetch = hostedMcpBackpressureFetch({
-            fetch: baseFetch, projectId, serverId, userId: authorizedUserId,
-            connectionId: connection?.connectionId ?? options?.connectionIds?.[serverId],
+            fetch: baseFetch,
+            projectId,
+            serverId,
+            userId: authorizedUserId,
+            connectionId:
+              connection?.connectionId ?? options?.connectionIds?.[serverId],
           });
         }
       } catch (error) {
@@ -2239,7 +2250,6 @@ export async function createAuthorizedManager(
       }
       return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
     }),
-
   );
   const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
@@ -2887,6 +2897,28 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Rewrites a mapped failure, and the log envelope sent with it, before the
+     * response is built. The hosted validate route uses it to report a status
+     * line in place of the server's own answer (MJ-001).
+     */
+    redactFailure?: (
+      routeError: WebRouteError,
+      error: unknown,
+      logs: Record<string, unknown> | undefined,
+    ) => {
+      routeError: WebRouteError;
+      logs: Record<string, unknown> | undefined;
+    };
+    /**
+     * Rewrites the log envelope attached to a SUCCESSFUL response. The hosted
+     * validate route projects received frames and header values the same way
+     * its failure path does, so a successful connect does not reflect what
+     * the target answered (MJ-001).
+     */
+    redactSuccessLogs?: (
+      logs: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2913,7 +2945,26 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
     );
 
-    return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
+    let response = attachHostedRpcLogs(result, rpcCollector);
+    if (
+      options?.redactSuccessLogs &&
+      response !== result &&
+      response &&
+      typeof response === "object"
+    ) {
+      const { _rpcLogs, _httpLogs, ...rest } = response as Record<
+        string,
+        unknown
+      >;
+      response = {
+        ...rest,
+        ...options.redactSuccessLogs({
+          ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
+          ...(_httpLogs !== undefined ? { _httpLogs } : {}),
+        }),
+      } as typeof response;
+    }
+    return c.json(response, 200);
   } catch (error) {
     // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
     // helper dials the caller's OWN MCP server, and a connection-class failure
@@ -2931,10 +2982,14 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     const routeError = mapTargetServerError(
       blockedEgressRouteError(error) ?? error,
     );
+    const logs = rpcCollector?.buildEnvelope() as
+      | Record<string, unknown>
+      | undefined;
+    const redacted = options?.redactFailure?.(routeError, error, logs);
     return webErrorFromRoute(
       c,
-      routeError,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      redacted?.routeError ?? routeError,
+      redacted ? redacted.logs : logs,
     );
   }
 }

@@ -12,10 +12,11 @@ import {
   runHostedDoctor,
   validateServerCore,
 } from "../web/servers.js";
-import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
-import { v1Resource } from "./envelope.js";
+import { v1OnError, v1Resource } from "./envelope.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { describeHostedConnectFailure } from "../../utils/hosted-connect-failure.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
@@ -259,15 +260,26 @@ servers.delete("/projects/:projectId/servers/:serverId", async (c) => {
 // POST /v1/projects/:projectId/servers/:serverId/validate
 // Connect to the server and capture an inspection snapshot. Wraps the same
 // validateServerCore the web /servers/validate route uses.
-servers.post("/projects/:projectId/servers/:serverId/validate", async (c) =>
-  runV1ServerOp(
-    c,
-    projectServerSchema,
-    (manager, body) => validateServerCore(c, manager, body),
-    (ctx, result) => v1Resource(ctx, result),
-    { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
-  )
-);
+servers.post("/projects/:projectId/servers/:serverId/validate", async (c) => {
+  try {
+    return await runV1ServerOp(
+      c,
+      projectServerSchema,
+      (manager, body) => validateServerCore(c, manager, body),
+      (ctx, result) => v1Resource(ctx, result),
+      { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
+    );
+  } catch (error) {
+    // Hosted: the target's status line in place of its answer, as on the web
+    // twin (MJ-001). Errors this server authored keep their wording.
+    if (!HOSTED_MODE || error instanceof WebRouteError) throw error;
+    const failure = describeHostedConnectFailure(error);
+    return v1OnError(error, c, {
+      message: failure.message,
+      ...(failure.blockedTarget ? { code: "VALIDATION_ERROR" as const } : {}),
+    });
+  }
+});
 
 // POST /v1/projects/:projectId/servers/:serverId/doctor
 // Run the shared SDK doctor workflow (probe -> connect -> initialize ->

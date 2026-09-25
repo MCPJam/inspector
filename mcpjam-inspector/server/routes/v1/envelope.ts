@@ -302,11 +302,20 @@ function isMcpMethodNotFound(error: unknown): boolean {
  * fallback with no message, origin or slug — the same blind spot `app.onError`
  * and `webError` already fixed for their surfaces.
  */
-export function v1OnError(error: unknown, c: Context) {
-  const { code, message, details, headers, origin, slug } = mapErrorToV1(
-    error,
-    { boundary: "mcpjam_internal" }
-  );
+export function v1OnError(
+  error: unknown,
+  c: Context,
+  /**
+   * What the failure may say, when the caller already knows (MJ-001: a hosted
+   * connection failure reports its status line). The mapping still classifies
+   * the error for capture and logging; only the response wording changes.
+   */
+  override?: { message: string; code?: V1ErrorCode },
+) {
+  const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
+  const { details, headers, origin, slug } = mapped;
+  const code = override?.code ?? mapped.code;
+  const message = override?.message ?? mapped.message;
   const status = V1_ERROR_STATUS[code];
   // The middleware only trusts meta whose status matches the response it
   // observed, so this has to be the v1 status — which is not always the
