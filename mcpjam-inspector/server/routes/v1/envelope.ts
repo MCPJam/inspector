@@ -307,15 +307,25 @@ export function v1OnError(
   c: Context,
   /**
    * What the failure may say, when the caller already knows (MJ-001: a hosted
-   * connection failure reports its status line). The mapping still classifies
-   * the error for capture and logging; only the response wording changes.
+   * connection failure reports its status line, and `details` rewrites the
+   * mapped details). The mapping still classifies the error for capture and
+   * logging; only the response wording changes.
    */
-  override?: { message: string; code?: V1ErrorCode },
+  override?: {
+    message: string;
+    code?: V1ErrorCode;
+    details?: (
+      details: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
+  },
 ) {
   const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
-  const { details, headers, origin, slug } = mapped;
+  const { headers, origin, slug } = mapped;
   const code = override?.code ?? mapped.code;
   const message = override?.message ?? mapped.message;
+  const details = override?.details
+    ? override.details(mapped.details)
+    : mapped.details;
   const status = V1_ERROR_STATUS[code];
   // The middleware only trusts meta whose status matches the response it
   // observed, so this has to be the v1 status — which is not always the

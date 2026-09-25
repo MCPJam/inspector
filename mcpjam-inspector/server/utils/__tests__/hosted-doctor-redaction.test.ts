@@ -1450,6 +1450,19 @@ describe("hosted connection failure logs", () => {
             result: { anything: "UNEXPECTED_MARKER_1" },
           },
         },
+        {
+          eventId: "event-3",
+          serverId: "srv_1",
+          serverName: "Fixture",
+          direction: "send",
+          timestamp: "2026-09-25T00:00:00.000Z",
+          message: {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/list",
+            params: { cursor: "UNEXPECTED_MARKER_6" },
+          },
+        },
       ],
       _httpLogs: [
         {
@@ -1477,6 +1490,12 @@ describe("hosted connection failure logs", () => {
               },
             },
             durationMs: 4,
+            bodyValues: {
+              method: "resources/read",
+              name: "UNEXPECTED_MARKER_7",
+              protocolVersion: "2025-06-18",
+              extra: "UNEXPECTED_MARKER_8",
+            },
           },
         },
       ],
@@ -1487,7 +1506,21 @@ describe("hosted connection failure logs", () => {
       id: 0,
       contentOmitted: true,
     });
+    expect(projected._rpcLogs[1]).toMatchObject({
+      direction: "send",
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        contentOmitted: true,
+      },
+    });
+    expect(projected._rpcLogs[1].message).not.toHaveProperty("params");
     const exchange = projected._httpLogs[0].exchange;
+    expect(exchange.bodyValues).toEqual({
+      method: "resources/read",
+      protocolVersion: "2025-06-18",
+    });
     expect(exchange.request.headers).toEqual({
       "content-type": "application/json",
       "x-tenant-context": "<redacted>",
@@ -1496,6 +1529,41 @@ describe("hosted connection failure logs", () => {
     expect(exchange.response.headers).toEqual({ "content-type": "text/html" });
     expect(exchange.response.statusText.length).toBeLessThanOrEqual(64);
     expect(JSON.stringify(projected)).not.toMatch(/UNEXPECTED_MARKER/);
+  });
+
+  it("keeps a failure's flags and scope challenge within their projection", async () => {
+    const { projectHostedConnectFailureDetails } =
+      await import("../hosted-connect-failure.js");
+
+    expect(
+      projectHostedConnectFailureDetails({
+        upstreamAuthRequired: true,
+        oauthRequired: "UNEXPECTED_MARKER_1",
+        insufficientScope: {
+          requiredScope: "tools:read  tools:write\u0000UNEXPECTED_MARKER_2",
+          resourceMetadataUrl:
+            "https://mcp.example.test/.well-known/oauth-protected-resource",
+          errorDescription: "UNEXPECTED_MARKER_3",
+        },
+        extra: "UNEXPECTED_MARKER_4",
+      }),
+    ).toEqual({
+      upstreamAuthRequired: true,
+      insufficientScope: {
+        requiredScope: "tools:read",
+        resourceMetadataUrl:
+          "https://mcp.example.test/.well-known/oauth-protected-resource",
+      },
+    });
+    expect(
+      projectHostedConnectFailureDetails({
+        insufficientScope: {
+          resourceMetadataUrl: "javascript:UNEXPECTED_MARKER_5",
+          errorDescription: "UNEXPECTED_MARKER_6",
+        },
+      }),
+    ).toBeUndefined();
+    expect(projectHostedConnectFailureDetails(undefined)).toBeUndefined();
   });
 
   it("does not attribute an earlier answer's status to a later failed exchange", async () => {

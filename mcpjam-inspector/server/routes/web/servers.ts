@@ -35,6 +35,7 @@ import {
 } from "../../utils/hosted-doctor-redaction.js";
 import {
   describeHostedConnectFailure,
+  projectHostedConnectFailureDetails,
   projectHostedConnectFailureLogs,
   redactNormalizedError,
 } from "../../utils/hosted-connect-failure.js";
@@ -64,7 +65,8 @@ servers.post("/validate", async (c) =>
 
 /**
  * A failed hosted validate reports the target's status line instead of its
- * answer, and the log envelope sent with it is reduced the same way (MJ-001).
+ * answer, and its details and the log envelope sent with it are reduced the
+ * same way (MJ-001).
  * A failure this server authored — authorization, the target check — is
  * already worded for the caller and keeps its message.
  */
@@ -83,6 +85,7 @@ function redactHostedValidateFailure(
     routeError.code = ErrorCode.VALIDATION_ERROR;
   }
   routeError.message = failure.message;
+  routeError.details = projectHostedConnectFailureDetails(routeError.details);
   if (routeError.normalized) {
     routeError.normalized = redactNormalizedError(
       routeError.normalized,

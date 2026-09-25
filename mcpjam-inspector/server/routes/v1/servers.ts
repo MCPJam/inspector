@@ -16,7 +16,10 @@ import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
 import { v1OnError, v1Resource } from "./envelope.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-import { describeHostedConnectFailure } from "../../utils/hosted-connect-failure.js";
+import {
+  describeHostedConnectFailure,
+  projectHostedConnectFailureDetails,
+} from "../../utils/hosted-connect-failure.js";
 import { createHostedRpcLogCollector } from "../web/hosted-rpc-logs.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -288,6 +291,7 @@ servers.post("/projects/:projectId/servers/:serverId/validate", async (c) => {
     return v1OnError(error, c, {
       message: failure.message,
       ...(failure.blockedTarget ? { code: "VALIDATION_ERROR" as const } : {}),
+      details: projectHostedConnectFailureDetails,
     });
   }
 });
