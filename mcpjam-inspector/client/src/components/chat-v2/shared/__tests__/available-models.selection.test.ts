@@ -407,4 +407,15 @@ describe("case model chips", () => {
       caseModelEntry({ provider: "openai", model: "nope" }, models),
     ).toEqual({ provider: "openai", model: "nope" });
   });
+
+  it("write the legacy pair alone when the deployment does not store selections", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    expect(
+      caseModelEntry(
+        { provider: "openrouter", model: "anthropic/claude-haiku-4.5" },
+        models,
+        false,
+      ),
+    ).toEqual({ provider: "openrouter", model: "anthropic/claude-haiku-4.5" });
+  });
 });

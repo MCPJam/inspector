@@ -68,4 +68,13 @@ describe("judgeModelPatch", () => {
       judgeSelection: undefined,
     });
   });
+
+  it("writes the legacy id alone when the deployment does not store selections", () => {
+    expect(
+      judgeModelPatch("anthropic/claude-haiku-4.5", [hosted], false),
+    ).toEqual({
+      judgeModel: "anthropic/claude-haiku-4.5",
+      judgeSelection: undefined,
+    });
+  });
 });

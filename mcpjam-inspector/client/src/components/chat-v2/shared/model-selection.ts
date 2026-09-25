@@ -299,7 +299,10 @@ export type CaseModelEntry = {
 export function caseModelEntry(
   entry: { provider: string; model: string },
   models: readonly ModelDefinition[],
+  /** The deployment stores selections; false ⇒ the legacy pair alone. */
+  saveSelection = true,
 ): CaseModelEntry {
+  if (!saveSelection) return { provider: entry.provider, model: entry.model };
   const row = models.find(
     (model) =>
       String(model.provider) === entry.provider &&

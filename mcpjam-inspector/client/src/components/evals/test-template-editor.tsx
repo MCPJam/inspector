@@ -189,6 +189,7 @@ import {
   caseModelEntry,
   type CaseModelEntry,
 } from "@/components/chat-v2/shared/model-selection";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
@@ -2673,6 +2674,8 @@ export function TestTemplateEditor({
     enqueue();
   };
 
+  // Case chips save a model selection only where the deployment stores one.
+  const modelSelectionsSupported = useModelSelectionsSupported(projectId);
   const buildSelectedCompareModels = (
     modelValues: string[],
   ): CaseModelEntry[] => {
@@ -2681,7 +2684,11 @@ export function TestTemplateEditor({
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
-      return caseModelEntry({ provider, model }, availableModels);
+      return caseModelEntry(
+        { provider, model },
+        availableModels,
+        modelSelectionsSupported,
+      );
     });
   };
 

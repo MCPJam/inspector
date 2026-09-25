@@ -197,7 +197,7 @@ export function BehaviorTab({
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
   // OpenRouter are selectable here too.
-  const { availableModels } = useAvailableModels();
+  const { availableModels, modelSelectionsSupported } = useAvailableModels();
   const currentModel = useMemo<ModelDefinition>(() => {
     // With a saved selection, the row it names (an org OpenRouter row and the
     // hosted row of the same id are different rows); else the legacy id.
@@ -332,10 +332,14 @@ export function BehaviorTab({
                     modelId: String(model.id),
                     // Always written with the id: a selection left over from
                     // the previous model would disagree with it.
-                    modelSelection: selectionBesideLegacyId(
-                      model,
-                      HOST_MODEL_SELECTION_PURPOSE,
-                    ),
+                    // Only where the deployment stores selections; else the
+                    // legacy id alone, which every deployment accepts.
+                    modelSelection: modelSelectionsSupported
+                      ? selectionBesideLegacyId(
+                          model,
+                          HOST_MODEL_SELECTION_PURPOSE,
+                        )
+                      : undefined,
                   })
                 }
                 disabled={readOnly || !modelState.enforced}
