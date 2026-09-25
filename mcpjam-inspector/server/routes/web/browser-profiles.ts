@@ -2,6 +2,7 @@
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError, handleRoute, readJsonBody } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { downloadBrowserProfile } from "./browser-profile-download.js";
 
 /**
  * Same 10s ceiling as the chat-history proxy, and for the same reason: a
@@ -94,12 +95,15 @@ for (const operation of [
   "commit",
   "list",
   "default",
-  "download-url",
   "delete",
 ] as const) {
   browserProfiles.post(`/${operation}`, async (c) =>
     handleRoute(c, async () => proxyPost(c, operation, await readJsonBody(c))),
   );
 }
+
+// MJ-005. Streams the archive bytes after the backend's owner check, with its
+// own deadlines (see browser-profile-download.ts).
+browserProfiles.post("/download", downloadBrowserProfile);
 
 export default browserProfiles;
