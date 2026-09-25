@@ -369,6 +369,23 @@ describe("HostsTab — agent bridge handlers", () => {
     expect(deleteHostMock).toHaveBeenCalledWith({ hostId: "host-2" });
   });
 
+  it("duplicateHost refuses a member without calling the backend", async () => {
+    clientsRole.canManage = false;
+    renderHosts();
+    const response = await dispatch({
+      type: "duplicateHost",
+      payload: { host: "Claude" },
+    });
+    expect(response).toMatchObject({
+      status: "error",
+      error: {
+        code: "unsupported_in_mode",
+        message: "Only project admins can create clients.",
+      },
+    });
+    expect(duplicateHostMock).not.toHaveBeenCalled();
+  });
+
   it("duplicateHost maps to the duplicateHost mutation and opens the copy", async () => {
     const { onSelectHost } = renderHosts();
     const response = await dispatch({

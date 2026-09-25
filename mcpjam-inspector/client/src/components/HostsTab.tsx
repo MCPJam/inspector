@@ -372,6 +372,12 @@ export function HostsTab({
       },
       duplicateHost: async (command) => {
         requireAgentOperable();
+        if (!canManageClients) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+          );
+        }
         const { payload } = command as DuplicateHostInspectorCommand;
         const host = resolveHost(payload?.host);
         if (payload?.name !== undefined && typeof payload.name !== "string") {
