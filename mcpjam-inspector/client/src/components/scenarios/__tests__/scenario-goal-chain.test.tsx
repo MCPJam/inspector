@@ -352,6 +352,60 @@ describe("the Findings tab observes server-owned analysis", () => {
     );
   });
 
+  it("shows the empty panel it is handed for a study with no sessions", () => {
+    // The detail page hands Insights' own empty panel in, so an unrun study
+    // reads the same on both tabs instead of Findings being a blank frame.
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [],
+        nextBefore: null,
+        total: 0,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 0, latestRun: null },
+      rebuild: vi.fn(),
+    });
+
+    render(
+      <ScenarioFindingsTab
+        scenarioId="scn-1"
+        emptyState={<div data-testid="handed-empty-panel" />}
+      />,
+    );
+
+    expect(screen.getByTestId("handed-empty-panel")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No sessions in this study yet."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the analysis notice, not the empty panel, for waiting sessions", () => {
+    // Sessions that exist but are not analyzed are a different problem; the
+    // share panel would tell the creator to go get sessions they already have.
+    unanalyzed();
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 2, latestRun: null },
+      rebuild: vi.fn(),
+    });
+
+    render(
+      <ScenarioFindingsTab
+        scenarioId="scn-1"
+        emptyState={<div data-testid="handed-empty-panel" />}
+      />,
+    );
+
+    expect(screen.queryByTestId("handed-empty-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("scenario-findings-empty")).toHaveTextContent(
+      "No session has been analyzed yet.",
+    );
+  });
+
   /** The summary the breakdown carries (B5), for one waiting session. */
   function summary(overrides: Record<string, unknown> = {}) {
     return {
