@@ -26,10 +26,13 @@ import {
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
+import { resolveExtrasCap } from "@/shared/eval-matching";
 import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
   HOSTED_AGENT_ACTIVITY_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
   buildHostedEvaluationConfig,
   hostedCriterionId,
@@ -57,13 +60,24 @@ export type HostedPredicateResultLike = {
   status?: "scored" | "error";
 };
 
-/** The tool-call matcher's verdict, as it lands on the evaluation. */
-export type HostedEvaluationLike = {
-  passed?: boolean;
+/** One turn of the tool-call matcher's verdict. */
+export type HostedMatcherTurnLike = {
+  promptIndex?: number;
   expectedToolCalls?: readonly unknown[];
   missing?: readonly unknown[];
   unexpected?: readonly unknown[];
   argumentMismatches?: readonly unknown[];
+};
+
+/** The tool-call matcher's verdict, as it lands on the evaluation. */
+export type HostedEvaluationLike = HostedMatcherTurnLike & {
+  passed?: boolean;
+  /**
+   * Per turn. The extras cap is applied PER TURN by the matcher, so the
+   * selection verdict has to read it per turn too: two turns with one extra
+   * call each pass a cap of 1, and the flattened list would say two.
+   */
+  promptSummaries?: readonly HostedMatcherTurnLike[];
 };
 
 /** `metadata.judgeVerdict`, written server-side by `saveGoalCompletion` (W2). */
@@ -243,6 +257,19 @@ function judgeAbsenceStatus(
     : undefined;
 }
 
+function toolMatchDeclared(inputs: HostedScoreRowInputs): boolean {
+  return Boolean(
+    inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored,
+  );
+}
+
+/** `argumentMatching` absent resolves to the matcher's default, `"partial"`. */
+function comparesArguments(
+  matchOptions: Record<string, unknown> | undefined,
+): boolean {
+  return matchOptions?.argumentMatching !== "ignore";
+}
+
 /**
  * The definition inputs implied by one iteration's evidence — shared by the
  * config snapshot and the rows so the two can never describe different scorers.
@@ -265,11 +292,24 @@ export function hostedScoreDefinitionInputs(
     // rather than a vacuously passing one. `toolMatchAuthored` says the same
     // thing for a caller holding the authored case but not the matcher's
     // output — see the field's note.
-    ...(inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored
+    ...(toolMatchDeclared(inputs)
       ? {
           toolMatch: {
             ...(inputs.matchOptions ? { matchOptions: inputs.matchOptions } : {}),
             ...(inputs.isNegativeTest ? { isNegativeTest: true } : {}),
+          },
+        }
+      : {}),
+    // Its arguments half, on the same precondition, and only where arguments
+    // are compared at all. A negative case expects no call to compare.
+    ...(toolMatchDeclared(inputs) &&
+    !inputs.isNegativeTest &&
+    comparesArguments(inputs.matchOptions)
+      ? {
+          toolArguments: {
+            ...(inputs.matchOptions
+              ? { matchOptions: inputs.matchOptions }
+              : {}),
           },
         }
       : {}),
@@ -383,14 +423,57 @@ export function buildHostedScoreRows(
 
   const toolMatchDefinition = byId.get(HOSTED_TOOL_MATCH_SCORER_ID);
   if (toolMatchDefinition && inputs.evaluation) {
-    // The matcher already applied the case's match options (extras policy,
-    // ordering, negative polarity), so its own `passed` is the criterion — this
-    // must not re-derive one from `missing`/`unexpected`.
+    // SELECTION only (v3): the matcher's own per-turn `missing` and extras,
+    // read against the same cap it applied. Its `passed` also folds in the
+    // arguments, which are `toolCalls:arguments` now; the two rows together
+    // pass exactly when it did.
+    //
+    // A NEGATIVE case is the exception, and only in name: "no tool should be
+    // called" is a selection claim through and through, and it has no
+    // arguments half, so the matcher's own verdict is the selection verdict.
+    const selection = toolSelectionOutcome(
+      inputs.evaluation,
+      inputs.matchOptions,
+    );
     rows.push(
       fromCriterionResult(toolMatchDefinition, {
         criterionId: HOSTED_TOOL_MATCH_SCORER_ID,
-        passed: inputs.evaluation.passed === true,
-        reason: describeToolMatch(inputs.evaluation),
+        ...(inputs.isNegativeTest
+          ? {
+              passed: inputs.evaluation.passed === true,
+              reason:
+                inputs.evaluation.passed === true
+                  ? "no tool was called, as the case expects"
+                  : `${
+                      inputs.evaluation.unexpected?.length ?? 0
+                    } tool call(s) made where the case expects none`,
+            }
+          : {
+              passed: selection.passed,
+              reason: describeToolSelection(selection),
+            }),
+      })
+    );
+  }
+
+  const argumentsDefinition = byId.get(HOSTED_TOOL_ARGUMENTS_SCORER_ID);
+  if (argumentsDefinition && inputs.evaluation) {
+    const outcome = toolArgumentsOutcome(
+      inputs.evaluation,
+      inputs.matchOptions,
+    );
+    // ALWAYS scored, never `skipped`: a gating row with no verdict is an
+    // unresolved gate, and at `enforce` that is a strictness path the first
+    // pass does not have (`finalize-iteration-enforce.test.ts`). With nothing
+    // compared — no expected call was matched — the row passes and says why:
+    // the miss is `toolCalls:match`'s to report, and failing here too would
+    // count it twice. `passed` is exactly "the matcher reported no argument
+    // mismatch", which is what keeps match ∧ arguments equal to its verdict.
+    rows.push(
+      fromCriterionResult(argumentsDefinition, {
+        criterionId: HOSTED_TOOL_ARGUMENTS_SCORER_ID,
+        passed: outcome.mismatches.length === 0,
+        reason: describeToolArguments(outcome),
       })
     );
   }
@@ -498,24 +581,174 @@ export function buildHostedScoreRows(
   return rows;
 }
 
-/** Bounded, content-free summary of the matcher's verdict. Counts only. */
-function describeToolMatch(evaluation: HostedEvaluationLike): string {
-  if (evaluation.passed === true) {
-    return "every expected tool call was observed";
+/** The turns the matcher graded; the evaluation itself when it has none. */
+function matcherTurns(
+  evaluation: HostedEvaluationLike,
+): readonly HostedMatcherTurnLike[] {
+  return evaluation.promptSummaries?.length
+    ? evaluation.promptSummaries
+    : [evaluation];
+}
+
+export type ToolSelectionOutcome = {
+  passed: boolean;
+  missing: number;
+  /** Extra calls in the turns that went past the cap. */
+  extrasOverCap: number;
+  cap: number | null;
+};
+
+/**
+ * `toolCalls:match` (v3): per turn, no expected call missing and no more
+ * extra calls than `maxExtraToolCalls` allows.
+ *
+ * Read off the matcher's OWN lists, never re-matched: a same-name call with
+ * the wrong arguments is paired by the matcher and reported as an argument
+ * mismatch, not as missing, so it lands on `toolCalls:arguments` and leaves
+ * this verdict alone. Order folds in through the same lists — a strict or
+ * superset miss leaves the expected call unpaired.
+ */
+export function toolSelectionOutcome(
+  evaluation: HostedEvaluationLike,
+  matchOptions: Record<string, unknown> | undefined,
+): ToolSelectionOutcome {
+  const cap = resolveExtrasCap(matchOptions);
+  let missing = 0;
+  let extrasOverCap = 0;
+  for (const turn of matcherTurns(evaluation)) {
+    missing += turn.missing?.length ?? 0;
+    const extras = turn.unexpected?.length ?? 0;
+    if (cap !== null && extras > cap) extrasOverCap += extras;
   }
+  return {
+    passed: missing === 0 && extrasOverCap === 0,
+    missing,
+    extrasOverCap,
+    cap,
+  };
+}
+
+/** Bounded, content-free summary of the selection verdict. Counts only. */
+function describeToolSelection(outcome: ToolSelectionOutcome): string {
+  if (outcome.passed) return "every expected tool was called";
   const parts: string[] = [];
-  if (evaluation.missing?.length) {
-    parts.push(`${evaluation.missing.length} missing`);
+  if (outcome.missing > 0) parts.push(`${outcome.missing} missing`);
+  if (outcome.extrasOverCap > 0) {
+    parts.push(
+      `${outcome.extrasOverCap} unexpected (at most ${outcome.cap} allowed per turn)`,
+    );
   }
-  if (evaluation.argumentMismatches?.length) {
-    parts.push(`${evaluation.argumentMismatches.length} argument mismatch(es)`);
+  return `tool selection unmet: ${parts.join(", ")}`;
+}
+
+type ArgumentMismatchLike = {
+  toolName?: unknown;
+  expectedArgs?: unknown;
+  actualArgs?: unknown;
+};
+
+export type ToolArgumentsOutcome = {
+  /** Expected calls the matcher paired with a call, rightly or wrongly. */
+  compared: number;
+  mismatches: Array<{ turn?: number; toolName: string; keys: string[] }>;
+};
+
+/**
+ * `toolCalls:arguments`: every expected call the matcher paired with an actual
+ * one was made with the expected arguments.
+ *
+ * The verdict is the matcher's own `argumentMismatches`. The argument NAMES
+ * each mismatch reports are recovered only for the reason line, and through
+ * the same matcher, one expected key at a time, so a placeholder like
+ * `"string"` means here what it meant there.
+ */
+export function toolArgumentsOutcome(
+  evaluation: HostedEvaluationLike,
+  matchOptions: Record<string, unknown> | undefined,
+): ToolArgumentsOutcome {
+  const turns = matcherTurns(evaluation);
+  const numbered = turns.length > 1;
+  let compared = 0;
+  const mismatches: ToolArgumentsOutcome["mismatches"] = [];
+  for (const turn of turns) {
+    compared += Math.max(
+      0,
+      (turn.expectedToolCalls?.length ?? 0) - (turn.missing?.length ?? 0),
+    );
+    for (const raw of turn.argumentMismatches ?? []) {
+      const mismatch = (raw ?? {}) as ArgumentMismatchLike;
+      const toolName =
+        typeof mismatch.toolName === "string" ? mismatch.toolName : "a tool";
+      mismatches.push({
+        ...(numbered && typeof turn.promptIndex === "number"
+          ? { turn: turn.promptIndex + 1 }
+          : {}),
+        toolName,
+        keys: mismatchedKeys(mismatch, matchOptions),
+      });
+    }
   }
-  if (evaluation.unexpected?.length) {
-    parts.push(`${evaluation.unexpected.length} unexpected`);
+  // A mismatch is itself a compared call; count it even when the turn did
+  // not report its expectations.
+  return { compared: Math.max(compared, mismatches.length), mismatches };
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** The argument names that differ, by the matcher's own rules. Names only. */
+function mismatchedKeys(
+  mismatch: ArgumentMismatchLike,
+  matchOptions: Record<string, unknown> | undefined,
+): string[] {
+  const expected = recordOf(mismatch.expectedArgs);
+  const actual = recordOf(mismatch.actualArgs);
+  const exact = matchOptions?.argumentMatching === "exact";
+  const keys = exact
+    ? [...new Set([...Object.keys(expected), ...Object.keys(actual)])]
+    : Object.keys(expected);
+  return keys
+    .filter((key) => {
+      const one = (args: Record<string, unknown>) =>
+        key in args ? { [key]: args[key] } : {};
+      return (
+        evaluateToolCalls(
+          [{ toolName: "t", arguments: one(expected) }],
+          [{ toolName: "t", arguments: one(actual) }],
+          { argumentMatching: exact ? "exact" : "partial" },
+        ).argumentMismatches.length > 0
+      );
+    })
+    .sort();
+}
+
+const MAX_NAMED_MISMATCHES = 3;
+
+/** Names the tool and the argument, never a value: values can be anything. */
+function describeToolArguments(outcome: ToolArgumentsOutcome): string {
+  if (outcome.mismatches.length === 0) {
+    return outcome.compared === 0
+      ? "no expected call was matched, so there were no arguments to compare"
+      : "every expected tool was called with the expected arguments";
   }
-  return parts.length > 0
-    ? `tool-call expectations unmet: ${parts.join(", ")}`
-    : "tool-call expectations unmet";
+  const named = outcome.mismatches
+    .slice(0, MAX_NAMED_MISMATCHES)
+    .map(({ turn, toolName, keys }) => {
+      const where = turn !== undefined ? `turn ${turn}: ` : "";
+      const names = keys.map((key) => `\`${key}\``).join(", ");
+      const what =
+        keys.length === 0
+          ? "different arguments"
+          : keys.length === 1
+            ? `a different ${names}`
+            : `different ${names}`;
+      return `${where}\`${toolName}\` was called with ${what} than expected`;
+    });
+  const rest = outcome.mismatches.length - named.length;
+  return rest > 0 ? `${named.join("; ")}; and ${rest} more` : named.join("; ");
 }
 
 /**

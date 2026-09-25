@@ -112,7 +112,9 @@ describe("coverageForCase", () => {
         toolsChoice: "tools",
       }),
     );
-    expect(routed.call.runner).toBe(true);
+    // A route also grades its arguments, at Tool call, so that link has a
+    // rule of its own; Response is left to its runner check.
+    expect(routed.call).toMatchObject({ required: 1, runner: false });
     expect(routed.response.runner).toBe(true);
   });
 

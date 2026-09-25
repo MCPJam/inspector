@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
@@ -44,6 +45,14 @@ const AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS =
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Convex clears socket auth before notifying React when its fetcher returns
+// null. Commit the readiness gate first so protected subscriptions are removed
+// while the socket still has its old identity. This runs after async token I/O.
+function pauseQueriesBeforeAuthClear(): null {
+  flushSync(() => useSessionRefreshStore.getState().pauseQueries());
+  return null;
 }
 
 /**
@@ -94,12 +103,12 @@ async function fetchTokenWithRetry(
         useSessionRefreshStore.getState().clear();
         return token;
       }
-      if (opts.isTerminalNull?.()) return null;
+      if (opts.isTerminalNull?.()) return pauseQueriesBeforeAuthClear();
       lastError = undefined;
     } catch (error) {
       if (opts.isTerminalError?.(error)) {
         useSessionRefreshStore.getState().notifyFailure("signed_out");
-        return null;
+        return pauseQueriesBeforeAuthClear();
       }
       lastError = error;
     }
@@ -123,7 +132,7 @@ async function fetchTokenWithRetry(
   // in-place retry, rather than letting the page crash into an error boundary
   // whose "Try again" cannot work while Convex sits in `noAuth`.
   useSessionRefreshStore.getState().notifyFailure("transient");
-  return null;
+  return pauseQueriesBeforeAuthClear();
 }
 
 // What a failed guest-session request knows about its failure: the HTTP status

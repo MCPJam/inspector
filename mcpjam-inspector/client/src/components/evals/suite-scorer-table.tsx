@@ -160,6 +160,10 @@ export function SuiteScorerTable({
   // Only a deployment that grades rubric checks stores the slot, so the row
   // and its card appear only when the capability says so.
   const rubricChecks = hasRubricChecksCapability(capabilities);
+  // The deployment's effective goal-judge policy. A suite that stores no
+  // `enabled` inherits it, and rubric checks ride that judge's job, so every
+  // "is the goal judge off" question on this page has to read it too.
+  const goalPolicy = capabilities?.judges?.goalCompletion.policy;
   const model = useMemo(
     () =>
       groupGradersByStage({
@@ -191,7 +195,7 @@ export function SuiteScorerTable({
         judgeConfig,
         judgeEnabled,
         judgeCapabilities: capabilities?.judge,
-        judgePolicy: capabilities?.judges?.goalCompletion.policy,
+        judgePolicy: goalPolicy,
       }),
     [
       model,
@@ -201,7 +205,7 @@ export function SuiteScorerTable({
       judgeConfig,
       judgeEnabled,
       capabilities?.judge,
-      capabilities?.judges?.goalCompletion.policy,
+      goalPolicy,
     ],
   );
   const [editMode, setEditMode] = useState(false);
@@ -283,7 +287,7 @@ export function SuiteScorerTable({
       if (scope.kind === "case") {
         return "Rubric checks are turned on or off in suite settings.";
       }
-      return judgeMode(judgeConfig) === "off"
+      return judgeMode(judgeConfig, goalPolicy) === "off"
         ? "Rubric checks run with the goal-completion judge, which is off."
         : undefined;
     }
@@ -600,7 +604,9 @@ export function SuiteScorerTable({
                         availableModels={availableModels}
                         judgesCapabilities={capabilities?.judges}
                         criteria={judgeRubric?.criteria ?? []}
-                        goalJudgeOff={judgeMode(judgeConfig) === "off"}
+                        goalJudgeOff={
+                          judgeMode(judgeConfig, goalPolicy) === "off"
+                        }
                       />
                     ) : null}
                   </details>

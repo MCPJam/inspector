@@ -212,6 +212,7 @@ export type {
   PlatformDisclosureFires,
   PlatformAnalysisTouchpointDisclosure,
   PlatformCaptureDisclosure,
+  PlatformProviderRetentionDisclosure,
   PlatformRetentionDisclosure,
   PlatformRegionDisclosure,
   PlatformSubprocessorDisclosure,
