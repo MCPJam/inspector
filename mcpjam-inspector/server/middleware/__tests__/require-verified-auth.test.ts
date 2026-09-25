@@ -254,6 +254,22 @@ describe("requireVerifiedAuth — session revocation", () => {
     });
   });
 
+  it("answers v1 with the status its contract gives SERVER_UNREACHABLE", async () => {
+    listWith(() => new Promise(() => {}));
+
+    const res = await appWith(vi.fn(), gatewayVerified("session_3")).request(
+      "/api/v1/agent-ops",
+      { headers: { Authorization: "Bearer some-jwt" } },
+    );
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("Retry-After")).toBe("5");
+    expect(await res.json()).toMatchObject({
+      code: "SERVER_UNREACHABLE",
+      details: { reason: "SESSION_CHECK_UNAVAILABLE" },
+    });
+  });
+
   it("answers 503 once the list is stale, and still 401 for a known revoked session", async () => {
     vi.useFakeTimers();
     const list = listWith();

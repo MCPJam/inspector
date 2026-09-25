@@ -230,8 +230,12 @@ describe("revokeSessionWithAcknowledgment", () => {
     );
   });
 
-  it("joins a retry already pending for the same session", async () => {
-    const revoke = vi.fn().mockRejectedValue(new Error("backend unavailable"));
+  it("joins a retry already pending for the same session, which retries with the newer token", async () => {
+    const revoke = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("backend unavailable"))
+      .mockRejectedValueOnce(new Error("backend unavailable"))
+      .mockResolvedValueOnce({ revoked: true });
     const options = {
       convexUrl: CONVEX_URL,
       revoke,
@@ -239,9 +243,15 @@ describe("revokeSessionWithAcknowledgment", () => {
     };
 
     await revokeSessionWithAcknowledgment("token-1", options);
-    await revokeSessionWithAcknowledgment("token-1", options);
+    await revokeSessionWithAcknowledgment("token-2", options);
 
     expect(pendingSessionRevocationRetryCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(SESSION_REVOCATION_RETRY_DELAYS_MS[0]);
+
+    expect(revoke).toHaveBeenCalledTimes(3);
+    expect(revoke).toHaveBeenLastCalledWith(CONVEX_URL, "token-2");
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
   });
 
   it("reports failed when no retry can be scheduled", async () => {

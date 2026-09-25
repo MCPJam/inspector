@@ -235,7 +235,7 @@ async function runRetry(
  * the background, with backoff, until it acknowledges, answers that there is
  * nothing to revoke, or the retries run out. Returns false when no retry could
  * be scheduled (the queue is full). A second request for a session already
- * being retried joins it.
+ * being retried joins it, and the remaining attempts use its token.
  *
  * In-process: a restart drops what is pending here. The session is still
  * ended at the identity provider by the sign-out itself, and the backend
@@ -247,7 +247,12 @@ export function scheduleSessionRevocationRetry(
   options: RetryOptions = {},
 ): boolean {
   const key = retryKey(token, options.sid);
-  if (pendingRetries.has(key)) return true;
+  const pending = pendingRetries.get(key);
+  if (pending) {
+    // A later sign-out of the same session carries the newer token.
+    pending.token = token;
+    return true;
+  }
   if (pendingRetries.size >= MAX_PENDING_SESSION_REVOCATION_RETRIES) {
     logger.warn("Sign-out revocation retry queue is full", {
       event: "auth.session.revoke_retry_dropped",

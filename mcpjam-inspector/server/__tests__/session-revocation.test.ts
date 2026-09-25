@@ -182,6 +182,16 @@ async function expectRetryable503(response: Response): Promise<void> {
   });
 }
 
+/** `/api/v1` answers with the status its contract gives `SERVER_UNREACHABLE`. */
+async function expectRetryableV1(response: Response): Promise<void> {
+  expect(response.status).toBe(502);
+  expect(response.headers.get("Retry-After")).toBe("5");
+  expect(await response.json()).toMatchObject({
+    code: "SERVER_UNREACHABLE",
+    details: { reason: "SESSION_CHECK_UNAVAILABLE" },
+  });
+}
+
 async function expectRevokedEverywhere(token: string): Promise<void> {
   await expectRevokedV1(await me(token));
   await expectRevokedWeb(await mintKey(token));
@@ -292,9 +302,9 @@ describe("session revocation across route families (MJ-011)", () => {
     const restarted = new RevokedSessionCache({ fetchPage: feed.fetchPage });
     serveAs(restarted);
     // Until the initial load completes, routes that rely on the list alone
-    // answer 503; a known-revoked answer needs the load.
+    // answer a retryable refusal; a known-revoked answer needs the load.
     await expectRetryable503(await mintKey("token-alice"));
-    await expectRetryable503(await agentOps("token-alice"));
+    await expectRetryableV1(await agentOps("token-alice"));
 
     const firstRequest = feed.requests.length;
     await restarted.scan();
@@ -312,7 +322,7 @@ describe("session revocation across route families (MJ-011)", () => {
     expect(replica.state().initialLoadComplete).toBe(false);
 
     await expectRetryable503(await mintKey("token-bob"));
-    await expectRetryable503(await agentOps("token-bob"));
+    await expectRetryableV1(await agentOps("token-bob"));
     // A route that forwards the bearer to Convex keeps serving: Convex checks
     // the session against the durable record itself.
     expect((await me("token-bob")).status).toBe(200);
@@ -362,14 +372,14 @@ describe("session revocation across route families (MJ-011)", () => {
     });
   });
 
-  it("answers 503 on routes that rely on a stale list, and still 401 for a known revoked session", async () => {
+  it("answers a retryable refusal on routes that rely on a stale list, and still 401 for a known revoked session", async () => {
     serveAs(await bootedReplica());
     await signOut("token-alice");
 
     vi.setSystemTime(Date.now() + REVOKED_SESSION_MAX_STALENESS_MS + 1);
 
     await expectRetryable503(await mintKey("token-bob"));
-    await expectRetryable503(await agentOps("token-bob"));
+    await expectRetryableV1(await agentOps("token-bob"));
     expect((await me("token-bob")).status).toBe(200);
     await expectRevokedEverywhere("token-alice");
   });

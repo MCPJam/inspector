@@ -14,8 +14,11 @@
  * - Unavailable → 503 `SERVER_UNREACHABLE` with `Retry-After`: the revoked-
  *   session list is not current, and the route cannot serve a session it has
  *   not been able to check. Retrying shortly is the remedy, not signing in.
+ *   `/api/v1` answers with the status its contract gives that code (502).
  */
 import type { Context } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { V1_ERROR_STATUS } from "../routes/v1/contract.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import {
   checkSessionRevocation,
@@ -68,13 +71,16 @@ export function sessionRequiredResponse(c: Context): Response {
 }
 
 export function sessionCheckUnavailableResponse(c: Context): Response {
+  const status = isV1Request(c)
+    ? (V1_ERROR_STATUS[ErrorCode.SERVER_UNREACHABLE] as ContentfulStatusCode)
+    : 503;
   return c.json(
     {
       code: ErrorCode.SERVER_UNREACHABLE,
       message: SESSION_CHECK_UNAVAILABLE_MESSAGE,
       details: { reason: SESSION_CHECK_UNAVAILABLE_REASON },
     },
-    503,
+    status,
     { "Retry-After": String(SESSION_CHECK_RETRY_AFTER_SECONDS) },
   );
 }
