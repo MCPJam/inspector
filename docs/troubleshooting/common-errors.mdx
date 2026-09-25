@@ -121,6 +121,22 @@ refused everywhere, including locally. If you see the message naming a
 "link-local or cloud-metadata host", something is pointing discovery at an
 instance-metadata endpoint rather than at an authorization server.
 
+### "Saved credentials were not sent" (403 on connect)
+
+If a connection fails with a message like:
+
+> Server "my-server" now points at `https://new.example.com`, but its saved credentials were saved for `https://old.example.com`. They were not sent. Re-enter this server's credentials for the new URL.
+
+This means the server's URL was changed to a **different origin** (scheme, host, or port) after credentials were saved, and MCPJam refused to send those credentials to the new destination.
+
+**Solution:** Re-enter the server's credentials for the current URL.
+
+1. Open the server's edit form.
+2. In the **Connection overrides** or **Environment variables** section, reveal and re-enter the credentials.
+3. Save the server. The new credentials are now bound to the current origin.
+
+If you see this error and did not intentionally change the server's URL, check the **Destination history** in the server detail panel to see when the origin changed and who made the edit.
+
 ### Getting 401 Unauthorized errors
 
 If you're seeing **401 Unauthorized** errors when trying to connect to your server, this typically means the server requires authentication that hasn't been set up yet.

@@ -868,6 +868,97 @@ describe("EvaluateTab", () => {
     });
   });
 
+  it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
+    // "Promote to test case" into a NEW suite runs as an action; its result
+    // can arrive before the overview subscription's update, so the page
+    // mounts on an overview that does not list the suite yet — while the
+    // suite's own query is still in flight.
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId: "new-suite",
+      testId: "case-1",
+    } as any;
+    let caughtUp = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (caughtUp) {
+          const created = makeSuiteEntry([], "new-suite");
+          const sortedSuites = [...state.sortedSuites, created];
+          const selectedSuiteEntry =
+            selectedSuiteId === "new-suite" ? created : null;
+          return {
+            ...state,
+            suiteOverview: sortedSuites,
+            sortedSuites,
+            selectedSuiteEntry,
+            selectedSuite: selectedSuiteEntry?.suite ?? null,
+            suiteDetails: selectedSuiteEntry
+              ? { testCases: [], iterations: [] }
+              : undefined,
+            isSuiteDetailsLoading: false,
+          };
+        }
+        return {
+          ...state,
+          // The stale overview: no "new-suite". Its own query has not
+          // answered yet.
+          isSuiteDetailsLoading: selectedSuiteId === "new-suite",
+        };
+      },
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    // The suite's query answers in the same transition that brings the
+    // overview up to date.
+    caughtUp = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+  });
+
+  it("bounces a missing suite once its own query answers empty", async () => {
+    // The real shape of a deleted (or unauthorized) suite: its query is in
+    // flight first, then `listTestCases` answers []. The existing "invalid
+    // suite routes" spec starts at the answer; this one walks through the
+    // wait, so a guard that also held on an empty answer would fail here
+    // instead of stranding the user on a spinner.
+    mocks.route.current = { type: "suite-overview", suiteId: "gone-suite" };
+    let answered = false;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+        ...makeQueryState(selectedSuiteId),
+        suiteDetails:
+          answered && selectedSuiteId
+            ? { testCases: [], iterations: [] }
+            : undefined,
+        isSuiteDetailsLoading: !answered && selectedSuiteId === "gone-suite",
+      }),
+    );
+
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
+
+    answered = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    await waitFor(() =>
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+        { type: "list" },
+        { replace: true },
+      ),
+    );
+  });
+
   it("passes eval iteration limit disabled state into the suite view", () => {
     mocks.evalIterationQuota = {
       used: 25,

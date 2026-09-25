@@ -426,6 +426,8 @@ export type EvalServerAttachment = {
   name: string;
   serverIds: string[];
   resolvedServerNames: string[];
+  /** A live suite, journey, or environment still uses it; delete would fail. */
+  inUse?: boolean;
 };
 
 export type EvalCase = {

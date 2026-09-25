@@ -186,7 +186,7 @@ The **Servers** section on the study Publish tab shows which project servers the
 From the Clients index page:
 
 - **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
-- **Delete** — Removes the Client. The inspector blocks deletion if any scenario or eval still depends on it; resolve those first, or use force delete if you're sure.
+- **Delete** — Removes the Client. The delete button is greyed out when a client is the last one in the project ("You need at least one client.") or when a test suite still references it ("In use by a test suite."). Detach the client from any eval suites that use it before deleting.
 
 <Tip>
   Keep one Client per host you intend to ship to. Duplicate it to make scoped
