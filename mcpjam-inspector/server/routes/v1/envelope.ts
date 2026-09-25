@@ -14,6 +14,7 @@ import {
   type MapRuntimeErrorOptions,
 } from "../web/errors.js";
 import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import { internalErrorResponseView } from "../web/hosted-internal-error.js";
 import {
   v1ErrorBody,
   v1Page,
@@ -59,6 +60,13 @@ export function v1Error(
       message,
     });
   }
+  // A hosted INTERNAL_ERROR answers with a generic sentence and the request id
+  // in `details` (MJ-020, MJ-021); the message stashed above is what the log
+  // keeps.
+  const view = internalErrorResponseView(c, V1_ERROR_STATUS[code], code, {
+    message,
+    details,
+  });
   // Cast the dynamic numeric status to satisfy Hono's literal StatusCode union
   // (the web routes sidestep this by typing `c` as `any` in `webError`).
   //
@@ -67,7 +75,7 @@ export function v1Error(
   // only accepts two arguments, and handing them `{}` would change behavior on
   // every error path to plumb a header almost none of them carry.
   return c.json(
-    v1ErrorBody(code, message, details),
+    v1ErrorBody(code, view.message, view.details),
     V1_ERROR_STATUS[code] as any,
     headers && Object.keys(headers).length > 0 ? headers : undefined
   );
@@ -307,11 +315,30 @@ function isMcpMethodNotFound(error: unknown): boolean {
  * fallback with no message, origin or slug — the same blind spot `app.onError`
  * and `webError` already fixed for their surfaces.
  */
-export function v1OnError(error: unknown, c: Context) {
-  const { code, message, details, headers, origin, slug } = mapErrorToV1(
-    error,
-    { boundary: "mcpjam_internal" }
-  );
+export function v1OnError(
+  error: unknown,
+  c: Context,
+  /**
+   * What the failure may say, when the caller already knows (MJ-001: a hosted
+   * connection failure reports its status line, and `details` rewrites the
+   * mapped details). The mapping still classifies the error for capture and
+   * logging; only the response wording changes.
+   */
+  override?: {
+    message: string;
+    code?: V1ErrorCode;
+    details?: (
+      details: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
+  },
+) {
+  const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
+  const { headers, origin, slug } = mapped;
+  const code = override?.code ?? mapped.code;
+  const message = override?.message ?? mapped.message;
+  const details = override?.details
+    ? override.details(mapped.details)
+    : mapped.details;
   const status = V1_ERROR_STATUS[code];
   // The middleware only trusts meta whose status matches the response it
   // observed, so this has to be the v1 status — which is not always the
