@@ -12,19 +12,32 @@ import { v1Resource } from "./envelope.js";
 
 const projects = new Hono();
 
+/**
+ * Field length limits, the same ones the backend enforces on every project
+ * write (MJ-013). Checked here too so an oversized field is a 400 with a
+ * field-level message rather than a round trip to Convex.
+ */
+export const PROJECT_NAME_MAX_LENGTH = 100;
+export const PROJECT_DESCRIPTION_MAX_LENGTH = 2000;
+export const PROJECT_ICON_MAX_LENGTH = 64;
+
+const projectName = z.string().trim().min(1).max(PROJECT_NAME_MAX_LENGTH);
+const projectDescription = z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH);
+const projectIcon = z.string().max(PROJECT_ICON_MAX_LENGTH);
+
 const createProjectSchema = z.strictObject({
-  name: z.string().trim().min(1),
-  description: z.string().optional(),
+  name: projectName,
+  description: projectDescription.optional(),
   organizationId: z.string().trim().min(1).optional(),
-  icon: z.string().optional(),
+  icon: projectIcon.optional(),
   visibility: z.enum(["public", "private"]).optional(),
 });
 
 const updateProjectSchema = z
   .strictObject({
-    name: z.string().trim().min(1).optional(),
-    description: z.string().optional(),
-    icon: z.string().optional(),
+    name: projectName.optional(),
+    description: projectDescription.optional(),
+    icon: projectIcon.optional(),
     visibility: z.enum(["public", "private"]).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
