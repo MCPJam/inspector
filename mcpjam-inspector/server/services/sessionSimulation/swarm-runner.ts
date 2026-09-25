@@ -16,9 +16,14 @@ import {
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
   backendModelSelection,
+  ModelResolutionRefusalError,
   readStoredModelSelection,
   wireModelIdForSelection,
 } from "../../utils/model-resolution-local.js";
+import {
+  resolveEffectiveModelSettings,
+  type EffectiveModelSettings,
+} from "../../utils/model-selection-settings.js";
 import type { ModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -238,6 +243,38 @@ export function swarmTargetBackendSelection(
     return undefined;
   }
   return backendModelSelection(selection);
+}
+
+/**
+ * The settings a swarm target runs with, resolved once per target:
+ * the saved selection's settings over the host's defaults (a swarm has no
+ * per-run override). Without a saved selection the host's temperature
+ * applies exactly as before. The effort's rail is not known until the turn
+ * resolves its runtime (an org connection is cloud or local at call time),
+ * so it is checked there, by `resolveTurnRuntime`. Throws the refusal when a
+ * saved setting cannot be honoured.
+ */
+export function swarmTargetSettings(
+  target: Pick<
+    PinnedHostExecutionSpec,
+    "modelId" | "resolvedSelection" | "temperature"
+  >,
+  modelDefinition: ModelDefinition,
+): EffectiveModelSettings {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return target.temperature !== undefined
+      ? { temperature: target.temperature }
+      : {};
+  }
+  const result = resolveEffectiveModelSettings({
+    route: selection.source === "hosted" ? "hosted" : "org",
+    modelDefinition,
+    selection,
+    host: { temperature: target.temperature },
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError([result.refusal]);
+  return result.settings;
 }
 
 function targetSessionIdentity(target: PinnedHostExecutionSpec): {
@@ -703,6 +740,7 @@ async function runJourneyFanOut(
       // attempt is claimed — the catch finalizes this target's pending attempts.
       const modelDefinition = swarmTargetModelDefinition(target);
       const modelSelection = swarmTargetBackendSelection(target);
+      const targetSettings = swarmTargetSettings(target, modelDefinition);
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -1252,7 +1290,10 @@ async function runJourneyFanOut(
               modelDefinition,
               ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,
-              temperature: target.temperature,
+              temperature: targetSettings.temperature,
+              ...(targetSettings.reasoningEffort
+                ? { reasoningEffort: targetSettings.reasoningEffort }
+                : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
