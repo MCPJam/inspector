@@ -78,6 +78,7 @@ import {
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
+import { requiresServerVerifiedApproval } from "../tool-approval-token.js";
 import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
@@ -2117,9 +2118,30 @@ export async function runHarnessTurn(
       // are `mcp__…`-prefixed, so the two sets cannot collide — but if a future
       // built-in ever took an `mcp__` name, the host's own built-in wins rather
       // than being shadowed by a server.
+      //
+      // A workspace tool that pauses for approval (MJ-008) is handed over only
+      // to a runtime that can pause on a host-executed tool. Anywhere else it
+      // is left out rather than offered without its pause.
+      const offeredBuiltInTools = Object.fromEntries(
+        Object.entries((builtInTools ?? {}) as Record<string, unknown>).filter(
+          ([name, definition]) => {
+            if (
+              harnessAdapter.supportsHostExecutedToolApproval ||
+              !requiresServerVerifiedApproval(definition)
+            ) {
+              return true;
+            }
+            logger.warn(
+              "[harness] workspace tool withheld: this runtime cannot pause on a host-executed tool for approval",
+              { harness: harnessAdapter.id, toolName: name },
+            );
+            return false;
+          },
+        ),
+      );
       const hostExecutedTools = {
         ...hostExecutedMcp.tools,
-        ...((builtInTools ?? {}) as Record<string, unknown>),
+        ...offeredBuiltInTools,
       } as Record<string, unknown>;
       // The tools that actually ask, read off the same `needsApproval` the
       // other two engines read.

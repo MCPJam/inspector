@@ -255,7 +255,7 @@ function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
   return false;
 }
 
-function threadFeedbackBucket(thread: SharedChatThread): string {
+export function threadFeedbackBucket(thread: SharedChatThread): string {
   const r = threadRating(thread);
   if (r == null) return "none";
   if (r >= 4) return "positive";
