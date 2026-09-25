@@ -3,6 +3,7 @@ import { HOSTED_MODE } from "../../config.js";
 import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
 import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
+import { getClientIp } from "../../utils/client-ip.js";
 
 /**
  * Values for the PostHog flags the web client reads (MJ-015). The client
@@ -20,7 +21,9 @@ import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
  *
  * "No values" is a 200 with `{ flags: {} }`, never an error: the client keeps
  * the flags it already has, and app boot never depends on PostHog being
- * reachable (local, Electron and air-gapped installs included).
+ * reachable (local, Electron and air-gapped installs included). The one
+ * refusal is the hosted per-IP ceiling below, a 429 the client treats the
+ * same way.
  */
 
 const ANONYMOUS_ID_PATTERN = /^[\x21-\x7e]{1,200}$/;
@@ -73,11 +76,65 @@ function flagPersonProperties(c: Context): Record<string, string> {
   };
 }
 
+// Per-IP ceiling on hosted evaluations: each one is a request to PostHog. The
+// client asks at boot and when its identity changes, a few times per session,
+// and a refused request keeps the flags the client already has. Per process,
+// like the relay's limit. Bounded: when the table is full a new address is
+// refused rather than an old one evicted, so churning addresses cannot reset
+// an exhausted window. Local installs are exempt.
+const FLAGS_RATE_LIMIT_PER_MIN = 120;
+const FLAGS_RATE_WINDOW_MS = 60_000;
+const FLAGS_RATE_MAX_ENTRIES = 10_000;
+const ipWindows = new Map<string, { count: number; windowStart: number }>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of ipWindows) {
+    if (now - entry.windowStart > FLAGS_RATE_WINDOW_MS * 2) {
+      ipWindows.delete(ip);
+    }
+  }
+}, 5 * 60_000).unref();
+
+export const CLIENT_FLAGS_RATE_LIMIT_PER_MIN = FLAGS_RATE_LIMIT_PER_MIN;
+
+export function resetClientFlagsRateLimitForTests(): void {
+  ipWindows.clear();
+}
+
+/** Seconds until `c`'s address may ask again, or null when it may ask now. */
+function flagsRateLimitRetryAfter(c: Context): number | null {
+  if (!HOSTED_MODE) return null;
+  const ip = getClientIp(c) ?? "unknown";
+  const now = Date.now();
+  const entry = ipWindows.get(ip);
+  if (entry && now - entry.windowStart < FLAGS_RATE_WINDOW_MS) {
+    if (entry.count >= FLAGS_RATE_LIMIT_PER_MIN) {
+      return Math.max(
+        1,
+        Math.ceil((entry.windowStart + FLAGS_RATE_WINDOW_MS - now) / 1000),
+      );
+    }
+    entry.count++;
+    return null;
+  }
+  if (!entry && ipWindows.size >= FLAGS_RATE_MAX_ENTRIES) {
+    return Math.ceil(FLAGS_RATE_WINDOW_MS / 1000);
+  }
+  ipWindows.set(ip, { count: 1, windowStart: now });
+  return null;
+}
+
 const clientFlags = new Hono();
 
 clientFlags.get("/", async (c) => {
   c.header("Cache-Control", "no-store");
   c.header("Vary", "Authorization");
+  const retryAfter = flagsRateLimitRetryAfter(c);
+  if (retryAfter !== null) {
+    c.header("Retry-After", String(retryAfter));
+    return c.json({ flags: {} }, 429);
+  }
   const distinctId = await resolveDistinctId(c);
   const flags = distinctId
     ? await evaluateClientFeatureFlags(distinctId, flagPersonProperties(c))
