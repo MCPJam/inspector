@@ -2,6 +2,7 @@
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError, handleRoute, readJsonBody } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { handleBrowserProfileUpload } from "./browser-profile-upload.js";
 
 /**
  * Same 10s ceiling as the chat-history proxy, and for the same reason: a
@@ -10,9 +11,9 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
  * minutes with nothing to show for it.
  *
  * Safe at 10s for every operation here because NONE of them carries archive
- * bytes — `upload-url` hands the client a signed URL and the client PUTs the
- * (up to 256 MB) archive straight to storage, so everything this proxy sees is
- * small metadata.
+ * bytes — the (up to 256 MB) archive goes through `/upload`
+ * (`browser-profile-upload.ts`), which has its own bounds, so everything this
+ * proxy sees is small metadata.
  */
 const DEFAULT_PROXY_TIMEOUT_MS = 10_000;
 
@@ -90,7 +91,6 @@ async function proxyPost(
 }
 
 for (const operation of [
-  "upload-url",
   "commit",
   "list",
   "default",
@@ -101,5 +101,8 @@ for (const operation of [
     handleRoute(c, async () => proxyPost(c, operation, await readJsonBody(c))),
   );
 }
+
+// Archive bytes in, storage id out (MJ-006).
+browserProfiles.post("/upload", handleBrowserProfileUpload);
 
 export default browserProfiles;

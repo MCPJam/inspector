@@ -6664,6 +6664,72 @@
         }
       }
     },
+    "/projects/{projectId}/eval-ingest/artifacts": {
+      "post": {
+        "operationId": "uploadEvalIngestArtifact",
+        "tags": ["Eval runs"],
+        "summary": "Upload a run artifact",
+        "description": "Stores one artifact referenced by an ingested run (typically widget HTML too large to send inline) and returns the `storageId` the run's results then reference. This is what `reportEvalResults` in `@mcpjam/sdk` uses for widget evidence.\n\nThe body is the artifact's raw bytes, sent with the artifact's own `Content-Type`. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where the artifact belongs. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success is the legacy `{ ok: true, storageId }` envelope the SDK reporter parses, not the v1 resource envelope. Bodies are capped at 20 MiB here, and the backend applies its own per-artifact limit.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through: `{ ok: true, storageId }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-ingest/artifacts/upload-url": {
       "post": {
         "operationId": "createEvalIngestUploadUrl",
