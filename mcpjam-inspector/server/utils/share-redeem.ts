@@ -3,6 +3,7 @@
  */
 
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 
 export type ShareRedeemSuccess = {
   ok: true;
@@ -80,10 +81,12 @@ export async function redeemShareToken(args: {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : "This share link is invalid or has been revoked.",
+      error: backendFailureText({
+        source: "share-redeem",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: "This share link is invalid or has been revoked.",
+      }),
     };
   }
 
