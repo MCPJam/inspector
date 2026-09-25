@@ -107,3 +107,35 @@ export type {
   ModelSelectionIssueCode,
   ModelSelectionValidation,
 } from "./model-selection.js";
+
+// Execution record reader + provenance formatting (reads what a run ran on).
+export {
+  EXECUTION_RAILS,
+  EXECUTION_DEVIATION_KINDS,
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_EXECUTION_ATTEMPTS,
+  readExecutionRecord,
+  executionRailLabel,
+  executionDeviationTitle,
+  describeExecutionRoute,
+  describeMaxOutputTokens,
+  describeExecutionSettings,
+  describeExecutionModel,
+  formatExecutionProvenanceLine,
+  describeExecutionRequest,
+  describeExecutionAttempts,
+  summarizeExecutionRecord,
+  formatExecutionDeviationLine,
+} from "./execution-record.js";
+export type {
+  ExecutionRecord,
+  ExecutionRail,
+  KnownExecutionRail,
+  ExecutionOffering,
+  ExecutionAttempt,
+  ExecutionAttemptOutcome,
+  ExecutionDeviation,
+  ExecutionDeviationKind,
+  KnownExecutionDeviationKind,
+  ExecutionProvenanceSummary,
+} from "./execution-record.js";

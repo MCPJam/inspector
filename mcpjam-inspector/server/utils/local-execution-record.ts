@@ -16,18 +16,24 @@
  * authoritative resolution the inspector already has (the saved selection and
  * the resolve response's provider key), and never a key, header or anything
  * outside the closed shape below. The shape mirrors the backend's
- * `executionRecordValidator` field for field (the SDK's reader-side
- * `ExecutionRecord` type is not on this branch).
+ * `executionRecordValidator` field for field, and is checked at compile time
+ * to be a valid SDK `ExecutionRecord` (the reader the inspector and CLI
+ * render it with).
  *
  * Only a saved `org` selection produces a record: a legacy request (no
  * selection) has nothing the backend could check it against, and a `local`
  * selection names no org connection.
  */
-import type { ModelConnectionRef, ModelSelection } from "@mcpjam/sdk";
+import {
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  type ExecutionRecord,
+  type ModelConnectionRef,
+  type ModelSelection,
+} from "@mcpjam/sdk";
 import type { EffectiveModelSettings } from "./model-selection-settings.js";
 
-/** `effectiveSettings.maxOutputTokens` when the call set no ceiling. */
-export const PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS = 0;
+/** Re-exported: the SDK's reader renders 0 as "provider default". */
+export { PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS };
 
 /** How a local provider call ended. `aborted` is reported as an error. */
 export type LocalAttemptOutcome =
@@ -181,3 +187,9 @@ export function buildLocalExecutionRecord(args: {
     ...(upstreamModel ? { upstreamModel } : {}),
   };
 }
+
+// Compile-time proof the writer's shape is one the SDK reader accepts.
+const _localRecordIsExecutionRecord = (
+  record: LocalExecutionRecord,
+): ExecutionRecord => record;
+void _localRecordIsExecutionRecord;

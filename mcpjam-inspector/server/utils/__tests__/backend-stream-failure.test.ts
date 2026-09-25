@@ -9,6 +9,24 @@ import {
 } from "../mcpjam-stream-handler.js";
 
 describe("describeBackendStreamFailure", () => {
+  it.each([401, 502])(
+    "reads a %i fallback_prohibited as the refused fallback, not a key or an outage",
+    (status) => {
+      // The legacy eval /stream answers a Gateway failure on a selection that
+      // forbids the OpenRouter fallback with this code, keeping the
+      // provider's own status. By status alone a 401 blames the user's key
+      // and a 502 pages MCPJam; neither is what happened.
+      const normalized = describeBackendStreamFailure(
+        status,
+        "The Gateway attempt for anthropic/claude-sonnet-4.5 failed and this selection does not permit an OpenRouter fallback.",
+        "fallback_prohibited",
+      );
+
+      expect(normalized.slug).toBe("provider/fallback_prohibited");
+      expect(originOf(normalized)).toBe("ambiguous");
+    },
+  );
+
   it("owns a 5xx from MCPJam's own backend", () => {
     // The reported bug: a chat turn dying on a hosted 502. There is no Error
     // object at this site — only a non-OK Response — so nothing in the
@@ -155,6 +173,17 @@ describe("isUserOwnedDenialCode", () => {
 });
 
 describe("describeStreamErrorChunkFailure", () => {
+  it("reads a mid-stream fallback_prohibited chunk as the refused fallback", () => {
+    const normalized = describeStreamErrorChunkFailure(
+      503,
+      "the gateway attempt failed and this selection does not permit an openrouter fallback",
+      "fallback_prohibited",
+    );
+
+    expect(normalized.slug).toBe("provider/fallback_prohibited");
+    expect(originOf(normalized)).toBe("ambiguous");
+  });
+
   it.each(["mcpjam_api_error", "mcpjam_rate_limit", "mcpjam_config_error"])(
     "owns a mid-stream failure whose code names us (%s)",
     (code) => {

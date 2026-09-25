@@ -980,6 +980,39 @@ export type {
   ModelSelectionValidation,
 } from "./host-config/index.js";
 
+// Execution record: what a run or turn actually ran on (also at
+// `@mcpjam/sdk/host-config`). Pure and browser-safe.
+export {
+  EXECUTION_RAILS,
+  EXECUTION_DEVIATION_KINDS,
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_EXECUTION_ATTEMPTS,
+  readExecutionRecord,
+  executionRailLabel,
+  executionDeviationTitle,
+  describeExecutionRoute,
+  describeMaxOutputTokens,
+  describeExecutionSettings,
+  describeExecutionModel,
+  formatExecutionProvenanceLine,
+  describeExecutionRequest,
+  describeExecutionAttempts,
+  summarizeExecutionRecord,
+  formatExecutionDeviationLine,
+} from "./host-config/index.js";
+export type {
+  ExecutionRecord,
+  ExecutionRail,
+  KnownExecutionRail,
+  ExecutionOffering,
+  ExecutionAttempt,
+  ExecutionAttemptOutcome,
+  ExecutionDeviation,
+  ExecutionDeviationKind,
+  KnownExecutionDeviationKind,
+  ExecutionProvenanceSummary,
+} from "./host-config/index.js";
+
 // Shared task lifecycle engine. Browser-safe by construction: it performs no
 // I/O at all — it decides *when* a task may next be polled and remembers what
 // was last seen, while the caller owns the transport. That is exactly what
