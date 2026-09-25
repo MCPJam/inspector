@@ -16,8 +16,9 @@ import { getAttestedClientIp } from "../../utils/client-ip.js";
  *    verifies from it (guest token or AuthKit access token), and any
  *    `distinct_id` it also sends is ignored. A bearer that does not verify
  *    gets no values;
- *  - a request without one gets the flags of the anonymous PostHog id the
- *    client already uses (`distinct_id`).
+ *  - a request without one gets the flags of the anonymous id posthog-js
+ *    generated for the visitor (`distinct_id`, a v7 UUID). Any other id, a
+ *    guest's or a signed-in user's, gets no values without its bearer.
  *
  * "No values" is a 200 with `{ flags: {} }`, never an error: the client keeps
  * the flags it already has, and app boot never depends on PostHog being
@@ -26,7 +27,8 @@ import { getAttestedClientIp } from "../../utils/client-ip.js";
  * same way.
  */
 
-const ANONYMOUS_ID_PATTERN = /^[\x21-\x7e]{1,200}$/;
+const ANONYMOUS_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // The platforms a local client reports (detectPlatform in PosthogUtils.ts).
 // Hosted is always "web".

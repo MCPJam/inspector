@@ -36,6 +36,9 @@ import clientFlags from "../flags.js";
 import { shutdownAnalytics } from "../../../utils/analytics.js";
 import { CLIENT_FEATURE_FLAG_KEYS } from "../../../../shared/client-feature-flags.js";
 
+// posthog-js generates a v7 UUID for a visitor it has not identified.
+const ANONYMOUS_ID = "0192a3f1-8c5e-7b3d-8f21-6a4c9e0d1b2f";
+
 function createApp() {
   const app = new Hono();
   app.route("/api/web/flags", clientFlags);
@@ -74,7 +77,7 @@ describe("GET /api/web/flags", () => {
       "registry-enabled": { nested: true },
     });
 
-    const { response, body } = await getFlags("?distinct_id=anon-device-1");
+    const { response, body } = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
@@ -90,20 +93,20 @@ describe("GET /api/web/flags", () => {
 
   it("evaluates exactly the allowlist, whatever the request names", async () => {
     await getFlags(
-      "?distinct_id=anon-device-1&flag_keys=unlisted-flag&key=unlisted-flag",
+      `?distinct_id=${ANONYMOUS_ID}&flag_keys=unlisted-flag&key=unlisted-flag`,
     );
 
     expect(mocks.getAllFlags).toHaveBeenCalledTimes(1);
     const [distinctId, options] = mocks.getAllFlags.mock.calls[0];
-    expect(distinctId).toBe("anon-device-1");
+    expect(distinctId).toBe(ANONYMOUS_ID);
     expect(options.flagKeys).toEqual([...CLIENT_FEATURE_FLAG_KEYS]);
     expect(options.flagKeys).not.toContain("unlisted-flag");
     expect(options).not.toHaveProperty("sendFeatureFlagEvents", true);
   });
 
   it("sends the person properties the server knows, and a known platform", async () => {
-    await getFlags("?distinct_id=anon-device-1&platform=mac");
-    await getFlags("?distinct_id=anon-device-1&platform=unexpected");
+    await getFlags(`?distinct_id=${ANONYMOUS_ID}&platform=mac`);
+    await getFlags(`?distinct_id=${ANONYMOUS_ID}&platform=unexpected`);
 
     expect(mocks.getAllFlags.mock.calls[0][1].personProperties).toEqual({
       deployment: "self_hosted",
@@ -155,6 +158,11 @@ describe("GET /api/web/flags", () => {
     ["no identity", ""],
     ["an oversized id", `?distinct_id=${"x".repeat(201)}`],
     ["an id with spaces", "?distinct_id=two%20words"],
+    ["a signed-in user's id without a bearer", "?distinct_id=user_01HZX5J8K2"],
+    [
+      "a guest id without a bearer",
+      "?distinct_id=5b0e3c6d-2f1a-4e8b-9c7d-1a2b3c4d5e6f",
+    ],
   ])("answers %s with no values", async (_name, query) => {
     const { response, body } = await getFlags(query);
 
@@ -165,7 +173,7 @@ describe("GET /api/web/flags", () => {
 
   it("answers with defaults when PostHog is unavailable", async () => {
     mocks.getAllFlags.mockRejectedValueOnce(new Error("unavailable"));
-    const failed = await getFlags("?distinct_id=anon-device-1");
+    const failed = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(failed.response.status).toBe(200);
     expect(failed.body).toEqual({ flags: {} });
 
@@ -173,7 +181,7 @@ describe("GET /api/web/flags", () => {
     mocks.constructPostHog.mockImplementationOnce(() => {
       throw new Error("not configured");
     });
-    const unconfigured = await getFlags("?distinct_id=anon-device-1");
+    const unconfigured = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(unconfigured.response.status).toBe(200);
     expect(unconfigured.body).toEqual({ flags: {} });
   });

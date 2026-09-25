@@ -24,6 +24,13 @@ import clientFlags, {
 } from "../flags.js";
 import { shutdownAnalytics } from "../../../utils/analytics.js";
 
+const ANONYMOUS_ID = "0192a3f1-8c5e-7b3d-8f21-6a4c9e0d1b2f";
+
+// A distinct anonymous (v7 UUID) PostHog id per `n`.
+function anonymousId(n: number): string {
+  return `0192a3f1-8c5e-7b3d-8f21-${n.toString(16).padStart(12, "0")}`;
+}
+
 function createApp() {
   const app = new Hono();
   app.route("/api/web/flags", clientFlags);
@@ -31,7 +38,7 @@ function createApp() {
 }
 
 function getFlags(app: Hono, ip: string, headers: Record<string, string> = {}) {
-  return app.request("/api/web/flags?distinct_id=anon-device-1", {
+  return app.request(`/api/web/flags?distinct_id=${ANONYMOUS_ID}`, {
     headers: {
       "cf-connecting-ip": ip,
       "x-mcpjam-edge-secret": "flags-test-edge-secret",
@@ -99,7 +106,7 @@ describe("GET /api/web/flags per-address ceiling (hosted)", () => {
         };
         if (secret !== undefined) headers["x-mcpjam-edge-secret"] = secret;
         const response = await app.request(
-          `/api/web/flags?distinct_id=anon-device-${i}`,
+          `/api/web/flags?distinct_id=${anonymousId(i)}`,
           { headers },
         );
 
@@ -141,7 +148,7 @@ describe("GET /api/web/flags per-address ceiling (hosted)", () => {
 
     for (let i = 0; i < CLIENT_FLAGS_RATE_LIMIT_PER_MIN + 2; i++) {
       const response = await app.request(
-        "/api/web/flags?distinct_id=anon-device-1",
+        `/api/web/flags?distinct_id=${ANONYMOUS_ID}`,
         {
           headers: {
             [i % 2 === 0 ? "x-real-ip" : "x-forwarded-for"]: `203.0.113.${

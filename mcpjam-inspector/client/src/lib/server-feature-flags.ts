@@ -103,8 +103,12 @@ export async function loadBootstrapFeatureFlags(): Promise<ClientFeatureFlagValu
   try {
     const distinctId = getBootstrapDistinctId();
     if (!distinctId) return null;
+    // A guest is evaluated through its own token; without a bearer the
+    // server answers only for an anonymous PostHog id.
+    const guest = getCachedGuestSession();
     const flags = await fetchServerFeatureFlags({
       distinctId,
+      bearer: guest?.guestId === distinctId ? guest.token : null,
       timeoutMs: BOOTSTRAP_FLAGS_TIMEOUT_MS,
     });
     return flags && Object.keys(flags).length > 0 ? flags : null;

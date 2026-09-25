@@ -75,6 +75,27 @@ describe("server-evaluated feature flags", () => {
 
       expect(await loadBootstrapFeatureFlags()).toEqual({ xaa: false });
       expect(requestedUrl().searchParams.get("distinct_id")).toBe("guest-1");
+      expect(requestedAuthorization()).toBe("Bearer guest-token");
+    });
+
+    it("sends the guest token only for that guest's id", async () => {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ distinct_id: "user_01HZX5J8K2" }),
+      );
+      guestState.session = {
+        guestId: "guest-1",
+        token: "guest-token",
+        expiresAt: Date.now() + 60_000,
+      };
+      vi.mocked(fetch).mockResolvedValueOnce(flagsResponse({}));
+
+      await loadBootstrapFeatureFlags();
+
+      expect(requestedUrl().searchParams.get("distinct_id")).toBe(
+        "user_01HZX5J8K2",
+      );
+      expect(requestedAuthorization()).toBeNull();
     });
 
     it("skips the request when no identity exists yet", async () => {
