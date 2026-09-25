@@ -19,10 +19,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const SESSIONS: Record<string, { sub: string; sid: string }> = {
-  "token-alice": { sub: "user_alice", sid: "session_alice" },
-  "token-bob": { sub: "user_bob", sid: "session_bob" },
-};
+/** The bearers this test verifies, and the session each belongs to. */
+const SESSIONS = vi.hoisted(
+  (): Record<string, { sub: string; sid: string }> => ({
+    "token-alice": { sub: "user_alice", sid: "session_alice" },
+    "token-bob": { sub: "user_bob", sid: "session_bob" },
+  }),
+);
 
 const backend = vi.hoisted(() => ({
   mode: "ok" as "ok" | "hang" | "fail",
@@ -30,28 +33,19 @@ const backend = vi.hoisted(() => ({
     undefined | ((token: string | undefined) => Promise<unknown>),
 }));
 
-vi.hoisted(() => {
-  process.env.DO_NOT_TRACK = "1";
-});
-
 vi.mock("../services/authkit-jwt.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../services/authkit-jwt.js")>();
-  const table = () =>
-    ({
-      "token-alice": { sub: "user_alice", sid: "session_alice" },
-      "token-bob": { sub: "user_bob", sid: "session_bob" },
-    }) as Record<string, { sub: string; sid: string }>;
   return {
     ...actual,
     classifyAuthKitBearer: vi.fn(async (token: string) => {
-      const session = table()[token];
+      const session = SESSIONS[token];
       return session
         ? { kind: "verified", ...session }
         : { kind: "not_authkit" };
     }),
     verifyAuthKitToken: vi.fn(async (token: string) => {
-      const session = table()[token];
+      const session = SESSIONS[token];
       if (!session) {
         throw new actual.AuthKitVerificationError("unknown test token");
       }
