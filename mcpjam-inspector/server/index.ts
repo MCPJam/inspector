@@ -50,6 +50,7 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { indexingHeadersMiddleware } from "./middleware/indexing-headers";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
@@ -210,7 +211,7 @@ import {
 } from "./services/bench-worker";
 import {
   SERVER_PORT,
-  CORS_ORIGINS,
+  CORS_OPTIONS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
@@ -451,6 +452,10 @@ app.use("*", async (c, next) => {
 // 1. Security headers (always applied)
 app.use("*", securityHeadersMiddleware);
 
+// 1b. Indexing directive. Host-scoped, so it is its own middleware rather
+// than another line in the security headers — see indexing-headers.ts.
+app.use("*", indexingHeadersMiddleware);
+
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
@@ -496,13 +501,14 @@ if (enableHttpLogs) {
     }),
   );
 }
-app.use(
-  "*",
-  cors({
-    origin: CORS_ORIGINS,
-    credentials: true,
-  }),
-);
+// Load-bearing for the header middleware above, not only for CORS. A handler
+// returning a bare `new Response(...)` (relay passthrough, the SSE streams,
+// /guest/jwks) assigns `c.res` directly, and Hono merges the headers prepared
+// by `c.header()` only when `c.res` was already materialized. `cors()` is what
+// materializes it: CORS_OPTIONS has a non-`*` origin, so it always sets
+// `Vary: Origin`. Measured on hono 4.13.7 — unmount it and those routes return
+// null for every security header and for X-Robots-Tag.
+app.use("*", cors(CORS_OPTIONS));
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
 // route (multipart blobs; it applies its own higher bodyLimit at the mount

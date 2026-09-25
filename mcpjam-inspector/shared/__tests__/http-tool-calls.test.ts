@@ -225,6 +225,46 @@ describe("executeToolCallsFromMessages", () => {
       expect((newMessages[0] as any).content[0].toolCallId).toBe("call-123");
     });
 
+    it("runs only the calls filterToolCall accepts, leaving the rest unresolved", async () => {
+      const mockExecute = vi.fn().mockResolvedValue({ result: "ran" });
+      const tools = { my_tool: { execute: mockExecute } };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-approved",
+              toolName: "my_tool",
+              input: { n: 1 },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-sibling",
+              toolName: "my_tool",
+              input: { n: 2 },
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+        filterToolCall: ({ toolCallId }) => toolCallId === "call-approved",
+      });
+
+      expect(mockExecute).toHaveBeenCalledTimes(1);
+      expect(mockExecute).toHaveBeenCalledWith(
+        { n: 1 },
+        expect.objectContaining({ toolCallId: "call-approved" }),
+      );
+      const resultIds = newMessages.flatMap((message) =>
+        (message as any).content.map((part: any) => part.toolCallId),
+      );
+      expect(resultIds).toEqual(["call-approved"]);
+      expect(hasUnresolvedToolCalls(messages)).toBe(true);
+    });
+
     it("handles tool execution errors", async () => {
       const mockExecute = vi.fn().mockRejectedValue(new Error("Tool failed"));
       const tools = {
@@ -1899,7 +1939,7 @@ describe("account-aware chat execution", () => {
               type: "tool-call",
               toolCallId: "call-b",
               toolName: "read",
-              input: { account: "B" },
+              input: { link_id: "B" },
             },
           ],
         },

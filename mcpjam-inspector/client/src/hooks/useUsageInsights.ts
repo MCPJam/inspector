@@ -49,9 +49,26 @@ export type BreakdownBucket = {
   count: number;
 };
 
+/**
+ * Why the theme columns read the way they do, when that needs saying.
+ * `draft`: themes proposed from fewer sessions than the stable catalog needs;
+ * they are replaced as sessions arrive. `needs_review`: a catalog is full.
+ */
+export type InsightsThemesReason = "draft" | "needs_review" | null;
+
 export type InsightsAnalysisSummary = {
   total: number;
   analyzed: number;
+  /**
+   * Sessions with no analysis yet whose automatic pass is still coming. Also
+   * counted in `pending`. Absent from backends before B5.
+   */
+  owed?: number;
+  /** Analyzed before the outcome could be asserted; the outcome follows. */
+  provisional?: number;
+  /** When the next automatic pass is due (ms epoch), or null. */
+  nextAnalysisAt?: number | null;
+  themes?: { reason: InsightsThemesReason; sessionsUntilStable: number };
   pending: number;
   running: number;
   failed: number;
@@ -75,6 +92,8 @@ export type InsightsAnalysisSummary = {
     unassigned: number;
     sampleSize: number;
     errorCode?: string;
+    /** The catalog is a draft (see `InsightsThemesReason`). */
+    draft?: boolean;
   }>;
 };
 
@@ -93,9 +112,15 @@ export type RebuildResult = {
 // drill-down hook reasonably expect the type alongside it.
 export type { SessionOutcome, SessionSentiment };
 
-export type SankeyStage = "goal" | "behavior" | "outcome" | "sentiment";
+export type SankeyStage =
+  | "goal"
+  | "behavior"
+  | "outcome"
+  | "sentiment"
+  | `question:${string}`;
 
 export type InsightsSankeyNode<S extends string = SankeyStage> = {
+  questionVersion?: number;
   /** `${stage}:${key}` — unique across stages, whose keys can collide. */
   id: string;
   stage: S;
@@ -122,6 +147,12 @@ export type InsightsSankeyLink = {
 };
 
 export type InsightsSankey<S extends string = SankeyStage> = {
+  stages?: Array<{
+    id: S;
+    label: string;
+    questionId?: string;
+    version?: number;
+  }>;
   nodes: InsightsSankeyNode<S>[];
   links: InsightsSankeyLink[];
   foldedGoalCount: number;
@@ -210,6 +241,14 @@ export type UsageBreakdown = {
    * still renders the rest of the panel instead of throwing.
    */
   sankey?: InsightsSankey;
+  questionBreakdown?: Array<{
+    questionId: string;
+    label: string;
+    version: number;
+    yes: number;
+    no: number;
+    unanswered: number;
+  }>;
   labeledOutcomeCount: number;
   outcomeFeedbackCalibration: OutcomeFeedbackCalibration[];
   /**
@@ -249,6 +288,13 @@ export function toServerFilters(state: UsageFilterState) {
           ...(chip.dimension ? { dimension: chip.dimension } : {}),
         };
       }
+      if (chip.kind === "question")
+        return {
+          kind: "question",
+          questionId: chip.questionId,
+          version: chip.version,
+          value: chip.value,
+        };
       return { kind: "dimension", key: chip.key, value: chip.value };
     }),
   };
@@ -377,9 +423,19 @@ const BREAKDOWN_QUERIES: Record<InsightsScope["kind"], string> = {
  * An allowlist would silently drop any option added to `rebuild` later, and the
  * mutation would run with server defaults while the surface toasted success.
  */
-function rebuildOptionsOnly(args?: {
+export type RebuildOptions = {
   force?: boolean;
-}): { force?: boolean } | undefined {
+  /**
+   * Analyze now: treat the scope's sessions as finished, so their outcome is
+   * asserted without waiting out the idle window. Scenario scope only; the
+   * swarm rebuild does not take it.
+   */
+  settled?: boolean;
+};
+
+function rebuildOptionsOnly(
+  args?: RebuildOptions,
+): RebuildOptions | undefined {
   if (args == null || typeof args !== "object") return undefined;
   const candidate = args as Record<string, unknown>;
   // A React synthetic event carries these; an options object does not.
@@ -476,6 +532,7 @@ export function useUsageInsights({
   ) as unknown as (args: {
     scenarioId: string;
     force?: boolean;
+    settled?: boolean;
   }) => Promise<RebuildResult>;
   const rebuildSwarm = useMutation(
     "chatSessions:rebuildSwarmInsights" as any,
@@ -507,7 +564,7 @@ export function useUsageInsights({
   // caller restating it is exactly how a swarm surface would accidentally
   // trigger a scenario rebuild.
   const rebuild = useCallback(
-    async (args?: { force?: boolean }) => {
+    async (args?: RebuildOptions) => {
       if (!effectiveScope) {
         throw new Error("No insights scope to rebuild");
       }

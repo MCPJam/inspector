@@ -78,6 +78,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
     await mintXaaAccessToken({
       ...baseArgs,
       registrationMode: "preregistered",
+      secretsBoundOrigin: "https://mcp.example.com",
       resolveServerSecret,
     });
 
@@ -91,6 +92,68 @@ describe("mintXaaAccessToken Connect client identity", () => {
         }),
       })
     );
+  });
+
+  it("does not send a stored secret that has no recorded binding", async () => {
+    const resolveServerSecret = vi.fn().mockResolvedValue({
+      serverUrl: baseArgs.resource,
+      xaaAuthzIssuer: baseArgs.explicitIssuer,
+      clientId: "client-1",
+      clientSecret: "secret-1",
+    });
+
+    await expect(
+      mintXaaAccessToken({
+        ...baseArgs,
+        registrationMode: "preregistered",
+        resolveServerSecret,
+      })
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ secretOriginMismatch: true }),
+    });
+    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send a stored secret bound to another origin", async () => {
+    const resolveServerSecret = vi.fn().mockResolvedValue({
+      serverUrl: baseArgs.resource,
+      xaaAuthzIssuer: baseArgs.explicitIssuer,
+      clientId: "client-1",
+      clientSecret: "secret-1",
+    });
+
+    await expect(
+      mintXaaAccessToken({
+        ...baseArgs,
+        registrationMode: "preregistered",
+        secretsBoundOrigin: "https://owner.example.com",
+        resolveServerSecret,
+      })
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ secretOriginMismatch: true }),
+    });
+    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+  });
+
+  it("mints for a preregistered public client, which is never bound", async () => {
+    const resolveServerSecret = vi.fn().mockResolvedValue({
+      serverUrl: baseArgs.resource,
+      xaaAuthzIssuer: baseArgs.explicitIssuer,
+      clientId: "public-client",
+      clientSecret: null,
+    });
+
+    await mintXaaAccessToken({
+      ...baseArgs,
+      registrationMode: "preregistered",
+      resolveServerSecret,
+    });
+
+    const request = executeOAuthProxyMock.mock.calls[0]?.[0];
+    expect(request.body).toMatchObject({ client_id: "public-client" });
+    expect(request.body.client_secret).toBeUndefined();
   });
 
   it("uses public CIMD without resolving or sending a stored secret", async () => {

@@ -1,6 +1,5 @@
-import { swarmLifecycleLabel } from "@mcpjam/sdk/contract";
+import { swarmVerdictLabel } from "@mcpjam/sdk/contract";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
-import { SwarmGoalResult } from "./swarm-report-panel";
 import type { SwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -14,7 +13,6 @@ import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
   type JourneySessionRow,
-  type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { TraceViewer } from "@/components/evals/trace-viewer";
@@ -26,6 +24,7 @@ import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import { SPAN_LOAD_FAILURE_CONSEQUENCE } from "@/components/evals/turn-trace-spans";
 import {
+  liveSessionTrace,
   swarmCellKey,
   type JourneyRunStreamState,
   type SwarmCellLiveStatus,
@@ -145,44 +144,101 @@ export function resolveSwarmCellOutcome(args: {
   return "pending";
 }
 
+type SessionResultMeta = { label: string; dot: string; text: string };
+
+const SESSION_RESULT_META = {
+  goalPassed: { label: "Goal passed", dot: "bg-success", text: "text-success" },
+  goalFailed: {
+    label: "Goal failed",
+    dot: "bg-destructive",
+    text: "text-destructive",
+  },
+  didNotRun: {
+    label: "Did not run",
+    dot: "bg-warning",
+    // Light `text-warning` is a mid-yellow at ~2:1 on the page background, too
+    // faint for a small label; amber-700 clears AA there.
+    text: "text-amber-700 dark:text-warning",
+  },
+} satisfies Record<string, SessionResultMeta>;
+
 /**
- * One session chip: `<host> #<n> · <outcome>`. Kept `data-testid`
+ * One status per session chip. Execution and goal grading used to render as
+ * two statuses side by side ("Broke" next to "Goal result: Failed"), which read
+ * as two verdicts on one session. A goal verdict outranks the execution that
+ * produced it. "Did not run" is reserved for sessions that never produced a
+ * conversation: a session that broke partway through still ran, and while the
+ * judge grades its transcript it can still end up passed or failed. Everything
+ * without a goal verdict keeps a neutral label.
+ */
+function sessionResultMeta(
+  outcome: SwarmMatrixCellOutcome,
+  verdict: SwarmSessionVerdict | undefined,
+  hasTranscript: boolean,
+): SessionResultMeta {
+  if (!verdict) {
+    // A failed attempt lands before its verdict does. With a transcript the
+    // judge may still grade it, so it reads "Broke" in gray, not "Did not run".
+    // A rate-limited attempt with a transcript is `broke` in the SDK too.
+    if ((outcome === "failed" || outcome === "rate_limited") && hasTranscript) {
+      return { ...CELL_META.pending, label: CELL_META.failed.label };
+    }
+    if (outcome === "failed" || outcome === "rate_limited") {
+      return SESSION_RESULT_META.didNotRun;
+    }
+    return outcome === "succeeded"
+      ? { ...CELL_META.pending, label: CELL_META.succeeded.label }
+      : CELL_META[outcome];
+  }
+  if (verdict.verdict === "passed") return SESSION_RESULT_META.goalPassed;
+  if (verdict.verdict === "failed") return SESSION_RESULT_META.goalFailed;
+  if (verdict.lifecycle === "pending" || verdict.lifecycle === "running") {
+    return CELL_META[verdict.lifecycle];
+  }
+  // `limited` and `executionFailed` already mean no transcript; `withdrawn`
+  // comes from the cancel error code alone, so a session canceled mid-
+  // conversation needs the transcript check.
+  if (
+    verdict.lifecycle === "limited" ||
+    (verdict.lifecycle === "withdrawn" && !hasTranscript) ||
+    verdict.reason === "executionFailed"
+  ) {
+    return SESSION_RESULT_META.didNotRun;
+  }
+  return { ...CELL_META.pending, label: swarmVerdictLabel(verdict) };
+}
+
+/**
+ * One session chip: `<host> #<n> · <result>`. Kept `data-testid`
  * "swarm-host-cell" from the old grid so outcome assertions carry over.
  */
 export function SwarmHostCell({
   hostLabel,
+  showHostLabel = true,
   sessionIndex,
   outcome,
   verdict,
-  criteria,
+  hasTranscript = false,
   selected,
   onSelect,
 }: {
   hostLabel: string;
+  /**
+   * Off when the matrix is already filtered to one target: the column header
+   * above these chips names it, so repeating it per chip only competes for
+   * width. The name stays in `aria-label` either way.
+   */
+  showHostLabel?: boolean;
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
   verdict?: SwarmSessionVerdict;
-  criteria?: SessionCriteria;
+  /** The session has messages, saved or still streaming. */
+  hasTranscript?: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const executionOutcome = verdict
-    ? (
-        {
-          pending: "pending",
-          running: "running",
-          ran: "succeeded",
-          broke: "failed",
-          limited: "rate_limited",
-          withdrawn: "failed",
-        } as const
-      )[verdict.lifecycle]
-    : outcome;
-  const meta = CELL_META[executionOutcome];
-  const executionLabel = verdict
-    ? swarmLifecycleLabel(verdict.lifecycle)
-    : meta.label;
+  const meta = sessionResultMeta(outcome, verdict, hasTranscript);
   return (
     <button
       type="button"
@@ -191,81 +247,37 @@ export function SwarmHostCell({
       data-outcome={outcome}
       aria-label={`Open session ${
         sessionIndex + 1
-      } on ${hostLabel} (${executionLabel})`}
+      } on ${hostLabel} (${meta.label})`}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
+        // These chips sit in a narrow target column and their parts can exceed
+        // it: an execution target's name is free text, and a generated
+        // environment can run to a full sentence. Wrapping BETWEEN parts keeps
+        // each one intact and inside the border — laid out without it, the name
+        // broke one word per line and stretched the chip to the height of the
+        // sentence. The name is also the only part that can lose characters and
+        // still read, so it truncates while the status parts hold their size.
+        "inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary bg-primary/5"
           : "border-border/50 bg-background/60",
       )}
     >
-      <span className="font-medium text-foreground/80">{hostLabel}</span>
-      <span className="font-mono text-[10px] text-muted-foreground">
+      {showHostLabel ? (
+        <span className="min-w-0 truncate font-medium text-foreground/80">
+          {hostLabel}
+        </span>
+      ) : null}
+      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
         #{sessionIndex + 1}
       </span>
-      <span className={cn("size-1.5 rounded-full", meta.dot)} />
-      <span className={cn("font-semibold", meta.text)}>{executionLabel}</span>
-      <SwarmGoalResult verdict={verdict} />
-      {verdict ? (
-        <span className="text-[10px] text-muted-foreground">
-          {verdict.counts.gatingPassed}/{verdict.counts.gating} evaluators
-          passed
-        </span>
-      ) : (
-        <SessionCriteriaChip criteria={criteria} />
-      )}
-    </button>
-  );
-}
-
-/**
- * Per-cell deterministic rubric verdict: `N/M` passed when graded, a subtle
- * glyph while pending or after a grading failure, and NOTHING when the session
- * carries no stamp.
- *
- * Rendering nothing for an absent stamp is the point. A `0/0` would claim the
- * session was graded against an empty rubric; absence means the run had no
- * rubric at all, which is a different thing and belongs in no denominator.
- */
-function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
-  if (!criteria) return null;
-
-  if (criteria.status === "completed") {
-    const results = criteria.results ?? [];
-    if (results.length === 0) return null;
-    const passed = results.filter((r) => r.passed).length;
-    const allPassed = passed === results.length;
-    return (
+      <span className={cn("size-1.5 shrink-0 rounded-full", meta.dot)} />
       <span
-        title={`${passed} of ${results.length} evaluators passed`}
-        className={cn(
-          "rounded px-1 font-mono text-[10px] tabular-nums",
-          allPassed
-            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-            : "bg-destructive/10 text-destructive",
-        )}
+        className={cn("shrink-0 whitespace-nowrap font-semibold", meta.text)}
       >
-        {passed}/{results.length}
+        {meta.label}
       </span>
-    );
-  }
-
-  // Pending and failed-grading stay visually quiet — they say something about
-  // the GRADER, not about the session, and shouting them would read as a
-  // product failure.
-  const pending = criteria.status === "pending";
-  return (
-    <span
-      title={
-        pending
-          ? "Evaluators still being graded"
-          : "Evaluators could not be graded"
-      }
-      className="rounded px-1 font-mono text-[10px] text-muted-foreground"
-    >
-      {pending ? "…" : "—"}
-    </span>
+    </button>
   );
 }
 
@@ -325,7 +337,7 @@ export function SwarmSessionsMatrix({
   return (
     <div className="min-w-0" data-testid="swarm-sessions-matrix">
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Sessions
+        Results
       </p>
       <div className="flex flex-wrap gap-1.5">
         {visibleTargets.flatMap((target) => {
@@ -375,11 +387,18 @@ export function SwarmSessionsMatrix({
               <SwarmHostCell
                 key={`${target.key}:${sessionIndex}`}
                 hostLabel={target.label}
+                showHostLabel={!targetKeyFilter}
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
                 verdict={convexSession?.verdict}
-                criteria={convexSession?.criteria}
+                hasTranscript={
+                  (convexSession?.messageCount ?? 0) > 0 ||
+                  // The stream can report the cell failed before Convex
+                  // counts the messages it already carried.
+                  (liveSessionTrace(stream.sessions[chatSessionId])?.messages
+                    ?.length ?? 0) > 0
+                }
                 selected={selected}
                 onSelect={() =>
                   onSelect({
@@ -653,11 +672,14 @@ export function SwarmLiveStreamPane({
         </div>
       ) : failureInfo || live?.errorMessage ? (
         <div data-testid="swarm-live-pane-failure">
-          <ErrorCard variant="inline" error={describeSwarmAttemptFailure(
-            attempt?.errorMessage ?? live?.errorMessage,
-            attempt?.errorCode,
-            providerLabelForModelId(convexSession?.modelId),
-          )} />
+          <ErrorCard
+            variant="inline"
+            error={describeSwarmAttemptFailure(
+              attempt?.errorMessage ?? live?.errorMessage,
+              attempt?.errorCode,
+              providerLabelForModelId(convexSession?.modelId),
+            )}
+          />
         </div>
       ) : null}
 
@@ -756,7 +778,12 @@ export function SwarmLiveStreamPane({
           !fillHeight && "max-h-[min(70vh,36rem)]",
         )}
       >
-        {displayTrace && resolvedHost.status === "ready" && (!emptyCompletedTrace || displayTrace.spans?.length || showReplay || viewMode !== "chat") ? (
+        {displayTrace &&
+        resolvedHost.status === "ready" &&
+        (!emptyCompletedTrace ||
+          displayTrace.spans?.length ||
+          showReplay ||
+          viewMode !== "chat") ? (
           <TraceViewer
             trace={displayTrace}
             hostSnapshot={resolvedHost.snapshot}
@@ -792,11 +819,21 @@ export function SwarmLiveStreamPane({
               />
             ) : showLoading ||
               (displayTrace && resolvedHost.status === "loading") ? (
-              <TranscriptEmptyState kind={displayTrace || persisted.loading ? "loading" : "streaming"} />
+              <TranscriptEmptyState
+                kind={
+                  displayTrace || persisted.loading ? "loading" : "streaming"
+                }
+              />
             ) : (
-              <TranscriptEmptyState kind="unrecorded" execution={
-                (convexSession?.messageCount ?? 0) > 0 || (displayTrace?.spans?.length ?? 0) > 0 ? "observed" : "unknown"
-              } />
+              <TranscriptEmptyState
+                kind="unrecorded"
+                execution={
+                  (convexSession?.messageCount ?? 0) > 0 ||
+                  (displayTrace?.spans?.length ?? 0) > 0
+                    ? "observed"
+                    : "unknown"
+                }
+              />
             )}
           </div>
         )}

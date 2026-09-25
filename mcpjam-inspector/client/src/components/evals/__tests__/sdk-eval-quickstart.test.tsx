@@ -160,6 +160,8 @@ describe("SdkEvalQuickstart", () => {
         name: "ci",
         // Single org auto-selects, so the reader never picks one.
         organizationId: "org-1",
+        // The dialog's default lifetime; a quickstart key expires like any other.
+        expiresInDays: 90,
       });
     });
 
@@ -263,6 +265,7 @@ describe("SdkEvalQuickstart", () => {
       expect(mocks.createApiKey).toHaveBeenCalledWith({
         name: "ci",
         organizationId: "org-1",
+        expiresInDays: 90,
       }),
     );
     // The mint ran to completion, which is what proves the narrowed org was

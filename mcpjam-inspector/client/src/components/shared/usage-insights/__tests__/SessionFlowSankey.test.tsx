@@ -5,8 +5,17 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionFlowSankey } from "../SessionFlowSankey";
+
+// Analyze now is shown to members only; the check is a Convex query.
+const member = vi.hoisted(() => ({ value: true as boolean | undefined }));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => member.value,
+}));
+beforeEach(() => {
+  member.value = true;
+});
 import type {
   InsightsAnalysisSummary,
   InsightsSankey,
@@ -138,6 +147,80 @@ describe("SessionFlowSankey", () => {
   it("shows a loading state until the breakdown arrives", () => {
     renderSankey({ breakdown: undefined });
     expect(screen.getByText(/Loading session flow/)).toBeInTheDocument();
+  });
+
+  it("gives each question column its own hue instead of foreground black", () => {
+    renderSankey({
+      breakdown: breakdown({
+        sankey: {
+          ...SANKEY,
+          stages: [
+            { id: "goal", label: "Goal" },
+            { id: "behavior", label: "Behavior" },
+            { id: "outcome", label: "Outcome" },
+            { id: "sentiment", label: "Sentiment" },
+            {
+              id: "question:q1",
+              label: "Likeness",
+              questionId: "q1",
+              version: 1,
+            },
+            {
+              id: "question:q2",
+              label: "View",
+              questionId: "q2",
+              version: 1,
+            },
+          ],
+          nodes: [
+            ...SANKEY.nodes,
+            {
+              id: "question:q1:yes",
+              stage: "question:q1",
+              key: "yes",
+              label: "Yes",
+              count: 1,
+              clickable: true,
+              questionVersion: 1,
+            },
+            {
+              id: "question:q2:yes",
+              stage: "question:q2",
+              key: "yes",
+              label: "Yes",
+              count: 1,
+              clickable: true,
+              questionVersion: 1,
+            },
+          ],
+          links: [
+            ...SANKEY.links,
+            {
+              source: "sentiment:s1",
+              target: "question:q1:yes",
+              count: 1,
+              discordantCount: 0,
+            },
+            {
+              source: "question:q1:yes",
+              target: "question:q2:yes",
+              count: 1,
+              discordantCount: 0,
+            },
+          ],
+        },
+      }),
+    });
+    const fills = screen
+      .getAllByRole("button", { name: /^Yes, 1 sessions/ })
+      .map((node) => node.querySelector("rect")?.getAttribute("fill"));
+    expect(fills).toHaveLength(2);
+    expect(fills[0]).toBeTruthy();
+    expect(fills[1]).toBeTruthy();
+    expect(fills[0]).not.toBe(fills[1]);
+    for (const fill of fills) {
+      expect(fill).not.toMatch(/foreground|#000\b/);
+    }
   });
 
   it("renders each column's theme name as the analysis produced it", () => {
@@ -297,11 +380,47 @@ describe("SessionFlowSankey", () => {
     expect(onRebuild.mock.calls[0]).toEqual([]);
   });
 
+  it("calls unanswered question nodes analyzing while a run is in flight", () => {
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({ pending: 1 }),
+        sankey: {
+          ...SANKEY,
+          stages: [
+            { id: "goal", label: "Goal" },
+            { id: "behavior", label: "Behavior" },
+            { id: "outcome", label: "Outcome" },
+            { id: "sentiment", label: "Sentiment" },
+            {
+              id: "question:q1",
+              label: "Likeness",
+              questionId: "q1",
+              version: 1,
+            },
+          ],
+          nodes: [
+            ...SANKEY.nodes,
+            {
+              id: "question:q1:__unanswered__",
+              stage: "question:q1",
+              key: "__unanswered__",
+              label: "Not answered",
+              count: 2,
+              clickable: false,
+            },
+          ],
+        },
+      }),
+    });
+    expect(screen.getByText("Analyzing…")).toBeInTheDocument();
+    expect(screen.queryByText("Not answered")).not.toBeInTheDocument();
+  });
+
   it("reports an analysis in flight instead of offering to start one", () => {
     renderSankey({
       breakdown: breakdown({ analysis: analysis({ pending: 4 }) }),
     });
-    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(screen.getByText(/Analyzing 4 sessions/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Analyze sessions/ }),
     ).not.toBeInTheDocument();
@@ -326,7 +445,7 @@ describe("SessionFlowSankey", () => {
       }),
     });
 
-    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(screen.getByText(/Analyzing 4 sessions/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Rebuild clusters/ }),
     ).not.toBeInTheDocument();
@@ -334,38 +453,380 @@ describe("SessionFlowSankey", () => {
 
   it("offers no voluntary rebuild on an empty flow a completed analysis produced", () => {
     // Voluntary re-analysis is gated off (#5277): analysis runs on its own as
-    // sessions settle, and the one place to ask for it again is the freshness
-    // chip's popover. The empty state must not grow a second door.
+    // sessions settle. Analyze now appears only where its reason can help,
+    // and "analyzed, themes still coming" is not one of those.
+    const onAnalyzeNow = vi.fn();
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
         analysis: analysis(),
       }),
-      analysisIsAutomatic: true,
+      onAnalyzeNow,
     });
 
-    expect(screen.getByText("No session flow yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Grouping sessions into themes"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze now/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /rebuild clusters/i }),
     ).not.toBeInTheDocument();
     expect(onRebuild).not.toHaveBeenCalled();
   });
 
+  /** One session, analyzed or not, with no theme yet: placeholders only. */
+  const PLACEHOLDERS: InsightsSankey = {
+    nodes: (["goal", "behavior", "outcome", "sentiment"] as const).map(
+      (stage) => ({
+        id: `${stage}:__analyzing__`,
+        stage,
+        key: "__analyzing__",
+        label: "Analyzing",
+        count: 1,
+        clickable: false,
+      }),
+    ),
+    links: [],
+    foldedGoalCount: 0,
+    foldedByStage: {},
+  };
+
+  it("says why a flow of placeholders is empty instead of drawing it (2026-09-22)", async () => {
+    const user = userEvent.setup();
+    const onAnalyzeNow = vi.fn();
+    const soon = Date.now() + 2 * 60_000;
+    renderSankey({
+      breakdown: breakdown({
+        sankey: PLACEHOLDERS,
+        analysis: analysis({
+          total: 1,
+          analyzed: 0,
+          owed: 1,
+          pending: 1,
+          nextAnalysisAt: soon,
+        }),
+      }),
+      onAnalyzeNow,
+    });
+
+    expect(
+      screen.queryByTestId("scenario-insights-sankey"),
+    ).not.toBeInTheDocument();
+    const status = screen.getByTestId("session-flow-status");
+    expect(status).toHaveAttribute("data-status", "waiting");
+    expect(status).toHaveTextContent("Waiting for the session to go quiet");
+    // Not "Analyzing": nothing runs until the door opens.
+    expect(screen.queryByText(/Analyzing/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    // No arguments: the rebuild path serializes whatever it is handed.
+    expect(onAnalyzeNow.mock.calls).toEqual([[]]);
+  });
+
+  it("hides Analyze now from a reader who is not a member", () => {
+    member.value = false;
+    renderSankey({
+      breakdown: breakdown({
+        sankey: PLACEHOLDERS,
+        analysis: analysis({ total: 1, analyzed: 0, owed: 1, pending: 1 }),
+      }),
+      onAnalyzeNow: vi.fn(),
+    });
+    expect(screen.getByTestId("session-flow-status")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze now/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names a guest-owned study's reason, and offers Analyze now to members only", () => {
+    const guestStudy = () =>
+      renderSankey({
+        breakdown: breakdown({
+          sankey: PLACEHOLDERS,
+          analysis: analysis({
+            total: 1,
+            analyzed: 0,
+            skipped: 1,
+            skips: { guest_owned: 1 },
+          }),
+        }),
+        onAnalyzeNow: vi.fn(),
+      });
+    guestStudy();
+    expect(screen.getByTestId("session-flow-status")).toHaveTextContent(
+      "Not analyzed automatically",
+    );
+    // A member's request is allowed on a guest study.
+    expect(
+      screen.getByRole("button", { name: /Analyze now/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a pending outcome column on a drawn flow, with Analyze now", async () => {
+    // The first half hour of every study after B5: goal, behavior and
+    // sentiment are drawn, and the outcome column reads "Analyzing".
+    const user = userEvent.setup();
+    const onAnalyzeNow = vi.fn();
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({
+          provisional: 4,
+          nextAnalysisAt: Date.now() + 20 * 60_000,
+          taxonomies: [
+            {
+              dimension: "goal",
+              version: 1,
+              status: "idle",
+              assigned: 4,
+              unassigned: 0,
+              sampleSize: 4,
+            },
+          ],
+        }),
+      }),
+      onAnalyzeNow,
+    });
+    expect(screen.getByTestId("scenario-insights-sankey")).toBeInTheDocument();
+    expect(screen.getByText("Outcomes are still coming")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    expect(onAnalyzeNow.mock.calls).toEqual([[]]);
+  });
+
+  it("says a drawn flow is still waiting on a session, in one line", () => {
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({ owed: 1, pending: 1 }),
+      }),
+    });
+    expect(screen.getByTestId("scenario-insights-sankey")).toBeInTheDocument();
+    expect(
+      screen.getByText("Waiting for the session to go quiet"),
+    ).toBeInTheDocument();
+  });
+
+  it("labels draft themes under the title", () => {
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({
+          themes: { reason: "draft", sessionsUntilStable: 7 },
+        }),
+      }),
+    });
+    expect(screen.getByTestId("session-flow-themes-note")).toHaveTextContent(
+      "Early themes. They settle after 7 more sessions.",
+    );
+  });
+
   it("draws each column header at its own column's x", () => {
     // Guards the misalignment that shipped: headers laid out by CSS across the
     // full panel while the columns lived in a fixed-width SVG.
     renderSankey();
-    const headers = Array.from(document.querySelectorAll("text")).filter((t) =>
-      ["GOAL", "BEHAVIOR", "OUTCOME", "SENTIMENT"].includes(
-        (t.textContent ?? "").toUpperCase(),
-      ),
+    const headers = screen.getByTestId("sankey-column-headers");
+    const xs = Array.from(headers.querySelectorAll("[data-column-x]")).map(
+      (node) => Number(node.getAttribute("data-column-x")),
     );
-    expect(headers).toHaveLength(4);
-    const xs = headers.map((h) => Number(h.getAttribute("x")));
+    expect(xs).toHaveLength(4);
     // Strictly increasing, and the last one is nowhere near the right edge —
     // it sits over its column, with the label gutter beyond it.
     expect(xs).toEqual([...xs].sort((a, b) => a - b));
     expect(new Set(xs).size).toBe(4);
+  });
+
+  it("keeps the Session flow header outside the scrolling chart pane", () => {
+    renderSankey({ scrollLayout: true });
+    const flowHeader = screen.getByTestId("sankey-flow-header");
+    const headers = screen.getByTestId("sankey-column-headers");
+    const pane = screen.getByTestId("sankey-chart-pane");
+    const chart = screen.getByRole("group", {
+      name: /Session flow from goal/,
+    });
+    expect(flowHeader).toHaveTextContent("Session flow");
+    expect(pane.contains(flowHeader)).toBe(false);
+    expect(headers.closest("svg")).toBeNull();
+    expect(headers.closest(".sticky")).not.toBeNull();
+    expect(pane.contains(headers)).toBe(true);
+    expect(pane.contains(chart)).toBe(true);
+    expect(pane.className).toMatch(/overflow-auto/);
+  });
+
+  it("keeps catalog column order when nothing is persisted", () => {
+    renderSankey({ stageOrderKey: "swarm:fresh" });
+    const ids = Array.from(
+      screen
+        .getByTestId("sankey-column-headers")
+        .querySelectorAll("[data-column-id]"),
+    ).map((node) => node.getAttribute("data-column-id"));
+    expect(ids).toEqual(["goal", "behavior", "outcome", "sentiment"]);
+  });
+
+  it("pins question hues to the question id, not the dragged slot", () => {
+    const withQuestions = breakdown({
+      sankey: {
+        ...SANKEY,
+        stages: [
+          { id: "goal", label: "Goal" },
+          { id: "behavior", label: "Behavior" },
+          { id: "outcome", label: "Outcome" },
+          { id: "sentiment", label: "Sentiment" },
+          {
+            id: "question:q1",
+            label: "Likeness",
+            questionId: "q1",
+            version: 1,
+          },
+          {
+            id: "question:q2",
+            label: "View",
+            questionId: "q2",
+            version: 1,
+          },
+        ],
+        nodes: [
+          ...SANKEY.nodes,
+          {
+            id: "question:q1:yes",
+            stage: "question:q1",
+            key: "yes",
+            label: "Yes",
+            count: 1,
+            clickable: true,
+            questionVersion: 1,
+          },
+          {
+            id: "question:q2:yes",
+            stage: "question:q2",
+            key: "yes",
+            label: "Yes",
+            count: 1,
+            clickable: true,
+            questionVersion: 1,
+          },
+        ],
+        links: [
+          ...SANKEY.links,
+          {
+            source: "sentiment:s1",
+            target: "question:q1:yes",
+            count: 1,
+            discordantCount: 0,
+          },
+          {
+            source: "question:q1:yes",
+            target: "question:q2:yes",
+            count: 1,
+            discordantCount: 0,
+          },
+        ],
+      },
+    });
+    const { unmount } = render(
+      <SessionFlowSankey
+        breakdown={withQuestions}
+        selection={null}
+        onSelectNode={vi.fn()}
+        onSelectLink={vi.fn()}
+        onRebuild={vi.fn()}
+        rebuildBusy={false}
+      />,
+    );
+    const catalogFills = Object.fromEntries(
+      screen.getAllByRole("button", { name: /^Yes, 1 sessions/ }).map((node) => [
+        node.getAttribute("aria-label"),
+        node.querySelector("rect")?.getAttribute("fill"),
+      ]),
+    );
+    unmount();
+
+    localStorage.setItem(
+      "sankey-stage-order",
+      JSON.stringify({
+        "swarm:hues": [
+          "question:q2",
+          "question:q1",
+          "goal",
+          "behavior",
+          "outcome",
+          "sentiment",
+        ],
+      }),
+    );
+    try {
+      render(
+        <SessionFlowSankey
+          breakdown={withQuestions}
+          selection={null}
+          onSelectNode={vi.fn()}
+          onSelectLink={vi.fn()}
+          onRebuild={vi.fn()}
+          rebuildBusy={false}
+          stageOrderKey="swarm:hues"
+        />,
+      );
+      const ids = Array.from(
+        screen
+          .getByTestId("sankey-column-headers")
+          .querySelectorAll("[data-column-id]"),
+      ).map((node) => node.getAttribute("data-column-id"));
+      expect(ids[0]).toBe("question:q2");
+      expect(ids[1]).toBe("question:q1");
+      const reorderedFills = Object.fromEntries(
+        screen
+          .getAllByRole("button", { name: /^Yes, 1 sessions/ })
+          .map((node) => [
+            node.getAttribute("aria-label"),
+            node.querySelector("rect")?.getAttribute("fill"),
+          ]),
+      );
+      expect(reorderedFills).toEqual(catalogFills);
+    } finally {
+      localStorage.removeItem("sankey-stage-order");
+    }
+  });
+
+  it("hides a catalog column and restores it from the add menu", async () => {
+    const user = userEvent.setup();
+    try {
+      renderSankey({ stageOrderKey: "swarm:hide" });
+      await user.click(
+        screen.getByRole("button", { name: "Remove Sentiment column" }),
+      );
+      const ids = () =>
+        Array.from(
+          screen
+            .getByTestId("sankey-column-headers")
+            .querySelectorAll("[data-column-id]"),
+        ).map((node) => node.getAttribute("data-column-id"));
+      expect(ids()).toEqual(["goal", "behavior", "outcome"]);
+      expect(
+        screen.queryByRole("button", { name: "Remove Sentiment column" }),
+      ).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Add column" }));
+      await user.click(screen.getByRole("menuitem", { name: "Sentiment" }));
+      expect(ids()).toEqual(["goal", "behavior", "outcome", "sentiment"]);
+    } finally {
+      localStorage.removeItem("sankey-stage-order");
+    }
+  });
+
+  it("applies a saved column order and marks headers as draggable", () => {
+    localStorage.setItem(
+      "sankey-stage-order",
+      JSON.stringify({
+        "swarm:test": ["sentiment", "goal", "behavior", "outcome"],
+      }),
+    );
+    try {
+      renderSankey({ stageOrderKey: "swarm:test" });
+      const headers = screen.getByTestId("sankey-column-headers");
+      expect(headers).toHaveAttribute("data-reorderable", "true");
+      const ids = Array.from(
+        headers.querySelectorAll("[data-column-id]"),
+      ).map((node) => node.getAttribute("data-column-id"));
+      expect(ids).toEqual(["sentiment", "goal", "behavior", "outcome"]);
+    } finally {
+      localStorage.removeItem("sankey-stage-order");
+    }
   });
 
   it("warns that the counts are windowed when the scan truncated", () => {
@@ -381,9 +842,7 @@ describe("SessionFlowSankey", () => {
         },
       }),
     });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /not the full history/,
-    );
+    expect(screen.getByText(/not the full history/)).toBeInTheDocument();
   });
 
   it("fills the parent pane when fillHeight is set", () => {
@@ -439,6 +898,170 @@ describe("SessionFlowSankey", () => {
       const viewBox = svg.getAttribute("viewBox") ?? "";
       const viewHeight = Number(viewBox.split(/\s+/)[3]);
       expect(viewHeight).toBeGreaterThan(320);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("fills the leftover parent on the scroll layout and stretches the ribbons into it", () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        Object.defineProperty(target, "clientWidth", {
+          configurable: true,
+          get: () => 800,
+        });
+        Object.defineProperty(target, "clientHeight", {
+          configurable: true,
+          get: () => 640,
+        });
+        this.cb(
+          [
+            {
+              target,
+              contentRect: {
+                width: 800,
+                height: 640,
+                top: 0,
+                left: 0,
+                bottom: 640,
+                right: 800,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+              },
+              borderBoxSize: [],
+              contentBoxSize: [],
+              devicePixelContentBoxSize: [],
+            } as ResizeObserverEntry,
+          ],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      renderSankey({ scrollLayout: true });
+      const root = screen.getByTestId("scenario-insights-sankey");
+      expect(root).toHaveAttribute("data-fill-remaining", "true");
+      expect(root.className).toMatch(/flex-1/);
+      const pane = screen.getByTestId("sankey-chart-pane");
+      const svg = screen.getByRole("group", {
+        name: /Session flow from goal/,
+      });
+      const viewBox = svg.getAttribute("viewBox") ?? "";
+      const viewHeight = Number(viewBox.split(/\s+/)[3]);
+      // Tall leftover parent → taller viewBox than the content floor, so
+      // the columns use the space instead of leaving a dead region below.
+      expect(viewHeight).toBeGreaterThan(320);
+      expect(pane.className).toMatch(/flex-1/);
+      expect(pane.className).toMatch(/overflow-auto/);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("stretches a wide six-column chart from the drawn width so headers stay on the bars", () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        Object.defineProperty(target, "clientWidth", {
+          configurable: true,
+          get: () => 800,
+        });
+        Object.defineProperty(target, "clientHeight", {
+          configurable: true,
+          get: () => 640,
+        });
+        this.cb(
+          [
+            {
+              target,
+              contentRect: {
+                width: 800,
+                height: 640,
+                top: 0,
+                left: 0,
+                bottom: 640,
+                right: 800,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+              },
+              borderBoxSize: [],
+              contentBoxSize: [],
+              devicePixelContentBoxSize: [],
+            } as ResizeObserverEntry,
+          ],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      renderSankey({
+        scrollLayout: true,
+        breakdown: breakdown({
+          sankey: {
+            ...SANKEY,
+            stages: [
+              { id: "goal", label: "Goal" },
+              { id: "behavior", label: "Behavior" },
+              { id: "outcome", label: "Outcome" },
+              { id: "sentiment", label: "Sentiment" },
+              {
+                id: "question:q1",
+                label: "Likeness",
+                questionId: "q1",
+                version: 1,
+              },
+              {
+                id: "question:q2",
+                label: "View",
+                questionId: "q2",
+                version: 1,
+              },
+            ],
+            nodes: [
+              ...SANKEY.nodes,
+              {
+                id: "question:q1:yes",
+                stage: "question:q1",
+                key: "yes",
+                label: "Yes",
+                count: 1,
+                clickable: true,
+                questionVersion: 1,
+              },
+              {
+                id: "question:q2:yes",
+                stage: "question:q2",
+                key: "yes",
+                label: "Yes",
+                count: 1,
+                clickable: true,
+                questionVersion: 1,
+              },
+            ],
+          },
+        }),
+      });
+      const svg = screen.getByRole("group", {
+        name: /Session flow from goal/,
+      });
+      const viewBox = svg.getAttribute("viewBox") ?? "";
+      const [, , viewWidth, viewHeight] = viewBox.split(/\s+/).map(Number);
+      // 6 columns → viewWidth 1560, min drawn width 1140. Stretch must use
+      // 1140, not the 800px pane — that was the letterbox that threw headers.
+      expect(viewWidth).toBe(1560);
+      expect(viewHeight).toBe(Math.round((640 / 1140) * 1560));
+      expect(svg).toHaveStyle({ minWidth: "1140px" });
     } finally {
       globalThis.ResizeObserver = originalResizeObserver;
     }

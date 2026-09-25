@@ -426,4 +426,122 @@ describe("guest-session-source", () => {
       }),
     );
   });
+
+  // A self-hosted install makes its 503 locally, so the reason on the result is
+  // the only way the browser's error report can say why the relay failed.
+  describe("failure reasons", () => {
+    async function fetchRemote() {
+      const { fetchRemoteGuestSession } =
+        await import("../guest-session-source.js");
+      const result = await fetchRemoteGuestSession(undefined);
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") throw new Error("expected an error result");
+      return result;
+    }
+
+    it("names an upstream non-ok status", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response("bad gateway", { status: 502 }),
+      );
+      const result = await fetchRemote();
+      expect(result.status).toBe(502);
+      expect(result.reason).toBe("upstream_status");
+      expect(result.upstreamStatus).toBe(502);
+    });
+
+    it("names a 200 whose body is not JSON", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response("<html>captive portal</html>", { status: 200 }),
+      );
+      const result = await fetchRemote();
+      expect(result.status).toBe(503);
+      expect(result.reason).toBe("bad_json");
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "[guest-auth] Failed to read MCPJam guest session response",
+        { reason: "bad_json" },
+      );
+    });
+
+    it("names a 200 JSON body without a token", async () => {
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response(JSON.stringify({ guestId: "g" }), { status: 200 }),
+      );
+      const result = await fetchRemote();
+      expect(result.status).toBe(503);
+      expect(result.reason).toBe("bad_payload");
+    });
+
+    it("names a network failure and its code", async () => {
+      vi.mocked(global.fetch).mockRejectedValue(
+        new TypeError("fetch failed", {
+          cause: Object.assign(
+            new Error("getaddrinfo ENOTFOUND app.mcpjam.com"),
+            { code: "ENOTFOUND" },
+          ),
+        }),
+      );
+      const result = await fetchRemote();
+      expect(result.status).toBe(503);
+      expect(result.reason).toBe("network");
+      expect(result.networkCode).toBe("ENOTFOUND");
+    });
+
+    it("names our timeout", async () => {
+      vi.mocked(global.fetch).mockRejectedValue(
+        new DOMException(
+          "The operation was aborted due to timeout",
+          "TimeoutError",
+        ),
+      );
+      const result = await fetchRemote();
+      expect(result.reason).toBe("timeout");
+      expect(result.networkCode).toBeUndefined();
+    });
+
+    it("names a timeout that fires while reading the body", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: () =>
+          Promise.reject(
+            new DOMException(
+              "The operation was aborted due to timeout",
+              "TimeoutError",
+            ),
+          ),
+      } as unknown as Response);
+      const result = await fetchRemote();
+      expect(result.reason).toBe("timeout");
+    });
+
+    it("names a timeout from the aborted signal when the error does not say so", async () => {
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValue(
+          AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+        );
+      try {
+        vi.mocked(global.fetch).mockRejectedValue(new TypeError("terminated"));
+        const result = await fetchRemote();
+        expect(result.reason).toBe("timeout");
+      } finally {
+        timeoutSpy.mockRestore();
+      }
+    });
+
+    it("names a provisioning failure without fetching", async () => {
+      mockProvisionGuestAuthConfigToConvex.mockRejectedValue(
+        new Error("convex env set failed"),
+      );
+      const { fetchConvexGuestSession } =
+        await import("../guest-session-source.js");
+      const result = await fetchConvexGuestSession();
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.status).toBe(503);
+      expect(result.reason).toBe("provisioning");
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
 });

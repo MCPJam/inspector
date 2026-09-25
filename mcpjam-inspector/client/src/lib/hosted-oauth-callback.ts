@@ -16,6 +16,7 @@ import {
 
 export interface HostedOAuthPendingMarker {
   connectionIntent?: ConnectionIntent;
+  initiatingUserId?: string | null;
   surface: HostedOAuthSurface;
   organizationId?: string | null;
   projectId?: string | null;
@@ -26,6 +27,8 @@ export interface HostedOAuthPendingMarker {
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string | null;
   returnPath: string | null;
+  suppressErrorToast?: boolean;
+  suppressSuccessToast?: boolean;
   startedAt: number;
 }
 
@@ -172,6 +175,8 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
 
     return {
       surface: parsed.surface,
+      ...(parsed.initiatingUserId === null || typeof parsed.initiatingUserId === "string"
+        ? { initiatingUserId: parsed.initiatingUserId } : {}),
       ...(parsed.connectionIntent?.kind === "add"
         ? { connectionIntent: { kind: "add" as const } }
         : parsed.connectionIntent?.kind === "replace" &&
@@ -206,6 +211,8 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
           : null,
         parsed.surface
       ),
+      suppressErrorToast: parsed.suppressErrorToast === true,
+      suppressSuccessToast: parsed.suppressSuccessToast === true,
       startedAt: parsed.startedAt,
     };
   } catch {

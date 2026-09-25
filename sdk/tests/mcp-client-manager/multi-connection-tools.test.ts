@@ -61,7 +61,7 @@ const opts = { toolCallId: "call", messages: [] };
 describe("multi-connection tools", () => {
   it("uses B for execution and output conversion of the same resource URI", async () => {
     const { merged, at, bt, onRoute } = fixture();
-    const input = { query: "hello", account: b.connectionId };
+    const input = { query: "hello", link_id: b.connectionId };
     const output = await merged.search.execute!(input, opts);
     expect(bt.execute).toHaveBeenCalledWith({ query: "hello" }, opts);
     expect(at.execute).not.toHaveBeenCalled();
@@ -73,7 +73,7 @@ describe("multi-connection tools", () => {
   });
   it("rejects missing or foreign selectors before any invocation", async () => {
     const { merged, at, bt } = fixture();
-    for (const input of [{}, { account: "foreign" }])
+    for (const input of [{}, { link_id: "foreign" }])
       expect(await merged.search.execute!(input, opts)).toMatchObject({
         isError: true,
       });
@@ -81,15 +81,15 @@ describe("multi-connection tools", () => {
     expect(bt.execute).not.toHaveBeenCalled();
   });
   it.each([
-    { type: "object", properties: { account: { type: "string" } } },
+    { type: "object", properties: { link_id: { type: "string" } } },
     { type: "object", properties: { other: { type: "boolean" } } },
   ])("creates variants for collisions or differing schemas", async (schema) => {
     const { merged, bt } = fixture(schema);
     expect(merged.search).toBeUndefined();
     expect(Object.keys(merged)).toHaveLength(2);
     const variant = Object.keys(merged).find((k) => k.endsWith("__side"))!;
-    await merged[variant].execute!({ account: "upstream" }, opts);
-    expect(bt.execute).toHaveBeenCalledWith({ account: "upstream" }, opts);
+    await merged[variant].execute!({ link_id: "upstream" }, opts);
+    expect(bt.execute).toHaveBeenCalledWith({ link_id: "upstream" }, opts);
   });
   it("keeps long tool names distinguishable and inside the name limit", () => {
     // Both names share their first 20 characters. Truncating the TOOL name to
@@ -146,7 +146,7 @@ describe("multi-connection tools", () => {
       { snapshot }
     );
     expect(
-      (asSchema(tools.search.inputSchema).jsonSchema as any).properties.account
+      (asSchema(tools.search.inputSchema).jsonSchema as any).properties.link_id
         .enum
     ).toEqual([b.connectionId]);
   });
@@ -185,6 +185,144 @@ describe("multi-connection tools", () => {
     );
     expect(new Set(keys).size).toBe(11);
     for (const key of keys) expect(key.length).toBeLessThanOrEqual(64);
+  });
+  it("describes each account on the selector, not in the tool description", () => {
+    const withProfiles = mergeConnectionToolsets(
+      fixture().perKey as any,
+      {
+        server: [
+          {
+            ...a,
+            label: "Work",
+            profile: {
+              id: "mbx_work_7f3a91",
+              name: "Work",
+              email: "avery@example.com",
+              nickname: "Work",
+            },
+          },
+          {
+            ...b,
+            label: "Personal",
+            profile: {
+              id: "mbx_personal_9e51dd",
+              name: "Personal",
+              email: "avery.chen@example.net",
+              nickname: "Personal",
+            },
+          },
+        ],
+      },
+      { snapshot, onRoute: vi.fn() }
+    );
+    const schema = asSchema(withProfiles.search.inputSchema).jsonSchema as any;
+    const { description } = schema.properties.link_id;
+    // The regression this exists for: the profile carries a name, and before
+    // this change only the email-first label reached the model.
+    expect(description).toContain("Work");
+    expect(description).toContain("Personal");
+    const descriptors = JSON.parse(description.slice(description.indexOf("[")));
+    expect(descriptors).toEqual([
+      {
+        link_id: a.connectionId,
+        link_name: "Work",
+        profile_id: "mbx_work_7f3a91",
+        profile_name: "Work",
+        profile_email: "avery@example.com",
+        profile_nickname: "Work",
+      },
+      {
+        link_id: b.connectionId,
+        link_name: "Personal",
+        profile_id: "mbx_personal_9e51dd",
+        profile_name: "Personal",
+        profile_email: "avery.chen@example.net",
+        profile_nickname: "Personal",
+      },
+    ]);
+    // The account list no longer rides on every merged tool's description.
+    expect(withProfiles.search.description ?? "").not.toContain("link_id");
+  });
+  it("tells the model to ask before an ambiguous write", () => {
+    const schema = asSchema(fixture().merged.search.inputSchema)
+      .jsonSchema as any;
+    expect(schema.properties.link_id.description).toContain(
+      "ask which account to use before calling this tool"
+    );
+  });
+  it("omits profile fields a server never supplied", () => {
+    const schema = asSchema(fixture().merged.search.inputSchema)
+      .jsonSchema as any;
+    // Neither fixture connection has a profile: a server with no profile tool
+    // must read as "nothing known", never as an account with empty fields.
+    const descriptors = JSON.parse(
+      schema.properties.link_id.description.slice(
+        schema.properties.link_id.description.indexOf("[")
+      )
+    );
+    expect(descriptors).toEqual([
+      { link_id: a.connectionId, link_name: "Acme" },
+      { link_id: b.connectionId, link_name: "Side" },
+    ]);
+  });
+  it("keeps two accounts on one email distinguishable", () => {
+    const shared = {
+      id: "mbx_support_2b8c04",
+      name: "Support",
+      email: "avery@example.com",
+    };
+    const schema = asSchema(
+      mergeConnectionToolsets(
+        fixture().perKey as any,
+        {
+          server: [
+            {
+              ...a,
+              label: "avery@example.com (Work)",
+              profile: { ...shared, id: "mbx_work_7f3a91", name: "Work" },
+            },
+            { ...b, label: "avery@example.com (Support)", profile: shared },
+          ],
+        },
+        { snapshot, onRoute: vi.fn() }
+      ).search.inputSchema
+    ).jsonSchema as any;
+    const descriptors = JSON.parse(
+      schema.properties.link_id.description.slice(
+        schema.properties.link_id.description.indexOf("[")
+      )
+    );
+    expect(descriptors[0].profile_name).toBe("Work");
+    expect(descriptors[1].profile_name).toBe("Support");
+    expect(descriptors[0].profile_id).not.toBe(descriptors[1].profile_id);
+  });
+  it("names the account on a variant without repeating the label", () => {
+    const merged = mergeConnectionToolsets(
+      fixture({ type: "object", properties: { link_id: { type: "string" } } })
+        .perKey as any,
+      {
+        server: [
+          a,
+          {
+            ...b,
+            label: "avery.chen@example.net",
+            profile: {
+              id: "mbx_personal_9e51dd",
+              name: "Personal",
+              email: "avery.chen@example.net",
+            },
+          },
+        ],
+      },
+      { snapshot, onRoute: vi.fn() }
+    );
+    const variant = Object.keys(merged).find((k) =>
+      k.endsWith("__avery-chen-example-n")
+    );
+    // The email is already the label, so it must not be printed twice.
+    expect(merged[variant!].description).toContain(
+      "Account: avery.chen@example.net (Personal)."
+    );
   });
   it("round-trips qualified keys without parsing user-typed hashes", () => {
     expect(connectionKey("name#hash", b.connectionId, true)).toBe("name#hash");

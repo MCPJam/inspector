@@ -513,9 +513,6 @@ describe("SwarmFindingsTab", () => {
     );
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
     expect(screen.getByTestId("findings-summary-card")).toBeInTheDocument();
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "Evaluator findings only",
-    );
   });
 
   it("renders the finding summary above the persona picker", () => {
@@ -578,9 +575,6 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("findings-headline").textContent).not.toContain(
       "broke at discovery",
     );
-    expect(
-      screen.queryByTestId("findings-footnotes")?.textContent ?? "",
-    ).not.toContain("model-written");
   });
 
   it("ellipsizes a narration the backend cut inside its first sentence", () => {
@@ -611,9 +605,6 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("findings-headline").textContent).toContain(
       '"Export the board" broke at discovery',
     );
-    expect(
-      screen.queryByTestId("findings-footnotes")?.textContent ?? "",
-    ).not.toContain("model-written");
   });
 
   it("refuses a narration of a wave that never launched", () => {
@@ -684,7 +675,9 @@ describe("SwarmRunDetail findings wiring", () => {
 });
 
 describe("SwarmFindingsTab on shared findings", () => {
-  it("renders backend findings and mounts remediation for this wave", () => {
+  // PLB-29: the tab ends at the persona cards. The actionable-findings list
+  // ("Fix in your MCP server" and the rest) must not render below them.
+  it("renders backend findings without the actionable-findings list", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -697,14 +690,9 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(
       screen.getByRole("tab", { name: new RegExp(WIRE_PERSONA.name) }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
-      "data-run-id",
-      wave().anchor.runId,
-    );
-    expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
-      "data-hide-empty",
-      "true",
-    );
+    expect(
+      screen.queryByTestId("actionable-findings-mount"),
+    ).not.toBeInTheDocument();
   });
 
   it("names the cause and shows its fix on its own line", () => {
@@ -722,9 +710,12 @@ describe("SwarmFindingsTab on shared findings", () => {
     const headline = screen.getByTestId("findings-headline").textContent;
     expect(headline).toContain(WIRE_MECHANISM_PHRASE.replace(/\.$/, ""));
     expect(headline).not.toContain("Lane A prose");
-    const summary = screen.getByTestId("findings-summary").textContent;
-    expect(summary).toContain(WIRE_FIX_PHRASE);
-    expect(summary).toContain("Suggested fix");
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
+    );
+    const fix = screen.getByTestId("findings-suggested-fix").textContent;
+    expect(fix).toContain(WIRE_FIX_PHRASE);
+    expect(fix).toContain("Suggested fix");
   });
 
   it("names the goal, stage and persona when there is no fix to promote", () => {
@@ -778,24 +769,6 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(
       screen.queryByText("Reading session evidence…"),
     ).not.toBeInTheDocument();
-  });
-
-  it("footnotes a wave whose analysis ran without a model", () => {
-    render(
-      <SwarmFindingsTab
-        wave={wave()}
-        waveSignals={waveSignals}
-        personas={personas}
-        narration={{
-          modelRan: false,
-          sessionCount: 8,
-          unanalyzedSessionCount: 3,
-        }}
-      />,
-    );
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "No model narration, 5 of 8 sessions covered by deterministic checks only",
-    );
   });
 
   it("keeps the empty state when there is no persona and no wire payload", () => {

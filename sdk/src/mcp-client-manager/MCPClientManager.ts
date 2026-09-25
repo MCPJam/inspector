@@ -1,3 +1,4 @@
+import { connectionErrorMessage } from "./connection-error-message.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
@@ -2768,7 +2769,8 @@ export class MCPClientManager {
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
         trimmedRefresh,
-        trimmedClientSecret
+        trimmedClientSecret,
+        config.onTokensRotated
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider
@@ -2895,9 +2897,11 @@ export class MCPClientManager {
           // `describeError` degrades from a specific transport slug to
           // message-regex guessing.
           throw new Error(
-            `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
-              error
-            )}`,
+            connectionErrorMessage(
+              url,
+              [error],
+              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(error)}`,
+            ),
             { cause: error }
           );
         }
@@ -3007,7 +3011,11 @@ export class MCPClientManager {
       // `transport/*` slug instead of message-regex guessing.
       throw attachStreamableCause(
         new Error(
-          `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          connectionErrorMessage(
+            url,
+            [streamableError, error],
+            `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+          ),
           { cause: error }
         ),
         streamableError

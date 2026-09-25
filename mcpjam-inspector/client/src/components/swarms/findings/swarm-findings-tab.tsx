@@ -18,6 +18,10 @@
  * suggested fix. It is suppressed entirely on a wave that failed to launch:
  * there is no session for a model to have read, and it will cheerfully report
  * that nothing is wrong.
+ *
+ * The tab ends at the persona cards. It used to go on to the shared
+ * actionable-findings list ("Fix in your MCP server", "Agent and prompt"), and
+ * product asked for that list to be removed here (PLB-29). Evals keep it.
  */
 import { useQuery } from "convex/react";
 import { useEffect, useCallback } from "react";
@@ -27,7 +31,6 @@ import type {
   SwarmJourneyFindings,
   SwarmJourneyFindingsJob,
 } from "@mcpjam/sdk/contract";
-import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 import { useMemo, useState } from "react";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
@@ -43,8 +46,6 @@ import {
   clampNarration,
   composeFindingsSummary,
   composeWireFindingsSummary,
-  deriveHonestyFootnotes,
-  wireFindingsFootnotes,
   type SwarmNarration,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
@@ -62,7 +63,6 @@ export function SwarmFindingsTab({
   generatedSummary,
   journeyFindings,
   journeyFindingsJob,
-  narration,
 }: {
   wave: SwarmWave;
   waveSignals: SwarmWaveSignals | null | undefined;
@@ -136,18 +136,6 @@ export function SwarmFindingsTab({
     summary.kind === "not_launched" || journeyFindings
       ? null
       : clampNarration(generatedSummary);
-  const footnotes = useMemo(
-    () =>
-      journeyFindings
-        ? wireFindingsFootnotes(journeyFindings)
-        : deriveHonestyFootnotes({
-            narration,
-            signals: waveSignals,
-            hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
-            launch: model.launch,
-          }),
-    [waveSignals, wave.runs, model.launch, journeyFindings, narration],
-  );
 
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
   // alphabetically, so a live wave adding a persona would shift indices under
@@ -219,7 +207,6 @@ export function SwarmFindingsTab({
           summary={summary.lines}
           recommendation={recommendation}
           narration={waveProse}
-          footnotes={footnotes}
         />
       </div>
     );
@@ -243,7 +230,6 @@ export function SwarmFindingsTab({
         summary={summary.lines}
         recommendation={recommendation}
         narration={waveProse}
-        footnotes={footnotes}
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">
@@ -277,15 +263,6 @@ export function SwarmFindingsTab({
         onOpenSession={onOpenSession}
         sessionScope={sessionScope}
       />
-      {projectId && (
-        <ActionableFindings
-          hideEmpty
-          surface={{ kind: "journey_run", projectId, runId: wave.anchor.runId }}
-          context={{ rerunLabel: "this swarm" }}
-          boundaryName="swarm-actionable-findings"
-          onOpenSession={onOpenSession}
-        />
-      )}
     </div>
   );
 }

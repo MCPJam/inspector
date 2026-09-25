@@ -41,6 +41,31 @@ export type NormalizedError = ErrorCatalogEntry & {
    * Captured `.cause` chain head — only `name` + `message`, redacted.
    */
   cause?: { name: string; message: string };
+  /**
+   * The thrown value’s own constructor name ("WebApiError", "TypeError"),
+   * when a consumer attached one. The catalog `title` says what went wrong
+   * for a reader; this says what the runtime actually threw, which is what a
+   * bug report needs. Populated client-side alongside {@link stack}.
+   */
+  errorType?: string;
+  /**
+   * Redacted stack, when a consumer attached one.
+   *
+   * NOT populated by `describeError`, deliberately. The server describes its
+   * own errors and puts the result straight into the JSON error body, so
+   * capturing a stack here would ship server stacks to every browser — the
+   * leak `WebRouteError` avoids by attaching its `cause` non-enumerably. The
+   * client fills this in from errors it already holds.
+   */
+  stack?: string;
+  /**
+   * The `x-request-id` of the failing request — the join key to its Axiom
+   * row.
+   *
+   * This is the field that makes a stackless 5xx reportable, so it is the one
+   * a details view shows when {@link stack} is absent.
+   */
+  requestId?: string;
 };
 
 /**
@@ -155,6 +180,12 @@ function maybePromoteRawMessage(
   slug: string,
   rawMessage: string,
 ): ErrorCatalogEntry {
+  // The backend's sentence carries the two numbers that make this refusal
+  // make sense; the catalog copy cannot know them.
+  if (slug === "provider/mcpjam_limit_insufficient") {
+    const sentence = mcpjamShortfallSentence(rawMessage);
+    return sentence ? { ...entry, oneLine: sentence } : entry;
+  }
   if (slug !== "internal/unknown") return entry;
   if (!rawMessage) return entry;
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
@@ -455,8 +486,13 @@ function classifyHttpStatus(status: number): string | undefined {
 }
 
 function classifyByMessageHttp(message: string): string | undefined {
-  if (/\b(?:http|status)[:\s-]*401\b/i.test(message)) return "auth/http_401";
-  if (/\b(?:http|status)[:\s-]*403\b/i.test(message)) return "auth/http_403";
+  // A bare 401 / 403 counts, on the same terms as the 429 below: the transport
+  // phrasings that reach the UI as prose — "401 Unauthorized", "Non-200 status
+  // code (401)" — carry the status with no `http`/`status` word in front of it,
+  // and without this they fell through to `internal/unknown`, so the error
+  // toast's "Learn more" pointed at the unknown-error docs section.
+  if (/(?:^|[^\w.:])401\b/.test(message)) return "auth/http_401";
+  if (/(?:^|[^\w.:])403\b/.test(message)) return "auth/http_403";
   // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
   // the status field and leaves only this wording. Narrower than "rate limit"
   // on purpose: that also matches MCPJam's own account limit, a different slug.
@@ -545,6 +581,11 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  // Composed copy can put "Out of MCPJam credits" beside the backend's
+  // shortfall sentence; the balance is not empty, so the shortfall wins.
+  if (mcpjamShortfallSentence(message)) {
+    return { slug: "provider/mcpjam_limit_insufficient" };
+  }
   if (/\bout of MCPJam credits\b/i.test(message)) return { slug: "provider/mcpjam_limit" };
 
   // Same shape of problem as the bearer gate above, and the same surface: the
@@ -563,8 +604,12 @@ function resolveSlug(error: unknown): {
   const limitSlug = mcpjamLimitSlugForMessage(message);
   if (limitSlug) return { slug: limitSlug };
 
-  // (e) HTTP status field (`statusCode` / `status`).
-  const httpStatus = getHttpStatus(error);
+  // (e) HTTP status field (`statusCode` / `status`), read through the cause
+  // chain: an auto-activation probe against an OAuth-gated server surfaces as
+  // `SdkError(EraNegotiationFailed)` wrapping the real `UnauthorizedError`, and
+  // a plain connect failure keeps the 401 on `.cause`. Reading only the outer
+  // error classified both as `internal/unknown`.
+  const httpStatus = httpStatusOf(error);
   if (httpStatus !== undefined) {
     const slug = classifyHttpStatus(httpStatus);
     if (slug) return { slug, rawCode: httpStatus };
@@ -924,13 +969,43 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
   };
 }
 
+/**
+ * The backend's refusal when the bucket is not empty but is below the
+ * request's worst-case estimate. Checked before the period phrase: the balance
+ * is not used up, so "daily credits are used up" would be false.
+ */
+const MCPJAM_INSUFFICIENT_CREDITS_PATTERN =
+  /\bThis request needs about (\d+) MCPJam credits; your organization has (\d+) left[^.]{0,40}\./i;
+
+/**
+ * The shortfall sentence, but only when its numbers describe one: an empty
+ * balance is exhaustion, and a request that fits was not refused for size.
+ * Same check the client applies to the structured fields.
+ */
+function mcpjamShortfallSentence(message: string): string | undefined {
+  const match = MCPJAM_INSUFFICIENT_CREDITS_PATTERN.exec(message);
+  if (!match) return undefined;
+  const required = Number(match[1]);
+  const remaining = Number(match[2]);
+  return Number.isSafeInteger(required) &&
+    Number.isSafeInteger(remaining) &&
+    remaining > 0 &&
+    required > remaining
+    ? match[0]
+    : undefined;
+}
+
 export function mcpjamLimitSlugForMessage(
   message: string
 ):
   | "provider/mcpjam_limit"
   | "provider/mcpjam_limit_daily"
   | "provider/mcpjam_limit_monthly"
+  | "provider/mcpjam_limit_insufficient"
   | undefined {
+  if (mcpjamShortfallSentence(message)) {
+    return "provider/mcpjam_limit_insufficient";
+  }
   const limitPeriod =
     /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
   if (limitPeriod) {

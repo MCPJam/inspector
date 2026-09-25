@@ -886,6 +886,17 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               isDlp: false,
               limitation: "not DLP",
               appliesTo: [],
+              providerRetention: {
+                openrouter: { data_collection: "deny", zdr: true },
+                gateway: {
+                  disallowPromptTraining: true,
+                  zeroDataRetention: true,
+                },
+                zeroDataRetention: true,
+                appliesTo: ["every analysis call"],
+                notAppliedTo: ["customer Playground chat"],
+                note: "provider, not MCPJam",
+              },
             },
             exportDefaults: {
               includeContent: false,
@@ -3438,6 +3449,12 @@ test("eval run prints the disclosure block in human mode, before the run link", 
     assert.match(
       run.stdout,
       /Export defaults: excludes content \(redacted by default\)/
+    );
+    // Printed when the backend sends it, read off the flags, with what the
+    // policy does not cover NAMED rather than left out.
+    assert.match(
+      run.stdout,
+      /Analysis providers: zero data retention and no training required on platform-key analysis calls — NOT applied to: customer Playground chat/
     );
     // "fires automatically" vs "fires only if asked" are different consent
     // stories — the fixture's goalCompletion touchpoint is

@@ -1,7 +1,8 @@
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
+import { registerArtifactUrls } from "@/lib/artifact-urls";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
-import { WebApiError } from "./base";
+import { WebApiError, requestIdOfResponse } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -200,7 +201,14 @@ async function webGet<T>(
         : typeof body?.error === "string"
         ? body.error
         : `Request failed (${response.status})`;
-    throw new WebApiError(response.status, code, message);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      undefined,
+      undefined,
+      requestIdOfResponse(response),
+    );
   }
 
   return body as T;
@@ -236,7 +244,14 @@ async function webPost<TRequest, TResponse>(
         : typeof body?.error === "string"
         ? body.error
         : `Request failed (${response.status})`;
-    throw new WebApiError(response.status, code, message);
+    throw new WebApiError(
+      response.status,
+      code,
+      message,
+      undefined,
+      undefined,
+      requestIdOfResponse(response),
+    );
   }
 
   return body as TResponse;
@@ -276,10 +291,14 @@ export async function getChatHistoryDetail(
   searchParams.set("chatSessionId", params.chatSessionId);
   if (params.projectId) searchParams.set("projectId", params.projectId);
 
-  return webGet<ChatHistoryDetailResponse>(
+  const detail = await webGet<ChatHistoryDetailResponse>(
     `/api/web/chat-history/detail?${searchParams.toString()}`,
     requestOptions
   );
+  // Freshly minted artifact links: record them so anything still holding an
+  // older link to the same object reads through this one.
+  registerArtifactUrls(detail);
+  return detail;
 }
 
 export async function chatHistoryAction(

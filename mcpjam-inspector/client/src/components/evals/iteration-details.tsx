@@ -12,6 +12,10 @@ import {
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+import {
+  registerArtifactUrls,
+  useArtifactUrlEpoch,
+} from "@/lib/artifact-urls";
 // One copy, deliberately. This module used to carry a byte-identical
 // `resolveTraceModel` (plus its own hand-copied `KNOWN_MODEL_PROVIDERS`), so a
 // provider added to the union had to be remembered in two places or the trace
@@ -251,7 +255,6 @@ export function IterationDetails({
   trialChainSlot,
   scorecard,
   trialVerdictWord,
-  requestedTab,
   syncedStepId,
   onSyncStep,
 }: {
@@ -304,7 +307,6 @@ export function IterationDetails({
    * the same screen.
    */
   trialVerdictWord?: string;
-  requestedTab?: { iterationId: string; mode: "steps" | "scorecard" } | null;
   /**
    * Step cursor shared with a host that lists the authored steps beside this
    * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
@@ -403,16 +405,6 @@ export function IterationDetails({
   }, [iteration.testCaseSnapshot]);
   const hasSteps = snapshotSteps.length > 0;
 
-  useEffect(() => {
-    if (requestedTab?.iterationId === iteration._id) {
-      setPreviewTraceMode(
-        requestedTab.mode === "steps" && !hasSteps
-          ? "scorecard"
-          : requestedTab.mode,
-      );
-    }
-  }, [requestedTab, iteration._id, hasSteps]);
-
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
   // either being present and re-runs when either changes.
@@ -441,6 +433,7 @@ export function IterationDetails({
         // otherwise reads from `iteration.blob`. Both paths return the
         // same envelope shape to `TraceViewer`.
         const data = await getBlob({ iterationId: iteration._id });
+        registerArtifactUrls(data);
         if (!cancelled) setLoadedBlob({ identity: traceIdentity, data });
       } catch (e: any) {
         if (!cancelled) {
@@ -456,6 +449,40 @@ export function IterationDetails({
       cancelled = true;
     };
   }, [traceSourceKey, traceIdentity, getBlob, blobRetryTick]);
+
+  // The trace's widget HTML and screenshots arrive as short-lived artifact
+  // links. When one expires anywhere on the page, re-read the trace in the
+  // background and swap the fresh links in without blanking the view.
+  const artifactUrlEpoch = useArtifactUrlEpoch();
+  const handledArtifactUrlEpochRef = useRef(artifactUrlEpoch);
+  useEffect(() => {
+    if (artifactUrlEpoch === handledArtifactUrlEpochRef.current) return;
+    handledArtifactUrlEpochRef.current = artifactUrlEpoch;
+    if (!traceSourceKey) return;
+    let cancelled = false;
+    getBlob({ iterationId: iteration._id })
+      .then((data) => {
+        registerArtifactUrls(data);
+        if (cancelled) return;
+        setLoadedBlob((current) =>
+          current?.identity === traceIdentity
+            ? { identity: traceIdentity, data }
+            : current,
+        );
+      })
+      .catch(() => {
+        // Keep what is shown; the next expired link retries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    artifactUrlEpoch,
+    traceSourceKey,
+    traceIdentity,
+    iteration._id,
+    getBlob,
+  ]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;

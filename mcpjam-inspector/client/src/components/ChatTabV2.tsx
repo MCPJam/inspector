@@ -1,4 +1,5 @@
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { resolveRestoredModel } from "@/lib/model-selection";
 import {
   FormEvent,
   useMemo,
@@ -796,8 +797,12 @@ export function ChatTabV2({
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
-        const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId
+        // By `modelSource` as well as id: an OpenRouter id can also be a
+        // hosted row, and this thread must reopen on the one it ran on (#5472).
+        const matchingModel = resolveRestoredModel(
+          availableModels,
+          detail.modelId,
+          detail.modelSource
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -1791,11 +1796,12 @@ export function ChatTabV2({
     }
     track("credit_topup_cta_clicked", {
       location: "chat_tab",
+      organization_id: organizationId,
       source: "chat_banner",
     });
     setPendingResendMessage(text);
     setIsTopupDialogOpen(true);
-  }, []);
+  }, [organizationId]);
 
   const handleTopupDialogOpenChange = useCallback((open: boolean) => {
     setIsTopupDialogOpen(open);
