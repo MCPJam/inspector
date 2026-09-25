@@ -186,6 +186,74 @@ describe("Ask MCPJam billing claim on the wire", () => {
     expect(writtenText()).not.toContain("agent_billing_rejected");
   });
 
+  it("sends a claimed turn to the PLATFORM route, never the ordinary one", async () => {
+    // The route IS the claim. A claimed turn on `/stream` is either served (and
+    // billed to the customer, on a backend that ignores the flag) or refused —
+    // neither is what this feature wants, so the Inspector must not send one.
+    await runTurn({ billingFeature: "mcpjam_agent" });
+    const url = String(
+      (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+        .calls[0]?.[0],
+    );
+    expect(url).toContain("/stream/platform");
+  });
+
+  it("sends an unclaimed turn to the ordinary route", async () => {
+    await runTurn();
+    const url = String(
+      (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+        .calls[0]?.[0],
+    );
+    expect(url).toContain("/stream");
+    expect(url).not.toContain("/platform");
+  });
+
+  it("refuses before any model work when the backend has no platform route", async () => {
+    // The legacy-backend case. A 404 is the ROUTER refusing, so no admission
+    // ran, no provider was called and nobody was charged — the only case where
+    // that can be promised, and the reason the guarantee moved off the response
+    // header onto the route.
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response("Not Found", { status: 404 }));
+
+    await runTurn({ billingFeature: "mcpjam_agent" });
+
+    const text = writtenText();
+    expect(text).toContain("agent_billing_rejected");
+    // The copy may promise no charge HERE, and only here.
+    expect(text).toContain("nothing was charged");
+    // Exactly one attempt, to the platform route: never a retry on `/stream`.
+    const calls = (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+      .calls;
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0]?.[0])).toContain("/stream/platform");
+  });
+
+  it("does not claim nothing was charged when the route exists but did not confirm", async () => {
+    // The distinction that matters. A backend that DOES serve the platform
+    // route and answers without confirming has already admitted and billed the
+    // step, so the refusal stands but the copy must not promise otherwise.
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse(
+        [
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+        { confirmPlatformPaid: null },
+      ),
+    );
+
+    await runTurn({ billingFeature: "mcpjam_agent" });
+
+    const text = writtenText();
+    expect(text).toContain("agent_billing_rejected");
+    expect(text).not.toContain("nothing was charged");
+  });
+
   it("leaves an unclaimed turn alone, confirmation or not", async () => {
     // Today's Playground sends no claim, so it is billed to the customer on
     // purpose and must never be gated on a header it never asked for.

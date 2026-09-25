@@ -77,6 +77,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -1602,7 +1603,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : metadata ?? usage;
+      : (metadata ?? usage);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -2116,9 +2117,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-              parseErr !== null &&
-              "message" in parseErr &&
-              typeof (parseErr as { message?: unknown }).message === "string"
+                parseErr !== null &&
+                "message" in parseErr &&
+                typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2473,7 +2474,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : part.output ?? rawResult;
+              : (part.output ?? rawResult);
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2486,7 +2487,8 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -3097,14 +3099,12 @@ async function settleUnapprovedHistoryToolCalls(args: {
   for (const idx of sortedKeys) {
     const message = {
       role: "tool",
-      content: byAssistantIdx.get(idx)!.map(
-        (part): ToolResultPart => ({
-          type: "tool-result",
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
-        }),
-      ),
+      content: byAssistantIdx.get(idx)!.map((part): ToolResultPart => ({
+        type: "tool-result",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
+      })),
     } as ModelMessage;
     messageHistory.splice(idx + 1, 0, message);
     answers.unshift(message);
@@ -3338,6 +3338,16 @@ async function processOneStep(
     }
     convexHeaders["x-inspector-service-token"] = serviceToken;
   }
+  // A claimed turn goes to the PLATFORM route and NEVER falls back to the
+  // ordinary one. Falling back is the whole failure being fixed: the ordinary
+  // route bills the customer, and on a backend that ignores `billingFeature`
+  // it does so while answering a perfectly normal 200.
+  //
+  // This also overrides a BYOK `endpointPath` on purpose. `/stream/org` runs on
+  // the organization's own provider key, which by definition is not MCPJam
+  // paying, so a claim there is incoherent rather than merely misrouted.
+  const dispatchPath =
+    billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -3345,7 +3355,7 @@ async function processOneStep(
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
   try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
+    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3399,16 +3409,46 @@ async function processOneStep(
       transient: true,
     });
   }
+  // The backend does not implement the platform route: a deployment older than
+  // it, or a rollback mid-session.
+  //
+  // This is the case the response header could never cover. A 404 or 405 means
+  // the request was REFUSED BY THE ROUTER — no admission ran, no provider was
+  // called, nothing was billed to anybody — so this is the one place the
+  // "stopped rather than charged" promise is actually true. Checked before the
+  // confirmation check below because an unimplemented route obviously carries
+  // no confirmation header, and the generic message would misdescribe it.
+  if (
+    billingFeature !== undefined &&
+    (res.status === 404 || res.status === 405)
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment does not support MCPJam-paid Ask MCPJam " +
+          "turns yet, so the request was refused before it reached a model " +
+          "and nothing was charged to your organization. This usually means " +
+          "the backend is still rolling out.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+  }
   // A claimed turn must come back CONFIRMED platform-paid.
   //
-  // Sending the claim is not the same as having it honoured. A backend that
-  // predates `billingFeature` ignores it as an unknown body field, bills the
-  // customer's org for the turn, and answers 200 — indistinguishable from
-  // success from here. That is a silent charge for a feature the product calls
-  // free, which is the single outcome this feature exists to prevent, so the
-  // absence of the confirmation is a REFUSAL, not a warning: the same call this
-  // file already makes for a missing service token, and the same call the exa
-  // tool makes when it cannot attest.
+  // This is now an ASSERTION, not the mechanism. The platform route is what
+  // guarantees no customer was charged, because a backend without it 404s above
+  // before any provider work. Reaching this branch means a backend that DOES
+  // serve the platform route answered without confirming — a bug or a partial
+  // deploy — and by then it has already admitted and billed the step. So the
+  // refusal stands, but the copy must NOT claim nothing was charged: unlike the
+  // 404 above, that is precisely what cannot be known from here.
   //
   // Swapping in a synthetic denial rather than hand-rolling the failure here
   // keeps one failure path: the branch below already writes the spans, fires
@@ -3431,9 +3471,10 @@ async function processOneStep(
         ok: false,
         code: "agent_billing_rejected",
         error:
-          "This MCPJam deployment could not confirm that the turn would be " +
-          "billed to MCPJam, so it was stopped rather than charged to your " +
-          "organization. This usually means the backend is still rolling out.",
+          "This MCPJam deployment did not confirm that the turn was billed " +
+          "to MCPJam, so Ask MCPJam stopped. If your organization was " +
+          "charged for it, contact support — this should not happen and we " +
+          "want to know about it.",
       }),
       { status: 503, headers: { "content-type": "application/json" } },
     );
@@ -4590,25 +4631,28 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(() => {
-        if (streamClosed || aborted) return;
-        const sinceLastWrite = Date.now() - lastWriteAt;
-        if (sinceLastWrite < resolvedHeartbeatMs) return;
-        try {
-          writeTraceEvent(safeWriter, {
-            type: "heartbeat",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-          });
-        } catch (error) {
-          // Should not happen — safeWriter swallows write errors —
-          // but a final guard here keeps a misbehaving writeTraceEvent
-          // from killing the loop.
-          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
+      heartbeatTimer = setInterval(
+        () => {
+          if (streamClosed || aborted) return;
+          const sinceLastWrite = Date.now() - lastWriteAt;
+          if (sinceLastWrite < resolvedHeartbeatMs) return;
+          try {
+            writeTraceEvent(safeWriter, {
+              type: "heartbeat",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+            });
+          } catch (error) {
+            // Should not happen — safeWriter swallows write errors —
+            // but a final guard here keeps a misbehaving writeTraceEvent
+            // from killing the loop.
+            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
+      );
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4667,7 +4711,10 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
-      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+      if (
+        options.durableCheckpoint &&
+        hasUnresolvedApprovalResponses(messageHistory)
+      ) {
         await options.durableCheckpoint({
           phase: "tools",
           messages: messageHistory,
@@ -4853,8 +4900,8 @@ export async function runChatEngineLoop(
           phase: shouldContinue
             ? "ready"
             : didEmitFinish
-            ? "complete"
-            : "model",
+              ? "complete"
+              : "model",
           messages: messageHistory,
           step: effectiveSteps(),
         });

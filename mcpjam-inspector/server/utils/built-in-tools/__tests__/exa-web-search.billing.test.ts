@@ -247,6 +247,84 @@ describe("exa web search — platform billing attestation", () => {
     await pending;
   });
 
+  it("sends a claimed search to the PLATFORM route, never the legacy one", async () => {
+    // The route IS the claim. Posting a claimed search to the customer-paid
+    // route is what bills the customer for a search the product calls free.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    await buildTool({ billingFeature: BILLING_FEATURE })(1);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/tools/exa/search/platform",
+    );
+  });
+
+  it("leaves an UNCLAIMED search on the ordinary route", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse(null));
+    global.fetch = fetchMock;
+
+    await buildTool({})(1);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain("/tools/exa/search");
+    expect(url).not.toContain("/platform");
+  });
+
+  it("stops without charging when the backend has no platform route", async () => {
+    // The legacy-backend case, and the only one where "nothing was charged" is
+    // actually provable: a 404 is the ROUTER refusing, so Exa never ran. The
+    // search must NOT be retried against the customer-paid route.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    expect((await run(1)).error).toBe("Web search is temporarily unavailable.");
+
+    // One attempt, to the platform route, and no fallback to the legacy one.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/platform");
+
+    // And the rest of the turn stops rather than each search rediscovering it.
+    expect((await run(2)).error).toBe("Web search is temporarily unavailable.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the turn when the platform route disappears mid-session", async () => {
+    // Rollback while a turn is in flight: the first search is confirmed
+    // platform-paid, then the route goes away. The later search must refuse
+    // rather than fall back to the customer's allowance.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => exaResponse())
+      .mockImplementation(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    expect((await run(1)).results).toHaveLength(1);
+    expect((await run(2)).error).toBe("Web search is temporarily unavailable.");
+
+    // Two attempts, both to the platform route — never a legacy retry.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).toContain("/platform");
+    }
+
+    // Latched, so a third search costs nothing further.
+    expect((await run(3)).error).toBe("Web search is temporarily unavailable.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps searching for the whole turn while attestation holds", async () => {
     // The latch must not fire on a healthy turn: every search still goes out.
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");

@@ -15,6 +15,10 @@
 import { tool, type ToolSet } from "ai";
 import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
+import {
+  EXA_SEARCH_PATH,
+  PLATFORM_EXA_SEARCH_PATH,
+} from "@/shared/mcpjam-agent-model";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
 
@@ -168,7 +172,14 @@ export function buildExaWebSearchTool(
 
       const search = async (): Promise<ExaWebSearchToolResult> => {
         try {
-          const res = await fetch(`${convexUrl}/tools/exa/search`, {
+          // A claimed search goes to the PLATFORM route and NEVER falls back
+          // to the ordinary one. The ordinary route bills the customer, and on a
+          // backend that ignores `billingFeature` it does so while answering an
+          // ordinary 200 — so a fallback is the silent charge this is preventing.
+          const searchPath = opts.billingFeature
+            ? PLATFORM_EXA_SEARCH_PATH
+            : EXA_SEARCH_PATH;
+          const res = await fetch(`${convexUrl}${searchPath}`, {
             method: "POST",
             headers: {
               Authorization: opts.authHeader,
@@ -189,6 +200,18 @@ export function buildExaWebSearchTool(
             }),
             signal: abortSignal,
           });
+          // The backend does not serve the platform search route: older than it,
+          // or a rollback mid-session. A 404/405 is the ROUTER refusing, so Exa
+          // was never called and nobody was charged — the one case where that can
+          // actually be promised. Latched like a failed attestation so the rest of
+          // the turn's searches stop instead of each learning it again.
+          if (
+            opts.billingFeature &&
+            (res.status === 404 || res.status === 405)
+          ) {
+            platformBillingUnconfirmed = true;
+            return UNAVAILABLE;
+          }
           if (res.status === 402) {
             return {
               error: "Out of MCPJam credits. Top up to use web search.",
