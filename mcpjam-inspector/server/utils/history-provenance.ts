@@ -698,10 +698,36 @@ function stringifyForModel(value: unknown): string {
 }
 
 /**
+ * A fence marker in any spelling a reader could take for one: either line's
+ * keyword, any case, joined by `_`, `-` or a zero-width character. Words
+ * separated by spaces are prose ("the MCPJam tool output panel") and stay.
+ */
+const FENCE_MARKER_PATTERN =
+  /(?:end[_\-\u200b-\u200d\u2060]*)?mcpjam[_\-\u200b-\u200d\u2060]*tool[_\-\u200b-\u200d\u2060]*output/gi;
+
+/** What a fence marker inside a tool result is replaced with. */
+export const REMOVED_FENCE_MARKER = "[fence marker removed]";
+
+/**
+ * Text from inside a tool result, with every fence marker replaced, so the
+ * only marker lines the model sees are the two the server writes.
+ */
+function withoutFenceMarkers(text: string): string {
+  return text.replace(FENCE_MARKER_PATTERN, REMOVED_FENCE_MARKER);
+}
+
+function contentPartWithoutFenceMarkers(part: unknown): unknown {
+  return isRecord(part) && part.type === "text" && typeof part.text === "string"
+    ? { ...part, text: withoutFenceMarkers(part.text) }
+    : part;
+}
+
+/**
  * Wrap a model-facing tool output in the fence. Text keeps its type, JSON
  * becomes text (providers stringify it anyway), and a `content` array gets
  * the fence lines as its first and last text parts so any images stay put.
- * A denial is not tool output and is left alone.
+ * Fence markers already inside the output are replaced first. A denial is
+ * not tool output and is left alone.
  */
 export function fenceToolOutput(
   output: unknown,
@@ -713,14 +739,17 @@ export function fenceToolOutput(
     case "text":
     case "error-text":
       return typeof output.value === "string"
-        ? { ...output, value: `${head}\n${output.value}\n${fence.close}` }
+        ? {
+            ...output,
+            value: `${head}\n${withoutFenceMarkers(output.value)}\n${fence.close}`,
+          }
         : output;
     case "json":
     case "error-json":
       return {
         ...output,
         type: output.type === "json" ? "text" : "error-text",
-        value: `${head}\n${stringifyForModel(output.value)}\n${fence.close}`,
+        value: `${head}\n${withoutFenceMarkers(stringifyForModel(output.value))}\n${fence.close}`,
       };
     case "content":
       return Array.isArray(output.value)
@@ -728,7 +757,7 @@ export function fenceToolOutput(
             ...output,
             value: [
               { type: "text", text: head },
-              ...output.value,
+              ...output.value.map(contentPartWithoutFenceMarkers),
               { type: "text", text: fence.close },
             ],
           }
