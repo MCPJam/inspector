@@ -6312,6 +6312,22 @@ const runHostedIterationWithBrowser = async (
         turnId: string;
       }
     | undefined;
+  // Eval attribution on every `/stream` and `/stream/org` call this iteration
+  // makes: the backend resolves a call that names an eval iteration or run for
+  // the `evalTarget` purpose (no implicit OpenRouter fallback), attaches its
+  // execution record to that iteration row, and stamps both ids on the usage
+  // record. Both are real Convex ids (`testIteration`, `testSuiteRun`); the
+  // usage writer validates them as such, so nothing else may ride here. A
+  // quick run has an iteration but no suite run (`runId === null`), so it
+  // sends the iteration alone.
+  const evalAttributedBodyFields: Record<string, unknown> | undefined =
+    iterationId || runId
+      ? {
+          ...(extraBodyFields ?? {}),
+          ...(iterationId ? { evalIterationId: String(iterationId) } : {}),
+          ...(runId ? { evalRunId: String(runId) } : {}),
+        }
+      : extraBodyFields;
   const hostedHandlers = buildHostedStepHandlers({
     // See the local path: one turn's slice of the run's frozen budget.
     turnTimeoutMs: budgets.turnTimeoutMs,
@@ -6323,7 +6339,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     evalAuthContext,
     endpointPath,
-    extraBodyFields,
+    extraBodyFields: evalAttributedBodyFields,
     ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,
