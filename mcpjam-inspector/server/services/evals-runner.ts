@@ -115,6 +115,11 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import { isHostedModelDefinition } from "./hosted-model-catalog.js";
+import type { ModelSelection } from "@mcpjam/sdk";
+import {
+  ModelResolutionRefusalError,
+  resolveLocalModelSelection,
+} from "../utils/model-resolution-local.js";
 import {
   hasSkillTools,
   mergeToolCallsByPromptIndex,
@@ -354,6 +359,16 @@ export type EvalTestCase = {
   passThreshold?: number;
   model: string;
   provider: string;
+  /**
+   * The saved selection behind `model` (the case's `models[].selection`), when
+   * the case was saved with one. Present ⇒ it decides the rail: an explicit
+   * `org` / `local` selection never matches the hosted catalog first, and a
+   * connection that cannot be reached refuses the case (`credential_missing`)
+   * instead of running on another credential. Absent ⇒ legacy: `model` is
+   * read hosted-first, exactly as before. Always validated before it gets
+   * here (`readStoredModelSelection`).
+   */
+  selection?: ModelSelection;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -2253,6 +2268,54 @@ function resolveOrgTargetForEval(
   return undefined;
 }
 
+/**
+ * Resolve a case's saved selection to a rail with the local adapter
+ * (`model-resolution-local.ts`), or throw its refusal. Pure apart from the
+ * throw; the org path's own resolution (and the backend's admission of hosted
+ * and org-cloud requests) happens where it always did.
+ */
+export function resolveEvalSelectionRoute(args: {
+  test: EvalTestCase;
+  selection: ModelSelection;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
+}): {
+  rail: "hosted" | "org" | "local";
+  wireModelId: string;
+  modelDefinition: ModelDefinition;
+} {
+  const { selection } = args;
+  const wireModelId = selection.nativeModelId ?? selection.modelId;
+  const base = buildModelDefinition({ ...args.test, model: wireModelId });
+  const selectionModel: ModelDefinition = {
+    ...base,
+    id: wireModelId,
+    hosted: selection.source === "hosted",
+  };
+  const providerKey =
+    selection.source === "org" ? deriveOrgProviderKey(selectionModel) : null;
+  const result = resolveLocalModelSelection({
+    selection,
+    purpose: "evalTarget",
+    ...(providerKey?.ok ? { orgProviderKey: providerKey.key } : {}),
+    hasOrgTarget:
+      !isCredentialFreeGithubExecution() &&
+      resolveOrgTargetForEval(args.test, args.orgModelConfigTarget) !==
+        undefined,
+    ...(args.orgModelConfig
+      ? { orgProviders: args.orgModelConfig.providers }
+      : {}),
+    hasLocalKey: (key) => Boolean(lookupProviderApiKey(args.modelApiKeys, key)),
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError(result.refusals);
+  return {
+    rail: result.plan.rail,
+    wireModelId: result.plan.wireModelId,
+    modelDefinition: selectionModel,
+  };
+}
+
 async function resolveOrgByokEvalRuntime(args: {
   test: EvalTestCase;
   modelDefinition: ModelDefinition;
@@ -2260,6 +2323,11 @@ async function resolveOrgByokEvalRuntime(args: {
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexAuthToken: string;
+  /**
+   * An explicit `org` selection: the org connection is the choice, so keys the
+   * request happens to carry do not divert it onto the local path.
+   */
+  ignoreExplicitModelApiKeys?: boolean;
 }): Promise<
   | {
       kind: "cloud";
@@ -2273,7 +2341,11 @@ async function resolveOrgByokEvalRuntime(args: {
   | undefined
 > {
   if (isCredentialFreeGithubExecution()) return undefined;
-  if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
+  if (
+    !args.ignoreExplicitModelApiKeys &&
+    hasExplicitModelApiKeys(args.modelApiKeys)
+  )
+    return undefined;
 
   const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!providerKeyResult.ok) return undefined;
@@ -2954,29 +3026,64 @@ const executeTestCase = async (params: {
   // a non-sentinel on an external-account harness and refused a run it had
   // already admitted. A per-case model is normal in evals, so that refusal hit
   // legitimate Cursor suites.
-  const modelDefinition = resolveEvalCaseModelDefinition({
+  const caseModel = buildModelDefinition(test);
+  const promotedModel = resolveEvalCaseModelDefinition({
     hostConfig: suiteHostConfig,
-    caseModel: buildModelDefinition(test),
+    caseModel,
   });
-  const resolvedModelId = getCanonicalModelId(
-    String(modelDefinition.id),
-    modelDefinition.provider,
-  );
-  const isJamModel = isHostedModelDefinition({
-    id: resolvedModelId,
-    provider: modelDefinition.provider,
-    hosted: modelDefinition.hosted,
-  });
-  const orgByokRuntime = isJamModel
-    ? undefined
-    : await resolveOrgByokEvalRuntime({
-        test,
-        modelDefinition,
-        modelApiKeys,
-        orgModelConfig,
-        orgModelConfigTarget,
-        convexAuthToken,
+  // The case's saved selection decides the rail — unless the host promoted
+  // its own runtime-chosen model, in which case the case's model (and so its
+  // selection) describes nothing that runs.
+  const selectionRoute =
+    test.selection && promotedModel === caseModel
+      ? resolveEvalSelectionRoute({
+          test,
+          selection: test.selection,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+        })
+      : undefined;
+  const modelDefinition = selectionRoute?.modelDefinition ?? promotedModel;
+  const resolvedModelId = selectionRoute
+    ? selectionRoute.wireModelId
+    : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
+  const isJamModel = selectionRoute
+    ? selectionRoute.rail === "hosted"
+    : isHostedModelDefinition({
+        id: resolvedModelId,
+        provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
       });
+  const orgByokRuntime =
+    isJamModel || selectionRoute?.rail === "local"
+      ? undefined
+      : await resolveOrgByokEvalRuntime({
+          test,
+          modelDefinition,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+          convexAuthToken,
+          ...(selectionRoute?.rail === "org"
+            ? { ignoreExplicitModelApiKeys: true }
+            : {}),
+        });
+  if (selectionRoute?.rail === "org" && !orgByokRuntime) {
+    // Every reason the org path can be unavailable was refused above; this is
+    // the belt to that brace — an org selection never falls through to the
+    // local keys.
+    throw new ModelResolutionRefusalError([
+      {
+        code: "credential_missing",
+        reason: "the saved org connection cannot be resolved for this run",
+      },
+    ]);
+  }
+  // A `local` selection runs on this request's own keys only — never on the
+  // org's resolved config.
+  const localOrgModelConfig =
+    selectionRoute?.rail === "local" ? undefined : orgModelConfig;
   // MCPJam-paid models bill an org wallet; backend `/stream` rejects the
   // request without a projectId. Same target the org-BYOK path threads.
   const jamBillingTarget = isJamModel
@@ -3215,7 +3322,7 @@ const executeTestCase = async (params: {
       orgModelConfig:
         orgByokRuntime?.kind === "local"
           ? orgByokRuntime.orgModelConfig
-          : orgModelConfig,
+          : localOrgModelConfig,
       orgModelConfigTarget,
       convexClient,
       runId,
