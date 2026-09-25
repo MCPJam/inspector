@@ -426,15 +426,23 @@ export type RequestEventMap = {
    */
   "apikey.inventory.truncated": { listed: number };
   /**
-   * An owner or admin revoked a key from the organization inventory.
+   * An owner or admin revoked a key bound to their organization, from the
+   * organization inventory or by key id (`DELETE /api/web/api-keys/:id`).
    * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
-   * the key is gone at WorkOS but its org binding was not removed — inert,
-   * and revoking it again from the inventory clears it.
+   * the key is gone at WorkOS but its org binding was not removed, so the
+   * backend has not written the revoke's audit row either. The binding is
+   * inert, and revoking the same key id again removes it and writes the row.
    */
   "apikey.admin_revoke.completed": {
     workosKeyId: string;
     alreadyRevoked: boolean;
     bindingCleanupFailed: boolean;
+    /**
+     * Tries at removing the binding, at most 3: a transport failure or a
+     * backend 5xx is retried. When `bindingCleanupFailed`, the event also
+     * carries the last cause and is reported to Sentry.
+     */
+    bindingCleanupAttempts: number;
     bindingStatus?: number;
   };
   /**
@@ -531,6 +539,8 @@ export type SystemEventMap = {
     upstreamErrors: number;
     bodyLimitRejects: number;
     rateLimitRejects: number;
+    projectRejects: number;
+    busyRejects: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

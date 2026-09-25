@@ -1,7 +1,11 @@
 import { looksLikeErrorPage } from "@/shared/error-page";
-import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
+import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
+import {
+  buildSkillContextMessages as buildSkillContextMessagesFor,
+  promptExampleContextText,
+} from "@/shared/user-context-message";
 
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -748,13 +752,20 @@ export function buildMcpPromptMessages(
         ? (promptMessage.role as UIMessage["role"])
         : ("user" as UIMessage["role"]);
 
+      // An example assistant turn from the prompt is sent as labelled user
+      // text: the user chose the prompt, so its content is theirs to send,
+      // and the assistant turns in the conversation stay the model's own
+      // (MJ-009).
+      const isAssistantExample = role === "assistant";
       messages.push({
         id: `mcp-prompt-${result.namespacedName}-${index}-${generateId()}`,
-        role,
+        role: isAssistantExample ? "user" : role,
         parts: [
           {
             type: "text",
-            text: `[${result.namespacedName}] ${text}`,
+            text: isAssistantExample
+              ? promptExampleContextText(result.namespacedName, text)
+              : `[${result.namespacedName}] ${text}`,
           },
         ],
       });
@@ -765,95 +776,14 @@ export function buildMcpPromptMessages(
 }
 
 /**
- * A skill name, reduced to the character set a provider accepts inside a
- * `tool_use.id`.
- *
- * Anthropic validates those ids against `^[a-zA-Z0-9_-]+$` and rejects the
- * whole request otherwise. A SERVER-SERVED skill (SEP-2640) is addressed by a
- * namespaced ref — `<server>/<skill>` — so its `/` made every follow-up turn
- * fail with `messages.N.content.M.tool_use.id: String should match pattern`,
- * and the transcript could not be continued at all. Cloud and local skills are
- * plain slugs, which is why the id survived unsanitized until server skills
- * introduced a separator into the name.
- *
- * The name is in the id for debuggability only — `generateId()` supplies the
- * uniqueness — so replacing rather than dropping the offending characters
- * keeps the id readable while making it valid. Sanitized at the ONE place ids
- * are minted rather than by narrowing refs upstream: the ref's shape is the
- * namespacing contract the picker and `loadSkill` both compute, and bending it
- * to a provider's id rules would make two unrelated concerns share a format.
+ * The skills the user picked in the composer, as user messages sent ahead of
+ * their next message: each carries the text `loadSkill` returns for the skill
+ * and every file the user selected (see `shared/user-context-message.ts`).
  */
-function toolCallIdSegment(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]+/g, "_");
-}
-
-/**
- * Builds UIMessages that simulate the LLM calling loadSkill tool.
- * Creates assistant messages with tool invocations instead of user messages.
- */
-export function buildSkillToolMessages(
+export function buildSkillContextMessages(
   skillResults: SkillResult[],
 ): UIMessage[] {
-  const messages: UIMessage[] = [];
-
-  for (const skill of skillResults) {
-    if (!skill.content) continue;
-
-    const toolCallId = `skill-load-${toolCallIdSegment(
-      skill.name
-    )}-${generateId()}`;
-
-    // Format output to match server-side loadSkill response.
-    //
-    // `toolOutput` is the escape hatch for a SERVER-SERVED skill (SEP-2640):
-    // its `loadSkill` result is the shared origin banner plus the body, and the
-    // banner already carries the `# Skill: <ref>` heading. Re-prefixing here
-    // would produce a message the tool could never have returned, breaking the
-    // "injection is indistinguishable from a real tool result" invariant this
-    // whole function exists to maintain.
-    const skillOutput =
-      skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`;
-
-    // Build parts array
-    const parts: UIMessage["parts"] = [];
-
-    // Add loadSkill tool part
-    const loadSkillPart: DynamicToolUIPart = {
-      type: "dynamic-tool",
-      toolCallId,
-      toolName: "loadSkill",
-      state: "output-available",
-      input: { name: skill.name },
-      output: skillOutput,
-    };
-    parts.push(loadSkillPart);
-
-    // Add readSkillFile parts for selected files
-    if (skill.selectedFiles && skill.selectedFiles.length > 0) {
-      for (const file of skill.selectedFiles) {
-        const fileToolCallId = `skill-file-${generateId()}`;
-
-        const readFilePart: DynamicToolUIPart = {
-          type: "dynamic-tool",
-          toolCallId: fileToolCallId,
-          toolName: "readSkillFile",
-          state: "output-available",
-          input: { name: skill.name, path: file.path },
-          output: `# File: ${file.path}\n\n\`\`\`\n${file.content}\n\`\`\``,
-        };
-        parts.push(readFilePart);
-      }
-    }
-
-    // Create assistant message with tool invocations
-    messages.push({
-      id: `assistant-skill-${skill.name}-${generateId()}`,
-      role: "assistant",
-      parts,
-    });
-  }
-
-  return messages;
+  return buildSkillContextMessagesFor(skillResults);
 }
 
 /** Deep-clone UI messages for seeding compare columns or restoring threads. */
