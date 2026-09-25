@@ -87,6 +87,24 @@ describe("humanizeSwarmAttemptError", () => {
     expect(info.httpStatus).toBe(429);
   });
 
+  it.each([
+    [" (provider_error)", { code: "provider_error" }],
+    [
+      "   (user_rate_limit, HTTP 429)",
+      { code: "user_rate_limit", httpStatus: 429 },
+    ],
+    ["(HTTP 502)", { httpStatus: 502 }],
+    [".  (provider_error)", { code: "provider_error" }],
+  ])(
+    "falls back to the generic sentence when %j has no message of its own",
+    (raw, lifted) => {
+      expect(humanizeSwarmAttemptError(raw)).toEqual({
+        message: "The session failed for an unknown reason.",
+        ...lifted,
+      });
+    },
+  );
+
   it("keeps a trailing parenthetical that is not an engine code", () => {
     for (const message of [
       "Could not reach the server (timeout)",

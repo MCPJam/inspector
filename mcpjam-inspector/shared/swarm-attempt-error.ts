@@ -254,7 +254,15 @@ export function humanizeSwarmAttemptError(
       const status = detail[2] ?? detail[3];
       if (status && httpStatus === undefined) httpStatus = Number(status);
     }
-    const cleaned = scrub(body) || scrub(input);
+    const stripped = scrub(body);
+    // `scrub(input)` rescues an envelope that consumed the whole string. Past a
+    // stripped suffix the raw input only holds that suffix again, and a
+    // remainder with no letters or digits (a lone ".") says nothing either.
+    const cleaned = detail
+      ? /[\p{L}\p{N}]/u.test(stripped)
+        ? stripped
+        : ""
+      : stripped || scrub(input);
     return {
       message: (cleaned || "The session failed for an unknown reason.").slice(
         0,
