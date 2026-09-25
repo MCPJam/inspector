@@ -195,6 +195,24 @@ describe("removeOrganizationKeyBinding", () => {
     expect(error).toBeInstanceOf(WorkosKeyBindingError);
     expect(error.status).toBe(403);
   });
+
+  it("treats a 404 the backend answers as nothing left to remove", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ ok: false, error: "Binding not found" }, 404)),
+    );
+    await expect(removeOrganizationKeyBinding(ARGS)).resolves.toBeUndefined();
+  });
+
+  it("throws on a 404 from a route that is not there", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("Not found", { status: 404 })),
+    );
+    const error = await removeOrganizationKeyBinding(ARGS).catch((e) => e);
+    expect(error).toBeInstanceOf(WorkosKeyBindingError);
+    expect(error.status).toBe(404);
+  });
 });
 
 describe("resolveApiKeyReadiness", () => {

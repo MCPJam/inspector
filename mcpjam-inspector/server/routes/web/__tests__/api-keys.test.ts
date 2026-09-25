@@ -1335,15 +1335,17 @@ describe("organization API key revoke (owners and admins)", () => {
   /**
    * Stub both hops. `calls` records every request in order as
    * "<METHOD> <host><path>", so the tests can assert the authorization ran
-   * BEFORE the irreversible WorkOS delete.
+   * BEFORE the irreversible WorkOS delete. `bindingDelete` is one answer for
+   * every binding delete, or a function of the attempt number (from 1).
    */
   function stubRevoke(opts: {
     authorize?: Response;
     workosDelete?: Response;
-    bindingDelete?: Response;
+    bindingDelete?: Response | ((attempt: number) => Response);
   }) {
     const calls: string[] = [];
     const urls: URL[] = [];
+    let bindingDeletes = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
@@ -1358,7 +1360,13 @@ describe("organization API key revoke (owners and admins)", () => {
           );
         }
         if (url.pathname === "/internal/v1/organization-api-keys") {
-          return opts.bindingDelete ?? workosJson({ ok: true, deleted: true });
+          bindingDeletes += 1;
+          if (typeof opts.bindingDelete === "function")
+            return opts.bindingDelete(bindingDeletes);
+          return (
+            opts.bindingDelete?.clone() ??
+            workosJson({ ok: true, deleted: true })
+          );
         }
         if (method === "DELETE" && url.pathname.startsWith("/api_keys/")) {
           return opts.workosDelete ?? new Response(null, { status: 204 });
@@ -1489,29 +1497,130 @@ describe("organization API key revoke (owners and admins)", () => {
     );
   });
 
-  it("still reports success when only the binding cleanup fails", async () => {
-    const event = vi.spyOn(logger, "event");
-    stubRevoke({
-      bindingDelete: workosJson({ ok: false, error: "Internal error" }, 500),
+  describe("binding cleanup", () => {
+    const BINDING_DELETE =
+      "DELETE backend.test/internal/v1/organization-api-keys";
+
+    beforeEach(() => {
+      vi.useFakeTimers();
     });
 
-    const { status, data } = await expectJson(await revoke());
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-    expect(status).toBe(200);
-    expect(data).toEqual({ ok: true, alreadyRevoked: false });
-    // The key is gone; the leftover binding is recorded rather than lost.
-    expect(event).toHaveBeenCalledWith(
-      "apikey.admin_revoke.completed",
-      expect.anything(),
-      {
-        workosKeyId: "key-members",
-        alreadyRevoked: false,
-        bindingCleanupFailed: true,
-        bindingStatus: 500,
-      },
-      undefined,
-    );
-    event.mockRestore();
+    /** Run a revoke to its answer, stepping fake time through any waits. */
+    async function revokeToCompletion() {
+      const pending = Promise.resolve(revoke());
+      let settled = false;
+      void pending.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      for (let step = 0; step < 40 && !settled; step++) {
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      return pending;
+    }
+
+    it("tries again after a 503 and records the removal on the second attempt", async () => {
+      const event = vi.spyOn(logger, "event");
+      const { calls } = stubRevoke({
+        bindingDelete: (attempt) =>
+          attempt === 1
+            ? workosJson({ ok: false, error: "Service Unavailable" }, 503)
+            : workosJson({ ok: true, deleted: true }),
+      });
+
+      const { status, data } = await expectJson(await revokeToCompletion());
+
+      expect(status).toBe(200);
+      expect(data).toEqual({ ok: true, alreadyRevoked: false });
+      expect(calls.filter((call) => call === BINDING_DELETE)).toHaveLength(2);
+      expect(event).toHaveBeenCalledWith(
+        "apikey.admin_revoke.completed",
+        expect.anything(),
+        {
+          workosKeyId: "key-members",
+          alreadyRevoked: false,
+          bindingCleanupFailed: false,
+          bindingCleanupAttempts: 2,
+        },
+        undefined,
+      );
+      event.mockRestore();
+    });
+
+    it("tries again after a transport failure", async () => {
+      const { calls } = stubRevoke({
+        bindingDelete: (attempt) => {
+          if (attempt === 1) throw new TypeError("fetch failed");
+          return workosJson({ ok: true, deleted: true });
+        },
+      });
+
+      const { status } = await expectJson(await revokeToCompletion());
+
+      expect(status).toBe(200);
+      expect(calls.filter((call) => call === BINDING_DELETE)).toHaveLength(2);
+    });
+
+    it("still reports success after three failed attempts, and raises the leftover binding", async () => {
+      const event = vi.spyOn(logger, "event");
+      const { calls } = stubRevoke({
+        bindingDelete: workosJson({ ok: false, error: "Internal error" }, 500),
+      });
+
+      const { status, data } = await expectJson(await revokeToCompletion());
+
+      // The key is gone at WorkOS, so the revoke itself succeeded.
+      expect(status).toBe(200);
+      expect(data).toEqual({ ok: true, alreadyRevoked: false });
+      expect(calls.filter((call) => call === BINDING_DELETE)).toHaveLength(3);
+      // The leftover binding is recorded with its cause, not lost.
+      expect(event).toHaveBeenCalledWith(
+        "apikey.admin_revoke.completed",
+        expect.anything(),
+        {
+          workosKeyId: "key-members",
+          alreadyRevoked: false,
+          bindingCleanupFailed: true,
+          bindingCleanupAttempts: 3,
+          bindingStatus: 500,
+        },
+        { error: expect.any(WorkosKeyBindingError), sentry: true },
+      );
+      event.mockRestore();
+    });
+
+    it("does not try again after a 403", async () => {
+      const event = vi.spyOn(logger, "event");
+      const { calls } = stubRevoke({
+        bindingDelete: workosJson(
+          {
+            ok: false,
+            error: "Not allowed to manage API keys for this organization",
+          },
+          403,
+        ),
+      });
+
+      const { status } = await expectJson(await revokeToCompletion());
+
+      expect(status).toBe(200);
+      expect(calls.filter((call) => call === BINDING_DELETE)).toHaveLength(1);
+      expect(event).toHaveBeenCalledWith(
+        "apikey.admin_revoke.completed",
+        expect.anything(),
+        expect.objectContaining({
+          bindingCleanupFailed: true,
+          bindingCleanupAttempts: 1,
+          bindingStatus: 403,
+        }),
+        { error: expect.any(WorkosKeyBindingError), sentry: true },
+      );
+      event.mockRestore();
+    });
   });
 
   it("refuses an sk_ key outright — keys cannot revoke keys", async () => {

@@ -237,8 +237,11 @@ export async function authorizeOrganizationKeyRevoke(
  * Drop the binding of a key an org admin has just revoked at WorkOS. The
  * backend re-checks admin rank, writes the audit row naming both the admin
  * and the minter, and is idempotent (200 whether or not a row existed).
- * Throws on any non-2xx; the caller treats that as best-effort cleanup, since
- * the WorkOS key is already gone.
+ * A 404 the backend answers itself (its `{ ok: false }` JSON) also means
+ * there is nothing left to drop. Throws with the status on any other
+ * non-2xx, including a 404 without that answer: that is a route that is not
+ * there (not deployed, or the wrong `CONVEX_HTTP_URL`), and nothing was
+ * dropped.
  */
 export async function removeOrganizationKeyBinding(
   args: OrganizationKeyArgs,
@@ -252,6 +255,12 @@ export async function removeOrganizationKeyBinding(
       signal: AbortSignal.timeout(ORGANIZATION_KEY_TIMEOUT_MS),
     },
   );
+  if (response.status === 404) {
+    const body = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+    } | null;
+    if (body?.ok === false) return;
+  }
   if (!response.ok) {
     throw new WorkosKeyBindingError(
       response.status,

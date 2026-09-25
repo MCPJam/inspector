@@ -1004,33 +1004,73 @@ async function revokeOrganizationKey(
     mapWorkOSError(status, body, "Failed to revoke API key");
   }
 
-  // Best-effort, like the personal revoke: the WorkOS key is gone either
-  // way, and failing the response would tell the admin a revoke did not
-  // happen when it did. A binding left behind is inert — the bearer
-  // middleware validates with WorkOS first — and revoking it again from
-  // the inventory cleans it up.
-  let bindingCleanupFailed = false;
-  let bindingStatus: number | undefined;
-  try {
-    await removeOrganizationKeyBinding(target);
-  } catch (error) {
-    bindingCleanupFailed = true;
-    if (error instanceof WorkosKeyBindingError) bindingStatus = error.status;
-  }
+  // Dropping the binding is also where the backend writes the durable
+  // `apikey.revoked` audit row naming both the admin and the minter, so a
+  // failure a second try can clear is retried a bounded number of times.
+  //
+  // The answer is success either way: the WorkOS key is already gone, and
+  // failing here would tell the admin a revoke did not happen when it did.
+  // If the drop never goes through, what remains is a binding for a key that
+  // no longer exists — inert, since the bearer middleware validates with
+  // WorkOS first — and no audit row for this revoke yet. That outcome is
+  // reported below with its cause, for follow-up: revoking the same key id
+  // again completes both.
+  const cleanup = await removeOrganizationKeyBindingWithRetry(target);
+  const bindingCleanupFailed = !cleanup.removed;
+  const bindingStatus =
+    cleanup.error instanceof WorkosKeyBindingError
+      ? cleanup.error.status
+      : undefined;
 
-  // The durable record is the backend's `apikey.revoked` audit row, which
-  // names both the admin and the minter; this is the operational one.
+  // The durable record is the backend's audit row; this is the operational
+  // one. A cleanup that never went through also carries its cause and is
+  // raised as an issue rather than left for someone to find in a query.
   getRequestLogger(c, "routes.web.api-keys").event(
     "apikey.admin_revoke.completed",
     {
       workosKeyId: keyId,
       alreadyRevoked,
       bindingCleanupFailed,
+      bindingCleanupAttempts: cleanup.attempts,
       ...(bindingStatus !== undefined ? { bindingStatus } : {}),
     },
+    bindingCleanupFailed ? { error: cleanup.error, sentry: true } : undefined,
   );
 
   return { ok: true, alreadyRevoked };
+}
+
+/**
+ * Waits between attempts at dropping a revoked key's org binding: three
+ * attempts in all.
+ */
+const BINDING_CLEANUP_RETRY_DELAYS_MS = [250, 1_000];
+
+/**
+ * Drop the binding of a key already revoked at WorkOS, retrying only what a
+ * second try can clear: a failure with no answer at all (transport, timeout)
+ * or a backend 5xx. Any other refusal is final. Never throws; reports how many
+ * attempts it made and, if none went through, the last cause.
+ */
+async function removeOrganizationKeyBindingWithRetry(
+  target: OrganizationKeyArgs,
+): Promise<{ removed: boolean; attempts: number; error?: unknown }> {
+  let attempts = 0;
+  for (;;) {
+    attempts += 1;
+    try {
+      await removeOrganizationKeyBinding(target);
+      return { removed: true, attempts };
+    } catch (error) {
+      const retryable =
+        !(error instanceof WorkosKeyBindingError) || error.status >= 500;
+      const delay = BINDING_CLEANUP_RETRY_DELAYS_MS[attempts - 1];
+      if (!retryable || delay === undefined) {
+        return { removed: false, attempts, error };
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 apiKeys.delete("/organization/:organizationId/:keyId", async (c) =>
