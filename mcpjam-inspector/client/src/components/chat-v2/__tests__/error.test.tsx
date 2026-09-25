@@ -124,6 +124,9 @@ describe("ErrorBox provider_not_allowlisted", () => {
   });
 
   it("opens the model picker's provider tab for the user's own key", () => {
+    const release = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
     const before = useModelPickerIntentStore.getState().openProvidersTabNonce;
     render(<ErrorBox message={message} code="provider_not_allowlisted" />);
 
@@ -134,6 +137,20 @@ describe("ErrorBox provider_not_allowlisted", () => {
     expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
       before + 1
     );
+    release();
+  });
+
+  it("offers no provider-key button when no model picker can open", () => {
+    // e.g. a hosted study chat in minimal mode, which mounts no picker.
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });
+    render(<ErrorBox message={message} code="provider_not_allowlisted" />);
+
+    expect(
+      screen.getByTestId("chat-error-provider-not-allowlisted")
+    ).toHaveTextContent(/BYOK/);
+    expect(
+      screen.queryByRole("button", { name: "Use your own provider key" })
+    ).not.toBeInTheDocument();
   });
 
   it("falls back to the catalog sentence when the message is blank", () => {

@@ -91,6 +91,12 @@ export function ErrorBox({
   onChangeProtocolVersion,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
+  // Only a mounted `ModelSelector` acts on the providers-tab nonce. Hosted
+  // study chats run in minimal mode without one, so there the button would
+  // do nothing.
+  const canOpenProvidersTab = useModelPickerIntentStore(
+    (state) => state.providersTabResponderCount > 0,
+  );
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
   const refusalCode = code ?? errorDetailsJson?.code;
@@ -134,15 +140,17 @@ export function ErrorBox({
             </ul>
           </div>
           <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                useModelPickerIntentStore.getState().requestOpenProvidersTab()
-              }
-            >
-              Use your own provider key
-            </Button>
+            {canOpenProvidersTab ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  useModelPickerIntentStore.getState().requestOpenProvidersTab()
+                }
+              >
+                Use your own provider key
+              </Button>
+            ) : null}
             {onResetChat ? (
               <Button type="button" variant="outline" onClick={onResetChat}>
                 Reset chat
