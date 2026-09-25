@@ -50,8 +50,18 @@ export function getEffectiveSuiteServers(
     environment?: { servers?: string[] } | undefined;
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
+    environmentTargets?: EvalSuite["environmentTargets"];
   },
 ): string[] {
+  // An ENVIRONMENT suite's servers are its environments' — the legacy fields
+  // below are not read by its runs. This is every server ANY of its runs
+  // touches (for filters and summaries); a surface acting on one run uses
+  // that environment's own list (`suiteEnvironmentTargets`).
+  if (suite.environmentTargets?.length) {
+    return Array.from(
+      new Set(suite.environmentTargets.flatMap((target) => target.serverNames)),
+    );
+  }
   if (suite.serverAttachment) {
     return Array.from(
       new Set(suite.serverAttachment.resolvedServerNames ?? []),
@@ -1576,4 +1586,95 @@ export function cancellableRunIds(
   runs: readonly { _id: string; status?: string | null }[],
 ): string[] {
   return runs.filter(isRunCancellable).map((run) => run._id);
+}
+
+/**
+ * An environment suite's launchable targets (archived or missing
+ * environments dropped), or `null` for a legacy suite / an older backend
+ * that does not report them.
+ */
+export function suiteEnvironmentTargets(suite: {
+  environmentIds?: string[];
+  environmentTargets?: EvalSuite["environmentTargets"];
+}): NonNullable<EvalSuite["environmentTargets"]> | null {
+  if (!suite.environmentIds?.length || !suite.environmentTargets) return null;
+  return suite.environmentTargets.filter((target) => !target.unavailable);
+}
+
+/**
+ * Whether a run of this suite would connect any server. An environment suite
+ * answers from its environments (a group's servers, or a pinned plugin that
+ * contributes some); a legacy suite from its legacy fields.
+ */
+export function suiteHasRunnableServers(
+  suite: Parameters<typeof getEffectiveSuiteServers>[0] & {
+    environmentIds?: string[];
+  },
+): boolean {
+  const targets = suiteEnvironmentTargets(suite);
+  if (targets) {
+    return targets.some(
+      (target) =>
+        target.serverNames.length > 0 || target.pluginVersionCount > 0,
+    );
+  }
+  return getEffectiveSuiteServers(suite).length > 0;
+}
+
+/**
+ * Which environment case generation authors against. Generating against the
+ * union of a mixed suite's tools would write cases no single environment can
+ * run, so a suite whose environments differ must name one.
+ */
+export type GenerationEnvironmentTarget =
+  | { kind: "legacy" }
+  | { kind: "environment"; environmentId: string }
+  | {
+      kind: "choose";
+      targets: NonNullable<EvalSuite["environmentTargets"]>;
+    }
+  | { kind: "none"; reason: string };
+
+export function generationEnvironmentTarget(
+  suite: {
+    environmentIds?: string[];
+    environmentTargets?: EvalSuite["environmentTargets"];
+  },
+  preferredEnvironmentId?: string | null,
+): GenerationEnvironmentTarget {
+  if (!suite.environmentIds?.length) return { kind: "legacy" };
+  const targets = suiteEnvironmentTargets(suite);
+  if (!targets) {
+    return {
+      kind: "none",
+      reason:
+        "This suite's environments are still loading, or this deployment can't describe them yet.",
+    };
+  }
+  const runnable = targets.filter(
+    (target) => target.serverNames.length > 0 || target.pluginVersionCount > 0,
+  );
+  if (runnable.length === 0) {
+    return {
+      kind: "none",
+      reason:
+        "None of this suite's environments has servers. Pick a server group in suite settings.",
+    };
+  }
+  const preferred = preferredEnvironmentId
+    ? runnable.find((target) => target.environmentId === preferredEnvironmentId)
+    : undefined;
+  if (preferred) {
+    return { kind: "environment", environmentId: preferred.environmentId };
+  }
+  // One server set across every environment (same group, no plugin pins):
+  // any of them exposes exactly the tools the others do.
+  const uniform =
+    runnable.every((target) => target.pluginVersionCount === 0) &&
+    new Set(runnable.map((target) => target.serverAttachmentId ?? "")).size ===
+      1;
+  if (runnable.length === 1 || uniform) {
+    return { kind: "environment", environmentId: runnable[0]!.environmentId };
+  }
+  return { kind: "choose", targets: runnable };
 }

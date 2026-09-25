@@ -274,6 +274,66 @@ evals.post("/run", async (c) =>
 );
 
 /**
+ * Resolve the environment a raw eval body names and prime its connection
+ * batch with exactly the environment's closed eval server set. The browser
+ * never supplies those servers; the same resolution is handed to the shared
+ * handler so what it asserts is what the manager connected.
+ */
+async function resolveEnvironmentOnRawBody(
+  c: Parameters<typeof getConvexBearerForRequest>[0],
+  rawBody: Record<string, unknown>,
+  args: { projectId: string; environmentId: string },
+): Promise<ResolvedEnvironmentForLaunch> {
+  let resolved: ResolvedEnvironmentForLaunch;
+  try {
+    resolved = await resolveEnvironmentForLaunch(
+      // The DELEGATED JWT: an `sk_` API key 401s Convex's query surface.
+      createConvexClient(await getConvexBearerForRequest(c)),
+      {
+        serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+        projectId: args.projectId,
+        environmentId: args.environmentId,
+      },
+    );
+  } catch (error) {
+    throw translateEnvironmentResolveError(error);
+  }
+  // Live-healed ids, like `/run`: the batch we authorize and connect must
+  // match the ids `resolveServerIdsOrThrow` later looks up.
+  rawBody.serverIds = environmentServerIds(resolved);
+  const serverNames = environmentServerNames(resolved);
+  if (serverNames.length) {
+    rawBody.serverNames = serverNames;
+  } else {
+    delete rawBody.serverNames;
+  }
+  return resolved;
+}
+
+/**
+ * Case-generation preflight: an environment request generates against that
+ * environment's eval server set, plugin servers included.
+ */
+async function preflightGenerationEnvironment(
+  c: Parameters<typeof getConvexBearerForRequest>[0],
+  rawBody: Record<string, unknown>,
+): Promise<ResolvedEnvironmentForLaunch | undefined> {
+  const environmentId = rawBody.environmentId;
+  if (typeof environmentId !== "string" || !environmentId) return undefined;
+  if (typeof rawBody.projectId !== "string" || !rawBody.projectId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "projectId is required to generate cases from an environment",
+    );
+  }
+  return await resolveEnvironmentOnRawBody(c, rawBody, {
+    projectId: rawBody.projectId,
+    environmentId,
+  });
+}
+
+/**
  * ENVIRONMENT quick-run preflight for the single-case routes, on the RAW body
  * — before it is parsed and before anything connects. Resolves the environment
  * eval-only (the same rule `/run` and `startTestSuiteRun` apply), refuses a
@@ -312,31 +372,14 @@ async function preflightQuickRunEnvironment(
       : {}),
   };
   assertNoConflictingEnvironmentOverrides(requestFields);
-  let resolved: ResolvedEnvironmentForLaunch;
-  try {
-    resolved = await resolveEnvironmentForLaunch(
-      // The DELEGATED JWT: an `sk_` API key 401s Convex's query surface.
-      createConvexClient(await getConvexBearerForRequest(c)),
-      {
-        serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-        projectId: requestFields.projectId!,
-        environmentId,
-      },
-    );
-  } catch (error) {
-    throw translateEnvironmentResolveError(error);
-  }
+  // `requestFields` was read before the batch is primed below, so the
+  // conflict check compares the BODY's own servers with the resolution.
+  const resolved = await resolveEnvironmentOnRawBody(c, rawBody, {
+    projectId: requestFields.projectId!,
+    environmentId,
+  });
   assertNoConflictingEnvironmentOverrides(requestFields, resolved);
   assertEnvironmentQuickRunAdmissible(resolved);
-  // Live-healed ids, like `/run`: the batch we authorize and connect must
-  // match the ids `resolveServerIdsOrThrow` later looks up.
-  rawBody.serverIds = environmentServerIds(resolved);
-  const serverNames = environmentServerNames(resolved);
-  if (serverNames.length) {
-    rawBody.serverNames = serverNames;
-  } else {
-    delete rawBody.serverNames;
-  }
   return resolved;
 }
 
@@ -534,31 +577,49 @@ evals.post("/stream-test-case", async (c) => {
   }
 });
 
-evals.post("/generate-tests", async (c) =>
-  withEphemeralConnection(
+evals.post("/generate-tests", async (c) => {
+  let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
+  return withEphemeralConnection(
     c,
     hostedGenerateTestsSchema,
     (manager, body) =>
       generateEvalTestsWithManager(manager, {
         ...body,
         convexAuthToken: assertBearerToken(c),
+        ...(preflightEnvironment
+          ? { resolvedEnvironment: preflightEnvironment }
+          : {}),
       }),
-    { rpcLogs: false },
-  ),
-);
+    {
+      rpcLogs: false,
+      beforeConnect: async (rawBody) => {
+        preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
+      },
+    },
+  );
+});
 
-evals.post("/generate-negative-tests", async (c) =>
-  withEphemeralConnection(
+evals.post("/generate-negative-tests", async (c) => {
+  let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
+  return withEphemeralConnection(
     c,
     hostedGenerateNegativeTestsSchema,
     (manager, body) =>
       generateNegativeEvalTestsWithManager(manager, {
         ...body,
         convexAuthToken: assertBearerToken(c),
+        ...(preflightEnvironment
+          ? { resolvedEnvironment: preflightEnvironment }
+          : {}),
       }),
-    { rpcLogs: false },
-  ),
-);
+    {
+      rpcLogs: false,
+      beforeConnect: async (rawBody) => {
+        preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
+      },
+    },
+  );
+});
 
 evals.post("/trace-repair/start", async (c) =>
   handleRoute(c, async () => {

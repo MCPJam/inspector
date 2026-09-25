@@ -71,9 +71,11 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 // Mock useConvex
 const mockConvexQuery = vi.fn();
+const mockConvexMutation = vi.fn();
 vi.mock("convex/react", () => ({
   useConvex: () => ({
     query: mockConvexQuery,
+    mutation: mockConvexMutation,
   }),
   useMutation: () => vi.fn().mockResolvedValue(undefined),
   useAction: () => vi.fn().mockResolvedValue(undefined),
@@ -1375,6 +1377,170 @@ describe("useEvalHandlers", () => {
   });
 
   describe("handleRunTestCase", () => {
+    describe("environment suites", () => {
+      const envSuite = {
+        _id: "suite-env",
+        name: "Env suite",
+        description: "",
+        // Legacy fields an environment suite does not read.
+        environment: { servers: ["legacy-server"] },
+        environmentIds: ["env-a", "env-b"],
+      } as any;
+      const envCase = {
+        _id: "case-env",
+        title: "Refund",
+        query: "Refund it",
+        models: [{ provider: "anthropic", model: "claude-legacy" }],
+        expectedToolCalls: [],
+      } as any;
+      const environments = [
+        {
+          environmentId: "env-a",
+          projectId: "project-1",
+          hostId: "host-1",
+          serverAttachmentId: "group-1",
+          revision: 1,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        {
+          environmentId: "env-b",
+          projectId: "project-1",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          serverAttachmentId: "group-1",
+          revision: 4,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ];
+
+      function mockEnvironmentBackend(
+        caps = { environmentQuickRuns: true, environmentDerivation: true },
+      ) {
+        mockConvexQuery.mockImplementation(async (name: string) => {
+          if (name === "projectEnvironments:listEnvironments") {
+            return environments;
+          }
+          if (name === "hosts:listHosts") {
+            return [{ hostId: "host-1", modelId: "openai/gpt-5-mini" }];
+          }
+          if (name === "projectEnvironments:getCapabilities") return caps;
+          return null;
+        });
+      }
+
+      function sentBodies() {
+        return mockAuthFetch.mock.calls.map(
+          (call) => JSON.parse((call[1] as { body: string }).body) as any,
+        );
+      }
+
+      it("runs the case on every environment of the suite, with no legacy servers or models", async () => {
+        mockEnvironmentBackend();
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, iteration: { _id: "iter" } }),
+        );
+        const ensureServersReady = vi.fn();
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady,
+          }),
+        );
+        await act(async () => {
+          await result.current.handleRunTestCase(envSuite, envCase);
+        });
+        expect(ensureServersReady).not.toHaveBeenCalled();
+        const bodies = sentBodies();
+        expect(bodies.map((body) => body.environmentId).sort()).toEqual([
+          "env-a",
+          "env-b",
+        ]);
+        for (const body of bodies) {
+          expect(body.serverIds).toEqual([]);
+          expect(body.model).toBeUndefined();
+          expect(body.provider).toBeUndefined();
+          expect(body.namedHostId).toBeUndefined();
+          expect(body.idempotencyKey).toMatch(/^quick-run:/);
+        }
+        expect(mockConvexMutation).not.toHaveBeenCalled();
+      });
+
+      it("derives an environment for a picked model none of them runs, before running", async () => {
+        mockEnvironmentBackend();
+        mockConvexMutation.mockResolvedValue([
+          { environment: { environmentId: "env-derived" } },
+        ]);
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, iteration: { _id: "iter" } }),
+        );
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          await result.current.handleRunTestCase(envSuite, envCase, {
+            selectedModel: "anthropic/claude-sonnet-4",
+          });
+        });
+        expect(mockConvexMutation).toHaveBeenCalledWith(
+          "projectEnvironments:deriveEnvironments",
+          {
+            projectId: "project-1",
+            derivations: [
+              {
+                sourceEnvironmentId: "env-a",
+                expectedRevision: 1,
+                overrides: {
+                  hostId: "host-1",
+                  modelId: "claude-sonnet-4",
+                  serverAttachmentId: "group-1",
+                },
+              },
+            ],
+          },
+        );
+        expect(sentBodies().map((body) => body.environmentId)).toEqual([
+          "env-derived",
+        ]);
+      });
+
+      it("reuses the environment that inherits the picked model from its client", async () => {
+        mockEnvironmentBackend();
+        mockAuthFetch.mockResolvedValue(
+          createFetchResponse({ success: true, iteration: { _id: "iter" } }),
+        );
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          // An editor value is `provider/<catalog id>`; the hosted catalog id
+          // is itself prefixed.
+          await result.current.handleRunTestCase(envSuite, envCase, {
+            selectedModel: "openai/openai/gpt-5-mini",
+          });
+        });
+        expect(mockConvexMutation).not.toHaveBeenCalled();
+        expect(sentBodies().map((body) => body.environmentId)).toEqual([
+          "env-a",
+        ]);
+      });
+
+      it("refuses, running nothing, on a deployment without environment quick runs", async () => {
+        mockEnvironmentBackend({
+          environmentQuickRuns: false,
+          environmentDerivation: false,
+        });
+        const { result } = renderHook(() => useEvalHandlers(defaultProps));
+        await act(async () => {
+          await result.current.handleRunTestCase(envSuite, envCase);
+        });
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /can't run a single case of an environment suite/,
+          ),
+        );
+      });
+    });
+
     it("declines widget probes with an accurate message instead of the model guard", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 

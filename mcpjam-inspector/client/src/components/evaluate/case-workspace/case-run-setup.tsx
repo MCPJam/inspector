@@ -11,6 +11,7 @@ import {
   SheetDescription,
 } from "@mcpjam/design-system/sheet";
 import { type CaseSuiteChipsProps } from "../simple-case/case-suite-chips";
+import { ServerPicker } from "@/components/hosts/server-picker";
 
 export function CaseRunSetup({
   open,
@@ -20,9 +21,20 @@ export function CaseRunSetup({
   runDisabled,
   disabledReason,
   onModelsChange,
+  serverGroup,
   ...controls
 }: Omit<CaseSuiteChipsProps, "onOpenSuiteSettings"> & {
   onModelsChange?: (models: string[]) => void;
+  /**
+   * Environment suites only: the server group the run's environments use.
+   * Defaults to the group the suite's environments share; there is no "none",
+   * because an eval environment without a group runs with no servers.
+   */
+  serverGroup?: {
+    projectId: string;
+    value: string | null;
+    onChange: (serverAttachmentId: string) => void;
+  };
   open: boolean;
   onOpenChange: (open: boolean) => void;
   caseTitle: string;
@@ -65,6 +77,24 @@ export function CaseRunSetup({
             onChange={(value) => controls.onTrialsChange?.(Number(value))}
             disabled={controls.disabled}
           />
+          {serverGroup ? (
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">Servers</p>
+              <ServerPicker
+                projectId={serverGroup.projectId}
+                value={serverGroup.value}
+                onChange={(id) => {
+                  if (id) serverGroup.onChange(id);
+                }}
+                offerClear={false}
+                variant="field"
+                inModal
+                disabled={controls.disabled}
+                emptyTriggerLabel="Pick a server group"
+                triggerTestId="case-run-server-group"
+              />
+            </div>
+          ) : null}
           <EvalTargetMatrix
             hostIds={[hostId]}
             hosts={hosts}

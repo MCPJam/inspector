@@ -1063,12 +1063,20 @@ export type GenerationOptions = z.infer<typeof GenerationOptionsSchema>;
 // array the rewrite is a no-op and standalone callers (where manager key ==
 // display name) continue to work unchanged.
 export const GenerateTestsRequestSchema = z.object({
-  serverIds: z
-    .array(z.string())
-    .min(1, { message: "At least one server must be selected" }),
+  /**
+   * Legacy: the servers to generate against (at least one, enforced when the
+   * request names no environment). An environment request resolves its own.
+   */
+  serverIds: z.array(z.string()),
   serverNames: z.array(z.string()).optional(),
   convexAuthToken: z.string(),
   projectId: z.string().min(1).optional(),
+  /**
+   * Generate against this environment's eval server set — its server group
+   * plus the servers its pinned plugins contribute — resolved the way a run
+   * resolves it, so cases are authored against the tools the run will have.
+   */
+  environmentId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
   generationOptions: GenerationOptionsSchema.optional(),
 });
@@ -1076,12 +1084,12 @@ export const GenerateTestsRequestSchema = z.object({
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
 
 export const GenerateNegativeTestsRequestSchema = z.object({
-  serverIds: z
-    .array(z.string())
-    .min(1, { message: "At least one server must be selected" }),
+  /** See {@link GenerateTestsRequestSchema}. */
+  serverIds: z.array(z.string()),
   serverNames: z.array(z.string()).optional(),
   convexAuthToken: z.string(),
   projectId: z.string().min(1).optional(),
+  environmentId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
@@ -3629,14 +3637,87 @@ export function remapSnapshotServerIdsForAttachment(
   return mutated ? { ...snapshot, servers } : snapshot;
 }
 
+/**
+ * The servers a generation request authors cases against: an environment's
+ * eval server set (resolved like a run resolves it — the caller's preflight
+ * resolution when it made one), or the request's own servers for a legacy
+ * request.
+ */
+async function resolveGenerationServers(
+  clientManager: MCPClientManager,
+  request: {
+    serverIds: string[];
+    serverNames?: string[];
+    convexAuthToken: string;
+    projectId?: string;
+    environmentId?: string;
+    resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+  },
+): Promise<{
+  resolvedServerIds: string[];
+  requestServerRefs: string[];
+  serverNames?: string[];
+}> {
+  if (request.environmentId) {
+    if (!request.projectId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "projectId is required to generate cases from an environment",
+      );
+    }
+    const resolved =
+      request.resolvedEnvironment?.environmentRef.environmentId ===
+      request.environmentId
+        ? request.resolvedEnvironment
+        : await resolveEnvironmentForLaunch(
+            createConvexClients(request.convexAuthToken).convexClient,
+            {
+              serverSource: EVAL_LAUNCH_SERVER_SOURCE,
+              projectId: request.projectId,
+              environmentId: request.environmentId,
+            },
+          ).catch((error) => {
+            throw translateEnvironmentResolveError(error);
+          });
+    const requestServerRefs = environmentServerRefsForManager(
+      resolved,
+      clientManager,
+    );
+    return {
+      resolvedServerIds: resolveServerIdsOrThrow(
+        requestServerRefs,
+        clientManager,
+      ),
+      requestServerRefs,
+      serverNames: environmentServerNames(resolved),
+    };
+  }
+  if (request.serverIds.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "At least one server must be selected",
+    );
+  }
+  return {
+    resolvedServerIds: resolveServerIdsOrThrow(
+      request.serverIds,
+      clientManager,
+    ),
+    requestServerRefs: request.serverIds,
+    ...(request.serverNames ? { serverNames: request.serverNames } : {}),
+  };
+}
+
 export async function generateEvalTestsWithManager(
   clientManager: MCPClientManager,
-  request: GenerateTestsRequest,
+  request: GenerateTestsRequest & {
+    resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+  },
 ) {
-  const resolvedServerIds = resolveServerIdsOrThrow(
-    request.serverIds,
-    clientManager,
-  );
+  const { resolvedServerIds, requestServerRefs, serverNames } =
+    await resolveGenerationServers(clientManager, request);
   const { toolSnapshot: rawSnapshot } =
     await captureToolSnapshotForEvalAuthoring(
       clientManager,
@@ -3649,8 +3730,8 @@ export async function generateEvalTestsWithManager(
     rawSnapshot,
     buildManagerKeyToDisplayNameMap(
       clientManager,
-      request.serverIds,
-      request.serverNames,
+      requestServerRefs,
+      serverNames,
     ),
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
@@ -3685,12 +3766,12 @@ export async function generateEvalTestsWithManager(
 
 export async function generateNegativeEvalTestsWithManager(
   clientManager: MCPClientManager,
-  request: GenerateNegativeTestsRequest,
+  request: GenerateNegativeTestsRequest & {
+    resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+  },
 ) {
-  const resolvedServerIds = resolveServerIdsOrThrow(
-    request.serverIds,
-    clientManager,
-  );
+  const { resolvedServerIds, requestServerRefs, serverNames } =
+    await resolveGenerationServers(clientManager, request);
   const { toolSnapshot: rawSnapshot } =
     await captureToolSnapshotForEvalAuthoring(
       clientManager,
@@ -3703,8 +3784,8 @@ export async function generateNegativeEvalTestsWithManager(
     rawSnapshot,
     buildManagerKeyToDisplayNameMap(
       clientManager,
-      request.serverIds,
-      request.serverNames,
+      requestServerRefs,
+      serverNames,
     ),
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
