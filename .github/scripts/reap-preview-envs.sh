@@ -41,6 +41,10 @@
 #     mode. If that can't be confirmed the env is kept and retried next run —
 #     deleting it would release the *.up.railway.app name while its redirect
 #     URI is still registered.
+#   - Anything that stops an orphan from being reaped for a reason other than
+#     policy (PR lookup, WorkOS, Railway delete, unreadable backend PRs) fails
+#     the run after every env has been tried, so a broken dependency shows up
+#     as a red run instead of an hourly no-op.
 
 set -euo pipefail
 
@@ -119,7 +123,8 @@ if jq -e '.errors' "$ENVS_FILE" >/dev/null 2>&1; then
   exit 1
 fi
 
-# One line per preview env: <id> <name> <service domain or -> <custom domain count>
+# One line per preview env:
+#   <id> <name> <first service domain or -> <service domain count> <custom domain count>
 PREVIEWS_FILE="$TMP_DIR/previews.tsv"
 jq -r '
   .data.project.environments.edges[].node
@@ -127,6 +132,7 @@ jq -r '
   | [ .id,
       .name,
       ([.serviceInstances.edges[].node.domains.serviceDomains[].domain] | first // "-"),
+      ([.serviceInstances.edges[].node.domains.serviceDomains[]] | length),
       ([.serviceInstances.edges[].node.domains.customDomains[]] | length)
     ] | @tsv' "$ENVS_FILE" >"$PREVIEWS_FILE"
 
@@ -151,18 +157,23 @@ TOTAL=0 KEPT_OPEN=0 REAPED=0 DEFERRED=0 FAILED=0 SKIPPED=0
 SKIPPED_LINES=""
 REAPED_LINES=""
 
+# skip: kept on purpose. fail: kept because something broke; fails the run.
 skip() {
   SKIPPED=$((SKIPPED + 1))
   SKIPPED_LINES+="| \`$1\` | $2 |"$'\n'
 }
+fail() {
+  FAILED=$((FAILED + 1))
+  SKIPPED_LINES+="| \`$1\` | **$2** |"$'\n'
+}
 
 # Read from fd 3 so nothing inside the loop can consume the list via stdin.
-while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN CUSTOM_DOMAINS <&3; do
+while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN SERVICE_DOMAINS CUSTOM_DOMAINS <&3; do
   TOTAL=$((TOTAL + 1))
   if [[ "$ENV_NAME" =~ ^pr-be-([0-9]+)$ ]]; then
     NUMBER="${BASH_REMATCH[1]}" REPO="$BACKEND_REPO" TOKEN="$BACKEND_GITHUB_TOKEN" OPEN="$OPEN_BACKEND"
     if [ "$BACKEND_OK" -eq 0 ]; then
-      skip "$ENV_NAME" "backend PRs unreadable"
+      fail "$ENV_NAME" "backend PRs unreadable"
       continue
     fi
   else
@@ -177,6 +188,12 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN CUSTOM_DOMAINS <&3; do
     skip "$ENV_NAME" "has a custom domain"
     continue
   fi
+  # WorkOS holds one preview URL per env; with several there's no telling
+  # which one was registered.
+  if [ "$SERVICE_DOMAINS" -gt 1 ]; then
+    skip "$ENV_NAME" "has ${SERVICE_DOMAINS} service domains"
+    continue
+  fi
   if [ "$REAPED" -ge "$MAX_DELETIONS" ]; then
     DEFERRED=$((DEFERRED + 1))
     continue
@@ -187,7 +204,7 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN CUSTOM_DOMAINS <&3; do
     closed) ;;
     open) KEPT_OPEN=$((KEPT_OPEN + 1)); continue ;;
     recent) skip "$ENV_NAME" "closed under ${GRACE_MINUTES}m ago"; continue ;;
-    *) skip "$ENV_NAME" "PR lookup failed (${VERDICT#error:})"; continue ;;
+    *) fail "$ENV_NAME" "PR lookup failed (${VERDICT#error:})"; continue ;;
   esac
 
   if [ "$DRY_RUN" != "0" ]; then
@@ -206,7 +223,7 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN CUSTOM_DOMAINS <&3; do
     fi
     if ! WORKOS_CLEANUP_STRICT=1 WORKOS_CLEANUP_MAX_PAGES=50 \
       "$SCRIPT_DIR/workos-cleanup.sh" "https://${DOMAIN}"; then
-      skip "$ENV_NAME" "WorkOS deregistration unconfirmed; retrying next run"
+      fail "$ENV_NAME" "WorkOS redirect URI removal unconfirmed; retrying next run"
       continue
     fi
   fi
@@ -215,8 +232,7 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN CUSTOM_DOMAINS <&3; do
     REAPED=$((REAPED + 1))
     REAPED_LINES+="| \`$ENV_NAME\` | ${REPO}#${NUMBER} |"$'\n'
   else
-    FAILED=$((FAILED + 1))
-    skip "$ENV_NAME" "Railway delete failed"
+    fail "$ENV_NAME" "Railway delete failed"
   fi
 done 3<"$PREVIEWS_FILE"
 
@@ -228,7 +244,7 @@ if [ -n "$REAPED_LINES" ]; then
   SUMMARY+=$'\n'"| ${VERB} | PR |"$'\n'"|---|---|"$'\n'"${REAPED_LINES}"
 fi
 if [ -n "$SKIPPED_LINES" ]; then
-  SUMMARY+=$'\n'"| Skipped | Why |"$'\n'"|---|---|"$'\n'"${SKIPPED_LINES}"
+  SUMMARY+=$'\n'"| Kept | Why (bold = failure) |"$'\n'"|---|---|"$'\n'"${SKIPPED_LINES}"
 fi
 echo "$SUMMARY"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
