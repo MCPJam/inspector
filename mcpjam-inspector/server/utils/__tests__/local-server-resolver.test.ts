@@ -575,6 +575,50 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.requestInit.headers.Authorization).toBeUndefined();
   });
 
+  it("discover (tokenless auto): a refused refresh surfaces the refusal instead of connecting bare", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-auto-3",
+          serverConfig: {
+            transportType: "http",
+            url: "https://open.example.com/mcp",
+            authMethod: "auto",
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "export_denied",
+            exportDenied: true,
+            policy: "credentialExportPolicy",
+            message: "Your organization keeps this credential in MCPJam.",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-auto-3",
+        { serverDisplayName: "Open Server" }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ exportDenied: true }),
+    });
+  });
+
   it("discover (auto with a stored token): rides the oauth rails with the refresh hook", async () => {
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);

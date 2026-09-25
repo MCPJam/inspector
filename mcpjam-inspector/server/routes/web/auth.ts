@@ -84,6 +84,7 @@ import {
 import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
+  isCredentialRefusalError,
 } from "../../utils/hosted-oauth-refresh.js";
 import {
   bindCredentialHeaders,
@@ -1764,8 +1765,9 @@ export async function createAuthorizedManager(
     } catch (error) {
       // A "discover" server was only ever going to try its luck: connecting
       // unauthenticated is the documented fallback, and a live 401 escalates
-      // client-side from there. Only an explicit-OAuth server has to fail.
-      if (!recovery.required) {
+      // client-side from there. Only an explicit-OAuth server has to fail —
+      // or any server whose credential was refused rather than unavailable.
+      if (!recovery.required && !isCredentialRefusalError(error)) {
         logger.debug(
           "[connect] private authorization server refresh unavailable; connecting unauthenticated",
           {

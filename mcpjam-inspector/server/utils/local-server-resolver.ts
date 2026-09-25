@@ -32,6 +32,7 @@ import {
 import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
+  isCredentialRefusalError,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
@@ -1399,6 +1400,9 @@ export async function resolveLocalServerForConnect(
           { serverName: options?.serverDisplayName ?? serverId }
         );
     } catch (error) {
+      // Refused, not unavailable: the policy or origin answer is what the
+      // user needs, and a bare connect would only end in a reauthorize.
+      if (isCredentialRefusalError(error)) throw error;
       logger.debug(
         "[discover connect] silent token refresh unavailable; attempting unauthenticated connect",
         {

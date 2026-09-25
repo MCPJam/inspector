@@ -176,6 +176,22 @@ export type HostedOAuthRefreshOptions = {
 };
 
 /**
+ * A refresh the backend REFUSED for policy or origin reasons (not one that
+ * merely failed). Callers that swallow refresh failures to try the server
+ * bare must let these through: connecting bare would lead to an OAuth flow
+ * the same refusal answers again, and the details are what the client shows.
+ */
+export function isCredentialRefusalError(error: unknown): boolean {
+  if (!(error instanceof WebRouteError)) return false;
+  const details = error.details as
+    | { exportDenied?: unknown; secretOriginMismatch?: unknown }
+    | undefined;
+  return (
+    details?.exportDenied === true || details?.secretOriginMismatch === true
+  );
+}
+
+/**
  * POST `/web/oauth/force-refresh` against Convex with the user's WorkOS
  * bearer to mint a fresh hosted-OAuth access token. Used by both the hosted
  * `/web` routes and the local `/mcp` resolver — they call the same backend
