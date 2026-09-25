@@ -124,6 +124,7 @@ export interface OrgModelHandlerOptions {
    * still runs the emulated engine, so nothing else about the record changes.
    */
   cancellationSource?: MCPJamHandlerOptions["cancellationSource"];
+  /**
    * `messages` came from the request body; forwarded into the wrapped MCPJam
    * handler (see `MCPJamHandlerOptions.clientSuppliedHistory`, MJ-008).
    */
