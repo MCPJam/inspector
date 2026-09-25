@@ -3,7 +3,7 @@ import { HOSTED_MODE } from "../../config.js";
 import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
 import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getAttestedClientIp } from "../../utils/client-ip.js";
 
 /**
  * Values for the PostHog flags the web client reads (MJ-015). The client
@@ -67,8 +67,8 @@ function flagPersonProperties(c: Context): Record<string, string> {
   const platform = HOSTED_MODE
     ? "web"
     : reportedPlatform && LOCAL_PLATFORMS.has(reportedPlatform)
-      ? reportedPlatform
-      : undefined;
+    ? reportedPlatform
+    : undefined;
   return {
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
@@ -105,7 +105,8 @@ export function resetClientFlagsRateLimitForTests(): void {
 /** Seconds until `c`'s address may ask again, or null when it may ask now. */
 function flagsRateLimitRetryAfter(c: Context): number | null {
   if (!HOSTED_MODE) return null;
-  const ip = getClientIp(c) ?? "unknown";
+  // Unattested callers share a bucket so rotating headers cannot reset it.
+  const ip = getAttestedClientIp(c) ?? "unknown";
   const now = Date.now();
   const entry = ipWindows.get(ip);
   if (entry && now - entry.windowStart < FLAGS_RATE_WINDOW_MS) {
