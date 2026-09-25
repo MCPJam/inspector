@@ -10,6 +10,7 @@ import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
+import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -228,6 +229,18 @@ web.use(
 // ceiling is 120/min times the replica count. A spike brake, not a budget; the
 // real cap stays the backend's org-keyed limits.
 web.use("*", passthroughRateLimitMiddleware);
+
+// MJ-012, per server. The limits above budget a caller across everything it
+// does; this one budgets how often a caller reaches ONE of its servers on the
+// MCP operation routes, keyed on (principal, serverId, route family). See
+// `mcp-operation-rate-limit.ts`.
+//
+// Registered after the per-family `bearerAuthMiddleware` lines, whose verified
+// identity it keys on, and after the passthrough limiter, so a request that
+// limiter refuses is turned away before this one reads the body.
+for (const family of ["tools", "resources", "prompts", "tasks"] as const) {
+  web.use(`/${family}/*`, mcpOperationRateLimit(family));
+}
 
 web.route("/servers", servers);
 web.route("/tools", tools);
