@@ -1602,4 +1602,75 @@ describe("hosted connection failure logs", () => {
     expect(answered.message).toContain("200");
     expect(answered.message).toContain("not with a valid MCP response");
   });
+
+  it("reads an HTTP status only where the transport put one", async () => {
+    const { describeHostedConnectFailure } =
+      await import("../hosted-connect-failure.js");
+    const logs = {
+      _httpLogs: [
+        {
+          eventId: "event",
+          serverId: "srv_1",
+          serverName: "Fixture",
+          timestamp: "2026-09-25T00:00:00.000Z",
+          exchange: {
+            serverId: "srv_1",
+            request: { method: "POST", url: "https://mcp.example.test/mcp" },
+            response: { status: 200, statusText: "OK" },
+            durationMs: 4,
+          },
+        },
+      ],
+    };
+    const named = (name: string, fields: Record<string, unknown>) =>
+      Object.assign(new Error("failed"), { name, ...fields });
+    const protocolError = named("ProtocolError", {
+      code: 401,
+      data: {
+        cause: { status: 418, statusText: "UNEXPECTED_MARKER_1" },
+      },
+    });
+    class StreamableHTTPError extends Error {
+      constructor(readonly code: number) {
+        super("failed");
+      }
+    }
+
+    for (const error of [
+      named("McpError", { code: 503 }),
+      protocolError,
+      named("MCPAuthError", { statusCode: 401, cause: protocolError }),
+    ]) {
+      const failure = describeHostedConnectFailure(error, logs);
+      expect(failure.message).toBe(
+        "The MCP server responded with HTTP 200 OK, but not with a valid MCP response.",
+      );
+    }
+    expect(
+      describeHostedConnectFailure(new StreamableHTTPError(502), logs).message,
+    ).toBe("The MCP server responded with HTTP 502.");
+    expect(
+      describeHostedConnectFailure(
+        named("SdkError", {
+          code: "ERA_NEGOTIATION_FAILED",
+          data: {
+            cause: named("SdkHttpError", {
+              status: 503,
+              statusText: "Service Unavailable",
+            }),
+          },
+        }),
+        logs,
+      ).message,
+    ).toBe("The MCP server responded with HTTP 503 Service Unavailable.");
+    expect(
+      describeHostedConnectFailure(
+        named("MCPAuthError", {
+          statusCode: 401,
+          cause: named("UnauthorizedError", {}),
+        }),
+        logs,
+      ).message,
+    ).toBe("The MCP server responded with HTTP 401.");
+  });
 });
