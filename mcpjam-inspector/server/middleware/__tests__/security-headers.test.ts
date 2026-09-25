@@ -32,6 +32,7 @@ vi.mock("../../env.js", async (importOriginal) => {
 
 const {
   DOCUMENT_CONTENT_SECURITY_POLICY,
+  DOCUMENT_PERMISSIONS_POLICY,
   buildReportOnlyContentSecurityPolicy,
   resetContentSecurityPolicyForTests,
   securityHeadersMiddleware,
@@ -87,6 +88,32 @@ describe("securityHeadersMiddleware document policies", () => {
     const res = await createApp().request("/api/data");
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    expect(res.headers.get("Permissions-Policy")).toBeNull();
+  });
+
+  it("denies unused hardware features and leaves SEP-1865 grants unlisted", async () => {
+    const res = await createApp().request("/");
+    const policy = res.headers.get("Permissions-Policy");
+    expect(policy).toBe(DOCUMENT_PERMISSIONS_POLICY);
+    // Every listed feature is fully denied.
+    for (const entry of (policy ?? "").split(",")) {
+      expect(entry.trim()).toMatch(/^[a-z-]+=\(\)$/);
+    }
+    // The features MCP Apps iframes are granted per-resource (SEP-1865) and
+    // the media features embeds rely on must stay unlisted: listing one here
+    // would deny it for every descendant iframe regardless of `allow=`.
+    for (const feature of [
+      "camera",
+      "microphone",
+      "geolocation",
+      "clipboard-write",
+      "fullscreen",
+      "autoplay",
+      "payment",
+      "picture-in-picture",
+    ]) {
+      expect(policy).not.toContain(`${feature}=`);
+    }
   });
 
   it("keeps a route's own policy", async () => {

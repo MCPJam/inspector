@@ -7,7 +7,8 @@
  * - X-XSS-Protection: Enables XSS filter
  * - Referrer-Policy: Controls referrer information
  *
- * HTML documents also get a Content-Security-Policy (MJ-016):
+ * HTML documents also get a Permissions-Policy denying hardware and sensor
+ * features nothing here uses, and a Content-Security-Policy (MJ-016):
  * - an ENFORCING policy limited to directives that cannot break the app:
  *   `frame-ancestors 'self'` (what X-Frame-Options already says), no plugin
  *   content, and no `<base>` pointing elsewhere;
@@ -30,6 +31,32 @@ import { SENTRY_DSN } from "../../shared/sentry-config.js";
 /** Enforced on every HTML document that does not set its own policy. */
 export const DOCUMENT_CONTENT_SECURITY_POLICY =
   "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+
+/**
+ * Denied on every HTML document (MJ-016). Only hardware and sensor features
+ * nothing in the app or its embeds uses: the SEP-1865 sandbox grants (camera,
+ * microphone, geolocation, clipboard-write) and media features (fullscreen,
+ * autoplay, payment, picture-in-picture) are deliberately UNLISTED, so the
+ * per-resource iframe `allow=` grants MCP Apps rely on keep their defaults.
+ * An unlisted feature is unaffected by this header; a listed one is denied
+ * for the document and every descendant iframe, which is why only
+ * never-used features may appear here.
+ */
+export const DOCUMENT_PERMISSIONS_POLICY = [
+  "accelerometer=()",
+  "ambient-light-sensor=()",
+  "bluetooth=()",
+  "gyroscope=()",
+  "hid=()",
+  "idle-detection=()",
+  "local-fonts=()",
+  "magnetometer=()",
+  "midi=()",
+  "serial=()",
+  "screen-wake-lock=()",
+  "usb=()",
+  "window-management=()",
+].join(", ");
 
 const DEFAULT_WORKOS_API_HOSTNAME = "api.workos.com";
 
@@ -140,6 +167,9 @@ function isHtmlDocument(res: Response): boolean {
 
 function setDocumentPolicies(headers: Headers, hosted: boolean): void {
   headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
+  if (!headers.has("Permissions-Policy")) {
+    headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+  }
   if (hosted) {
     headers.set(
       "Content-Security-Policy-Report-Only",
