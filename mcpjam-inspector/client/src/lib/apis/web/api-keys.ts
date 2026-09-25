@@ -90,6 +90,43 @@ export async function listOrganizationApiKeys(
   };
 }
 
+/**
+ * Whether the signed-in user may create a key in one organization: their role
+ * there, and the organization's setting for who may create keys (owners and
+ * admins unless it allows members; MJ-010).
+ */
+export interface ApiKeyMintEligibility {
+  /**
+   * `null` when the server could not say. Creating is then simply attempted:
+   * the server makes the same check when the key is created.
+   */
+  mintAllowed: boolean | null;
+  /** The lowest role that may create keys there, when known. */
+  mintMinimumRole: "member" | "admin" | null;
+}
+
+export async function getApiKeyMintEligibility(
+  organizationId: string,
+): Promise<ApiKeyMintEligibility> {
+  const response = await authFetch(
+    `/api/web/api-keys/mint-eligibility?organizationId=${encodeURIComponent(organizationId)}`,
+    { method: "GET" },
+  );
+  if (!response.ok) await parseError(response);
+  const body = (await response.json()) as {
+    mintAllowed?: unknown;
+    mintMinimumRole?: unknown;
+  };
+  return {
+    mintAllowed:
+      typeof body?.mintAllowed === "boolean" ? body.mintAllowed : null,
+    mintMinimumRole:
+      body?.mintMinimumRole === "member" || body?.mintMinimumRole === "admin"
+        ? body.mintMinimumRole
+        : null,
+  };
+}
+
 export async function createApiKey(args: {
   name: string;
   /** MCPJam organization id (Convex) the key acts inside. Required. */
