@@ -3,6 +3,7 @@ import {
   isScoreRunnerBusy,
   SCORE_PREVIEW_DIMENSIONS,
   scoreRunnerBusyLabel,
+  scoreRunnerCopyStage,
   scoreRunnerHeadline,
   scoreRunnerLead,
 } from "../score-runner-view-model";
@@ -38,8 +39,24 @@ describe("score runner view model", () => {
       "Where should we send the scorecard?",
     );
     expect(scoreRunnerLead("email")).toBe(
-      "We'll email a hosted page with the overall score, five dimensions, and the check ledger.",
+      "We'll email you a hosted page with the overall score with breakdowns in each category.",
     );
     expect(isScoreRunnerBusy("email")).toBe(false);
+  });
+
+  it("uses scanning copy while the run is in flight", () => {
+    expect(scoreRunnerCopyStage("preparing")).toBe("scanning");
+    expect(scoreRunnerCopyStage("running")).toBe("scanning");
+    expect(scoreRunnerHeadline("running")).toBe("Scanning your MCP server");
+    expect(scoreRunnerLead("preparing")).toBe(
+      "Preparing your results shortly.",
+    );
+  });
+
+  it("uses delivery copy on the finished frame", () => {
+    expect(scoreRunnerHeadline("done")).toBe("Your scorecard is on its way.");
+    expect(scoreRunnerLead("done")).toBe(
+      "Find it in your inbox, or open the hosted report in the browser.",
+    );
   });
 });
