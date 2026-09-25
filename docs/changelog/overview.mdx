@@ -117,7 +117,7 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 - **Shared session threads now render MCP App widgets live** — when viewing a shared usage thread, MCP App tool calls now render as full interactive widgets instead of static placeholders, matching the experience in the Playground and swarm session viewer.
 
-- **Swarm run Sessions tab no longer shows project-wide session metrics** — the session metrics strip (session count, tool error rate, latency, tokens) is hidden when the Sessions tab is scoped to a specific run. The strip continues to appear on the top-level Sessions tab where it reflects the full project or persona scope.
+- **Swarm run Sessions tab session metrics are scoped to the run** — the session metrics strip (session count, tool error rate, latency, tokens) now reports the cohort of the run you are viewing, not every swarm session in the project. The strip appears on both the run Sessions tab and the top-level Sessions tab; on the top-level tab it continues to reflect the full project or persona scope.
 
 ### 2026-09-16
 
