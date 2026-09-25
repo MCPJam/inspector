@@ -1302,10 +1302,7 @@ export function OrganizationBillingSection({
                 <div className="px-4 pb-5 sm:px-6">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                        Compare plans
-                      </p>
-                      <CardTitle className="text-base font-semibold leading-snug sm:text-lg">
+                      <CardTitle className="text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
                         {planCatalog?.plans.pro
                           ? "Compare plans"
                           : "Compare Free vs Team"}
