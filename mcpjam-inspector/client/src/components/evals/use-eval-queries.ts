@@ -37,9 +37,7 @@ import { useRunsIterations } from "./use-runs-iterations";
  */
 const BENCHMARK_SOURCE = "benchmark";
 
-export function isBenchmarkOwned(row: {
-  source?: string | undefined;
-}): boolean {
+function isBenchmarkOwned(row: { source?: string | undefined }): boolean {
   return row.source === BENCHMARK_SOURCE;
 }
 
@@ -271,11 +269,5 @@ export function useEvalQueries({
     isSuiteRunsLoading,
     enableOverviewQuery,
     enableSuiteDetailsQuery,
-    /**
-     * The args the overview subscription runs with, or `null` while it is
-     * skipped. Exposed so a caller about to act on "this suite is not in the
-     * overview" can re-ask the SAME question at a fresh timestamp first.
-     */
-    suiteOverviewArgs: enableOverviewQuery ? suiteOverviewArgs : null,
   };
 }

@@ -16,9 +16,6 @@ const mocks = vi.hoisted(() => ({
     current: { type: "suite-overview" as const, suiteId: "suite-a" },
   },
   useEvalQueries: vi.fn(),
-  // One-shot Convex reads. Controllable so a spec can answer the fresh
-  // overview re-check the suite redirect makes before bouncing.
-  convexQuery: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   toSuiteOverview: vi.fn(),
   toTestEdit: vi.fn(),
@@ -74,7 +71,7 @@ vi.mock("convex/react", () => ({
     isAuthenticated: mocks.isAuthenticated,
     isLoading: false,
   }),
-  useConvex: () => ({ query: mocks.convexQuery }),
+  useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
   useQuery: (...args: unknown[]) => mocks.useQuery(...args),
   useMutation: () => vi.fn().mockResolvedValue({ _id: "stub-id" }),
   usePaginatedQuery: () => ({
@@ -266,9 +263,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
   },
 }));
 
-// Partial: the suite redirect also reads `isBenchmarkOwned` from here.
-vi.mock("../evals/use-eval-queries", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../evals/use-eval-queries")>()),
+vi.mock("../evals/use-eval-queries", () => ({
   useEvalQueries: (...args: unknown[]) => mocks.useEvalQueries(...args),
 }));
 
@@ -368,7 +363,6 @@ function withCiOwnedSuiteA() {
 describe("EvaluateTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.convexQuery.mockResolvedValue([]);
     mocks.isDirectGuest = false;
     mocks.isAuthenticated = true;
     // Default OFF, matching `useFeatureFlagEnabled`'s own "still loading"
@@ -874,55 +868,59 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it("does not bounce a just-created suite the cached overview hasn't caught up to", async () => {
+  it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
     // "Promote to test case" into a NEW suite runs as an action; its result
     // can arrive before the overview subscription's update, so the page
-    // mounts on an overview that does not list the suite yet.
+    // mounts on an overview that does not list the suite yet — while the
+    // suite's own query is still in flight.
     mocks.route.current = {
       type: "test-edit",
       suiteId: "new-suite",
       testId: "case-1",
     } as any;
+    let caughtUp = false;
     mocks.useEvalQueries.mockImplementation(
-      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
-        ...makeQueryState(selectedSuiteId),
-        suiteOverviewArgs: { projectId: "ws-1" },
-      }),
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (caughtUp) {
+          const created = makeSuiteEntry([], "new-suite");
+          const sortedSuites = [...state.sortedSuites, created];
+          const selectedSuiteEntry =
+            selectedSuiteId === "new-suite" ? created : null;
+          return {
+            ...state,
+            suiteOverview: sortedSuites,
+            sortedSuites,
+            selectedSuiteEntry,
+            selectedSuite: selectedSuiteEntry?.suite ?? null,
+            suiteDetails: selectedSuiteEntry
+              ? { testCases: [], iterations: [] }
+              : undefined,
+            isSuiteDetailsLoading: false,
+          };
+        }
+        return {
+          ...state,
+          // The stale overview: no "new-suite". Its own query has not
+          // answered yet.
+          isSuiteDetailsLoading: selectedSuiteId === "new-suite",
+        };
+      },
     );
-    mocks.convexQuery.mockResolvedValue([makeSuiteEntry([], "new-suite")]);
 
-    render(<EvaluateTab projectId="ws-1" />);
-
-    await waitFor(() =>
-      expect(mocks.convexQuery).toHaveBeenCalledWith(
-        "testSuites:getTestSuitesOverview",
-        { projectId: "ws-1" },
-      ),
-    );
-    await Promise.resolve();
+    const { rerender } = render(<EvaluateTab projectId="ws-1" />);
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
       { type: "list" },
       { replace: true },
     );
-  });
 
-  it("still bounces a suite the fresh overview does not have either", async () => {
-    mocks.route.current = { type: "suite-overview", suiteId: "missing-suite" };
-    mocks.useEvalQueries.mockImplementation(
-      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
-        ...makeQueryState(selectedSuiteId),
-        suiteOverviewArgs: { projectId: "ws-1" },
-      }),
-    );
-    mocks.convexQuery.mockResolvedValue([makeSuiteEntry([], "suite-a")]);
-
-    render(<EvaluateTab projectId="ws-1" />);
-
-    await waitFor(() =>
-      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
-        { type: "list" },
-        { replace: true },
-      ),
+    // The suite's query answers in the same transition that brings the
+    // overview up to date.
+    caughtUp = true;
+    rerender(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
     );
   });
 
