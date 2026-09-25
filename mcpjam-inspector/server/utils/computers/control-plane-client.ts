@@ -97,16 +97,19 @@ export function computerUnavailableError(
     ...(failure.code ? { code: failure.code } : {}),
     ...(failure.error ? { detail: redactForLog(failure.error) } : {}),
   });
-  return `Computer unavailable: ${computerUnavailableReason(failure)}`;
+  return `Computer unavailable: ${computerUnavailableReason(failure, source)}`;
 }
 
-function computerUnavailableReason({
-  status,
-  code,
-}: {
-  status: number;
-  code?: string;
-}): string {
+function computerUnavailableReason(
+  {
+    status,
+    code,
+  }: {
+    status: number;
+    code?: string;
+  },
+  source: string,
+): string {
   if (code === "at_capacity" || status === 503) {
     return "computers are at capacity right now. Try again in a moment.";
   }
@@ -123,7 +126,11 @@ function computerUnavailableReason({
     case 0:
       return "the computers service could not be reached.";
     case 401:
-      return "sign in again and retry.";
+      // sandbox-info is gated on this server's own credential, which signing
+      // in again cannot repair.
+      return source === "sandbox-info"
+        ? "the computers service returned an error."
+        : "sign in again and retry.";
     case 403:
       return "you do not have access to this computer.";
     case 404:

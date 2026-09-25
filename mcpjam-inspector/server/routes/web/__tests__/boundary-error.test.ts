@@ -105,6 +105,19 @@ describe("web boundary errors", () => {
     expect(result.status).toBe(403);
     expect(result.message).toBe("Not a member of this project");
   });
+
+  it.each(["", "  \n"])(
+    "answers an authorization refusal with a blank message (%j) with the fallback copy",
+    (message) => {
+      const result = mapWebBoundaryError(
+        Object.assign(new Error("Uncaught ConvexError"), {
+          data: { kind: "forbidden", message },
+        }),
+      );
+      expect(result.status).toBe(403);
+      expect(result.message).toBe("You do not have permission to do that.");
+    },
+  );
 });
 
 describe("handleRoute errors", () => {

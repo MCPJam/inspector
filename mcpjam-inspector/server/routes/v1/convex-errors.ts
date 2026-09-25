@@ -312,8 +312,11 @@ export function translateConvexWriteError(
 
   const data = convexErrorData(error);
   const code = typeof data?.code === "string" ? data.code : undefined;
+  // A blank message is no copy: every branch then uses its own fallback.
   const structuredMessage =
-    typeof data?.message === "string" ? data.message : undefined;
+    typeof data?.message === "string" && data.message.trim()
+      ? data.message
+      : undefined;
   const kind = typeof data?.kind === "string" ? data.kind : undefined;
 
   // ── The eval tier denial (mcpjam-backend lib/evalPermissions.ts) ─────────
