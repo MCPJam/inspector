@@ -103,8 +103,19 @@ function statusLineFromLogs(
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const exchange = isPlainRecord(event) ? event.exchange : undefined;
-    const response = isPlainRecord(exchange) ? exchange.response : undefined;
-    if (!isPlainRecord(response)) continue;
+    if (!isPlainRecord(exchange)) continue;
+    const response = isPlainRecord(exchange.response)
+      ? exchange.response
+      : undefined;
+    if (!response) {
+      // The last exchange never got an answer (rejected fetch — the SDK logs
+      // it without a response). An EARLIER answer's status must not be
+      // attributed to this failure; the caller reports the uniform transport
+      // message instead. Completing a reason phrase for a status the error
+      // itself carries may keep scanning back.
+      if (status === undefined) return undefined;
+      continue;
+    }
     const logged = parseHttpStatus(response.status);
     if (logged !== undefined && (status === undefined || logged === status)) {
       return { status: logged, statusText: response.statusText };

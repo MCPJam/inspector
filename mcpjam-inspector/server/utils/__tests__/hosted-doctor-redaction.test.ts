@@ -1464,4 +1464,41 @@ describe("hosted connection failure logs", () => {
     expect(exchange.response.statusText.length).toBeLessThanOrEqual(64);
     expect(JSON.stringify(projected)).not.toMatch(/UNEXPECTED_MARKER/);
   });
+
+  it("does not attribute an earlier answer's status to a later failed exchange", async () => {
+    const { describeHostedConnectFailure } = await import(
+      "../hosted-connect-failure.js"
+    );
+    const exchangeEvent = (
+      response: { status: number; statusText: string } | undefined,
+    ) => ({
+      eventId: "event",
+      serverId: "srv_1",
+      serverName: "Fixture",
+      timestamp: "2026-09-25T00:00:00.000Z",
+      exchange: {
+        serverId: "srv_1",
+        request: { method: "POST", url: "https://mcp.example.test/mcp" },
+        ...(response ? { response } : { transportError: "fetch failed" }),
+        durationMs: 4,
+      },
+    });
+
+    // initialize answered 200; the next request's fetch rejected. The failure
+    // is the transport's, not the 200's.
+    const failure = describeHostedConnectFailure(new Error("fetch failed"), {
+      _httpLogs: [
+        exchangeEvent({ status: 200, statusText: "OK" }),
+        exchangeEvent(undefined),
+      ],
+    });
+    expect(failure.message).not.toContain("200");
+
+    // A 200 that IS the last answer is still reported as not-MCP.
+    const answered = describeHostedConnectFailure(new Error("not mcp"), {
+      _httpLogs: [exchangeEvent({ status: 200, statusText: "OK" })],
+    });
+    expect(answered.message).toContain("200");
+    expect(answered.message).toContain("not with a valid MCP response");
+  });
 });
