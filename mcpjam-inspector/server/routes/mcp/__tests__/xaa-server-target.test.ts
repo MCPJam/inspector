@@ -212,6 +212,7 @@ describe("server-target /proxy/token", () => {
     // and the token endpoint is only discoverable from that issuer's metadata.
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",
+      targetEnforced: true,
       clientId: "stored-client-id",
       serverUrl: "https://stored-server.example.com/mcp",
       xaaAuthzIssuer: null,
@@ -289,6 +290,7 @@ describe("server-target /proxy/token", () => {
   it("prefers the stored xaaAuthzIssuer over the server URL for discovery", async () => {
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",
+      targetEnforced: true,
       clientId: "stored-client-id",
       serverUrl: "https://stored-server.example.com",
       xaaAuthzIssuer: "https://issuer.example.com",
@@ -343,6 +345,7 @@ describe("server-target /proxy/token", () => {
     // family: CDN edges replace those bodies with a branded error page.
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",
+      targetEnforced: true,
       clientId: "stored-client-id",
       serverUrl: "https://stored-server.example.com",
       xaaAuthzIssuer: "https://stored-issuer.example.com",
@@ -420,6 +423,7 @@ describe("server-target /proxy/token", () => {
   function pathScopedResolver(allow: boolean) {
     return vi.fn(async () => ({
       clientSecret: "stored-secret",
+      targetEnforced: true,
       clientId: "stored-client-id",
       serverUrl: "https://mcp.example.com/mcp",
       xaaAuthzIssuer: "https://env.example.com/resources/res_1",
@@ -536,6 +540,7 @@ describe("server-target /proxy/token", () => {
   it("returns 404 when no authorization server can be discovered", async () => {
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",
+      targetEnforced: true,
       clientId: "stored-client-id",
       serverUrl: "https://stored-server.example.com",
       xaaAuthzIssuer: null,

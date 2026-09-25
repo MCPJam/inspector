@@ -387,11 +387,13 @@ export async function resolveServerTarget(deps: {
     );
   }
 
-  // A secret released for a declared target must say the backend checked it.
-  // A response without that acknowledgement came from a backend that did not
+  // A released secret must say the backend checked where it is going: the
+  // returned `serverUrl` (and the declared target, when there is one). A
+  // response without that acknowledgement came from a backend that did not
   // make the check, and a secret it released may have been saved for another
-  // origin — so it is not spent. Fails closed.
-  if (deps.targetUrl && resolved.clientSecret && !resolved.targetEnforced) {
+  // origin — so it is not spent, with or without a declared target. Fails
+  // closed.
+  if (resolved.clientSecret && !resolved.targetEnforced) {
     throw new WebRouteError(
       503,
       ErrorCode.SERVER_UNREACHABLE,

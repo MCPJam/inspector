@@ -657,6 +657,8 @@ interface CreateXaaRouterOptions {
     projectId: string;
     bearerToken: string;
     clientIp?: string | null;
+    /** The resource the secret is requested for; forwarded to the reveal. */
+    targetUrl?: string;
   }) => Promise<ServerClientSecretResult>;
   // Confirms the caller may mint under a scoped issuer path before minting.
   // Two flavors, selected by issuerKind: "org" (/o/:orgId/...) requires org
