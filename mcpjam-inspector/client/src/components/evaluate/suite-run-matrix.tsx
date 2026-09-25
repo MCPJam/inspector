@@ -7,6 +7,7 @@ import {
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import type { ModelSelection } from "@/components/environment-composer/environment-stack";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { EvalTargetMatrix } from "./eval-target-matrix";
@@ -26,6 +27,15 @@ type PlannedCombination = {
   stack: Parameters<
     ReturnType<typeof useEnsureAdhocEnvironments>
   >[0]["stacks"][number];
+  /**
+   * With backend derivation: build this cell server-side from the stored
+   * source (every pin kept) instead of composing `stack`.
+   */
+  derive?: {
+    sourceEnvironmentId: string;
+    expectedRevision: number;
+    overrides: { hostId: string; modelId: string | null };
+  };
   /** Why this cell cannot start; the dialog shows the first one. */
   blocked?: string;
   /** No server group and no plugin pin: the run would connect no servers. */
@@ -74,6 +84,13 @@ export function planRunMatrix(
   suite: SuiteRunReviewProps["suite"],
   environments: Environments,
   selections: Record<string, ModelSelection>,
+  options: {
+    /**
+     * The backend derives one-run cells from the stored source
+     * (`environmentDerivation`), so a pinned setup no longer blocks them.
+     */
+    lossless?: boolean;
+  } = {},
 ): PlannedCombination[] {
   const attached = (suite.environmentIds ?? []).map((id) => {
     const environment = environments.find((item) => item.environmentId === id);
@@ -116,6 +133,18 @@ export function planRunMatrix(
           },
         ];
       if (choice.kind === "none") return [{ stack: bare, missingGroup: true }];
+      if (options.lossless)
+        return [
+          {
+            stack: bare,
+            derive: {
+              sourceEnvironmentId: choice.source.environmentId,
+              expectedRevision: choice.source.revision,
+              overrides: { hostId, modelId: modelId ?? null },
+            },
+            missingGroup: lacksServerSource(choice.composition),
+          },
+        ];
       const reason = unpreservableReason(choice.composition);
       if (reason)
         return [
@@ -155,6 +184,10 @@ export function ConfiguredSuiteRunReview(
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels } = useAvailableModels({ projectId });
   const { capable, pending } = useEvalComposeCapable(projectId);
+  // Until the probe answers, plan as an older backend would: a cell the
+  // browser can't copy stays blocked rather than being composed lossily.
+  const capabilities = useEnvironmentCapabilities(projectId);
+  const lossless = capabilities?.environmentDerivation === true;
   const ensure = useEnsureAdhocEnvironments();
   const convex = useConvex();
   const [draft, setDraft] = useState<Record<string, ModelSelection> | null>(
@@ -165,7 +198,9 @@ export function ConfiguredSuiteRunReview(
     (id) =>
       !environments.some((environment) => environment.environmentId === id),
   );
-  const plan = unresolved ? [] : planRunMatrix(suite, environments, selections);
+  const plan = unresolved
+    ? []
+    : planRunMatrix(suite, environments, selections, { lossless });
   const blockedCell = plan.find((item) => item.blocked)?.blocked ?? null;
   // Start is refused for any cell that would connect no servers: a new cell
   // copying a group-less setup, or an attached environment that has none.
@@ -255,16 +290,33 @@ export function ConfiguredSuiteRunReview(
             );
           }
         }
-        const resolved = missing.length
+        // One-run cells never touch the suite: derived ones are built from
+        // their stored source, composed ones from their stack.
+        const derived = missing.filter((item) => item.derive);
+        const composed = missing.filter((item) => !item.derive);
+        const derivedRows = derived.length
+          ? ((await convex.mutation(
+              "projectEnvironments:deriveEnvironments" as any,
+              {
+                projectId,
+                derivations: derived.map((item) => item.derive),
+              },
+            )) as Array<{ environment?: { environmentId?: string } }>)
+          : [];
+        const resolved = composed.length
           ? await ensure({
               projectId,
-              stacks: missing.map((item) => item.stack),
+              stacks: composed.map((item) => item.stack),
             })
           : [];
-        let next = 0;
-        const environmentIds = plan.map(
-          (item) =>
-            item.environmentId ?? resolved[next++]?.environment.environmentId,
+        let nextDerived = 0;
+        let nextComposed = 0;
+        const environmentIds = plan.map((item) =>
+          item.environmentId
+            ? item.environmentId
+            : item.derive
+              ? derivedRows[nextDerived++]?.environment?.environmentId
+              : resolved[nextComposed++]?.environment.environmentId,
         );
         if (environmentIds.some((id) => !id))
           throw new Error(

@@ -3,13 +3,19 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SuiteRunReview } from "../suite-run-review";
 import { planRunMatrix, seedRunMatrix } from "../suite-run-matrix";
 import type { EvalSuite, EvalCase } from "../../evals/types";
-const { ensure, query } = vi.hoisted(() => ({
+const { ensure, query, mutation, capabilities } = vi.hoisted(() => ({
   ensure: vi.fn(),
   query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
+  mutation: vi.fn(),
+  capabilities: { value: null as { environmentDerivation?: boolean } | null },
 }));
 vi.mock("convex/react", () => ({
-  useConvex: () => ({ query }),
+  useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+// The mount-time capabilities probe; `query` then only sees launch probes.
+vi.mock("@/hooks/use-environment-capabilities", () => ({
+  useEnvironmentCapabilities: () => capabilities.value,
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
@@ -172,6 +178,8 @@ beforeEach(() => {
   ensure.mockReset();
   query.mockReset();
   query.mockResolvedValue({ ephemeralEnvironmentLaunch: true });
+  mutation.mockReset();
+  capabilities.value = null;
 });
 
 it("launches saved pairings without a temporary-environment flag or capability probe", async () => {
@@ -300,4 +308,68 @@ it("launches a suite without environments through its own configuration", async 
   expect(launched.environmentIds).toBeUndefined();
   expect(options).not.toHaveProperty("ephemeralEnvironment");
   expect(ensure).not.toHaveBeenCalled();
+});
+
+it("derives a one-run cell from a pinned setup on the backend instead of blocking it", () => {
+  const pinned = [
+    {
+      ...environments[0],
+      revision: 6,
+      pluginVersionIds: ["pin"],
+      secretSelection: { mode: "explicit", secretIds: ["secret"] },
+    },
+  ];
+  const opus = {
+    claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
+  };
+  expect(planRunMatrix(suite, pinned, opus)[0].blocked).toMatch(
+    /pins plugin versions/,
+  );
+  const [cell] = planRunMatrix(suite, pinned, opus, { lossless: true });
+  expect(cell.blocked).toBeUndefined();
+  expect(cell.derive).toEqual({
+    sourceEnvironmentId: "env",
+    expectedRevision: 6,
+    overrides: { hostId: "claude", modelId: "opus" },
+  });
+});
+
+it("launches a derived cell without modifying the suite", async () => {
+  capabilities.value = { environmentDerivation: true };
+  mutation.mockResolvedValue([{ environment: { environmentId: "derived" } }]);
+  const onStart = vi.fn();
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={suite}
+      cases={cases}
+      environments={[{ ...environments[0], revision: 2 }]}
+      hostNamesById={new Map()}
+      onStart={onStart}
+      onClose={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Change model" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+  await waitFor(() =>
+    expect(onStart).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentIds: ["derived"] }),
+      { iterationOverride: 5, ephemeralEnvironment: true },
+    ),
+  );
+  expect(mutation).toHaveBeenCalledWith(
+    "projectEnvironments:deriveEnvironments",
+    {
+      projectId: "project",
+      derivations: [
+        {
+          sourceEnvironmentId: "env",
+          expectedRevision: 2,
+          overrides: { hostId: "claude", modelId: "opus" },
+        },
+      ],
+    },
+  );
+  expect(ensure).not.toHaveBeenCalled();
+  expect(suite.environmentIds).toEqual(["env"]);
 });

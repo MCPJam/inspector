@@ -1022,6 +1022,79 @@ describe("web routes — evals", () => {
     });
   });
 
+  describe("environment-scoped generation", () => {
+    const resolvedEnvironment = {
+      environmentRef: { environmentId: "env-1", name: "Prod", revision: 2 },
+      hostId: "host-env",
+      hostConfigId: "cfg-env",
+      effectiveModelId: "openai/gpt-5",
+      modelSource: "environment",
+      selectedServerIds: ["env-srv"],
+      effectiveServerIds: ["env-srv", "plugin-srv"],
+      servers: [
+        { serverId: "env-srv", name: "billing" },
+        { serverId: "plugin-srv", name: "acme" },
+      ],
+    };
+
+    it.each([
+      ["/api/web/evals/generate-tests", generateEvalTestsWithManagerMock],
+      [
+        "/api/web/evals/generate-negative-tests",
+        generateNegativeEvalTestsWithManagerMock,
+      ],
+    ])(
+      "%s connects the environment's servers, plugins included, whatever the body sent",
+      async (path, generateMock) => {
+        environmentQueryMock.mockResolvedValueOnce(resolvedEnvironment);
+        generateMock.mockResolvedValueOnce({ success: true, tests: [] });
+        const { app, token } = createEvalsTestApp();
+        const response = await postJson(
+          app,
+          path,
+          {
+            projectId: "project-1",
+            serverIds: ["browser-picked"],
+            environmentId: "env-1",
+          },
+          token,
+        );
+        expect(response.status).toBe(200);
+        expect(environmentQueryMock).toHaveBeenCalledWith(
+          "projectEnvironments:resolveEnvironmentForLaunch",
+          {
+            projectId: "project-1",
+            environmentId: "env-1",
+            serverSource: "environment_only",
+          },
+        );
+        expect(
+          Object.keys(managerConfigsMock.mock.calls[0]?.[0] ?? {}),
+        ).toEqual(["env-srv", "plugin-srv"]);
+        expect(generateMock.mock.calls[0]?.[1]).toEqual(
+          expect.objectContaining({
+            environmentId: "env-1",
+            serverIds: ["env-srv", "plugin-srv"],
+            serverNames: ["billing", "acme"],
+          }),
+        );
+      },
+    );
+
+    it("requires a project to resolve the environment", async () => {
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/generate-tests",
+        { serverIds: [], environmentId: "env-1" },
+        token,
+      );
+      expect(response.status).toBe(400);
+      expect(environmentQueryMock).not.toHaveBeenCalled();
+      expect(generateEvalTestsWithManagerMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects direct guest compare quick run bodies", async () => {
     const { app } = createEvalsTestApp();
     const { token } = issueGuestToken();

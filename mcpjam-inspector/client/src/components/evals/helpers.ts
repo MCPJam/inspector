@@ -1604,18 +1604,24 @@ export function suiteEnvironmentTargets(suite: {
 /**
  * Whether a run of this suite would connect any server. An environment suite
  * answers from its environments (a group's servers, or a pinned plugin that
- * contributes some); a legacy suite from its legacy fields.
+ * contributes some), never from its legacy fields, which its runs do not
+ * read; a legacy suite answers from those fields. An environment suite whose
+ * environments this backend does not describe is not blocked here: the launch
+ * checks its servers itself.
  */
 export function suiteHasRunnableServers(
   suite: Parameters<typeof getEffectiveSuiteServers>[0] & {
     environmentIds?: string[];
   },
 ): boolean {
-  const targets = suiteEnvironmentTargets(suite);
-  if (targets) {
-    return targets.some(
-      (target) =>
-        target.serverNames.length > 0 || target.pluginVersionCount > 0,
+  if (suite.environmentIds?.length) {
+    const targets = suiteEnvironmentTargets(suite);
+    return (
+      targets === null ||
+      targets.some(
+        (target) =>
+          target.serverNames.length > 0 || target.pluginVersionCount > 0,
+      )
     );
   }
   return getEffectiveSuiteServers(suite).length > 0;
@@ -1677,4 +1683,121 @@ export function generationEnvironmentTarget(
     return { kind: "environment", environmentId: runnable[0]!.environmentId };
   }
   return { kind: "choose", targets: runnable };
+}
+
+/**
+ * The environments a person picks between to generate cases for this suite,
+ * or `null` when there is nothing to pick: a legacy suite, a single runnable
+ * environment, or several that connect the same servers.
+ */
+export function generationEnvironmentChoices(suite: {
+  environmentIds?: string[];
+  environmentTargets?: EvalSuite["environmentTargets"];
+}): NonNullable<EvalSuite["environmentTargets"]> | null {
+  const target = generationEnvironmentTarget(suite);
+  return target.kind === "choose" ? target.targets : null;
+}
+
+/**
+ * The environment generation should send for this suite, given the saved
+ * pick: the picked (or only) environment, or `undefined` for a legacy suite.
+ * A suite that still needs a pick also answers `undefined`; the server then
+ * refuses the ambiguity instead of guessing.
+ */
+export function generationEnvironmentId(
+  suite: {
+    environmentIds?: string[];
+    environmentTargets?: EvalSuite["environmentTargets"];
+  },
+  preferredEnvironmentId?: string | null,
+): string | undefined {
+  const target = generationEnvironmentTarget(suite, preferredEnvironmentId);
+  return target.kind === "environment" ? target.environmentId : undefined;
+}
+
+type EnvironmentTarget = NonNullable<EvalSuite["environmentTargets"]>[number];
+
+/** A person-readable name for one of a suite's environments. */
+export function environmentTargetLabel(target: EnvironmentTarget): string {
+  if (target.name?.trim()) return target.name.trim();
+  return [target.hostName ?? "Client", target.modelId]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** What an environment connects, for a picker's second line. */
+export function environmentTargetServersLabel(
+  target: EnvironmentTarget,
+): string {
+  const plugins =
+    target.pluginVersionCount > 0
+      ? `${target.pluginVersionCount} plugin${
+          target.pluginVersionCount === 1 ? "" : "s"
+        }`
+      : "";
+  return (
+    [target.serverNames.join(", "), plugins].filter(Boolean).join(" + ") ||
+    "No servers"
+  );
+}
+
+/**
+ * Resolve the environment an agent's generate request names (its id, or its
+ * name as shown, ignoring case) for this suite. A legacy suite takes no
+ * environment; an environment suite whose environments connect different
+ * servers needs one, from the request or the person's saved pick.
+ */
+export function resolveGenerationEnvironmentRequest(
+  suite: {
+    environmentIds?: string[];
+    environmentTargets?: EvalSuite["environmentTargets"];
+  },
+  reference: string | undefined,
+  savedEnvironmentId: string | undefined,
+): { environmentId?: string } | { error: string } {
+  const requested = reference?.trim();
+  if (!suite.environmentIds?.length) {
+    return requested
+      ? { error: "it does not run environments. Omit 'environment'." }
+      : {};
+  }
+  const targets = suiteEnvironmentTargets(suite) ?? [];
+  const list = targets.map(environmentTargetLabel).join(", ");
+  let preferred = savedEnvironmentId;
+  if (requested) {
+    const needle = requested.toLowerCase();
+    const match =
+      targets.find((target) => target.environmentId === requested) ??
+      targets.find(
+        (target) => environmentTargetLabel(target).toLowerCase() === needle,
+      );
+    if (!match) {
+      return {
+        error: `it has no environment "${requested}". Its environments: ${
+          list || "none"
+        }.`,
+      };
+    }
+    if (match.serverNames.length === 0 && match.pluginVersionCount === 0) {
+      return {
+        error: `its environment "${environmentTargetLabel(
+          match,
+        )}" has no servers. Pick a server group for it in suite settings.`,
+      };
+    }
+    preferred = match.environmentId;
+  }
+  const target = generationEnvironmentTarget(suite, preferred);
+  if (target.kind === "environment") {
+    return { environmentId: target.environmentId };
+  }
+  if (target.kind === "choose") {
+    return {
+      error: `its environments connect different servers. Name the one to generate for with 'environment': ${target.targets
+        .map(environmentTargetLabel)
+        .join(", ")}.`,
+    };
+  }
+  if (target.kind === "none") return { error: target.reason };
+  return {};
 }

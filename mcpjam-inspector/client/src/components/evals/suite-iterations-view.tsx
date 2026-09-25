@@ -50,6 +50,7 @@ import {
   buildHostNamesById,
   compareRunsBySequence,
   evalSuitePinsSandboxImage,
+  generationEnvironmentChoices,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -1849,6 +1850,7 @@ export function SuiteIterationsView({
           onOpenChange={setImportOpen}
           projectId={projectId}
           suiteId={suite._id}
+          environmentChoices={generationEnvironmentChoices(suite)}
         />
       )}
       {/* Header */}

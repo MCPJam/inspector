@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AmbiguousSuiteTemplateError,
   SuiteClientsSettings,
   planSuiteClients,
 } from "../suite-clients-settings";
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   error: vi.fn(),
   environments: [] as ProjectEnvironmentView[],
+  capabilities: null as { environmentDerivation?: boolean } | null,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -28,6 +30,9 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
   useEvalComposeCapable: () => ({ capable: true, pending: false }),
+}));
+vi.mock("@/hooks/use-environment-capabilities", () => ({
+  useEnvironmentCapabilities: () => mocks.capabilities,
 }));
 vi.mock("@/lib/toast", () => ({ toast: { error: mocks.error } }));
 vi.mock("@/components/hosts/server-picker", () => ({
@@ -97,6 +102,7 @@ const selections = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.environments = envs;
+  mocks.capabilities = null;
   mocks.ensure.mockResolvedValue([
     { environment: { environmentId: "new-env" } },
   ]);
@@ -399,5 +405,188 @@ describe("SuiteClientsSettings", () => {
     render(<SuiteClientsSettings suite={suite} projectId="project" />);
     expect(screen.getByRole("button", { name: "Change model" })).toBeDisabled();
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+});
+
+describe("planSuiteClients with backend derivation", () => {
+  const pinned = [
+    {
+      ...envs[0],
+      revision: 4,
+      pluginVersionIds: ["pin"],
+      secretSelection: { mode: "explicit", secretIds: ["secret"] },
+    },
+    { ...envs[1], revision: 2 },
+  ] as ProjectEnvironmentView[];
+
+  it("derives a new model from the stored setup instead of refusing its pins", () => {
+    expect(
+      planSuiteClients(suite, pinned, selections, {
+        group: "servers",
+        lossless: true,
+      }),
+    ).toEqual([
+      {
+        derive: {
+          sourceEnvironmentId: "chat-env",
+          expectedRevision: 4,
+          overrides: {
+            hostId: "chat",
+            modelId: "new-model",
+            serverAttachmentId: "servers",
+          },
+        },
+      },
+      { environmentId: "cursor-env" },
+    ]);
+  });
+
+  it("moves each environment to a new group as a replacement of itself", () => {
+    const plan = planSuiteClients(
+      suite,
+      pinned,
+      {
+        chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+        cursor: selections.cursor,
+      },
+      { group: "new-group", lossless: true },
+    );
+    expect(plan).toEqual([
+      {
+        derive: {
+          sourceEnvironmentId: "chat-env",
+          expectedRevision: 4,
+          overrides: { serverAttachmentId: "new-group" },
+          replaces: "chat-env",
+        },
+      },
+      {
+        derive: {
+          sourceEnvironmentId: "cursor-env",
+          expectedRevision: 2,
+          overrides: { serverAttachmentId: "new-group" },
+          replaces: "cursor-env",
+        },
+      },
+    ]);
+  });
+
+  it("asks which setup to copy when the candidates differ, then derives from the pick", () => {
+    const differing = [
+      pinned[0],
+      { ...pinned[1], serverAttachmentId: "elsewhere" },
+    ] as ProjectEnvironmentView[];
+    const newClient = {
+      chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+      cursor: selections.cursor,
+      codex: { includeClientDefaults: true, explicitModelIds: [] },
+    };
+    let caught: unknown;
+    try {
+      planSuiteClients(suite, differing, newClient, { lossless: true });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AmbiguousSuiteTemplateError);
+    expect(
+      (caught as AmbiguousSuiteTemplateError).candidates.map(
+        (row) => row.environmentId,
+      ),
+    ).toEqual(["chat-env", "cursor-env"]);
+
+    const plan = planSuiteClients(suite, differing, newClient, {
+      lossless: true,
+      sourceEnvironmentId: "cursor-env",
+    });
+    expect(plan.at(-1)).toEqual({
+      derive: {
+        sourceEnvironmentId: "cursor-env",
+        expectedRevision: 2,
+        // A client-default cell clears the source's model.
+        overrides: { hostId: "codex", modelId: null },
+      },
+    });
+  });
+
+  it("still refuses a derived environment that would have no servers", () => {
+    const groupless = [
+      { ...pinned[0], serverAttachmentId: undefined, pluginVersionIds: [] },
+      { ...pinned[1], serverAttachmentId: undefined },
+    ] as ProjectEnvironmentView[];
+    expect(() =>
+      planSuiteClients(suite, groupless, selections, { lossless: true }),
+    ).toThrow(/Pick a server group/);
+  });
+});
+
+describe("SuiteClientsSettings with backend derivation", () => {
+  it("saves the edit in one derive-and-repoint call", async () => {
+    mocks.capabilities = { environmentDerivation: true };
+    mocks.environments = [
+      { ...envs[0], revision: 3, pluginVersionIds: ["pin"] },
+      { ...envs[1], revision: 1 },
+    ] as ProjectEnvironmentView[];
+    render(<SuiteClientsSettings suite={suite} projectId="project" />);
+    fireEvent.click(screen.getByText("Change model"));
+    await waitFor(() =>
+      expect(mocks.save).toHaveBeenCalledWith({
+        suiteId: "suite",
+        expectedEnvironmentIds: ["chat-env", "cursor-env"],
+        targets: [
+          {
+            derive: {
+              sourceEnvironmentId: "chat-env",
+              expectedRevision: 3,
+              overrides: {
+                hostId: "chat",
+                modelId: "new-model",
+                serverAttachmentId: "servers",
+              },
+            },
+          },
+          { keep: "cursor-env" },
+        ],
+      }),
+    );
+    expect(mocks.ensure).not.toHaveBeenCalled();
+  });
+
+  it("asks which setup a new model copies when the client's setups differ", async () => {
+    mocks.capabilities = { environmentDerivation: true };
+    const twoChats = {
+      ...suite,
+      environmentIds: ["chat-env", "chat-other", "cursor-env"],
+    } as EvalSuite;
+    mocks.environments = [
+      { ...envs[0], revision: 3 },
+      {
+        ...envs[0],
+        environmentId: "chat-other",
+        modelId: "gpt-mini",
+        computerEnvironmentId: undefined,
+        revision: 5,
+      },
+      { ...envs[1], revision: 1 },
+    ] as ProjectEnvironmentView[];
+    render(<SuiteClientsSettings suite={twoChats} projectId="project" />);
+    fireEvent.click(screen.getByText("Change model"));
+    expect(
+      await screen.findByTestId("suite-clients-template-choice"),
+    ).toBeTruthy();
+    expect(mocks.save).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText(/gpt-mini/));
+    fireEvent.click(screen.getByRole("button", { name: "Copy this setup" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(mocks.save.mock.calls[0][0].targets[0]).toEqual({
+      derive: {
+        sourceEnvironmentId: "chat-other",
+        expectedRevision: 5,
+        overrides: {
+          hostId: "chat",
+          modelId: "new-model",
+          serverAttachmentId: "servers",
+        },
+      },
+    });
   });
 });

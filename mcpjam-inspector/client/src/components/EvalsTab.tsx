@@ -36,8 +36,12 @@ import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
   aggregateSuite,
+  environmentTargetLabel,
   formatRunId,
+  generationEnvironmentTarget,
   getEffectiveSuiteServers,
+  resolveGenerationEnvironmentRequest,
+  suiteEnvironmentTargets,
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader } from "./evals/evals-header";
@@ -552,7 +556,41 @@ function EvalsTabContent({
   // agent's generateEvalTests command (any resolved suite): one
   // argument-building path into the SAME handleGenerateTests callback.
   const generateTestsForSuite = useCallback(
-    async (suite: EvalSuite) => {
+    async (suite: EvalSuite, environmentId?: string) => {
+      // Per-suite generation config from the "Generate" popover (count, mix,
+      // vary-user-styles). Defaults reproduce today's behavior, so the one-click
+      // Generate keeps working unchanged when the popover was never touched. A
+      // degenerate all-zero persisted mix falls back to default generation rather
+      // than sending an empty caseMix (mirrors the popover's total >= 1 guard).
+      const generateConfig = loadGenerateConfig(suite._id);
+      const generationOptions =
+        totalCases(generateConfig) >= 1
+          ? toGenerationOptions(generateConfig)
+          : undefined;
+      // An ENVIRONMENT suite generates against ONE environment's servers
+      // (its group plus pinned plugins), resolved server-side, never its
+      // legacy server fields or a union across environments that differ.
+      const environmentTarget = generationEnvironmentTarget(
+        suite,
+        environmentId ?? generateConfig.environmentId,
+      );
+      if (environmentTarget.kind === "none") {
+        toast.error(environmentTarget.reason);
+        return;
+      }
+      if (environmentTarget.kind === "choose") {
+        toast.error(
+          "This suite’s environments connect different servers. Choose the one to generate from with the arrow next to Generate.",
+        );
+        return;
+      }
+      if (environmentTarget.kind === "environment") {
+        await handlers.handleGenerateTests(suite._id, [], {
+          environmentId: environmentTarget.environmentId,
+          ...(generationOptions ? { generationOptions } : {}),
+        });
+        return;
+      }
       const suiteServers = getEffectiveSuiteServers(suite);
       if (suiteServers.length === 0) return;
       // Scope generation by the suite's saved server attachment when present.
@@ -568,16 +606,6 @@ function EvalsTabContent({
             resolvedServerNames: suiteAttachment.resolvedServerNames,
           }
         : undefined;
-      // Per-suite generation config from the "Generate" popover (count, mix,
-      // vary-user-styles). Defaults reproduce today's behavior, so the one-click
-      // Generate keeps working unchanged when the popover was never touched. A
-      // degenerate all-zero persisted mix falls back to default generation rather
-      // than sending an empty caseMix (mirrors the popover's total >= 1 guard).
-      const generateConfig = loadGenerateConfig(suite._id);
-      const generationOptions =
-        totalCases(generateConfig) >= 1
-          ? toGenerationOptions(generateConfig)
-          : undefined;
       await handlers.handleGenerateTests(suite._id, suiteServers, {
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
@@ -592,6 +620,21 @@ function EvalsTabContent({
   }, [generateTestsForSuite, selectedSuite]);
 
   const generateState = useMemo(() => {
+    // Environment suites: servers resolve server-side from the environment,
+    // so neither the legacy list nor the browser's connections gate this.
+    const environmentTarget = selectedSuite
+      ? generationEnvironmentTarget(selectedSuite)
+      : null;
+    if (environmentTarget?.kind === "none") {
+      return { canGenerate: false, disabledReason: environmentTarget.reason };
+    }
+    if (environmentTarget && environmentTarget.kind !== "legacy") {
+      return {
+        canGenerate: true,
+        disabledReason:
+          "Generate suggested cases from this suite’s environment servers. Open a case to run it when you are ready.",
+      };
+    }
     const suiteServers = selectedSuite
       ? getEffectiveSuiteServers(selectedSuite)
       : [];
@@ -840,7 +883,23 @@ function EvalsTabContent({
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite, "edit_config");
-        if (getEffectiveSuiteServers(entry.suite).length === 0) {
+        const environment = resolveGenerationEnvironmentRequest(
+          entry.suite,
+          payload.environment,
+          loadGenerateConfig(entry.suite._id).environmentId,
+        );
+        if ("error" in environment) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `Suite "${suiteDisplayName(entry.suite)}" can't generate cases: ${
+              environment.error
+            }`,
+          );
+        }
+        if (
+          !environment.environmentId &&
+          getEffectiveSuiteServers(entry.suite).length === 0
+        ) {
           throw createInspectorCommandClientError(
             "invalid_request",
             `Suite "${suiteDisplayName(entry.suite)}" has no servers attached — attach a client in the suite header before generating cases.`,
@@ -862,7 +921,9 @@ function EvalsTabContent({
         // kickoff (synchronous) and cleared when it settles, so a second
         // concurrent call can't double-bill before React state commits.
         agentGenerateInFlightRef.current.add(generateSuiteId);
-        void Promise.resolve(generateTestsForSuite(entry.suite)).finally(() => {
+        void Promise.resolve(
+          generateTestsForSuite(entry.suite, environment.environmentId),
+        ).finally(() => {
           agentGenerateInFlightRef.current.delete(generateSuiteId);
         });
         return {
@@ -935,6 +996,19 @@ function EvalsTabContent({
               name: suiteDisplayName(selectedSuite),
               caseCount: suiteDetails?.testCases.length ?? null,
               servers: getEffectiveSuiteServers(selectedSuite),
+              // Names the agent can pass as ui_generate_eval_tests'
+              // `environment` when they connect different servers.
+              ...(suiteEnvironmentTargets(selectedSuite)
+                ? {
+                    environments: suiteEnvironmentTargets(selectedSuite)!.map(
+                      (target) => ({
+                        id: target.environmentId,
+                        name: environmentTargetLabel(target),
+                        servers: target.serverNames,
+                      }),
+                    ),
+                  }
+                : {}),
             }
           : null,
         totalSuites: visibleSuites.length,

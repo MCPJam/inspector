@@ -144,7 +144,10 @@ vi.mock("@/lib/eval-route-url", () => ({
   useEvaluateRouteFromUrl: () => mocks.route.current,
 }));
 
-vi.mock("../evals/helpers", () => ({
+vi.mock("../evals/helpers", async (importOriginal) => ({
+  // The generation-target helpers are pure and read the suite passed in;
+  // the real ones keep a legacy suite (no environmentIds) on its old path.
+  ...(await importOriginal<typeof import("../evals/helpers")>()),
   aggregateSuite: () => null,
   // EvaluateTab's `generateState` memo and the agent bridge's generate handler
   // call this to compute the effective server set. Configurable so the
@@ -345,6 +348,54 @@ function withCiOwnedSuiteA() {
       });
       const sortedSuites = state.sortedSuites.map((entry) =>
         entry.suite._id === "suite-a" ? ciOwned : entry,
+      );
+      const selectedSuiteEntry =
+        sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
+        null;
+      return {
+        ...state,
+        suiteOverview: sortedSuites,
+        sortedSuites,
+        selectedSuiteEntry,
+        selectedSuite: selectedSuiteEntry?.suite ?? null,
+      };
+    },
+  );
+}
+
+/** Make "Suite suite-a" an environment suite whose environments differ. */
+function withMixedEnvironmentSuiteA() {
+  mocks.useEvalQueries.mockImplementation(
+    ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+      const state = makeQueryState(selectedSuiteId);
+      const base = makeSuiteEntry([], "suite-a");
+      const mixed = {
+        ...base,
+        suite: {
+          ...base.suite,
+          environmentIds: ["env-a", "env-b"],
+          environmentTargets: [
+            {
+              environmentId: "env-a",
+              hostName: "Claude",
+              modelId: "opus",
+              serverAttachmentId: "group-1",
+              serverNames: ["billing"],
+              pluginVersionCount: 0,
+            },
+            {
+              environmentId: "env-b",
+              hostName: "Cursor",
+              modelId: "sonnet",
+              serverAttachmentId: "group-2",
+              serverNames: ["search"],
+              pluginVersionCount: 0,
+            },
+          ],
+        },
+      };
+      const sortedSuites = state.sortedSuites.map((entry) =>
+        entry.suite._id === "suite-a" ? mixed : entry,
       );
       const selectedSuiteEntry =
         sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
@@ -1124,6 +1175,47 @@ describe("EvaluateTab", () => {
           "suite-a",
           ["server-a"],
           expect.objectContaining({ generationOptions: expect.anything() }),
+        );
+      });
+    });
+
+    it("generateEvalTests asks a mixed environment suite which environment to use", async () => {
+      withMixedEnvironmentSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: {
+          code: "invalid_request",
+          message: expect.stringMatching(/Claude · opus, Cursor · sonnet/),
+        },
+      });
+      expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    it("generateEvalTests generates for the named environment, not the legacy servers", async () => {
+      withMixedEnvironmentSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a", environment: "cursor · sonnet" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "generation_started", suiteId: "suite-a" },
+      });
+      await waitFor(() => {
+        expect(mocks.handleGenerateTests).toHaveBeenCalledWith(
+          "suite-a",
+          [],
+          expect.objectContaining({ environmentId: "env-b" }),
         );
       });
     });
