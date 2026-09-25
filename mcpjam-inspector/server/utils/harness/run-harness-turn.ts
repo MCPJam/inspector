@@ -92,6 +92,11 @@ import {
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  toolCallLookupFor,
+} from "../history-provenance.js";
+import {
   createSystemStreamFailureReporter,
   oncePerTurn,
 } from "../stream-failure-reporter.js";
@@ -719,6 +724,17 @@ export async function runHarnessTurn(
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
   const messageHistory: ModelMessage[] = [...messages];
+  // What this turn streams is signed as the server's own, as the emulated
+  // engine's turns are (MJ-009), so its replies stay in model context when
+  // the conversation continues on another engine. A no-op where nothing can
+  // be signed (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
   // Per-turn prompt index (user-message count − 1), computed from the inbound
@@ -3757,8 +3773,11 @@ export async function runHarnessTurn(
       // `onFinishEngine` never consumed the reducer's argument, so this is a
       // strict reduction in exposure.
       execute: async (context) => {
+        const writer: ChunkWriter = signChunk
+          ? { write: (chunk) => context.writer.write(signChunk(chunk)) }
+          : context.writer;
         try {
-          await executeEngine(context);
+          await executeEngine({ writer });
         } finally {
           await onFinishEngine(context.writer);
         }
