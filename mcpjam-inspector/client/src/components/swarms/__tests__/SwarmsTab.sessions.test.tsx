@@ -438,7 +438,12 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     );
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
-    expect(within(matrix).getAllByText("Host Two").length).toBeGreaterThan(0);
+    // Scoped to Host Two. The chips no longer PRINT the target name — the
+    // column header above them already does — so this reads the accessible
+    // name, which still carries it.
+    expect(
+      within(matrix).getAllByLabelText(/on Host Two/i).length
+    ).toBeGreaterThan(0);
     // Host Two's unpersisted failures surface as Fail chips.
     const failCells = within(matrix)
       .getAllByTestId("swarm-host-cell")

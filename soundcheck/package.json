@@ -8,11 +8,13 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port ${PORT:-3100}",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:auth": "node --test tests/auth-smoke.test.mjs"
   },
   "dependencies": {
     "@mcpjam/design-system": "*",
-    "@workos-inc/authkit-nextjs": "^0.14.0",
+    "@workos-inc/authkit-nextjs": "^4.3.2",
+    "@workos-inc/node": "^9.3.1",
     "next": "^15.5.25",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -28,5 +30,8 @@
     "tailwindcss": "^4.1.11",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5.5.2"
+  },
+  "engines": {
+    "node": ">=22.11.0"
   }
 }
