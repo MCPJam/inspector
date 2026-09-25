@@ -267,7 +267,7 @@ servers.post("/projects/:projectId/servers/:serverId/validate", async (c) => {
       projectServerSchema,
       (manager, body) => validateServerCore(c, manager, body),
       (ctx, result) => v1Resource(ctx, result),
-      { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
+      { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
     );
   } catch (error) {
     // Hosted: the target's status line in place of its answer, as on the web

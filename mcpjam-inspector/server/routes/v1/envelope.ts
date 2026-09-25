@@ -302,7 +302,7 @@ export function v1OnError(
    * connection failure reports its status line). The mapping still classifies
    * the error for capture and logging; only the response wording changes.
    */
-  override?: { message: string; code?: V1ErrorCode }
+  override?: { message: string; code?: V1ErrorCode },
 ) {
   const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
   const { details, headers, origin, slug } = mapped;

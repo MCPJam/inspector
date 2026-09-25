@@ -578,20 +578,54 @@ export type ProjectedProbeAttempt = {
   durationMs: number;
 };
 
-function copyStringRecord(value: unknown): Record<string, string> {
-  const copy: Record<string, string> = {};
-  if (!isPlainRecord(value)) return copy;
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry === "string") copy[key] = entry;
+const MAX_REQUEST_HEADERS = 64;
+const MAX_HEADER_NAME_LENGTH = 128;
+
+/** Stands in for a request header value a hosted response does not repeat. */
+export const REDACTED_HEADER_VALUE = "<redacted>";
+
+/** Request headers whose values are protocol data rather than credentials. */
+const PROTOCOL_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  "content-type",
+  "accept",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "last-event-id",
+]);
+
+/**
+ * Request headers as a hosted response reports them: each name, bounded, and
+ * the value only for a protocol header. Every other value — `Authorization`,
+ * cookies, and any header a server was configured with — is replaced with
+ * {@link REDACTED_HEADER_VALUE}, whatever the name, independently of any
+ * redaction applied upstream of this function.
+ */
+export function projectRequestHeaders(
+  headers: unknown,
+): Record<string, string> {
+  const projected: Record<string, string> = {};
+  if (!isPlainRecord(headers)) return projected;
+  for (const [name, value] of Object.entries(headers).slice(
+    0,
+    MAX_REQUEST_HEADERS,
+  )) {
+    const boundedName = boundText(name, MAX_HEADER_NAME_LENGTH);
+    if (boundedName === undefined || typeof value !== "string") continue;
+    projected[boundedName] = PROTOCOL_REQUEST_HEADERS.has(
+      boundedName.toLowerCase(),
+    )
+      ? (boundText(value, MAX_HEADER_VALUE_LENGTH) ?? "")
+      : REDACTED_HEADER_VALUE;
   }
-  return copy;
+  return projected;
 }
 
 /**
- * One recorded probe request. The request half is what this server sent, so
- * it is kept, with the URL bounded because a metadata URL is named by the
- * target. The response half goes through {@link projectAttemptResponse}.
- * `error` is passed to `describeError`, which decides what may be said.
+ * One recorded probe request. The request half keeps its method, its URL
+ * (bounded, since a metadata URL is named by the target), the body this
+ * server sent, and its headers through {@link projectRequestHeaders}. The
+ * response half goes through {@link projectAttemptResponse}. `error` is
+ * passed to `describeError`, which decides what may be said.
  */
 export function projectProbeAttempt(
   attempt: unknown,
@@ -615,7 +649,7 @@ export function projectProbeAttempt(
     request: {
       method: boundText(request.method, MAX_REQUEST_METHOD_LENGTH) ?? "GET",
       url: boundText(request.url, MAX_URL_LENGTH) ?? "",
-      headers: copyStringRecord(request.headers),
+      headers: projectRequestHeaders(request.headers),
       ...(request.body !== undefined ? { body: request.body } : {}),
     },
     ...(answered
@@ -669,9 +703,10 @@ function optionalString(value: unknown): string | undefined {
 /**
  * The hosted log envelope (`_rpcLogs` / `_httpLogs`) attached to a failed
  * connection, reduced the same way as a probe answer: received frames keep
- * their envelope, exchanges keep their status line and allowlisted headers,
- * and a transport error goes through `describeTransportError`. Frames and
- * request headers this server sent are kept.
+ * their envelope, exchanges keep their status line and allowlisted response
+ * headers, request headers go through {@link projectRequestHeaders}, and a
+ * transport error goes through `describeTransportError`. Frames this server
+ * sent are kept.
  */
 export function projectHostedLogEnvelope(
   envelope: Record<string, unknown> | undefined,
@@ -742,7 +777,7 @@ function projectHttpLogEvent(
       request: {
         method: boundText(request.method, MAX_REQUEST_METHOD_LENGTH) ?? "",
         url: boundText(request.url, MAX_URL_LENGTH) ?? "",
-        headers: copyStringRecord(request.headers),
+        headers: projectRequestHeaders(request.headers),
       },
       ...(response
         ? {
@@ -762,4 +797,370 @@ function projectHttpLogEvent(
         : {}),
     },
   };
+}
+
+/** Items kept per MCP list; later ones are counted as omitted. */
+export const MAX_LIST_ITEMS = 500;
+/** Upper bound on the serialized list section of one hosted response. */
+export const MAX_LIST_SECTION_BYTES = 2 * 1024 * 1024;
+
+const MAX_ITEM_NAME_LENGTH = 256;
+const MAX_ITEM_DESCRIPTION_LENGTH = 4096;
+const MAX_ITEM_URI_LENGTH = 2048;
+const MAX_MIME_TYPE_LENGTH = 128;
+const MAX_SCHEMA_BYTES = 16 * 1024;
+const MAX_SCHEMA_DEPTH = 32;
+const MAX_SCHEMA_NODES = 4096;
+const MAX_PROMPT_ARGUMENTS = 32;
+const MAX_ARGUMENT_DESCRIPTION_LENGTH = 1024;
+const MAX_SKILL_MESSAGE_LENGTH = 512;
+
+type ListItem = Record<string, unknown>;
+
+/** A bounded description, flagged when it was cut. */
+function projectDescription(value: unknown): {
+  description?: string;
+  descriptionTruncated?: true;
+} {
+  const description = boundText(value, MAX_ITEM_DESCRIPTION_LENGTH);
+  if (description === undefined) return {};
+  const cleanedLength = (value as string)
+    .replace(CONTROL_CHARACTERS, " ")
+    .trim().length;
+  return {
+    description,
+    ...(cleanedLength > MAX_ITEM_DESCRIPTION_LENGTH
+      ? { descriptionTruncated: true as const }
+      : {}),
+  };
+}
+
+const ITEM_URI_PATTERN =
+  /^[A-Za-z][A-Za-z0-9+.-]*:[^\s\u0000-\u001f\u007f-\u009f]*$/;
+const ITEM_URI_TEMPLATE_PATTERN = /^[^\s\u0000-\u001f\u007f-\u009f]+$/;
+
+/** A URI with a scheme and no whitespace, bounded, or `undefined`. */
+function parseItemUri(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.length <= MAX_ITEM_URI_LENGTH &&
+    ITEM_URI_PATTERN.test(value)
+    ? value
+    : undefined;
+}
+
+function parseItemUriTemplate(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.length <= MAX_ITEM_URI_LENGTH &&
+    ITEM_URI_TEMPLATE_PATTERN.test(value)
+    ? value
+    : undefined;
+}
+
+const ItemSizeSchema = z.number().int().nonnegative().safe();
+
+/**
+ * Whether a JSON value stays within the schema depth and node budget. Walks
+ * iteratively and stops as soon as either bound is passed, so an oversized
+ * value costs no more than the budget to reject.
+ */
+function fitsSchemaBudget(value: unknown): boolean {
+  const stack: Array<{ node: unknown; depth: number }> = [
+    { node: value, depth: 0 },
+  ];
+  let visited = 0;
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    visited += 1;
+    if (visited > MAX_SCHEMA_NODES || depth > MAX_SCHEMA_DEPTH) return false;
+    if (typeof node !== "object" || node === null) continue;
+    const children = Array.isArray(node) ? node : Object.values(node);
+    if (visited + stack.length + children.length > MAX_SCHEMA_NODES) {
+      return false;
+    }
+    for (const child of children) stack.push({ node: child, depth: depth + 1 });
+  }
+  return true;
+}
+
+/**
+ * A tool's JSON Schema when it is an object within the per-schema budget,
+ * as a fresh copy; otherwise only the fact that it was omitted.
+ */
+function projectToolSchema(value: unknown): {
+  schema?: Record<string, unknown>;
+  omitted?: true;
+} {
+  if (value === undefined) return {};
+  if (!isPlainRecord(value) || !fitsSchemaBudget(value)) {
+    return { omitted: true };
+  }
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    return { omitted: true };
+  }
+  if (Buffer.byteLength(serialized, "utf8") > MAX_SCHEMA_BYTES) {
+    return { omitted: true };
+  }
+  return { schema: JSON.parse(serialized) as Record<string, unknown> };
+}
+
+const TOOL_ANNOTATION_HINTS = [
+  "readOnlyHint",
+  "destructiveHint",
+  "idempotentHint",
+  "openWorldHint",
+] as const;
+
+function projectToolAnnotations(value: unknown): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const annotations: ListItem = {};
+  const title = boundText(value.title, MAX_ITEM_NAME_LENGTH);
+  if (title !== undefined) annotations.title = title;
+  for (const hint of TOOL_ANNOTATION_HINTS) {
+    if (typeof value[hint] === "boolean") annotations[hint] = value[hint];
+  }
+  return Object.keys(annotations).length > 0 ? annotations : undefined;
+}
+
+/**
+ * A listed tool: name, title, bounded description, schemas within budget
+ * (or a flag saying one was omitted), and annotations reduced to their title
+ * and boolean hints. `_meta`, icons and unknown keys are not carried.
+ */
+export function projectListedTool(value: unknown): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const name = boundText(value.name, MAX_ITEM_NAME_LENGTH);
+  if (name === undefined) return undefined;
+  const title = boundText(value.title, MAX_ITEM_NAME_LENGTH);
+  const input = projectToolSchema(value.inputSchema);
+  const output = projectToolSchema(value.outputSchema);
+  const annotations = projectToolAnnotations(value.annotations);
+  return {
+    name,
+    ...(title !== undefined ? { title } : {}),
+    ...projectDescription(value.description),
+    ...(input.schema ? { inputSchema: input.schema } : {}),
+    ...(input.omitted ? { inputSchemaOmitted: true } : {}),
+    ...(output.schema ? { outputSchema: output.schema } : {}),
+    ...(output.omitted ? { outputSchemaOmitted: true } : {}),
+    ...(annotations ? { annotations } : {}),
+  };
+}
+
+/** A listed resource: URI, name, title, description, MIME type and size. */
+export function projectListedResource(value: unknown): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const uri = parseItemUri(value.uri);
+  if (uri === undefined) return undefined;
+  const name = boundText(value.name, MAX_ITEM_NAME_LENGTH);
+  const title = boundText(value.title, MAX_ITEM_NAME_LENGTH);
+  const mimeType = boundText(value.mimeType, MAX_MIME_TYPE_LENGTH);
+  const size = ItemSizeSchema.safeParse(value.size);
+  return {
+    uri,
+    ...(name !== undefined ? { name } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...projectDescription(value.description),
+    ...(mimeType !== undefined ? { mimeType } : {}),
+    ...(size.success ? { size: size.data } : {}),
+  };
+}
+
+/** A listed resource template: URI template, name, title, description, MIME type. */
+export function projectListedResourceTemplate(
+  value: unknown,
+): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const uriTemplate = parseItemUriTemplate(value.uriTemplate);
+  if (uriTemplate === undefined) return undefined;
+  const name = boundText(value.name, MAX_ITEM_NAME_LENGTH);
+  const title = boundText(value.title, MAX_ITEM_NAME_LENGTH);
+  const mimeType = boundText(value.mimeType, MAX_MIME_TYPE_LENGTH);
+  return {
+    uriTemplate,
+    ...(name !== undefined ? { name } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...projectDescription(value.description),
+    ...(mimeType !== undefined ? { mimeType } : {}),
+  };
+}
+
+function projectPromptArgument(value: unknown): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const name = boundText(value.name, MAX_ITEM_NAME_LENGTH);
+  if (name === undefined) return undefined;
+  const description = boundText(
+    value.description,
+    MAX_ARGUMENT_DESCRIPTION_LENGTH,
+  );
+  return {
+    name,
+    ...(description !== undefined ? { description } : {}),
+    ...(typeof value.required === "boolean"
+      ? { required: value.required }
+      : {}),
+  };
+}
+
+/**
+ * A listed prompt: name, title, description, and its arguments reduced to
+ * name, description and `required`, count-capped and flagged when cut.
+ */
+export function projectListedPrompt(value: unknown): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const name = boundText(value.name, MAX_ITEM_NAME_LENGTH);
+  if (name === undefined) return undefined;
+  const title = boundText(value.title, MAX_ITEM_NAME_LENGTH);
+  const declared = Array.isArray(value.arguments) ? value.arguments : [];
+  const promptArguments = declared
+    .slice(0, MAX_PROMPT_ARGUMENTS)
+    .map(projectPromptArgument)
+    .filter((argument) => argument !== undefined);
+  return {
+    name,
+    ...(title !== undefined ? { title } : {}),
+    ...projectDescription(value.description),
+    ...(promptArguments.length > 0 ? { arguments: promptArguments } : {}),
+    ...(declared.length > MAX_PROMPT_ARGUMENTS
+      ? { argumentsTruncated: true }
+      : {}),
+  };
+}
+
+const SKILL_UNLOADABLE_REASONS: ReadonlySet<unknown> = new Set([
+  "no_resources",
+  "dynamic_resources",
+  "too_many_resources",
+  "too_large",
+]);
+
+/**
+ * A listed skill: its URI, name, description, how many files its manifest
+ * names, and why it cannot be loaded when it cannot. Frontmatter and the
+ * manifest itself are not carried.
+ */
+export function projectListedSkill(value: unknown): ListItem | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const skillUri = parseItemUri(value.skillUri);
+  if (skillUri === undefined) return undefined;
+  const serverId = boundText(value.serverId, MAX_ITEM_NAME_LENGTH);
+  const name = boundText(value.name, MAX_ITEM_NAME_LENGTH);
+  const unloadable = isPlainRecord(value.unloadable)
+    ? value.unloadable
+    : undefined;
+  const unloadableMessage = boundText(
+    unloadable?.message,
+    MAX_SKILL_MESSAGE_LENGTH,
+  );
+  return {
+    ...(serverId !== undefined ? { serverId } : {}),
+    skillUri,
+    ...(name !== undefined ? { name } : {}),
+    ...projectDescription(value.description),
+    ...(Array.isArray(value.resources)
+      ? { resourceCount: value.resources.length }
+      : {}),
+    ...(unloadable && SKILL_UNLOADABLE_REASONS.has(unloadable.reason)
+      ? {
+          unloadable: {
+            reason: unloadable.reason,
+            ...(unloadableMessage !== undefined
+              ? { message: unloadableMessage }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+const LIST_PROJECTORS: ReadonlyArray<
+  readonly [string, (value: unknown) => ListItem | undefined]
+> = [
+  ["tools", projectListedTool],
+  ["resources", projectListedResource],
+  ["resourceTemplates", projectListedResourceTemplate],
+  ["prompts", projectListedPrompt],
+  ["skills", projectListedSkill],
+];
+
+/** How much of one list a hosted response carries, when not all of it. */
+export type ListCut = { returned: number; omitted: number };
+
+export type ProjectedListSection = {
+  lists: Record<string, ListItem[]>;
+  /** Present for a list only when some of its items were not returned. */
+  truncated: Record<string, ListCut>;
+};
+
+/**
+ * The MCP list results of a doctor run (`tools`, `resources`,
+ * `resourceTemplates`, `prompts`, `skills`), each item projected field by
+ * field, each list capped at {@link MAX_LIST_ITEMS}, and the section held to
+ * {@link MAX_LIST_SECTION_BYTES}.
+ *
+ * The byte budget is shared out smallest list first: a list that fits its
+ * even share of what is left keeps everything and returns the remainder to
+ * the others, so one large list cannot crowd out the rest. A list keeps a
+ * prefix of its items; everything it does not return — cut by a limit or
+ * dropped as malformed — is counted in `truncated`.
+ */
+export function projectListSection(
+  source: Record<string, unknown>,
+): ProjectedListSection {
+  const candidates: Array<{
+    key: string;
+    total: number;
+    items: ListItem[];
+    sizes: number[];
+    bytes: number;
+  }> = [];
+  for (const [key, project] of LIST_PROJECTORS) {
+    const listed = source[key];
+    if (!Array.isArray(listed)) continue;
+    const items: ListItem[] = [];
+    const sizes: number[] = [];
+    for (const entry of listed.slice(0, MAX_LIST_ITEMS)) {
+      const item = project(entry);
+      if (item === undefined) continue;
+      items.push(item);
+      sizes.push(Buffer.byteLength(JSON.stringify(item), "utf8"));
+    }
+    const bytes = sizes.reduce((sum, size) => sum + size, 0);
+    candidates.push({ key, total: listed.length, items, sizes, bytes });
+  }
+
+  const allowance = new Map<string, number>();
+  let remaining = MAX_LIST_SECTION_BYTES;
+  const bySize = [...candidates].sort((a, b) => a.bytes - b.bytes);
+  bySize.forEach((candidate, index) => {
+    const share = Math.floor(remaining / (bySize.length - index));
+    const granted = Math.min(candidate.bytes, share);
+    allowance.set(candidate.key, granted);
+    remaining -= granted;
+  });
+
+  const lists: Record<string, ListItem[]> = {};
+  const truncated: Record<string, ListCut> = {};
+  for (const candidate of candidates) {
+    const budget = allowance.get(candidate.key) ?? 0;
+    let used = 0;
+    let returned = 0;
+    while (
+      returned < candidate.items.length &&
+      used + candidate.sizes[returned]! <= budget
+    ) {
+      used += candidate.sizes[returned]!;
+      returned += 1;
+    }
+    lists[candidate.key] = candidate.items.slice(0, returned);
+    if (candidate.total > returned) {
+      truncated[candidate.key] = {
+        returned,
+        omitted: candidate.total - returned,
+      };
+    }
+  }
+  return { lists, truncated };
 }

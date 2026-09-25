@@ -18,6 +18,7 @@ import {
   parseHttpUrl,
   parseProtocolVersion,
   projectAuthorizationServerMetadata,
+  projectListSection,
   projectProbeAttempt,
   projectResourceMetadata,
   projectServerCapabilities,
@@ -105,10 +106,11 @@ const HOSTED_TRANSPORT_FAILURE_CODE = "SERVER_UNREACHABLE";
  * envelope is rebuilt from an allowlist ({@link projectHostedDoctorResult}):
  * every answered attempt keeps its status, a bounded status text and the
  * allowlisted headers, with its body omitted and — where the diagnostic needs
- * protocol data — a validated projection beside it; the OAuth metadata and the
- * connected server's initialize data are projected the same way; and every
- * summary string is either one this code or the SDK wrote, with numbers and
- * bounded status text as its only variable parts, or a fixed replacement.
+ * protocol data — a validated projection beside it; the OAuth metadata, the
+ * connected server's initialize data and its MCP list results are projected
+ * field by field and bounded; and every summary string is either one this
+ * code or the SDK wrote, with numbers and bounded status text as its only
+ * variable parts, or a fixed replacement.
  *
  * A no-op outside hosted mode. Locally the socket error is the answer — a
  * developer whose server is not running needs to be told `ECONNREFUSED` — and
@@ -280,7 +282,7 @@ const OAUTH_GUARD_REFUSAL = new RegExp(
     `|Refusing outbound OAuth fetch to loopback host "${OAUTH_GUARD_HOST}" \\(no loopback opt-in\\)` +
     '|Outbound OAuth fetch must be http\\(s\\); got "[a-z][a-z0-9+.-]*:"' +
     ")$",
-  "i"
+  "i",
 );
 
 const OAUTH_CHALLENGE_SUMMARY =
@@ -372,7 +374,7 @@ const MAX_STEP_DETAIL_LENGTH = 512;
 function projectStepDetail(
   failed: boolean,
   detail: unknown,
-  step: string
+  step: string,
 ): string {
   if (typeof detail !== "string") return failed ? stepFailureText(step) : "";
   if (failed) return allowedDoctorText(detail) ?? stepFailureText(step);
@@ -463,13 +465,13 @@ function projectProbeOAuth(value: unknown) {
   const resourceMetadataUrl = parseHttpUrl(oauth.resourceMetadataUrl);
   const resourceMetadata = projectResourceMetadata(oauth.resourceMetadata);
   const authorizationServerMetadataUrl = parseHttpUrl(
-    oauth.authorizationServerMetadataUrl
+    oauth.authorizationServerMetadataUrl,
   );
   const authorizationServerMetadata = projectAuthorizationServerMetadata(
-    oauth.authorizationServerMetadata
+    oauth.authorizationServerMetadata,
   );
   const nonCompliantChallengeStatus = parseHttpStatus(
-    oauth.nonCompliantChallengeStatus
+    oauth.nonCompliantChallengeStatus,
   );
   return {
     required: oauth.required === true,
@@ -484,7 +486,7 @@ function projectProbeOAuth(value: unknown) {
       ? { authorizationServerMetadata }
       : {}),
     registrationStrategies: projectRegistrationStrategies(
-      oauth.registrationStrategies
+      oauth.registrationStrategies,
     ),
     ...(typeof oauth.discoveryError === "string"
       ? { discoveryError: projectDiscoveryError(oauth.discoveryError) }
@@ -532,7 +534,7 @@ function projectConnection(value: unknown) {
     detail: projectStepDetail(
       status === "error",
       connection.detail,
-      "connection"
+      "connection",
     ),
   };
 }
@@ -540,7 +542,7 @@ function projectConnection(value: unknown) {
 type ProjectedCheck = { status: unknown; detail: string };
 
 function projectChecks(
-  checks: Record<string, unknown>
+  checks: Record<string, unknown>,
 ): Record<string, ProjectedCheck> {
   const projected: Record<string, ProjectedCheck> = {};
   for (const [step, check] of Object.entries(checks)) {
@@ -563,7 +565,7 @@ function projectChecks(
 function projectDoctorError(
   value: unknown,
   rawChecks: Record<string, unknown> | undefined,
-  checks: Record<string, ProjectedCheck>
+  checks: Record<string, ProjectedCheck>,
 ) {
   if (typeof value !== "object" || value === null) return null;
   // May be an error instance whose fields are getters; read without trusting.
@@ -587,7 +589,7 @@ function projectDoctorError(
       ([, check]) =>
         isPlainRecord(check) &&
         check.status === "error" &&
-        check.detail === rawMessage
+        check.detail === rawMessage,
     )?.[0];
     message =
       failedStep !== undefined && checks[failedStep]
@@ -604,12 +606,12 @@ function projectDoctorError(
 
 function projectOAuthRequiredDetails(details: Record<string, unknown>) {
   const authorizationServerMetadataUrl = parseHttpUrl(
-    details.authorizationServerMetadataUrl
+    details.authorizationServerMetadataUrl,
   );
   const resourceMetadataUrl = parseHttpUrl(details.resourceMetadataUrl);
   return {
     registrationStrategies: projectRegistrationStrategies(
-      details.registrationStrategies
+      details.registrationStrategies,
     ),
     ...(authorizationServerMetadataUrl !== undefined
       ? { authorizationServerMetadataUrl }
@@ -628,7 +630,7 @@ function projectInitInfo(value: unknown) {
   if (!isPlainRecord(value)) return null;
   const protocolVersion = parseProtocolVersion(value.protocolVersion);
   const serverCapabilities = projectServerCapabilities(
-    value.serverCapabilities
+    value.serverCapabilities,
   );
   const serverVersion = projectServerIdentity(value.serverVersion);
   return {
@@ -644,16 +646,12 @@ function projectInitInfo(value: unknown) {
   };
 }
 
-/**
- * Fields the doctor reports from its own run, or from MCP list results
- * gathered over an initialized session, carried as they are.
- */
-const CARRIED_DOCTOR_FIELDS = new Set([
-  "target",
-  "generatedAt",
-  "status",
+/** Fields the doctor writes about its own run, carried as they are. */
+const CARRIED_DOCTOR_FIELDS = new Set(["target", "generatedAt", "status"]);
+
+/** The MCP list results, carried through {@link projectListSection}. */
+const LIST_DOCTOR_FIELDS = new Set([
   "tools",
-  "toolsMetadata",
   "resources",
   "resourceTemplates",
   "prompts",
@@ -664,14 +662,22 @@ const CARRIED_DOCTOR_FIELDS = new Set([
  * Rebuild a doctor result from an allowlist, in the SDK's field order. A field
  * this function does not name is not carried, so a new SDK field stays out of
  * hosted responses until it is added here.
+ *
+ * The MCP lists are projected item by item and bounded; `truncated` says which
+ * lists were cut and by how much. `toolsMetadata` — each tool's `_meta`, which
+ * no diagnostic reads — is reported empty.
  */
 function projectHostedDoctorResult(result: unknown): unknown {
   if (!isPlainRecord(result)) return result;
   const rawChecks = isPlainRecord(result.checks) ? result.checks : undefined;
   const checks = rawChecks ? projectChecks(rawChecks) : {};
+  const listSection = projectListSection(result);
   const projected: Record<string, unknown> = {};
   for (const key of Object.keys(result)) {
     switch (key) {
+      case "toolsMetadata":
+        projected.toolsMetadata = {};
+        break;
       case "probe":
         projected.probe = projectProbe(result.probe);
         break;
@@ -692,8 +698,15 @@ function projectHostedDoctorResult(result: unknown): unknown {
         projected.error = projectDoctorError(result.error, rawChecks, checks);
         break;
       default:
-        if (CARRIED_DOCTOR_FIELDS.has(key)) projected[key] = result[key];
+        if (LIST_DOCTOR_FIELDS.has(key)) {
+          projected[key] = listSection.lists[key] ?? [];
+        } else if (CARRIED_DOCTOR_FIELDS.has(key)) {
+          projected[key] = result[key];
+        }
     }
+  }
+  if (Object.keys(listSection.truncated).length > 0) {
+    projected.truncated = listSection.truncated;
   }
   return projected;
 }

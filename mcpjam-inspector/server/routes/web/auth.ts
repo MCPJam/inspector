@@ -2897,8 +2897,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // Convex deployment — keeps its 5xx and keeps paging us.
     const routeError = mapTargetServerError(error);
     const logs = rpcCollector?.buildEnvelope() as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const redacted = options?.redactFailure?.(routeError, error, logs);
     return webErrorFromRoute(
       c,

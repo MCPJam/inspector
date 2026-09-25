@@ -30,9 +30,10 @@ const { upstream, validateGuestTokenMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../utils/hosted-mcp-base-fetch.js", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("../../../utils/hosted-mcp-base-fetch.js")
-  >();
+  const actual =
+    await importOriginal<
+      typeof import("../../../utils/hosted-mcp-base-fetch.js")
+    >();
   return {
     ...actual,
     hostedMcpBaseFetch: () =>
@@ -187,6 +188,114 @@ function mcpServer(toolsList?: () => Response): Upstream {
   };
 }
 
+const LISTED_TOOLS = [
+  {
+    name: "search",
+    title: "Search",
+    description: "Finds matching records.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+    annotations: { readOnlyHint: true, extra: "UNEXPECTED_MARKER_26" },
+    icons: [{ src: "https://cdn.example.test/UNEXPECTED_MARKER_27.png" }],
+    _meta: { note: "UNEXPECTED_MARKER_28" },
+    extra: { nested: ["UNEXPECTED_MARKER_29"] },
+  },
+  {
+    name: "large",
+    description: `${"d".repeat(6000)}UNEXPECTED_MARKER_30`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        blob: {
+          type: "string",
+          description: `${"x".repeat(20_000)}UNEXPECTED_MARKER_31`,
+        },
+      },
+    },
+  },
+];
+
+/**
+ * A working MCP server with tools, resources, templates and prompts whose
+ * list results carry fields outside the allowlist. `tools` replaces the tool
+ * list.
+ */
+function listingServer(tools: unknown[] = LISTED_TOOLS): Upstream {
+  const results: Record<string, unknown> = {
+    "tools/list": { tools },
+    "resources/list": {
+      resources: [
+        {
+          uri: "file:///notes.txt",
+          name: "notes",
+          description: "Team notes.",
+          mimeType: "text/plain",
+          _meta: { note: "UNEXPECTED_MARKER_32" },
+          extra: "UNEXPECTED_MARKER_33",
+        },
+      ],
+    },
+    "resources/templates/list": {
+      resourceTemplates: [
+        {
+          uriTemplate: "file:///{path}",
+          name: "file",
+          description: "A file by path.",
+          _meta: { note: "UNEXPECTED_MARKER_34" },
+        },
+      ],
+    },
+    "prompts/list": {
+      prompts: [
+        {
+          name: "summarize",
+          description: "Summarizes text.",
+          arguments: [
+            { name: "text", required: true, extra: "UNEXPECTED_MARKER_35" },
+          ],
+          _meta: { note: "UNEXPECTED_MARKER_36" },
+        },
+      ],
+    },
+  };
+  return async (request) => {
+    if (request.method === "GET") {
+      return new Response(null, { status: 405, headers: { allow: "POST" } });
+    }
+    if (request.method === "DELETE") return new Response(null, { status: 200 });
+    const message = await readMessage(request);
+    if (message?.method === "initialize") {
+      return json({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          protocolVersion: "2025-06-18",
+          capabilities: { tools: {}, resources: {}, prompts: {} },
+          serverInfo: { name: "listing-server", version: "1.0.0" },
+        },
+      });
+    }
+    if (typeof message?.method === "string" && message.id === undefined) {
+      return new Response(null, { status: 202 });
+    }
+    if (message?.method in results) {
+      return json({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: results[message.method],
+      });
+    }
+    return json({
+      jsonrpc: "2.0",
+      id: message?.id ?? null,
+      error: { code: -32601, message: "Method not found" },
+    });
+  };
+}
+
 /** Answers every JSON-RPC request with an error carrying text and data. */
 const jsonRpcErrorAnswer: Upstream = async (request) => {
   const message = await readMessage(request);
@@ -240,13 +349,24 @@ const oauthServer: Upstream = async (request) => {
   return new Response("UNEXPECTED_MARKER_24", { status: 404 });
 };
 
+/**
+ * A header the stored server config carries. Its value must never be
+ * repeated by a hosted response; its name may be.
+ */
+const CONFIGURED_HEADERS = { "X-Tenant-Context": "UNEXPECTED_MARKER_38" };
+
 function authorizeResponse(url: string): Response {
   return json({
     authorized: true,
     role: "member",
     accessLevel: "project_member",
     permissions: { chatOnly: false },
-    serverConfig: { transportType: "http", url, useOAuth: false },
+    serverConfig: {
+      transportType: "http",
+      url,
+      useOAuth: false,
+      headers: CONFIGURED_HEADERS,
+    },
   });
 }
 
@@ -258,7 +378,11 @@ function authorizeBatchResponse(url: string): Response {
         role: "member",
         accessLevel: "project_member",
         permissions: { chatOnly: false },
-        serverConfig: { transportType: "http", url },
+        serverConfig: {
+          transportType: "http",
+          url,
+          headers: CONFIGURED_HEADERS,
+        },
       },
     },
   });
@@ -435,6 +559,9 @@ describe("hosted doctor responses (web and v1)", () => {
       });
       expect(body.capabilities).toEqual({ tools: { listChanged: true } });
       expect(body.initInfo).not.toHaveProperty("instructions");
+      for (const attempt of body.probe.transport.attempts) {
+        expect(attempt.request.headers["x-tenant-context"]).toBe("<redacted>");
+      }
       expect(body.checks.tools).toEqual({
         status: "ok",
         detail: "0 tools discovered.",
@@ -478,6 +605,62 @@ describe("hosted doctor responses (web and v1)", () => {
       });
     });
 
+    it(`${surface}: reports MCP list results through their projection`, async () => {
+      upstream.current = listingServer();
+      const res = await run(routes);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(JSON.stringify(body)).not.toMatch(MARKER);
+
+      expect(body.tools).toEqual([
+        {
+          name: "search",
+          title: "Search",
+          description: "Finds matching records.",
+          inputSchema: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "large",
+          description: "d".repeat(4096),
+          descriptionTruncated: true,
+          inputSchemaOmitted: true,
+        },
+      ]);
+      expect(body.toolsMetadata).toEqual({});
+      expect(body.resources).toEqual([
+        {
+          uri: "file:///notes.txt",
+          name: "notes",
+          description: "Team notes.",
+          mimeType: "text/plain",
+        },
+      ]);
+      expect(body.resourceTemplates).toEqual([
+        {
+          uriTemplate: "file:///{path}",
+          name: "file",
+          description: "A file by path.",
+        },
+      ]);
+      expect(body.prompts).toEqual([
+        {
+          name: "summarize",
+          description: "Summarizes text.",
+          arguments: [{ name: "text", required: true }],
+        },
+      ]);
+      expect(body.checks.tools).toEqual({
+        status: "ok",
+        detail: "2 tools discovered.",
+      });
+      expect(body).not.toHaveProperty("truncated");
+    });
+
     it(`${surface}: bounds an oversized answer's status text and headers`, async () => {
       upstream.current = oversizedAnswer;
       const res = await run(routes);
@@ -491,6 +674,22 @@ describe("hosted doctor responses (web and v1)", () => {
       expect(answered.response.statusText).toMatch(/^Internal x+$/);
     });
   }
+
+  it("web: caps a long tool list and says how much it left out", async () => {
+    upstream.current = listingServer(
+      Array.from({ length: 600 }, (_, index) => ({
+        name: index >= 500 ? `UNEXPECTED_MARKER_${index}` : `tool${index}`,
+        inputSchema: { type: "object" },
+      })),
+    );
+    const res = await webDoctor(routes);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(JSON.stringify(body)).not.toMatch(MARKER);
+    expect(body.tools).toHaveLength(500);
+    expect(body.truncated).toEqual({ tools: { returned: 500, omitted: 100 } });
+    expect(body.checks.tools.detail).toBe("600 tools discovered.");
+  });
 
   it("web: keeps the doctor's list failure out of its summary text", async () => {
     upstream.current = mcpServer(
@@ -530,6 +729,13 @@ describe("hosted validate responses (web and v1)", () => {
       );
       expect(body.normalized?.rawMessage).toBe(body.message);
       expectLogsProjected(body);
+      const requestHeaders = (body._httpLogs ?? []).map(
+        (event: any) => event.exchange.request.headers,
+      );
+      expect(requestHeaders.length).toBeGreaterThan(0);
+      for (const headers of requestHeaders) {
+        expect(headers["x-tenant-context"]).toBe("<redacted>");
+      }
     }
   });
 
@@ -633,6 +839,25 @@ describe("local doctor and validate responses", () => {
     });
     expect(initialize.response.headers["x-extra"]).toBe("UNEXPECTED_MARKER_5");
     expect(initialize.response).not.toHaveProperty("bodyOmitted");
+    expect(initialize.request.headers["x-tenant-context"]).toBe(
+      "UNEXPECTED_MARKER_38",
+    );
+  });
+
+  it("doctor: returns MCP list results unchanged", async () => {
+    upstream.current = listingServer();
+    const res = await webDoctor(routes);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.toolsMetadata).toEqual({
+      search: { note: "UNEXPECTED_MARKER_28" },
+    });
+    const large = body.tools.find((tool: any) => tool.name === "large");
+    expect(large.description).toBe(`${"d".repeat(6000)}UNEXPECTED_MARKER_30`);
+    expect(large.inputSchema.properties.blob.description).toContain(
+      "UNEXPECTED_MARKER_31",
+    );
+    expect(body).not.toHaveProperty("truncated");
   });
 
   it("validate: keeps the connection failure's own text", async () => {

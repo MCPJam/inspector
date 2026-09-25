@@ -50,8 +50,8 @@ servers.post("/validate", async (c) =>
     {
       timeoutMs: WEB_CONNECT_TIMEOUT_MS,
       ...(HOSTED_MODE ? { redactFailure: redactHostedValidateFailure } : {}),
-    }
-  )
+    },
+  ),
 );
 
 /**
@@ -63,7 +63,7 @@ servers.post("/validate", async (c) =>
 function redactHostedValidateFailure(
   routeError: WebRouteError,
   error: unknown,
-  logs: Record<string, unknown> | undefined
+  logs: Record<string, unknown> | undefined,
 ) {
   const projectedLogs = projectHostedConnectFailureLogs(logs);
   if (error instanceof WebRouteError) {
@@ -78,7 +78,7 @@ function redactHostedValidateFailure(
   if (routeError.normalized) {
     routeError.normalized = redactNormalizedError(
       routeError.normalized,
-      failure.message
+      failure.message,
     );
   }
   return { routeError, logs: projectedLogs };

@@ -82,8 +82,8 @@ function statusLineFromChain(error: unknown): StatusLine | undefined {
           typeof statusText === "string"
             ? statusText
             : isPlainRecord(data)
-            ? data.statusText
-            : undefined,
+              ? data.statusText
+              : undefined,
       };
     }
     if (read(node, "name") === "UnauthorizedError") return { status: 401 };

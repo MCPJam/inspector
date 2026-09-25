@@ -284,7 +284,7 @@ describe("hosted doctor transport-detail redaction", () => {
     expect(redacted.probe!.error).not.toBe("initialize failed: -32600");
     expect(redacted.error?.message).not.toBe("initialize failed: -32600");
     expect(redacted.connection.detail).toBe(
-      "Server requires OAuth before a connection can be established."
+      "Server requires OAuth before a connection can be established.",
     );
     expect(JSON.stringify(redacted)).not.toMatch(/not echoed/);
   });
@@ -426,7 +426,7 @@ describe("hosted doctor transport-detail redaction", () => {
     // out on the first's response.
     expect(redacted.probe!.transport.attempts[0].response?.status).toBe(200);
     expect(redacted.probe!.transport.attempts[0].error).toBe(
-      "The request failed after the server answered."
+      "The request failed after the server answered.",
     );
     expect(redacted.probe!.transport.attempts[1].error).toBe(
       redacted.connection.detail
@@ -527,7 +527,8 @@ describe("hosted doctor answer projection", () => {
     error?: unknown;
     initInfo?: unknown;
     capabilities?: unknown;
-    tools?: unknown[];
+    /** `tools`, `toolsMetadata`, `resources`, ... as the SDK collected them. */
+    lists?: Record<string, unknown>;
   }) {
     return {
       target: { kind: "http", scope: "hosted", label: "Fixture" },
@@ -547,12 +548,13 @@ describe("hosted doctor answer projection", () => {
       },
       initInfo: parts.initInfo ?? null,
       capabilities: parts.capabilities ?? null,
-      tools: parts.tools ?? [],
-      toolsMetadata: {},
-      resources: [],
-      resourceTemplates: [],
-      prompts: [],
-      skills: [],
+      tools: [] as unknown[],
+      toolsMetadata: {} as Record<string, unknown>,
+      resources: [] as unknown[],
+      resourceTemplates: [] as unknown[],
+      prompts: [] as unknown[],
+      skills: [] as unknown[],
+      ...parts.lists,
       checks: {
         probe: {
           status: "ok",
@@ -571,7 +573,7 @@ describe("hosted doctor answer projection", () => {
   function metadataAttempt(
     name: "resource_metadata" | "authorization_server_metadata",
     url: string,
-    body: unknown
+    body: unknown,
   ): ProbeHttpAttempt {
     const attempt = answeredAttempt(
       url,
@@ -582,7 +584,7 @@ describe("hosted doctor answer projection", () => {
         body,
         contentType: "application/json",
       },
-      3
+      3,
     );
     attempt.name = name;
     attempt.request.method = "GET";
@@ -647,7 +649,7 @@ describe("hosted doctor answer projection", () => {
               },
             },
           },
-          9
+          9,
         ),
       ],
       probe: {
@@ -733,7 +735,7 @@ describe("hosted doctor answer projection", () => {
               contentType: "text/html",
               body,
             },
-            4
+            4,
           ),
         ],
         probe: {
@@ -749,7 +751,7 @@ describe("hosted doctor answer projection", () => {
       expect(response).not.toHaveProperty("projection");
       expect(response.bodyOmitted).toBe(true);
       expect(redacted.probe.error).toBe(
-        "Server responded to initialize but did not return a recognizable MCP initialize result."
+        "Server responded to initialize but did not return a recognizable MCP initialize result.",
       );
       expect(JSON.stringify(redacted)).not.toMatch(MARKER);
     }
@@ -776,7 +778,7 @@ describe("hosted doctor answer projection", () => {
               },
             },
           },
-          5
+          5,
         ),
       ],
     });
@@ -823,7 +825,7 @@ describe("hosted doctor answer projection", () => {
         contentType: "application/json",
         body: { error: "UNEXPECTED_MARKER_7" },
       },
-      6
+      6,
     );
     const prmUrl =
       "https://mcp.example.test/.well-known/oauth-protected-resource/mcp";
@@ -836,7 +838,7 @@ describe("hosted doctor answer projection", () => {
         metadataAttempt(
           "authorization_server_metadata",
           asmUrl,
-          authorizationServerMetadata
+          authorizationServerMetadata,
         ),
       ],
       probe: {
@@ -933,11 +935,11 @@ describe("hosted doctor answer projection", () => {
     const longTokens = () =>
       Array.from(
         { length: 32 },
-        (_, index) => `${String(index).padStart(3, "0")}${"t".repeat(125)}`
+        (_, index) => `${String(index).padStart(3, "0")}${"t".repeat(125)}`,
       );
     const LONG_CHALLENGE = "a".repeat(4000);
     const scopes = Array.from({ length: 100 }, (_, index) =>
-      index === 50 ? "UNEXPECTED_MARKER_1" : `scope${index}`
+      index === 50 ? "UNEXPECTED_MARKER_1" : `scope${index}`,
     );
     const result = doctorResult({
       attempts: [
@@ -964,7 +966,7 @@ describe("hosted doctor answer projection", () => {
               },
             },
           },
-          7
+          7,
         ),
         metadataAttempt(
           "resource_metadata",
@@ -972,7 +974,7 @@ describe("hosted doctor answer projection", () => {
           {
             resource: "https://mcp.example.test/mcp",
             scopes_supported: scopes,
-          }
+          },
         ),
         metadataAttempt(
           "authorization_server_metadata",
@@ -984,7 +986,7 @@ describe("hosted doctor answer projection", () => {
             grant_types_supported: longTokens(),
             code_challenge_methods_supported: longTokens(),
             token_endpoint_auth_methods_supported: longTokens(),
-          }
+          },
         ),
       ],
     });
@@ -993,10 +995,10 @@ describe("hosted doctor answer projection", () => {
     const [initialize, prm, asm] = redacted.probe.transport.attempts;
     expect(initialize.response.statusText.length).toBeLessThanOrEqual(64);
     expect(
-      initialize.response.headers["www-authenticate"].length
+      initialize.response.headers["www-authenticate"].length,
     ).toBeLessThanOrEqual(2048);
     expect(
-      initialize.response.projection.serverInfo.name.length
+      initialize.response.projection.serverInfo.name.length,
     ).toBeLessThanOrEqual(128);
     expect(prm.response.projection.scopes_supported).toHaveLength(32);
     expect(asm.response.bodyOmitted).toBe(true);
@@ -1016,7 +1018,7 @@ describe("hosted doctor answer projection", () => {
       }
     }
     const listFailure = new FixtureHttpError(
-      "<html>UNEXPECTED_MARKER_1</html>"
+      "<html>UNEXPECTED_MARKER_1</html>",
     );
     const statusText = `Bad Gateway ${"y".repeat(70)}UNEXPECTED_MARKER_2`;
     const probeError = `Server responded with HTTP 502 ${statusText} to the initialize probe.`;
@@ -1029,7 +1031,7 @@ describe("hosted doctor answer projection", () => {
             statusText,
             headers: {},
           },
-          8
+          8,
         ),
       ],
       probe: {
@@ -1056,11 +1058,11 @@ describe("hosted doctor answer projection", () => {
 
     const redacted = redact(result) as any;
     expect(redacted.probe.error).toMatch(
-      /^Server responded with HTTP 502 Bad Gateway y+ to the initialize probe\.$/
+      /^Server responded with HTTP 502 Bad Gateway y+ to the initialize probe\.$/,
     );
     expect(redacted.checks.probe.detail).toBe(redacted.probe.error);
     expect(redacted.probe.oauth.discoveryError).toBe(
-      "The protected resource metadata document did not match the expected format."
+      "The protected resource metadata document did not match the expected format.",
     );
     expect(redacted.checks.tools.status).toBe("error");
     expect(redacted.checks.tools.detail).toMatch(/^Listing tools failed\./);
@@ -1075,23 +1077,391 @@ describe("hosted doctor answer projection", () => {
     expect(JSON.stringify(redacted)).not.toMatch(MARKER);
   });
 
+  it("projects each MCP list item field by field", async () => {
+    const redact = await hostedRedactor();
+    const unloadableMessage =
+      "This skill generates its content per request, so there is no manifest to verify it against. MCPJam declines to load unverifiable skills.";
+    const result = doctorResult({
+      attempts: [],
+      lists: {
+        tools: [
+          {
+            name: "search",
+            title: "Search",
+            description: "Finds matching records.",
+            inputSchema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+            },
+            outputSchema: { type: "object" },
+            annotations: {
+              title: "Search records",
+              readOnlyHint: true,
+              extra: "UNEXPECTED_MARKER_1",
+            },
+            execution: { taskSupport: "optional", note: "UNEXPECTED_MARKER_2" },
+            icons: [{ src: "https://cdn.example.test/UNEXPECTED_MARKER_3" }],
+            _meta: { note: "UNEXPECTED_MARKER_4" },
+            extra: { nested: ["UNEXPECTED_MARKER_5"] },
+          },
+        ],
+        toolsMetadata: { search: { note: "UNEXPECTED_MARKER_4" } },
+        resources: [
+          {
+            uri: "file:///notes.txt",
+            name: "notes",
+            title: "Notes",
+            description: "Team notes.",
+            mimeType: "text/plain",
+            size: 42,
+            annotations: { audience: ["user"], note: "UNEXPECTED_MARKER_6" },
+            _meta: { note: "UNEXPECTED_MARKER_7" },
+            extra: "UNEXPECTED_MARKER_8",
+          },
+        ],
+        resourceTemplates: [
+          {
+            uriTemplate: "file:///{path}",
+            name: "file",
+            description: "A file by path.",
+            mimeType: "text/plain",
+            _meta: { note: "UNEXPECTED_MARKER_9" },
+            extra: "UNEXPECTED_MARKER_10",
+          },
+        ],
+        prompts: [
+          {
+            name: "summarize",
+            title: "Summarize",
+            description: "Summarizes text.",
+            arguments: [
+              {
+                name: "text",
+                description: "Text to summarize.",
+                required: true,
+                extra: "UNEXPECTED_MARKER_11",
+              },
+            ],
+            _meta: { note: "UNEXPECTED_MARKER_12" },
+          },
+        ],
+        skills: [
+          {
+            serverId: "__cli__",
+            skillUri: "skill://notes/SKILL.md",
+            name: "notes",
+            description: "Keeps notes.",
+            frontmatter: { name: "notes", extra: "UNEXPECTED_MARKER_13" },
+            resources: [
+              {
+                uri: "skill://notes/SKILL.md",
+                digest: "sha256:UNEXPECTED_MARKER_14",
+              },
+            ],
+            unloadable: {
+              reason: "dynamic_resources",
+              message: unloadableMessage,
+            },
+          },
+        ],
+      },
+    });
+
+    const redacted = redact(result) as any;
+
+    expect(redacted.tools).toEqual([
+      {
+        name: "search",
+        title: "Search",
+        description: "Finds matching records.",
+        inputSchema: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
+        outputSchema: { type: "object" },
+        annotations: { title: "Search records", readOnlyHint: true },
+      },
+    ]);
+    expect(redacted.toolsMetadata).toEqual({});
+    expect(redacted.resources).toEqual([
+      {
+        uri: "file:///notes.txt",
+        name: "notes",
+        title: "Notes",
+        description: "Team notes.",
+        mimeType: "text/plain",
+        size: 42,
+      },
+    ]);
+    expect(redacted.resourceTemplates).toEqual([
+      {
+        uriTemplate: "file:///{path}",
+        name: "file",
+        description: "A file by path.",
+        mimeType: "text/plain",
+      },
+    ]);
+    expect(redacted.prompts).toEqual([
+      {
+        name: "summarize",
+        title: "Summarize",
+        description: "Summarizes text.",
+        arguments: [
+          { name: "text", description: "Text to summarize.", required: true },
+        ],
+      },
+    ]);
+    expect(redacted.skills).toEqual([
+      {
+        serverId: "__cli__",
+        skillUri: "skill://notes/SKILL.md",
+        name: "notes",
+        description: "Keeps notes.",
+        resourceCount: 1,
+        unloadable: { reason: "dynamic_resources", message: unloadableMessage },
+      },
+    ]);
+    expect(redacted).not.toHaveProperty("truncated");
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("bounds an oversized description and omits an oversized schema with a flag", async () => {
+    const redact = await hostedRedactor();
+    let deep: Record<string, unknown> = { note: "UNEXPECTED_MARKER_3" };
+    for (let level = 0; level < 40; level += 1) {
+      deep = { type: "object", properties: { next: deep } };
+    }
+    const result = doctorResult({
+      attempts: [],
+      lists: {
+        tools: [
+          {
+            name: "large",
+            description: `${"d".repeat(6000)}UNEXPECTED_MARKER_1`,
+            inputSchema: {
+              type: "object",
+              properties: {
+                blob: {
+                  type: "string",
+                  description: `${"x".repeat(20_000)}UNEXPECTED_MARKER_2`,
+                },
+              },
+            },
+            outputSchema: deep,
+          },
+        ],
+        prompts: [
+          {
+            name: "many-arguments",
+            arguments: Array.from({ length: 40 }, (_, index) => ({
+              name: index === 39 ? "UNEXPECTED_MARKER_4" : `argument${index}`,
+            })),
+          },
+        ],
+      },
+    });
+
+    const redacted = redact(result) as any;
+    const [tool] = redacted.tools;
+    expect(tool.description).toHaveLength(4096);
+    expect(tool.descriptionTruncated).toBe(true);
+    expect(tool).not.toHaveProperty("inputSchema");
+    expect(tool.inputSchemaOmitted).toBe(true);
+    expect(tool).not.toHaveProperty("outputSchema");
+    expect(tool.outputSchemaOmitted).toBe(true);
+    const [prompt] = redacted.prompts;
+    expect(prompt.arguments).toHaveLength(32);
+    expect(prompt.argumentsTruncated).toBe(true);
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("caps each list and records what it did not return", async () => {
+    const redact = await hostedRedactor();
+    const tools = Array.from({ length: 600 }, (_, index) => ({
+      name: index >= 500 ? `UNEXPECTED_MARKER_${index}` : `tool${index}`,
+      inputSchema: { type: "object" },
+    }));
+    const result = doctorResult({
+      attempts: [],
+      lists: {
+        tools,
+        resources: [
+          { uri: "file:///kept.txt", name: "kept" },
+          { name: "UNEXPECTED_MARKER_1", description: "Has no URI." },
+        ],
+      },
+    });
+
+    const redacted = redact(result) as any;
+    expect(redacted.tools).toHaveLength(500);
+    expect(redacted.resources).toEqual([
+      { uri: "file:///kept.txt", name: "kept" },
+    ]);
+    expect(redacted.truncated).toEqual({
+      tools: { returned: 500, omitted: 100 },
+      resources: { returned: 1, omitted: 1 },
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
+  it("holds the list section to its size budget without crowding out small lists", async () => {
+    const redact = await hostedRedactor();
+    const schema = {
+      type: "object",
+      properties: {
+        value: { type: "string", description: "s".repeat(15_000) },
+      },
+    };
+    const tools = Array.from({ length: 400 }, (_, index) => ({
+      name: `tool${index}`,
+      inputSchema: schema,
+    }));
+    const prompts = Array.from({ length: 20 }, (_, index) => ({
+      name: `prompt${index}`,
+    }));
+    const result = doctorResult({ attempts: [], lists: { tools, prompts } });
+
+    const redacted = redact(result) as any;
+    const listBytes = Buffer.byteLength(
+      JSON.stringify([redacted.tools, redacted.prompts]),
+      "utf8",
+    );
+    expect(listBytes).toBeLessThanOrEqual(2 * 1024 * 1024 + 4096);
+    expect(redacted.tools.length).toBeGreaterThan(0);
+    expect(redacted.tools.length).toBeLessThan(400);
+    expect(redacted.truncated.tools).toEqual({
+      returned: redacted.tools.length,
+      omitted: 400 - redacted.tools.length,
+    });
+    expect(redacted.prompts).toHaveLength(20);
+    expect(redacted.truncated).not.toHaveProperty("prompts");
+  });
+
+  it("reports request header names but only protocol header values", async () => {
+    const redact = await hostedRedactor();
+    const attempt = answeredAttempt(
+      "https://mcp.example.test/mcp",
+      { status: 200, statusText: "OK", headers: {} },
+      3,
+    );
+    attempt.request.headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-11-25",
+      Authorization: "Bearer UNEXPECTED_MARKER_1",
+      Cookie: "sid=UNEXPECTED_MARKER_2",
+      "X-Tenant-Context": "UNEXPECTED_MARKER_3",
+    };
+
+    const redacted = redact(doctorResult({ attempts: [attempt] })) as any;
+    expect(redacted.probe.transport.attempts[0].request.headers).toEqual({
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-11-25",
+      Authorization: "<redacted>",
+      Cookie: "<redacted>",
+      "X-Tenant-Context": "<redacted>",
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
   it("returns the local result untouched", async () => {
     const loaded = await loadRedactor(false);
     restore = loaded.restore;
 
     const body = { jsonrpc: "2.0", payload: "UNEXPECTED_MARKER_1" };
+    const tool = {
+      name: "local-tool",
+      _meta: { note: "UNEXPECTED_MARKER_2" },
+      extra: "UNEXPECTED_MARKER_3",
+    };
     const result = doctorResult({
       attempts: [
         answeredAttempt(
           "http://localhost:3000/mcp",
           { status: 200, statusText: "OK", headers: {}, body },
-          2
+          2,
         ),
       ],
+      lists: {
+        tools: [tool],
+        toolsMetadata: { "local-tool": tool._meta },
+      },
     });
 
     const redacted = loaded.redact(result);
     expect(redacted).toBe(result);
     expect(redacted.probe.transport.attempts[0].response?.body).toBe(body);
+    expect(redacted.tools[0]).toBe(tool);
+    expect(redacted.toolsMetadata).toEqual({ "local-tool": tool._meta });
+  });
+});
+
+describe("hosted connection failure logs", () => {
+  it("keeps frame envelopes, status lines and header names only", async () => {
+    const { projectHostedConnectFailureLogs } =
+      await import("../hosted-connect-failure.js");
+    const projected = projectHostedConnectFailureLogs({
+      _rpcLogs: [
+        {
+          eventId: "event-1",
+          serverId: "srv_1",
+          serverName: "Fixture",
+          direction: "receive",
+          timestamp: "2026-09-25T00:00:00.000Z",
+          message: {
+            jsonrpc: "2.0",
+            id: 0,
+            result: { anything: "UNEXPECTED_MARKER_1" },
+          },
+        },
+      ],
+      _httpLogs: [
+        {
+          eventId: "event-2",
+          serverId: "srv_1",
+          serverName: "Fixture",
+          timestamp: "2026-09-25T00:00:00.000Z",
+          exchange: {
+            serverId: "srv_1",
+            request: {
+              method: "POST",
+              url: "https://mcp.example.test/mcp",
+              headers: {
+                "content-type": "application/json",
+                "x-tenant-context": "UNEXPECTED_MARKER_2",
+                authorization: "Bearer UNEXPECTED_MARKER_3",
+              },
+            },
+            response: {
+              status: 500,
+              statusText: `Internal ${"x".repeat(80)}UNEXPECTED_MARKER_4`,
+              headers: {
+                "content-type": "text/html",
+                "x-extra": "UNEXPECTED_MARKER_5",
+              },
+            },
+            durationMs: 4,
+          },
+        },
+      ],
+    }) as any;
+
+    expect(projected._rpcLogs[0].message).toEqual({
+      jsonrpc: "2.0",
+      id: 0,
+      contentOmitted: true,
+    });
+    const exchange = projected._httpLogs[0].exchange;
+    expect(exchange.request.headers).toEqual({
+      "content-type": "application/json",
+      "x-tenant-context": "<redacted>",
+      authorization: "<redacted>",
+    });
+    expect(exchange.response.headers).toEqual({ "content-type": "text/html" });
+    expect(exchange.response.statusText.length).toBeLessThanOrEqual(64);
+    expect(JSON.stringify(projected)).not.toMatch(/UNEXPECTED_MARKER/);
   });
 });
