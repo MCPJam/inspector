@@ -22,7 +22,7 @@ import {
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
-import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type { MCPClientManager, Harness, ModelSelection } from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -292,6 +292,12 @@ interface SessionResult {
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
+  /**
+   * The saved selection behind `modelDefinition`, already checked with
+   * `backendModelSelection()` (never `local`). Forwarded to the backend as the
+   * request body's `modelSelection` on the rail it names. Absent ⇒ legacy.
+   */
+  modelSelection?: ModelSelection;
   systemPrompt: string;
   temperature?: number;
   /**
@@ -519,6 +525,7 @@ export async function runSyntheticHostSession(
     accessVersion,
     scenarioId,
     environmentId,
+    modelSelection,
   } = runtime;
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
@@ -1265,6 +1272,7 @@ export async function runSyntheticHostSession(
             ...(persist.journeyRunId
               ? { journeyRunId: persist.journeyRunId }
               : {}),
+            ...(modelSelection ? { modelSelection } : {}),
           }),
         admissionOptions,
       ).catch((error: unknown) => {
@@ -1870,6 +1878,12 @@ export async function drainAssistantTurn(
      * up in one query.
      */
     journeyRunId?: string;
+    /**
+     * The saved selection behind `modelDefinition` (see
+     * `SyntheticHostRuntime.modelSelection`), forwarded by `resolveTurnRuntime`
+     * on the rail it names.
+     */
+    modelSelection?: ModelSelection;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   },
@@ -1896,6 +1910,7 @@ export async function drainAssistantTurn(
     builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
+    modelSelection,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1955,6 +1970,7 @@ export async function drainAssistantTurn(
       ? { extraBodyFields: mergedExtraBodyFields }
       : {}),
     ...(attribution ? { attribution } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
   });
 
   // Engine-error signal. Structural type covers both the hosted

@@ -542,12 +542,14 @@ export async function resolveOrgProviderRuntime(
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
+  options?: { modelSelection?: ModelSelection },
 ): Promise<OrgProviderRuntime> {
   return resolveOrgProviderRuntimeForTarget(
     { projectId },
     providerKey,
     model,
     auth,
+    options,
   );
 }
 
@@ -758,6 +760,12 @@ export async function resolveSyntheticModelSource(args: {
   scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
+  /**
+   * The saved `org` selection behind this model, forwarded to
+   * `/stream/org/resolve` so the backend re-checks its connection. Any other
+   * source is not sent.
+   */
+  modelSelection?: ModelSelection;
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
   if (isHostedModelDefinition(args.modelDefinition)) {
@@ -788,6 +796,9 @@ export async function resolveSyntheticModelSource(args: {
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
+        args.modelSelection?.source === "org"
+          ? { modelSelection: args.modelSelection }
+          : undefined,
       )
     : { runtimeLocation: "cloud", providerKey: keyResult.key };
   return {

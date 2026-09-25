@@ -15,9 +15,11 @@ import {
 } from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
+  backendModelSelection,
   readStoredModelSelection,
   wireModelIdForSelection,
 } from "../../utils/model-resolution-local.js";
+import type { ModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
   captureAndPersistWidgetSnapshotsForSession,
@@ -219,6 +221,23 @@ export function swarmTargetModelDefinition(
     };
   }
   return definition;
+}
+
+/**
+ * The target's saved selection as the backend should see it: the same
+ * selection {@link swarmTargetModelDefinition} routes by (valid and naming the
+ * pinned model), put through `backendModelSelection()`, so a `hosted` or `org`
+ * one is forwarded as the request body's `modelSelection` and a `local` one
+ * never is. `undefined` for a legacy snapshot.
+ */
+export function swarmTargetBackendSelection(
+  target: Pick<PinnedHostExecutionSpec, "modelId" | "resolvedSelection">,
+): ModelSelection | undefined {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return undefined;
+  }
+  return backendModelSelection(selection);
 }
 
 function targetSessionIdentity(target: PinnedHostExecutionSpec): {
@@ -683,6 +702,7 @@ async function runJourneyFanOut(
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
       const modelDefinition = swarmTargetModelDefinition(target);
+      const modelSelection = swarmTargetBackendSelection(target);
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -1230,6 +1250,7 @@ async function runJourneyFanOut(
             maxTurns,
             runtime: {
               modelDefinition,
+              ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,
               temperature: target.temperature,
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
