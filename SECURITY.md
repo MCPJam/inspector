@@ -18,12 +18,14 @@ and what an attacker gains. A proof of concept helps us reproduce quickly.
 
 ## What happens next
 
+These are targets we aim to meet, not guarantees:
+
 | Stage | Target |
 | --- | --- |
-| We acknowledge the report | 3 business days |
-| We confirm or reject the finding, with a severity | 10 business days |
-| Fix for a critical finding | 7 days from confirmation |
-| Fix for a high finding | 30 days from confirmation |
+| We acknowledge the report | Within 3 business days |
+| We confirm or decline the finding, with a severity | Within 10 business days |
+| Fix for a critical finding | Within 7 days of confirmation |
+| Fix for a high finding | Within 30 days of confirmation |
 
 Medium and low findings are scheduled into normal release work. We will tell you
 which bucket a report landed in rather than leaving it silent.
@@ -40,8 +42,10 @@ paid bug bounty.
 
 In scope:
 
-- The hosted service at `app.mcpjam.com`.
-- The `@mcpjam/inspector` npm package and the MCPJam desktop app.
+- The hosted service at `app.mcpjam.com`, including its public API
+  (`app.mcpjam.com/api/v1`), and the hosted MCP server at `mcp.mcpjam.com`.
+- The `@mcpjam/inspector`, `@mcpjam/sdk` and `@mcpjam/cli` npm packages and the
+  MCPJam desktop app.
 - This repository's source and its CI/CD workflows.
 
 Out of scope:
@@ -58,8 +62,9 @@ Out of scope:
 
 ## Supported versions
 
-We patch the most recent released minor of `@mcpjam/inspector` and the current
-hosted deployment. Releases are frequent, so upgrading to the latest version is
+We patch the most recent released minor of each npm package
+(`@mcpjam/inspector`, `@mcpjam/sdk`, `@mcpjam/cli`) and the current hosted
+deployment. Releases are frequent, so upgrading to the latest version is
 usually the fastest route to a fix. We do not backport security fixes to older
 minors.
 
