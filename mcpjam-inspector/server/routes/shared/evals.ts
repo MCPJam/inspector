@@ -96,7 +96,11 @@ import {
   translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
-import { resolveSuiteRunPluginServers } from "../../services/plugins/run-plugin-servers.js";
+import {
+  resolveSuiteRunPluginServers,
+  type RunPluginServer,
+} from "../../services/plugins/run-plugin-servers.js";
+import { withPluginExecutionServers } from "../../services/evals/plugin-execution-servers.js";
 import { type RunPinnedSkill } from "../../services/evals/run-plugin-snapshot.js";
 import {
   buildPinnedSkillSource,
@@ -2850,6 +2854,8 @@ export async function prepareEvalRun(
    * the `skillsOverride: "exclude"` arm every skill in the project.
    */
   let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
+  /** The run's pinned plugin servers, re-gated just before execution. */
+  let executionPluginServers: RunPluginServer[] = [];
   if (runId) {
     // The run row already exists (startSuiteRunWithRecorder created it), so a
     // persistent setup failure would otherwise strand the run as
@@ -2882,6 +2888,7 @@ export async function prepareEvalRun(
           allowUndeployedBackend: !environmentLaunch,
         },
       );
+      executionPluginServers = runPluginServers;
 
       // The shared pin → skill-channel conversion (environment quick runs use
       // the same one): unreachable supporting files fail HERE, before the
@@ -2912,6 +2919,13 @@ export async function prepareEvalRun(
     }
   }
 
+  // The model's tools come from the run's frozen selection PLUS its re-gated
+  // plugin servers; the snapshot keeps plugin ids out of the host config.
+  const executionConfig = withPluginExecutionServers(
+    config,
+    executionPluginServers,
+    clientManager,
+  );
   const execute = async () => {
     await runEvalSuiteWithAiSdk({
       suiteId: resolvedSuiteId,
@@ -2920,7 +2934,7 @@ export async function prepareEvalRun(
       // field, which the runner reads as "resolve the platform defaults" —
       // same code path, differing only in which rung each field came from.
       ...(runExecutionBudgets ? { executionBudgets: runExecutionBudgets } : {}),
-      config,
+      config: executionConfig,
       modelApiKeys: resolvedModelApiKeys ?? undefined,
       orgModelConfig: resolvedOrgModelConfig,
       orgModelConfigTarget: resolvedOrgModelConfigTarget,
