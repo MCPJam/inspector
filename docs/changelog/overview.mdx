@@ -11,6 +11,10 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-09-25
 
+#### Changed
+
+- **Artifact links in v1 API responses are now signed URLs or `null`** — screenshot and recording fields (`screenshotUrl`, `videoUrl`) in eval iteration traces (`GET .../iterations/{iterationId}/trace`), eval step evidence (`GET .../iterations/{iterationId}/steps`), and chat session browser responses now carry only signed, expiring `/web/artifact` links. Any value that was a raw storage URL is now reported as `null`. If your integration reads these fields, treat `null` as "not yet available" and re-poll or re-fetch once the backend has minted a signed link. The `videoMeta` field on a step's evidence is also omitted when `videoUrl` is `null`, since metadata for an unreachable recording is not useful.
+
 #### Fixed
 
 - **Swarm run session metrics now reflect the run, not the whole project** — the session metrics strip on a run's Sessions tab was aggregating every swarm session in the project instead of the sessions belonging to that run. Session count, tool error rate, latency, and token tiles now describe the run you are looking at. The top-level Sessions tab is unchanged and continues to show project-wide or persona-scoped metrics.
