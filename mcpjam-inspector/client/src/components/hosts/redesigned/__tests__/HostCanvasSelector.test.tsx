@@ -315,4 +315,22 @@ describe("HostCanvasSelector", () => {
     expect(deleteBtn).not.toBeDisabled();
     expect(deleteBtn).not.toHaveAttribute("title");
   });
+
+  it("disables delete on a host in use and explains why in a tooltip", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...twoHosts[0], inUse: true }, twoHosts[1]],
+      isLoading: false,
+    });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    await user.click(screen.getByTestId("host-canvas-current"));
+
+    const blocked = await screen.findByTestId("host-canvas-delete-host-a");
+    expect(blocked).toBeDisabled();
+    expect(blocked).toHaveAttribute("title", "In use by a test suite.");
+    const free = screen.getByTestId("host-canvas-delete-host-b");
+    expect(free).not.toBeDisabled();
+    expect(free).not.toHaveAttribute("title");
+  });
 });

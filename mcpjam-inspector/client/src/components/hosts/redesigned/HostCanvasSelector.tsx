@@ -29,8 +29,8 @@ import { clientDisplayName } from "@/lib/client-display-name";
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
-const LAST_HOST_DELETE_REASON =
-  "A project needs at least one client. Create another client first.";
+const LAST_HOST_DELETE_REASON = "You need at least one client.";
+const IN_USE_DELETE_REASON = "In use by a test suite.";
 const ANALYTICS_LOCATION = "host_canvas";
 
 // Sits on the nav row's own surface, so no elevation/blur — just a bordered
@@ -300,8 +300,14 @@ export function HostCanvasSelector({
                       type="button"
                       aria-label={`Delete ${clientDisplayName(host)}`}
                       data-testid={`host-canvas-delete-${host.hostId}`}
-                      disabled={isDeleting || !canDelete}
-                      title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
+                      disabled={isDeleting || !canDelete || host.inUse === true}
+                      title={
+                        !canDelete
+                          ? LAST_HOST_DELETE_REASON
+                          : host.inUse
+                            ? IN_USE_DELETE_REASON
+                            : undefined
+                      }
                       className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
