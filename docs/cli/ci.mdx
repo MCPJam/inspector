@@ -497,6 +497,8 @@ badge can never claim more than "the client said so". No secret that could prove
 it can live in a public npm package.
 </Note>
 
+In human format, `eval run --wait` also prints an **Iteration provenance** block after the receipt — one line per iteration showing what each trial actually ran on ("Ran on \<model\> via \<rail/connection\>, \<harness vX\>, effort/temperature, max output"), plus a deviation line when the execution record says the run differed from the requested model selection. Iterations recorded before this feature was deployed say "not recorded"; nothing is inferred. When `--reporter` is present, the block goes to stderr so stdout stays a single parseable document.
+
 In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
 
 ```text
