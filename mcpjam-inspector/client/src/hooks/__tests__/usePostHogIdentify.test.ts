@@ -8,6 +8,7 @@ const mockState = vi.hoisted(() => ({
     register: vi.fn(),
     reset: vi.fn(),
     setPersonPropertiesForFlags: vi.fn(),
+    updateFlags: vi.fn(),
   },
   auth: {
     user: null as {
@@ -127,6 +128,15 @@ describe("usePostHogIdentify", () => {
     expect(mockState.posthog.reset).not.toHaveBeenCalled();
   });
 
+  it("keeps bootstrapped flags on the first identification", () => {
+    mockState.auth.user = null;
+    mockState.actorKey = "guest_abc";
+
+    renderHook(() => usePostHogIdentify());
+
+    expect(mockState.posthog.updateFlags).not.toHaveBeenCalled();
+  });
+
   it("does nothing while the actor key is still resolving", () => {
     mockState.auth.user = null;
     mockState.actorKey = null;
@@ -207,6 +217,8 @@ describe("usePostHogIdentify", () => {
       deployment: "self_hosted",
       platform: "mac",
     });
+    // reset() already dropped the departing authed actor's flags.
+    expect(mockState.posthog.updateFlags).not.toHaveBeenCalled();
   });
 
   it("aliases a guest into an authed user without calling reset on guest→authed promotion", () => {
@@ -236,6 +248,9 @@ describe("usePostHogIdentify", () => {
     rerender();
 
     expect(mockState.posthog.reset).not.toHaveBeenCalled();
+    // Without a reset, the guest's server-evaluated flags would survive a
+    // failed refresh for the new actor — they are cleared explicitly instead.
+    expect(mockState.posthog.updateFlags).toHaveBeenCalledWith({});
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
       deployment: "self_hosted",
       email: "user@example.com",

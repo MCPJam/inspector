@@ -55,6 +55,13 @@ export function usePostHogIdentify() {
       });
     }
 
+    if (isActorChange && previous && !previous.wasAuthed) {
+      // reset() above only covers a departing authed actor. A departing
+      // guest's server-evaluated flags must not survive into the new actor
+      // either — the refresh below can fail without replacing them.
+      posthog.updateFlags?.({});
+    }
+
     // `deployment` is a PERSON property here, not just a super property: the
     // super prop rides events, while `/flags` targeting reads person
     // properties. Set for every actor (guest included) so a cohort rule like
