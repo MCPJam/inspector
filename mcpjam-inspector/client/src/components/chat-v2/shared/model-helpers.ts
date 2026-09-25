@@ -106,6 +106,17 @@ export function buildAvailableModels(params: {
 }
 
 /**
+ * Org providers whose picker rows are the model ids the org configured
+ * (`modelIds`), because no static list covers them.
+ */
+const ORG_LISTED_MODEL_PROVIDERS: ReadonlySet<string> = new Set([
+  "moonshotai",
+  "z-ai",
+  "qwen",
+  "minimax",
+]);
+
+/**
  * OrgVisibleConfig shape as returned by the org model config query.
  */
 export type OrgVisibleConfig = {
@@ -247,6 +258,26 @@ export function buildAvailableModelsFromOrgConfig(
         id: modelId,
         name: modelId,
         provider: "ollama" as const,
+        orgProvider: orgStamp(p),
+      });
+    }
+  }
+
+  // OpenAI-compatible providers the backend reaches at a fixed base URL
+  // (Moonshot, Z.ai, Qwen, MiniMax): no static list covers them, so the org
+  // lists the model ids to offer, in the provider's own spelling.
+  for (const p of orgConfig.providers) {
+    if (!ORG_LISTED_MODEL_PROVIDERS.has(p.providerKey)) continue;
+    if (!p.enabled || !p.hasSecret) continue;
+    const seen = new Set<string>();
+    for (const raw of p.modelIds ?? []) {
+      const modelId = raw.trim();
+      if (!modelId || seen.has(modelId)) continue;
+      seen.add(modelId);
+      models.push({
+        id: modelId,
+        name: modelId,
+        provider: p.providerKey,
         orgProvider: orgStamp(p),
       });
     }

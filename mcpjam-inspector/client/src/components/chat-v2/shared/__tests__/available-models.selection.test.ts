@@ -401,6 +401,46 @@ describe("org Azure deployments", () => {
   });
 });
 
+describe("org OpenAI-compatible providers with listed models", () => {
+  it("offer the org's model ids, saved with the connection", () => {
+    const config: OrgVisibleConfig = {
+      providers: [
+        {
+          id: "orgprov_moonshot",
+          providerKey: "moonshotai",
+          enabled: true,
+          hasSecret: true,
+          modelIds: ["kimi-k2-0905-preview", "kimi-k2-0905-preview"],
+        },
+        {
+          id: "orgprov_zai_nokey",
+          providerKey: "z-ai",
+          enabled: true,
+          hasSecret: false,
+          modelIds: ["glm-4.6"],
+        },
+      ],
+    };
+    const rows = buildAvailableModelsFromOrgConfig(config, []);
+    expect(rows).toEqual([
+      {
+        id: "kimi-k2-0905-preview",
+        name: "kimi-k2-0905-preview",
+        provider: "moonshotai",
+        orgProvider: { providerKey: "moonshotai", id: "orgprov_moonshot" },
+        hosted: false,
+      },
+    ]);
+    expect(modelSelectionFromDefinition(rows[0], undefined, "chat")).toEqual({
+      modelId: "moonshotai/kimi-k2-0905-preview",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_moonshot" },
+      nativeModelId: "kimi-k2-0905-preview",
+      fallback: { provider: "openrouter", model: "none" },
+    });
+  });
+});
+
 describe("stored choices", () => {
   it("store the canonical id beside the selection and read back the picked row", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
