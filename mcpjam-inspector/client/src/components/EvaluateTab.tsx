@@ -380,11 +380,29 @@ function EvaluateTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
+    // Missing from the overview is not yet proof the suite is gone — not
+    // until the suite's OWN query has answered. "Promote to test case" into a
+    // NEW suite creates it in an action, whose result can reach this client
+    // before the overview subscription's update does; and the promote dialog
+    // holds that same subscription (same args), so this page can mount on a
+    // cached overview older than the suite it was just sent to. Bouncing on
+    // that landed the promoter on the list instead of their case.
+    //
+    // The per-suite query is a fresh subscription for a suite nobody has
+    // opened yet, and Convex applies every subscription's update in one
+    // consistent transition — so once it answers, the overview has caught up
+    // too. (A one-shot `convex.query` would not do: it returns the cached
+    // overview when there is one, which is exactly the stale answer.) For a
+    // suite that really is gone it answers `[]`, and the bounce proceeds.
+    if (queries.isSuiteDetailsLoading) {
+      return;
+    }
     if (!selectedSuiteEntry) {
       navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
     }
   }, [
     overviewQueries.isOverviewLoading,
+    queries.isSuiteDetailsLoading,
     route,
     selectedSuiteEntry,
     selectedSuiteId,
