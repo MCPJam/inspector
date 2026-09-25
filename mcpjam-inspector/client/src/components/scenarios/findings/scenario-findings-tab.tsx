@@ -58,9 +58,8 @@ export function ScenarioFindingsTab({
   onOpenSession?: (sessionId: string) => void;
   /**
    * What a study with NO sessions shows, in place of the one-line notice.
-   * The detail page passes Insights' own empty panel, so the two tabs of an
-   * unrun study say the same thing and offer the same way to get a first
-   * session. Only the no-sessions case: sessions still waiting on analysis
+   * The detail page passes Insights' own empty panel, titled for Findings, so
+   * both tabs of an unrun study offer the same ways to get a first session. Only the no-sessions case: sessions still waiting on analysis
    * keep their status panel, which is about a different problem.
    */
   emptyState?: ReactNode;

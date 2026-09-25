@@ -1,6 +1,7 @@
 /**
- * {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers a
- * self-serve run plus the same invite / copy-link actions.
+ * {@link ScenarioShareEmptyPanel} — the empty state for Insights and Findings
+ * on a study with no sessions: a self-serve run plus the same invite /
+ * copy-link actions, under a heading titled for the tab (`surface`).
  *
  * Copy says STUDY, never "scenario". The product renamed the thing this panel
  * describes; the component, its props and the Convex tables under it did not
@@ -244,7 +245,7 @@ const EMPTY_COPY = {
 } as const;
 
 /**
- * Insights empty state — the two ways to get a first session, in the order
+ * The Insights / Findings empty state — the two ways to get a first session, in the order
  * they cost the reader: run it yourself, or send it to a tester.
  *
  * The header's `Share` button is always there too; this panel repeats copy —
