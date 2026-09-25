@@ -18238,7 +18238,7 @@
           },
           "capture": {
             "type": "object",
-            "description": "Capture level, reporting mode, and redaction facts (fixed for this contract version)."
+            "description": "Capture level, reporting mode, and redaction facts (fixed for this contract version). `redaction.providerRetention` carries the provider policy every platform-key analysis call sends (zero data retention and no training, each read off the wire flags) and names what it does not cover; it is absent on older backends."
           },
           "retention": {
             "type": "object",
