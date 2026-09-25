@@ -60,6 +60,12 @@ async function loadApp() {
   };
 }
 
+// Every probe names a server of its own. `/tools/*` also carries a per-server
+// budget (`mcp-operation-rate-limit.ts`, pinned by
+// `mcp-operation-limit-mount.test.ts`); with a fresh server each time that one
+// never binds, so the ceiling these cases reach is the per-token one.
+let probeServer = 0;
+
 const callProbe = (app: Hono, path: string, bearer: string, ip: string) =>
   app.request(path, {
     method: "POST",
@@ -68,7 +74,7 @@ const callProbe = (app: Hono, path: string, bearer: string, ip: string) =>
       "CF-Connecting-IP": ip,
       Authorization: `Bearer ${bearer}`,
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ serverId: `probe-server-${++probeServer}` }),
   });
 
 /**

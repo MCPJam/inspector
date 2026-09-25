@@ -6,8 +6,31 @@ import {
   readJsonBody,
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
+import { backendFailureRouteError } from "./backend-error.js";
 
 const DEFAULT_PROXY_TIMEOUT_MS = 10_000;
+
+/**
+ * Fixed copy per backend status (MJ-020, MJ-021). The status and a recognized
+ * code are what the backend decides; the words are ours.
+ */
+const FAILURE_MESSAGES: Record<number, string> = {
+  400: "The chat history request was not valid.",
+  401: "Sign in again to load chat history.",
+  403: "You do not have access to this chat.",
+  404: "Chat not found.",
+  409: "This chat changed since it was loaded. Refresh and try again.",
+  429: "Too many requests. Wait a moment and try again.",
+};
+
+function chatHistoryFailure(status: number, body: unknown) {
+  return backendFailureRouteError({
+    source: "chat-history",
+    status,
+    body,
+    message: FAILURE_MESSAGES[status] ?? "Chat history request failed.",
+  });
+}
 
 const chatHistory = new Hono();
 
@@ -54,11 +77,7 @@ async function proxyGet(
 
     const body = await response.json();
     if (!response.ok) {
-      throw new WebRouteError(
-        response.status,
-        body?.code ?? ErrorCode.INTERNAL_ERROR,
-        body?.error ?? "Backend error",
-      );
+      throw chatHistoryFailure(response.status, body);
     }
     return body;
   } catch (error) {
@@ -102,11 +121,7 @@ async function proxyPost(
 
     const responseBody = await response.json();
     if (!response.ok) {
-      throw new WebRouteError(
-        response.status,
-        responseBody?.code ?? ErrorCode.INTERNAL_ERROR,
-        responseBody?.error ?? "Backend error",
-      );
+      throw chatHistoryFailure(response.status, responseBody);
     }
     return responseBody;
   } catch (error) {

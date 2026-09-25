@@ -219,6 +219,10 @@ import {
   requireConvexIdShape,
 } from "./convex-id-param.js";
 import { redactForLog } from "./redact-log-message.js";
+import {
+  publicArtifactLink,
+  withPublicTraceArtifactLinks,
+} from "./artifact-links.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
@@ -2100,13 +2104,16 @@ function toIterationDto(
 // `evidence` is omitted entirely when the step produced none.
 function toStepResultDto(step: EvalStepReplay) {
   const ev = step.evidence;
+  // Artifact links only as signed `/web/artifact` links (MJ-005).
+  const screenshotUrl = publicArtifactLink(ev?.screenshotUrl);
+  const videoUrl = publicArtifactLink(ev?.videoUrl);
   const evidence = ev
     ? {
         ...(ev.toolCalls?.length ? { toolCalls: ev.toolCalls } : {}),
-        ...(ev.screenshotUrl ? { screenshotUrl: ev.screenshotUrl } : {}),
-        ...(ev.videoUrl
+        ...(screenshotUrl ? { screenshotUrl } : {}),
+        ...(videoUrl
           ? {
-              videoUrl: ev.videoUrl,
+              videoUrl,
               // With the URL, never without: metadata for a video this row
               // does not carry describes a recording nobody can reach.
               ...(ev.videoMeta ? { videoMeta: ev.videoMeta } : {}),
@@ -6215,6 +6222,8 @@ evals.get(
         { reason: "TRACE_NOT_AVAILABLE" },
       );
     }
+    // Artifact links only as signed `/web/artifact` links (MJ-005).
+    trace = withPublicTraceArtifactLinks(trace);
     // AFTER the read resolves and after the 404s, so a row means a transcript
     // actually left the product.
     //

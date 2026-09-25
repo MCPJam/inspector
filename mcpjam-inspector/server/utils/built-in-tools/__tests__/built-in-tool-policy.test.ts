@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyBuiltInToolPolicy,
   isKnownBuiltInToolId,
   resolveTurnBuiltInToolIds,
+  resolveWorkspaceToolApproval,
 } from "../built-in-tool-policy";
 import { MCPJAM_TOOL_IDS } from "../mcpjam";
 
@@ -11,12 +12,14 @@ import { MCPJAM_TOOL_IDS } from "../mcpjam";
 const READ = "list_project_servers";
 const GATED_WRITE = "run_eval_suite";
 const EXCLUDED_WRITE = "create_project_server";
+// A workspace read that opens a connection to a saved server.
+const CONNECTION_READ = "diagnose_server";
 
 type ResolveArgs = Parameters<typeof resolveTurnBuiltInToolIds>[0];
 
 function resolve(overrides: Partial<ResolveArgs>) {
-  const loadProjectDefaultBuiltInToolIds = vi.fn(
-    overrides.loadProjectDefaultBuiltInToolIds ?? (async () => null),
+  const loadProjectDefaultConfig = vi.fn(
+    overrides.loadProjectDefaultConfig ?? (async () => null),
   );
   const loadProjectAccess = vi.fn(
     overrides.loadProjectAccess ?? (async () => ({ projectRole: "admin" })),
@@ -27,10 +30,10 @@ function resolve(overrides: Partial<ResolveArgs>) {
     hostRuntimeConfig: null,
     isGuest: false,
     ...overrides,
-    loadProjectDefaultBuiltInToolIds,
+    loadProjectDefaultConfig,
     loadProjectAccess,
   });
-  return { result, loadProjectDefaultBuiltInToolIds, loadProjectAccess };
+  return { result, loadProjectDefaultConfig, loadProjectAccess };
 }
 
 describe("isKnownBuiltInToolId", () => {
@@ -131,7 +134,7 @@ describe("applyBuiltInToolPolicy", () => {
 
 describe("resolveTurnBuiltInToolIds", () => {
   it("bounds a host-bound turn by the saved host's list", async () => {
-    const { result, loadProjectDefaultBuiltInToolIds } = resolve({
+    const { result, loadProjectDefaultConfig } = resolve({
       targetKind: "host",
       hostRuntimeConfig: { builtInToolIds: ["web_search"] },
       requested: ["web_search", "bash", "browser"],
@@ -141,7 +144,7 @@ describe("resolveTurnBuiltInToolIds", () => {
     expect(decision.dropped).toEqual([
       { id: "bash", reason: "not_configured" },
     ]);
-    expect(loadProjectDefaultBuiltInToolIds).not.toHaveBeenCalled();
+    expect(loadProjectDefaultConfig).not.toHaveBeenCalled();
   });
 
   it("treats a host with no list as configuring none", async () => {
@@ -156,7 +159,9 @@ describe("resolveTurnBuiltInToolIds", () => {
   it("bounds an ad-hoc turn by the project's default host config", async () => {
     const { result, loadProjectAccess } = resolve({
       requested: ["web_search", GATED_WRITE, READ],
-      loadProjectDefaultBuiltInToolIds: async () => ["web_search", READ],
+      loadProjectDefaultConfig: async () => ({
+        builtInToolIds: ["web_search", READ],
+      }),
     });
     const decision = await result;
     expect(decision.ids).toEqual(["web_search", READ]);
@@ -169,7 +174,7 @@ describe("resolveTurnBuiltInToolIds", () => {
   it("leaves an ad-hoc turn unbounded when the project has no default config", async () => {
     const { result } = resolve({
       requested: ["web_search", "bash", GATED_WRITE],
-      loadProjectDefaultBuiltInToolIds: async () => null,
+      loadProjectDefaultConfig: async () => null,
     });
     expect((await result).ids).toEqual(["web_search", "bash", GATED_WRITE]);
   });
@@ -177,7 +182,7 @@ describe("resolveTurnBuiltInToolIds", () => {
   it("drops workspace tools, and only those, when the configuration cannot be read", async () => {
     const { result, loadProjectAccess } = resolve({
       requested: ["web_search", READ],
-      loadProjectDefaultBuiltInToolIds: async () => {
+      loadProjectDefaultConfig: async () => {
         throw new Error("convex unavailable");
       },
     });
@@ -199,6 +204,7 @@ describe("resolveTurnBuiltInToolIds", () => {
     expect(await result).toEqual({
       ids: [],
       dropped: [{ id: READ, reason: "access_unverified" }],
+      workspaceToolApproval: true,
     });
   });
 
@@ -223,39 +229,209 @@ describe("resolveTurnBuiltInToolIds", () => {
       { isGuest: true },
       { targetKind: "scenario" as const },
     ]) {
-      const { result, loadProjectAccess, loadProjectDefaultBuiltInToolIds } =
-        resolve({ requested: [READ, "web_search"], ...overrides });
+      const { result, loadProjectAccess, loadProjectDefaultConfig } = resolve({
+        requested: [READ, "web_search"],
+        ...overrides,
+      });
       expect((await result).ids).toEqual(["web_search"]);
       expect(loadProjectAccess).not.toHaveBeenCalled();
-      expect(loadProjectDefaultBuiltInToolIds).not.toHaveBeenCalled();
+      expect(loadProjectDefaultConfig).not.toHaveBeenCalled();
     }
   });
 
   it("makes no lookup a turn's request cannot need", async () => {
     const browserOnly = resolve({ requested: ["browser"] });
     expect((await browserOnly.result).ids).toEqual(["browser"]);
-    expect(browserOnly.loadProjectDefaultBuiltInToolIds).not.toHaveBeenCalled();
+    expect(browserOnly.loadProjectDefaultConfig).not.toHaveBeenCalled();
     expect(browserOnly.loadProjectAccess).not.toHaveBeenCalled();
 
     const noWorkspace = resolve({
       requested: ["web_search"],
-      loadProjectDefaultBuiltInToolIds: async () => ["web_search"],
+      loadProjectDefaultConfig: async () => ({
+        builtInToolIds: ["web_search"],
+      }),
     });
     expect((await noWorkspace.result).ids).toEqual(["web_search"]);
     expect(noWorkspace.loadProjectAccess).not.toHaveBeenCalled();
 
     const empty = resolve({ requested: [] });
-    expect(await empty.result).toEqual({ ids: [], dropped: [] });
-    expect(empty.loadProjectDefaultBuiltInToolIds).not.toHaveBeenCalled();
+    expect(await empty.result).toEqual({
+      ids: [],
+      dropped: [],
+      workspaceToolApproval: true,
+    });
+    expect(empty.loadProjectDefaultConfig).not.toHaveBeenCalled();
   });
 
   it("still role-gates an environment turn's own list", async () => {
-    const { result, loadProjectDefaultBuiltInToolIds } = resolve({
+    const { result, loadProjectDefaultConfig } = resolve({
       targetKind: "environment",
       requested: [READ, GATED_WRITE],
       loadProjectAccess: async () => ({ projectRole: null }),
     });
     expect((await result).ids).toEqual([READ]);
-    expect(loadProjectDefaultBuiltInToolIds).not.toHaveBeenCalled();
+    expect(loadProjectDefaultConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveWorkspaceToolApproval (MJ-008)", () => {
+  it.each([
+    [undefined, undefined, true],
+    [undefined, false, true],
+    [true, false, true],
+    [true, undefined, true],
+    [false, false, false],
+    [false, undefined, false],
+    [false, true, true],
+    ["off", false, true],
+  ])("saved %s, turn %s: %s", (saved, requested, expected) => {
+    expect(resolveWorkspaceToolApproval({ saved, requested })).toBe(expected);
+  });
+});
+
+describe("resolveTurnBuiltInToolIds — workspace approval setting (MJ-008)", () => {
+  it("is on for an ad-hoc turn in a project with no saved default config", async () => {
+    const { result } = resolve({
+      requested: ["list_projects", READ, EXCLUDED_WRITE],
+      requestedToolApproval: false,
+      loadProjectDefaultConfig: async () => null,
+    });
+    const decision = await result;
+    expect(decision.ids).toEqual(["list_projects", READ, EXCLUDED_WRITE]);
+    expect(decision.workspaceToolApproval).toBe(true);
+  });
+
+  it.each([true, false])(
+    "follows the project default's saved setting (%s) on an ad-hoc turn, from the one read",
+    async (saved) => {
+      const { result, loadProjectDefaultConfig } = resolve({
+        requested: [READ, CONNECTION_READ],
+        requestedToolApproval: false,
+        loadProjectDefaultConfig: async () => ({
+          builtInToolIds: [READ, CONNECTION_READ],
+          requireToolApproval: saved,
+        }),
+      });
+      const decision = await result;
+      expect(decision.ids).toEqual([READ, CONNECTION_READ]);
+      expect(decision.workspaceToolApproval).toBe(saved);
+      expect(loadProjectDefaultConfig).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("is on when the saved default config carries no setting", async () => {
+    const { result } = resolve({
+      requested: [CONNECTION_READ],
+      requestedToolApproval: false,
+      loadProjectDefaultConfig: async () => ({
+        builtInToolIds: [CONNECTION_READ],
+      }),
+    });
+    expect((await result).workspaceToolApproval).toBe(true);
+  });
+
+  it("is raised by the turn's own setting and never lowered by it", async () => {
+    const raised = resolve({
+      requested: [CONNECTION_READ],
+      requestedToolApproval: true,
+      loadProjectDefaultConfig: async () => ({
+        builtInToolIds: [CONNECTION_READ],
+        requireToolApproval: false,
+      }),
+    });
+    expect((await raised.result).workspaceToolApproval).toBe(true);
+
+    const kept = resolve({
+      requested: [CONNECTION_READ],
+      requestedToolApproval: false,
+      loadProjectDefaultConfig: async () => ({
+        builtInToolIds: [CONNECTION_READ],
+        requireToolApproval: true,
+      }),
+    });
+    expect((await kept.result).workspaceToolApproval).toBe(true);
+  });
+
+  it.each(["host" as const, "environment" as const])(
+    "follows the saved host on a %s turn",
+    async (targetKind) => {
+      const off = resolve({
+        targetKind,
+        requested: [CONNECTION_READ],
+        requestedToolApproval: false,
+        hostRuntimeConfig: {
+          builtInToolIds: [CONNECTION_READ],
+          requireToolApproval: false,
+        },
+      });
+      expect((await off.result).workspaceToolApproval).toBe(false);
+      expect(off.loadProjectDefaultConfig).not.toHaveBeenCalled();
+
+      const unsaved = resolve({
+        targetKind,
+        requested: [CONNECTION_READ],
+        requestedToolApproval: false,
+        hostRuntimeConfig: { builtInToolIds: [CONNECTION_READ] },
+      });
+      expect((await unsaved.result).workspaceToolApproval).toBe(true);
+    },
+  );
+});
+
+describe("workspace tools where approvals cannot be verified (MJ-008)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function withoutSigningKey() {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+  }
+
+  it("drops every workspace tool that would pause and keeps the pure reads", async () => {
+    withoutSigningKey();
+    const { result } = resolve({
+      requested: [
+        "list_projects",
+        READ,
+        EXCLUDED_WRITE,
+        CONNECTION_READ,
+        "web_search",
+      ],
+      requestedToolApproval: false,
+    });
+    const decision = await result;
+    expect(decision.ids).toEqual(["list_projects", READ, "web_search"]);
+    expect(decision.dropped).toEqual([
+      { id: EXCLUDED_WRITE, reason: "approval_unverifiable" },
+      { id: CONNECTION_READ, reason: "approval_unverifiable" },
+    ]);
+  });
+
+  it("keeps a connection-opening read whose saved setting is off", async () => {
+    withoutSigningKey();
+    const { result } = resolve({
+      requested: [READ, CONNECTION_READ, EXCLUDED_WRITE],
+      requestedToolApproval: false,
+      loadProjectDefaultConfig: async () => ({
+        builtInToolIds: [READ, CONNECTION_READ, EXCLUDED_WRITE],
+        requireToolApproval: false,
+      }),
+    });
+    const decision = await result;
+    expect(decision.ids).toEqual([READ, CONNECTION_READ]);
+    expect(decision.dropped).toEqual([
+      { id: EXCLUDED_WRITE, reason: "approval_unverifiable" },
+    ]);
+  });
+
+  it("drops nothing for this reason where approvals can be verified", async () => {
+    const { result } = resolve({
+      requested: [READ, CONNECTION_READ, EXCLUDED_WRITE],
+      requestedToolApproval: false,
+    });
+    const decision = await result;
+    expect(decision.ids).toEqual([READ, CONNECTION_READ, EXCLUDED_WRITE]);
+    expect(decision.dropped).toEqual([]);
   });
 });

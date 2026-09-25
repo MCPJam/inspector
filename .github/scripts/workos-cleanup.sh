@@ -32,16 +32,29 @@
 #   0 — always. This is hygiene on the PR-close path: a missing entry, an
 #       unavailable endpoint, or a bad key must never block PR close.
 #       Problems surface as ::warning:: annotations instead.
+#   1 — only with WORKOS_CLEANUP_STRICT=1, when removal of the redirect URI
+#       can't be confirmed: no key, a failed list or delete, or a scan that
+#       hit the page cap without a match. The preview reaper
+#       (reap-preview-envs.sh) uses this to keep an environment until its
+#       redirect URI is known to be gone. The CORS origin stays best-effort
+#       even in strict mode — see the call site at the bottom.
+#
+# WORKOS_CLEANUP_MAX_PAGES (default 10) caps pages scanned per resource.
 
 set -uo pipefail
+
+STRICT="${WORKOS_CLEANUP_STRICT:-0}"
+MAX_PAGES="${WORKOS_CLEANUP_MAX_PAGES:-10}"
 
 PREVIEW_URL="${1:-}"
 if [ -z "$PREVIEW_URL" ]; then
   echo "::warning::workos-cleanup.sh called without a preview URL — nothing to clean" >&2
+  [ "$STRICT" = "1" ] && exit 1
   exit 0
 fi
 if [ -z "${STAGING_WORKOS_API_KEY:-}" ]; then
   echo "::warning::STAGING_WORKOS_API_KEY is not set — skipping WorkOS cleanup for ${PREVIEW_URL}" >&2
+  [ "$STRICT" = "1" ] && exit 1
   exit 0
 fi
 
@@ -59,11 +72,12 @@ WORKOS_API_BASE="${WORKOS_API_BASE:-https://api.workos.com}"
 # exists"), so one entry per exact value is all that can exist. A scan that
 # ends without a match AND without seeing the end of the list (page cap,
 # list failure) must NOT report "already clean" — it warns instead.
+# Returns 1 when removal can't be confirmed; callers decide whether it matters.
 delete_matching() {
   local resource="$1" field="$2" value="$3"
-  local after="" page=0 ids="" scan_complete=0
+  local after="" page=0 ids="" scan_complete=0 unconfirmed=0
 
-  while [ "$page" -lt 10 ]; do
+  while [ "$page" -lt "$MAX_PAGES" ]; do
     page=$((page + 1))
     local url="${WORKOS_API_BASE}/user_management/${resource}?limit=100"
     if [ -n "$after" ]; then
@@ -108,6 +122,7 @@ delete_matching() {
       echo "::notice::No WorkOS ${resource} entry matched '${value}' (already clean)"
     else
       echo "::warning::WorkOS ${resource} scan ended after ${page} page(s) without finding '${value}' — verify/remove it manually in the staging WorkOS dashboard" >&2
+      return 1
     fi
     return 0
   fi
@@ -121,12 +136,25 @@ delete_matching() {
     del_code="${del_code:-000}"
     case "$del_code" in
       2*) echo "::notice::Removed WorkOS ${resource} entry ${id} ('${value}')" ;;
-      *) echo "::warning::Failed to delete WorkOS ${resource} ${id} (HTTP ${del_code}) — remove '${value}' manually in the staging WorkOS dashboard" >&2 ;;
+      *)
+        echo "::warning::Failed to delete WorkOS ${resource} ${id} (HTTP ${del_code}) — remove '${value}' manually in the staging WorkOS dashboard" >&2
+        unconfirmed=1
+        ;;
     esac
   done <<< "$ids"
+  return "$unconfirmed"
 }
 
-delete_matching redirect_uris uri "${PREVIEW_URL}/callback"
-delete_matching cors_origins origin "${PREVIEW_URL}"
+REDIRECT_CONFIRMED=1
+delete_matching redirect_uris uri "${PREVIEW_URL}/callback" || REDIRECT_CONFIRMED=0
+# Best-effort even in strict mode: DELETE on a listed cors_origins id returns
+# 404 on every close-time destroy run (e.g. pr-5581, 2026-09-25), so it can't
+# gate anything until that endpoint is sorted out. A leftover redirect URI is
+# the one that matters — it can deliver auth codes to whoever reclaims the
+# *.up.railway.app name; a CORS origin can't.
+delete_matching cors_origins origin "${PREVIEW_URL}" || true
 
+if [ "$STRICT" = "1" ] && [ "$REDIRECT_CONFIRMED" -eq 0 ]; then
+  exit 1
+fi
 exit 0

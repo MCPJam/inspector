@@ -1085,7 +1085,7 @@ describe("browser turn integration", () => {
   afterEach(() => vi.restoreAllMocks());
   function browserFixture() {
     mutationMock.mockImplementation(async (name: string) => name === "chatSessions:claimTurnLease" ? { status: "claimed", turnId: "turn_1", executionOwnerToken: "owner" } : null);
-    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://storage.test/shot" }] } : null);
+    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://example.convex.site/web/artifact?t=shot.sig" }] } : null);
     resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ builtInToolIds: ["browser"], browserToolPolicy: { mode: "allow_all" }, modelId: MODEL }));
     vi.spyOn(BrowserSessionService.prototype, "agentRequest").mockImplementation(async op => op === "create_shell" ? { sessionId: "cs_1", chatSessionId: "wire" } : { ok: true });
     vi.spyOn(sessionBrowser, "getConversationBrowser").mockResolvedValue(null);
@@ -1115,7 +1115,7 @@ describe("browser turn integration", () => {
     const response = await turn(input);
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://storage.test/shot" }] });
+    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://example.convex.site/web/artifact?t=shot.sig" }] });
     expect(body.chatSessionId).toBe("wire");
     const pixels = Buffer.from([137,80,78,71,13,10,26,10]).toString("base64");
     expect(JSON.stringify(body)).not.toContain(pixels);

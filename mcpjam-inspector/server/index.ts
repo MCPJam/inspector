@@ -53,6 +53,10 @@ import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { indexingHeadersMiddleware } from "./middleware/indexing-headers";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
+import {
+  startRevokedSessionCache,
+  stopRevokedSessionCache,
+} from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
@@ -339,6 +343,10 @@ initXAAIdpKeyPair();
 // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
 // dispatch classifies newly-added hosted models correctly. Memoized.
 startHostedModelCatalogRefresh();
+// The revoked-session list (MJ-011). Loads in the background; the routes that
+// depend on it answer 503 until the first scan completes, and nothing else
+// waits for it. A no-op without the service token. Mirror of server/app.ts.
+startRevokedSessionCache();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
@@ -1062,6 +1070,7 @@ async function shutdown() {
     await githubChecksWorker?.stop();
     await benchWorker?.stop();
     await productionChecksWorker.stop();
+    stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
