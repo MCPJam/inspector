@@ -12,7 +12,7 @@
  * collapse to one line and open on click.
  */
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
@@ -76,6 +76,19 @@ export function ActionRow({
   const Icon = meta.Icon;
   const expandable = step.kind !== "prompt";
   const [open, setOpen] = useState(defaultOpen);
+  // An authored tool call names its server by ID, so the row would otherwise
+  // read "search-products on p570g76zwcpz1…".
+  const serverNamesById = useMemo(
+    () =>
+      new Map(
+        (projectServers ?? []).flatMap((server) =>
+          server._id && server.name
+            ? [[server._id, server.name] as const]
+            : [],
+        ),
+      ),
+    [projectServers],
+  );
 
   return (
     <li
@@ -114,7 +127,7 @@ export function ActionRow({
               )}
             />
             <span className="min-w-0 truncate text-xs text-foreground">
-              {summarizeStep(step)}
+              {summarizeStep(step, serverNamesById)}
             </span>
           </button>
         ) : (
