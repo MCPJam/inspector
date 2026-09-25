@@ -1,14 +1,21 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SuiteRunReview } from "../suite-run-review";
 import { planRunMatrix, seedRunMatrix } from "../suite-run-matrix";
 import type { EvalSuite, EvalCase } from "../../evals/types";
-const { ensure, query, mutation, capabilities } = vi.hoisted(() => ({
-  ensure: vi.fn(),
-  query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
-  mutation: vi.fn(),
-  capabilities: { value: null as { environmentDerivation?: boolean } | null },
-}));
+const { ensure, query, mutation, capabilities, projectEnvironments } =
+  vi.hoisted(() => ({
+    ensure: vi.fn(),
+    query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
+    mutation: vi.fn(),
+    capabilities: {
+      value: null as {
+        environmentDerivation?: boolean;
+        ephemeralEnvironmentLaunch?: boolean;
+      } | null,
+    },
+    projectEnvironments: { value: [] as unknown[] | undefined },
+  }));
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -31,6 +38,7 @@ vi.mock("@/hooks/use-available-models", () => ({
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useEnsureAdhocEnvironments: () => ensure,
+  useProjectEnvironments: () => projectEnvironments.value,
 }));
 vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
   useEvalComposeCapable: () => ({ capable: true, pending: false }),
@@ -180,6 +188,7 @@ beforeEach(() => {
   query.mockResolvedValue({ ephemeralEnvironmentLaunch: true });
   mutation.mockReset();
   capabilities.value = null;
+  projectEnvironments.value = [];
 });
 
 it("launches saved pairings without a temporary-environment flag or capability probe", async () => {
@@ -372,4 +381,85 @@ it("launches a derived cell without modifying the suite", async () => {
   );
   expect(ensure).not.toHaveBeenCalled();
   expect(suite.environmentIds).toEqual(["env"]);
+});
+
+describe("an SDK suite", () => {
+  const sdkSuite = {
+    ...suite,
+    source: "sdk",
+    environmentIds: undefined,
+    hostAttachments: [],
+  } as unknown as EvalSuite;
+
+  it("runs in the environment picked for this run, without attaching it", async () => {
+    capabilities.value = { ephemeralEnvironmentLaunch: true };
+    projectEnvironments.value = [
+      {
+        environmentId: "prod",
+        name: "Prod",
+        hostId: "claude",
+        modelId: "anthropic/claude-sonnet-4-6",
+        serverAttachmentId: "servers",
+      },
+      // No servers: not offered, it could only fail.
+      { environmentId: "empty", name: "Empty", hostId: "claude" },
+    ];
+    const onStart = vi.fn();
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={sdkSuite}
+        cases={cases}
+        environments={[]}
+        hostNamesById={new Map([["claude", "Claude"]])}
+        onStart={onStart}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("radio", { name: /Empty/ })).toBeNull();
+    const start = screen.getByRole("button", { name: "Start run" });
+    expect(start).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /Prod/ }));
+    fireEvent.click(start);
+    await waitFor(() =>
+      expect(onStart).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentIds: ["prod"] }),
+        { iterationOverride: 5, ephemeralEnvironment: true },
+      ),
+    );
+  });
+
+  it("says what to do when the project has no environment to run it in", () => {
+    capabilities.value = { ephemeralEnvironmentLaunch: true };
+    projectEnvironments.value = [];
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={sdkSuite}
+        cases={cases}
+        environments={[]}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/no environment with servers yet/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
+  });
+
+  it("keeps the suite's own launch on a backend without ephemeral launches", () => {
+    capabilities.value = { environmentDerivation: true };
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={sdkSuite}
+        cases={cases}
+        environments={[]}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("sdk-suite-run-environment")).toBeNull();
+  });
 });

@@ -8,6 +8,7 @@ import {
   initSuiteSettingsDraft,
   normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
+  suiteImageSetting,
   SUITE_SETTINGS_KEYS,
   suiteSettingsReducer,
   toUpdateArgs,
@@ -199,6 +200,58 @@ describe("clearing a setting is not the same as omitting it", () => {
     };
     expect(args.environment.servers).toEqual(["alpha"]);
     expect("computerEnvironmentId" in args.environment).toBe(false);
+  });
+
+  test("an environment suite sets its environments' image, and a clear is explicit", () => {
+    const pinned = edit(draftOf(), "computerEnvironmentId", "env_1");
+    const set = toUpdateArgs(
+      pinned,
+      "s",
+      { servers: ["alpha"] },
+      {
+        environmentSuite: true,
+      },
+    );
+    expect(set.environmentSettings).toEqual({ computerEnvironmentId: "env_1" });
+    expect(set.environment).toBeUndefined();
+
+    const cleared = edit(
+      draftOf({ computerEnvironmentId: "env_1" }),
+      "computerEnvironmentId",
+      undefined,
+    );
+    expect(
+      toUpdateArgs(cleared, "s", undefined, { environmentSuite: true })
+        .environmentSettings,
+    ).toEqual({ computerEnvironmentId: null });
+  });
+});
+
+describe("suiteImageSetting", () => {
+  test("a legacy suite shows its own pin", () => {
+    expect(
+      suiteImageSetting({ environment: { computerEnvironmentId: "img" } }),
+    ).toEqual({ value: "img", mixed: false });
+  });
+
+  test("an environment suite shows its environments' shared image, never the stale pin", () => {
+    expect(
+      suiteImageSetting({
+        environment: { computerEnvironmentId: "stale" },
+        environmentIds: ["a", "b"],
+        environmentTargets: [
+          { computerEnvironmentId: "img" },
+          { computerEnvironmentId: "img" },
+          { unavailable: "archived" },
+        ],
+      }),
+    ).toEqual({ value: "img", mixed: false });
+    expect(
+      suiteImageSetting({
+        environmentIds: ["a", "b"],
+        environmentTargets: [{ computerEnvironmentId: "img" }, {}],
+      }),
+    ).toEqual({ value: undefined, mixed: true });
   });
 });
 

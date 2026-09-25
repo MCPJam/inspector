@@ -1673,6 +1673,13 @@ export async function authorEvalSuite(args: {
   suiteRerun: boolean | undefined;
   refreshSnapshot: boolean | undefined;
   /**
+   * The run executes an ENVIRONMENT. Its servers come from the environment
+   * at launch, so they are not the suite's to snapshot: writing them back
+   * into the suite's legacy `environment` would change nothing a run reads
+   * (and the backend would carry a server change onto the environments).
+   */
+  environmentLaunch?: boolean;
+  /**
    * Caller-supplied write idempotency key (see utils/idempotency.ts). When
    * set, the suite create and EACH case create derive a stable per-row key, so
    * a retry lands on the same suite and only re-creates the cases that did not
@@ -1775,7 +1782,8 @@ export async function authorEvalSuite(args: {
     // hostConfigId — new connected servers would silently contaminate the
     // frozen execution snapshot. Only update when explicitly refreshing or
     // on first-run (non-rerun) writes.
-    const shouldUpdateSnapshot = !suiteRerun || refreshSnapshot === true;
+    const shouldUpdateSnapshot =
+      !args.environmentLaunch && (!suiteRerun || refreshSnapshot === true);
     // …and when there is nothing to update, DON'T CALL AT ALL.
     //
     // A plain rerun carries no snapshot (above) and no name or description of
@@ -2457,6 +2465,7 @@ export async function prepareEvalRun(
       passCriteria,
       suiteRerun,
       refreshSnapshot,
+      environmentLaunch: Boolean(environmentLaunch),
       // The SAME key the run creation uses. Without it, a retried
       // /eval-runs call authors a second suite and duplicates its cases
       // BEFORE the run-level idempotency check runs — and the new suite id

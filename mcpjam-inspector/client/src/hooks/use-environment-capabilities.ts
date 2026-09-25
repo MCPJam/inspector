@@ -9,6 +9,8 @@ export type EnvironmentCapabilities = {
   environmentQuickRuns?: boolean;
   ephemeralEnvironmentLaunch?: boolean;
   modelMatrix?: boolean;
+  /** Settings writes accept `environmentSettings` for environment suites. */
+  environmentSuiteSettings?: boolean;
 };
 
 /**

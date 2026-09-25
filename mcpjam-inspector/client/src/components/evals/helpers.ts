@@ -1612,8 +1612,12 @@ export function suiteEnvironmentTargets(suite: {
 export function suiteHasRunnableServers(
   suite: Parameters<typeof getEffectiveSuiteServers>[0] & {
     environmentIds?: string[];
+    source?: EvalSuite["source"];
   },
 ): boolean {
+  // An SDK suite without environments runs in a project environment picked
+  // at launch; the run dialog checks that one has servers.
+  if (suite.source === "sdk" && !suite.environmentIds?.length) return true;
   if (suite.environmentIds?.length) {
     const targets = suiteEnvironmentTargets(suite);
     return (

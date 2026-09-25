@@ -855,7 +855,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
+        {/* A frozen server snapshot is a legacy-suite concept: an environment
+            suite's run resolves its environment's servers when it starts. */}
+        {!readOnlyConfig &&
+        !configLocked &&
+        hasServersConfigured &&
+        !suite.environmentIds?.length ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">

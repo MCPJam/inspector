@@ -398,7 +398,10 @@ export function SuiteDetailOverview({
     caseCount: cases.length,
     draftCount: generation?.drafts.length ?? 0,
     hasServersConfigured,
-    isEnvironmentSuite,
+    // An SDK suite launches in an environment picked in the run dialog, which
+    // is where a missing server set is caught.
+    isEnvironmentSuite:
+      isEnvironmentSuite || (suite.source === "sdk" && Boolean(projectId)),
     isRerunning,
     isReplaying: replayingRunId != null,
     runningTestCase: runningTestCaseId != null,

@@ -250,6 +250,8 @@ export type EvalSuiteEnvironmentTarget = {
   serverNames: string[];
   /** Pinned plugin versions, which contribute more servers at launch. */
   pluginVersionCount: number;
+  /** The sandbox image the environment pins, if any. */
+  computerEnvironmentId?: string;
   /** Set when the environment is archived or gone: it cannot launch. */
   unavailable?: "archived" | "missing";
 };

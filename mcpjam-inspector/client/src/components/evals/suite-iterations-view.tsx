@@ -43,6 +43,7 @@ import {
   EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
 } from "@/components/computer/CloudUnreachableNotice";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
@@ -139,6 +140,7 @@ import {
   dirtyKeys,
   initSuiteSettingsDraft,
   readSuiteSettingsValues,
+  suiteImageSetting,
   suiteSettingsReducer,
   type SuiteSettingsKey,
 } from "./suite-settings-draft";
@@ -878,6 +880,9 @@ export function SuiteIterationsView({
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
   const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const { capable: composeCapable } = useEvalComposeCapable(projectId);
+  // Whether the backend carries an environment suite's settings onto its
+  // environments (`environmentSettings`) instead of a legacy suite field.
+  const environmentCapabilities = useEnvironmentCapabilities(projectId);
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   // Discarding is what the person just agreed to when they confirmed the
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
@@ -920,6 +925,9 @@ export function SuiteIterationsView({
         : undefined,
       expectedRevisionNumber: suite.revisionNumber,
       liveEnvironment: suite.environment,
+      environmentSuite:
+        Boolean(suite.environmentIds?.length) &&
+        environmentCapabilities?.environmentSuiteSettings === true,
     });
     if (outcome.status === "saved") {
       // What the save actually WROTE: the normalized form of the keys it
@@ -959,6 +967,7 @@ export function SuiteIterationsView({
     isCommitting,
     dirtySettingKeys,
     draftChanges,
+    environmentCapabilities,
   ]);
 
   // Save the same validated draft from the button or keyboard shortcut.
@@ -1475,7 +1484,10 @@ export function SuiteIterationsView({
       : (featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined)));
+          : undefined))) ??
+    (suiteImageSetting(suite).mixed
+      ? "These environments pin different images. Change each one's image on the Environments page."
+      : undefined);
   const subsectionOptions = useMemo(
     () => ({
       isVerdictPolicyV2,

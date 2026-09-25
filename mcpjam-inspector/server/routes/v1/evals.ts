@@ -8248,7 +8248,42 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const updateArgs: Record<string, unknown> = { suiteId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
-  if (body.environment !== undefined) {
+  // An ENVIRONMENT suite's servers and image are its environments'. On a
+  // backend that carries settings onto them, send what the caller asked for
+  // as `environmentSettings` (servers become the environments' group, the
+  // image every environment's pin, `null` clearing it) rather than the
+  // legacy envelope, which is compared with the suite row's own stale pin.
+  const environmentSuite =
+    body.environment !== undefined &&
+    (suite!.environmentIds?.length ?? 0) > 0 &&
+    (await readClient
+      .query("projectEnvironments:getCapabilities" as any, { projectId })
+      .then(
+        (caps: { environmentSuiteSettings?: boolean } | null) =>
+          caps?.environmentSuiteSettings === true,
+      )
+      .catch(() => false));
+  if (body.environment !== undefined && environmentSuite) {
+    const environmentSettings: Record<string, unknown> = {};
+    if (body.environment.servers !== undefined) {
+      environmentSettings.servers = body.environment.servers;
+    }
+    if (body.environment.computerEnvironment !== undefined) {
+      environmentSettings.computerEnvironmentId =
+        body.environment.computerEnvironment === null
+          ? null
+          : (
+              await resolveComputerEnvironment(
+                readClient,
+                projectId,
+                body.environment.computerEnvironment,
+              )
+            ).id;
+    }
+    if (Object.keys(environmentSettings).length > 0) {
+      updateArgs.environmentSettings = environmentSettings;
+    }
+  } else if (body.environment !== undefined) {
     // `updateTestSuite` REPLACES the environment envelope wholesale, so this
     // has to be a merge over the suite's current one. Sending `{ servers }`
     // alone — which is what this did — silently dropped the server bindings
