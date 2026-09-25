@@ -22,16 +22,12 @@ vi.hoisted(() => {
 const {
   validateGuestTokenMock,
   createAuthorizedManagerMock,
-  generateEvalTestsMock,
-  generateNegativeEvalTestsMock,
   convexQueryMock,
   convexMutationMock,
   convexActionMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   createAuthorizedManagerMock: vi.fn(),
-  generateEvalTestsMock: vi.fn(),
-  generateNegativeEvalTestsMock: vi.fn(),
   convexQueryMock: vi.fn(),
   convexMutationMock: vi.fn(),
   convexActionMock: vi.fn(),
@@ -40,17 +36,6 @@ const {
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
-
-vi.mock("../../shared/evals.js", async () => {
-  const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js",
-  );
-  return {
-    ...actual,
-    generateEvalTestsWithManager: generateEvalTestsMock,
-    generateNegativeEvalTestsWithManager: generateNegativeEvalTestsMock,
-  };
-});
 
 vi.mock("../../web/auth.js", async () => {
   const actual = await vi.importActual<typeof import("../../web/auth.js")>(
@@ -1889,499 +1874,318 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
-  it("generate persists drafts and reports the generation model", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+  /**
+   * Generation runs the shared authoring job. What this layer still owns is
+   * what it hands the job, how it answers while the job is unfinished, and how
+   * a refusal the BACKEND made reaches the caller — the drafting itself, the
+   * per-case idempotency and the spend accounting are the job's, and are
+   * tested against the worker in the backend repo.
+   */
+  function authoringBackend(init?: {
+    start?: Response;
+    status?: Record<string, unknown> | null;
+  }) {
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi
+      .spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring")
+      .mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        init?.start ??
+          Response.json(
+            { version: 1, jobId: "job", status: "pending" },
+            { status: 202 },
+          ),
+      );
+    authoringStatus =
+      init?.status === undefined
+        ? {
+            jobId: "job",
+            projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            source: "generation",
+            status: "completed",
+            drafts: [],
+          }
+        : init.status;
+    return {
+      capture,
+      fetchMock,
+      /** The job body the route posted to the backend. */
+      sent: () =>
+        JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string),
+      restore: () => {
+        capture.mockRestore();
+        fetchMock.mockRestore();
+        authoringStatus = null;
+        delete process.env.CONVEX_HTTP_URL;
+      },
+    };
+  }
+
+  /** A draft the job finished, ready to commit. */
+  function finishedDraft(overrides: Record<string, unknown> = {}) {
+    return {
+      version: 1,
+      draftId: "d1",
+      revision: 0,
+      case: {
+        title: "Generated A",
+        steps: [{ id: "p", kind: "prompt", prompt: "do a thing" }],
+        expectedOutput: "A thing happened",
+      },
+      issues: [],
+      additions: [],
+      review: "required",
+      ...overrides,
+    };
+  }
+
+  it("generate commits the job's drafts and reports the generation model", async () => {
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "generation",
+        status: "completed",
+        drafts: [finishedDraft()],
+      },
     });
-    generateEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [
-        {
-          title: "Generated A",
-          query: "do a thing",
-          runs: 1,
-          expectedToolCalls: [{ toolName: "list", arguments: {} }],
-        },
-      ],
-    });
-    // Suite has a saved selection so generate resolves servers without override.
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "evalAuthoringState:prepareCommit")
+        return Promise.resolve({ title: "Generated A" });
+      if (name === "testSuites:createTestCases")
         return Promise.resolve({
-          serverIds: ["srv_1"],
-          serverNames: ["Excalidraw (App)"],
+          caseUpsert: {
+            committed: [{ index: 0, testCaseId: "case_1" }],
+            failed: [],
+          },
         });
-      return defaultQueryImpl(name);
+      return defaultMutationImpl(name, args);
     });
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal" },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.generationModel).toBe("anthropic/claude-haiku-4.5");
-    expect(body.created).toHaveLength(1);
-    expect(body.counts.normal).toBe(1);
-    expect(generateEvalTestsMock).toHaveBeenCalled();
-    expect(
-      convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases",
-      ),
-    ).toBe(true);
-    const createArgs = authoredCaseArgs();
-    expect(createArgs.steps).toHaveLength(2);
-    expect(createArgs.steps[0]).toMatchObject({
-      kind: "prompt",
-      prompt: "do a thing",
-    });
-    expect(createArgs.steps[1]).toMatchObject({
-      kind: "assert",
-      assertion: { type: "toolCalledWith", toolName: "list" },
-    });
-    expect(createArgs.promptTurns).toBeUndefined();
+    try {
+      const res = await generateWith({ body: { mode: "normal" } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.generationModel).toBe("anthropic/claude-haiku-4.5");
+      expect(body.created).toHaveLength(1);
+      expect(backend.sent()).toMatchObject({ source: "generation" });
+    } finally {
+      backend.restore();
+    }
   });
 
   /**
    * The public contract `$ref`s `RateLimited` (which documents `Retry-After`)
-   * from almost every operation, and generation answered 500 INTERNAL_ERROR
-   * for every backend refusal instead — so a CI caller had no code to branch
-   * on, no header to wait on, and MCPJam's 5xx monitors counted the customer's
-   * own exhausted allowance as an MCPJam fault.
+   * from almost every operation. The refusal is the BACKEND's — the customer's
+   * own exhausted allowance — so reporting it as `SERVER_UNREACHABLE` would
+   * leave a CI caller no code to branch on, no window to wait for, and would
+   * count the refusal against MCPJam's own 5xx monitors.
    */
   it("generate answers a backend platform_capacity 429 as RATE_LIMITED with Retry-After", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    const backend = authoringBackend({
+      start: Response.json(
+        {
+          ok: false,
+          code: "platform_capacity",
+          error: "MCPJam generation is at capacity. Try again shortly.",
+          retryAfterMs: 45_000,
+        },
+        { status: 429 },
+      ),
     });
-    // Built from a real upstream `Response`, so the adapter's reader is part
-    // of what this test pins rather than a hand-written stand-in.
-    generateEvalTestsMock.mockRejectedValue(
-      await upstreamRefusalFromResponse(
-        new Response(
-          JSON.stringify({
-            ok: false,
-            code: "platform_capacity",
-            error: "MCPJam's daily generation budget is used up.",
-            isRetryable: true,
-            retryAfterMs: 3_600_000,
-            canTopUp: false,
-          }),
-          {
-            status: 429,
-            headers: {
-              "Content-Type": "application/json",
-              "Retry-After": "1800",
+    try {
+      const res = await generateWith({ body: { mode: "normal" } });
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("45");
+      const body = (await res.json()) as any;
+      expect(body.code).toBe("RATE_LIMITED");
+      expect(body.message).toContain("at capacity");
+    } finally {
+      backend.restore();
+    }
+  });
+
+  it("generate answers 202 with the job id when the wait runs out", async () => {
+    // A disconnect is the same shape as the window expiring, and is the only
+    // way to reach it without waiting out the real 15 seconds.
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "generation",
+        status: "pending",
+        drafts: [],
+      },
+    });
+    try {
+      const res = await generateWith({
+        body: { mode: "normal" },
+        signal: AbortSignal.abort(),
+      });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({ jobId: "job" });
+    } finally {
+      backend.restore();
+    }
+  });
+
+  // A case the model was unsure about is not written unattended: the app keeps
+  // it out of "Add all" behind "Save anyway", and the API has nobody to ask.
+  // The skip has to NAME the doubt, or a CLI user learns only that something
+  // was wrong and has to open a browser to find out what.
+  it("generate skips a draft the model was unsure about, and says why", async () => {
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "generation",
+        status: "completed",
+        drafts: [
+          finishedDraft({
+            case: {
+              title: "Bad draft",
+              steps: [{ id: "p", kind: "prompt", prompt: "x" }],
+              expectedOutput: "y",
             },
-          },
-        ),
-        "Failed to generate test cases",
-      ),
-    );
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      return defaultQueryImpl(name);
+            issues: [
+              {
+                code: "unknown_tool",
+                message: "Tool nope is missing or ambiguous.",
+                blocking: false,
+                origin: "validation",
+              },
+            ],
+          }),
+        ],
+      },
     });
-
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal" },
-    );
-
-    expect(res.status).toBe(429);
-    expect(res.headers.get("Retry-After")).toBe("1800");
-    const body = (await res.json()) as any;
-    expect(body.code).toBe("RATE_LIMITED");
-    // MCPJam's own budget, not the caller's — so no top-up is on offer.
-    expect(body.details?.code).toBe("platform_capacity");
-    expect(body.details?.canTopUp).toBe(false);
-    // Nothing was persisted: the generator never produced a draft.
-    expect(
-      convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases",
-      ),
-    ).toBe(false);
+    try {
+      const res = await generateWith({ body: { mode: "normal" } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.created).toHaveLength(0);
+      expect(body.skipped).toHaveLength(1);
+      expect(body.skipped[0].title).toBe("Bad draft");
+      expect(body.skipped[0].error).toContain(
+        "names tools this server does not have",
+      );
+    } finally {
+      backend.restore();
+    }
   });
 
-  it("generate still answers 5xx when the backend itself failed", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockRejectedValue(
-      await upstreamRefusalFromResponse(
-        new Response(JSON.stringify({ ok: false, code: "provider_error" }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        }),
-        "Failed to generate test cases",
-      ),
-    );
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      return defaultQueryImpl(name);
-    });
-
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal" },
-    );
-
-    expect(res.status).toBeGreaterThanOrEqual(500);
-    expect(res.headers.get("Retry-After")).toBeNull();
-  });
-
-  it("generate carries the backend's sanitized arguments through verbatim", async () => {
-    // Producer-side regression for the assertions that could never pass. The
-    // backend now drops every expected-argument entry the case's own prompt
-    // does not determine, so what arrives here is already narrow. This pins
-    // that the inspector neither re-inflates it nor drops what survived: the
-    // step's args are EXACTLY the backend's, and an empty object stays empty
-    // (under `partial` matching that reads as "this tool was called", which is
-    // the assertion a correct server can satisfy).
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [
-        {
-          title: "Draw a rectangle",
-          query: "Draw a rectangle on the canvas",
-          runs: 1,
-          expectedToolCalls: [
-            { toolName: "create_element", arguments: { type: "rectangle" } },
-          ],
-        },
-        {
-          title: "Draw a flowchart",
-          query: "Draw a flowchart of our deploy process",
-          runs: 1,
-          expectedToolCalls: [{ toolName: "create_element", arguments: {} }],
-        },
-      ],
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      return defaultQueryImpl(name);
-    });
-
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal" },
-    );
-    expect(res.status).toBe(200);
-
-    const assertions = allAuthoredCaseArgs()
-      .flatMap((item: any) => item.steps ?? [])
-      .filter((step: any) => step.kind === "assert")
-      .map((step: any) => step.assertion);
-    expect(assertions).toEqual([
-      {
-        type: "toolCalledWith",
-        toolName: "create_element",
-        args: { args: { type: "rectangle" } },
+  // An addition is the model filling a gap the document left, and it is
+  // already IN the steps. The app approves them all when the reader presses
+  // save, so the API refusing them meant handing back a link to a one-click
+  // save of the case we had just declined to write.
+  it("generate commits a draft whose only note is an addition", async () => {
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "generation",
+        status: "completed",
+        drafts: [
+          finishedDraft({
+            case: {
+              title: "Completed draft",
+              steps: [{ id: "p", kind: "prompt", prompt: "x" }],
+              expectedOutput: "y",
+            },
+            additions: [{ id: "a", path: "steps.0", explanation: "Added" }],
+          }),
+        ],
       },
-      {
-        type: "toolCalledWith",
-        toolName: "create_element",
-        args: { args: {} },
-      },
-    ]);
-    // No unmatched free-form payload anywhere: every asserted argument value
-    // is a scalar. A nested object or array here is the shape that made the
-    // 2026-08-20 Excalidraw cases unpassable.
-    for (const assertion of assertions) {
-      for (const value of Object.values(assertion.args.args)) {
-        expect(typeof value).not.toBe("object");
+    });
+    let accepted: any;
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "evalAuthoringState:acceptDraft") {
+        accepted = args;
+        return Promise.resolve(null);
       }
+      if (name === "evalAuthoringState:prepareCommit")
+        return Promise.resolve({ title: "Completed draft" });
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: {
+            committed: [{ index: 0, testCaseId: "case_1" }],
+            failed: [],
+          },
+        });
+      return defaultMutationImpl(name, args);
+    });
+    try {
+      const res = await generateWith({ body: { mode: "normal" } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.skipped ?? []).toHaveLength(0);
+      expect(body.created).toHaveLength(1);
+      // The draft's own addition ids, not `[]`: the backend refuses to accept
+      // a draft with an unapproved addition, so sending none meant the commit
+      // could never succeed for a case the model had completed.
+      expect(accepted.acceptedAdditionIds).toEqual(["a"]);
+    } finally {
+      backend.restore();
     }
   });
 
   it("generate discovers tools from the suite's environment, not its saved selection", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getTestSuite")
-        return Promise.resolve({
-          ...SUITE_DOC,
-          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
-        });
-      if (name === "projectEnvironments:resolveEnvironmentForLaunch")
-        return Promise.resolve({
-          environmentRef: {
-            environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            name: "Staging",
-            revision: 3,
-          },
-          hostId: "host1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
-          selectedServerIds: ["srv_env"],
-          servers: [{ serverId: "srv_env_live", name: "env server" }],
-        });
-      return defaultQueryImpl(name);
-    });
-
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      {},
-    );
-
-    expect(res.status).toBe(200);
-    // The environment's closed set is connected; the legacy rollback selection
-    // is never read — cases generated against it would describe tools the
-    // suite's runs never see.
-    expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
-      "srv_env_live",
-    ]);
-    expect(convexQueryMock).not.toHaveBeenCalledWith(
-      "testSuites:getSuiteRunServerSelection",
-      expect.anything(),
-    );
-  });
-
-  it("generate rejects a server override on an environment-based suite", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getTestSuite")
-        return Promise.resolve({
-          ...SUITE_DOC,
-          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
-        });
-      if (name === "projectEnvironments:listEnvironments")
-        return Promise.resolve([
-          {
-            environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            name: "Staging",
-          },
-        ]);
-      return defaultQueryImpl(name);
-    });
-
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { servers: ["srv_1"] },
-    );
-
-    expect(res.status).toBe(400);
-    expect(
-      ((await res.json()) as { details?: { reason?: string } }).details?.reason,
-    ).toBe("ENVIRONMENT_SERVERS_NOT_OVERRIDABLE");
-    // No connection, no tool discovery, no credit spent.
-    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
-  });
-
-  it("generate rejects environmentId together with servers at the schema", async () => {
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", servers: ["srv_1"] },
-    );
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { message?: string }).message).toContain(
-      "mutually exclusive",
-    );
-  });
-
-  it("generate with an idempotency key records the ledger before persisting and keys each case", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [
-        { title: "A", query: "one", runs: 1, expectedToolCalls: [] },
-        { title: "B", query: "two", runs: 1, expectedToolCalls: [] },
-      ],
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      // No prior ledger for this key.
-      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
-      return defaultQueryImpl(name);
-    });
-
-    const res = await makeApp().request(
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer tok",
-          "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
+    const backend = authoringBackend();
+    try {
+      const res = await generateWith({
+        body: {},
+        query: (name) => {
+          if (name === "testSuites:getTestSuite")
+            return Promise.resolve({
+              ...SUITE_DOC,
+              environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+            });
+          if (name === "projectEnvironments:resolveEnvironmentForLaunch")
+            return Promise.resolve({
+              environmentRef: {
+                environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                name: "Staging",
+                revision: 3,
+              },
+              hostId: "host1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              selectedServerIds: ["srv_env"],
+              servers: [{ serverId: "srv_env_live", name: "env server" }],
+            });
+          return undefined;
         },
-        body: JSON.stringify({ mode: "normal" }),
-      },
-    );
-    expect(res.status).toBe(200);
-
-    // The ledger write must precede the first case persist: it is the
-    // checkpoint that makes a crash after this point replayable WITHOUT a
-    // second LLM spend.
-    const calls = convexMutationMock.mock.calls.map((c) => c[0]);
-    const ledgerIndex = calls.indexOf("testSuites:recordCaseGeneration");
-    const firstCaseIndex = calls.indexOf("testSuites:createTestCases");
-    expect(ledgerIndex).toBeGreaterThanOrEqual(0);
-    expect(firstCaseIndex).toBeGreaterThan(ledgerIndex);
-
-    // Every case carries the EXACT derived per-item key — positional under
-    // the caller's key — so a resumed persistence loop lands on the first
-    // attempt's rows. Asserting the literal derivation (not just "some
-    // string") is the point: a fresh-per-attempt or operation-independent key
-    // would still be a non-empty string and would still duplicate cases.
-    // One BATCH now carries both cases, so the per-item keys are read off the
-    // items rather than off two separate mutation calls. The derivation is
-    // unchanged: the caller still derives them, positionally, per draft.
-    const caseItems = allAuthoredCaseArgs();
-    expect(caseItems).toHaveLength(2);
-    const keys = caseItems.map((item: any) => item.idempotencyKey);
-    expect(keys).toEqual([
-      deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "0"),
-      deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "1"),
-    ]);
+      });
+      expect(res.status).toBe(200);
+      // The environment's closed set is connected; the legacy rollback
+      // selection is never read — cases authored against it would describe
+      // tools the suite's runs never see.
+      expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
+        "srv_env_live",
+      ]);
+      expect(convexQueryMock).not.toHaveBeenCalledWith(
+        "testSuites:getSuiteRunServerSelection",
+        expect.anything(),
+      );
+    } finally {
+      backend.restore();
+    }
   });
 
-  it("generate checkpoints an EMPTY result and fails closed on an unreadable ledger", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+  /** The authoring job `startAuthoringJobAndAwait` polls, set per test. */
+  let authoringStatus: Record<string, unknown> | null = null;
+
+  /** The suite's servers resolve; nothing else is stubbed for the caller. */
+  function withResolvedServers() {
     convexQueryMock.mockImplementation((name: string) => {
+      if (name === "evalAuthoringState:status")
+        return Promise.resolve(authoringStatus);
       if (name === "testSuites:getSuiteRunServerSelection")
         return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
-      return defaultQueryImpl(name);
-    });
-
-    // "The generator ran and produced nothing" is a spend too — without the
-    // checkpoint every keyed retry would pay for it again.
-    const res = await makeApp().request(
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer tok",
-          "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
-        },
-        body: JSON.stringify({ mode: "normal" }),
-      },
-    );
-    expect(res.status).toBe(200);
-    const ledgerCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:recordCaseGeneration",
-    );
-    expect(ledgerCall?.[1].drafts).toEqual([]);
-
-    // And a keyed request whose ledger cannot be READ must 503 (retryable),
-    // never silently regenerate: a backend blip is exactly when the first
-    // attempt's spend is most likely to be invisible.
-    generateEvalTestsMock.mockClear();
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      if (name === "testSuites:getCaseGeneration")
-        return Promise.reject(new Error("convex down"));
-      return defaultQueryImpl(name);
-    });
-    const blocked = await makeApp().request(
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer tok",
-          "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
-        },
-        body: JSON.stringify({ mode: "normal" }),
-      },
-    );
-    // 502 SERVER_UNREACHABLE — the repo's retryable upstream-failure status.
-    expect(blocked.status).toBe(502);
-    expect(generateEvalTestsMock).not.toHaveBeenCalled();
-  });
-
-  it("generate replays recorded drafts on a keyed retry instead of re-spending", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      if (name === "testSuites:getCaseGeneration")
-        return Promise.resolve({
-          drafts: [
-            {
-              title: "Cached",
-              query: "from ledger",
-              runs: 1,
-              expectedToolCalls: [],
-            },
-          ],
-          createdCaseIds: null,
-        });
-      return defaultQueryImpl(name);
-    });
-
-    const res = await makeApp().request(
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer tok",
-          "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
-        },
-        body: JSON.stringify({ mode: "normal" }),
-      },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.created).toHaveLength(1);
-    // The whole point: no MCP connection, no generator call, no second spend.
-    expect(generateEvalTestsMock).not.toHaveBeenCalled();
-    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
-    // And no duplicate ledger write for the replay.
-    expect(
-      convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:recordCaseGeneration",
-      ),
-    ).toBe(false);
-  });
-
-  /**
-   * The gap these close: before this, the generate route read ONLY the
-   * `x-mcpjam-idempotency-key` header, while `PlatformApiClient` sends
-   * `idempotency-key` and the operation had no body field at all. So the CLI,
-   * the MCP plugin, and direct SDK callers — exactly the surfaces that hit the
-   * 30s client timeout and retry — had no way to reach the ledger, and every
-   * retry re-spent. The failure was SILENT: a key went out on the wire and
-   * nothing read it.
-   *
-   * Each test therefore asserts against the ledger read (`getCaseGeneration`
-   * carries the key) and not merely that a key was sent.
-   */
-  function ledgerKeys(): unknown[] {
-    return convexQueryMock.mock.calls
-      .filter((c) => c[0] === "testSuites:getCaseGeneration")
-      .map((c) => (c[1] as any)?.idempotencyKey);
-  }
-
-  function withNoPriorLedger() {
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
       return defaultQueryImpl(name);
     });
   }
@@ -2440,7 +2244,7 @@ describe("v1 eval-edit routes", () => {
   it("keeps review skips and normalizes batch failure messages", async () => {
     const draft = { version: 1, draftId: "draft", revision: 0, case: { title: "Save failed", steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }], expectedOutput: "Document found" }, issues: [], additions: [], review: "required" };
     convexQueryMock.mockResolvedValue({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", drafts: [
-      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, additions: [{ id: "a", path: "steps.0", explanation: "Added details" }] }, draft,
+      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, issues: [{ code: "unknown_tool", message: "Tool nope is missing or ambiguous.", blocking: false, origin: "validation" }] }, draft,
     ] });
     convexMutationMock.mockImplementation((name: string) => {
       if (name === "evalAuthoringState:prepareCommit") return Promise.resolve({ title: "Save failed" });
@@ -2449,8 +2253,10 @@ describe("v1 eval-edit routes", () => {
     });
     const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
     expect(response.status).toBe(200);
+    // The skip NAMES the doubt. "Review this draft in the suite" told a CLI
+    // caller that something was wrong without saying what.
     expect((await response.json()).skipped).toEqual([
-      { title: "Needs review", error: "Review this draft's issues and proposed additions in the suite." },
+      { title: "Needs review", error: "This case names tools this server does not have. Open the review link to read it and save it anyway." },
       { title: "Save failed", error: "Already exists" },
     ]);
   });
@@ -2458,12 +2264,22 @@ describe("v1 eval-edit routes", () => {
   async function generateWith(init: {
     headers?: Record<string, string>;
     body?: Record<string, unknown>;
+    /** Applied AFTER `withResolvedServers`, which otherwise clobbers it. */
+    query?: (name: string) => Promise<unknown> | undefined;
+    /** Ends the compatibility wait early, the way a disconnect does. */
+    signal?: AbortSignal;
   }) {
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
     });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    withNoPriorLedger();
+    withResolvedServers();
+    if (init.query) {
+      const base = convexQueryMock.getMockImplementation()!;
+      convexQueryMock.mockImplementation((name: string, ...rest: unknown[]) => {
+        const override = init.query!(name);
+        return override ?? (base as any)(name, ...rest);
+      });
+    }
     return makeApp().request(
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
@@ -2474,357 +2290,507 @@ describe("v1 eval-edit routes", () => {
           ...(init.headers ?? {}),
         },
         body: JSON.stringify({ mode: "normal", ...(init.body ?? {}) }),
+        ...(init.signal ? { signal: init.signal } : {}),
       },
     );
   }
 
-  it("generate reaches the ledger with a BODY idempotency key", async () => {
-    const res = await generateWith({ body: { idempotencyKey: "cli-run-7" } });
-    expect(res.status).toBe(200);
-    expect(ledgerKeys()).toContain("cli-run-7");
-    expect(
-      convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:recordCaseGeneration",
-      )?.[1].idempotencyKey,
-    ).toBe("cli-run-7");
-  });
-
-  it("generate reaches the ledger with the SDK client's transport header", async () => {
-    // `PlatformApiClient` puts `options.idempotencyKey` here, unprefixed.
-    // Reading only the prefixed spelling is what made a key sent this way
-    // degrade silently to no idempotency at all.
-    const res = await generateWith({
-      headers: { "idempotency-key": "sdk-transport-key" },
-    });
-    expect(res.status).toBe(200);
-    expect(ledgerKeys()).toContain("sdk-transport-key");
-  });
-
-  it("generate lets the prefixed HEADER win over both other channels", async () => {
-    // The agent adapter sets the prefixed header per operation; a body key
-    // could otherwise be shaped by model output, so it must never override it.
-    const res = await generateWith({
-      headers: {
-        "x-mcpjam-idempotency-key": "proposal:act_9:generate_eval_cases",
-        "idempotency-key": "sdk-transport-key",
-      },
-      body: { idempotencyKey: "body-key" },
-    });
-    expect(res.status).toBe(200);
-    expect(ledgerKeys()).toEqual(["proposal:act_9:generate_eval_cases"]);
-  });
-
-  it("generate prefers the transport header over a body key", async () => {
-    const res = await generateWith({
-      headers: { "idempotency-key": "sdk-transport-key" },
-      body: { idempotencyKey: "body-key" },
-    });
-    expect(res.status).toBe(200);
-    expect(ledgerKeys()).toEqual(["sdk-transport-key"]);
-  });
-
-  it("generate stays keyless — and reads no ledger — when no key is sent", async () => {
-    // The unkeyed path must keep working exactly as before: no ledger read,
-    // no ledger write, and certainly no fabricated key.
-    const res = await generateWith({});
-    expect(res.status).toBe(200);
-    expect(ledgerKeys()).toEqual([]);
-    expect(
-      convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:recordCaseGeneration",
-      ),
-    ).toBe(false);
-  });
-
-  it("generate replays the first attempt's drafts for a BODY key retry", async () => {
-    // The end-to-end property the plumbing exists for: retrying with the same
-    // key from a direct caller costs nothing and returns the same cases.
+  /**
+   * Document import: the same authoring job as generation, reached with a
+   * document instead of a brief. What is worth pinning is the part that is
+   * NOT shared — the gate, the forwarded payload, and the fact that a partial
+   * result hands back a way to finish it that is not "send it all again".
+   */
+  async function importWith(init: {
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+    /** Applied AFTER `withResolvedServers`, which otherwise clobbers it. */
+    query?: (name: string) => Promise<unknown> | undefined;
+    /** Ends the compatibility wait early, the way a disconnect does. */
+    signal?: AbortSignal;
+  }) {
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
     });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
-      if (name === "testSuites:getCaseGeneration")
-        return Promise.resolve({
-          drafts: [
-            {
-              title: "Cached",
-              query: "from ledger",
-              runs: 1,
-              expectedToolCalls: [],
-            },
-          ],
-          createdCaseIds: null,
-        });
-      return defaultQueryImpl(name);
-    });
-
-    const res = await makeApp().request(
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+    withResolvedServers();
+    if (init.query) {
+      const base = convexQueryMock.getMockImplementation()!;
+      convexQueryMock.mockImplementation((name: string, ...rest: unknown[]) => {
+        const override = init.query!(name);
+        return override ?? (base as any)(name, ...rest);
+      });
+    }
+    return makeApp().request(
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/import",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer tok",
+          ...(init.headers ?? {}),
         },
-        body: JSON.stringify({ mode: "normal", idempotencyKey: "cli-run-7" }),
+        body: JSON.stringify({
+          content: "# Case 1\nSearch for coffee.",
+          ...(init.body ?? {}),
+        }),
+        ...(init.signal ? { signal: init.signal } : {}),
       },
     );
-    expect(res.status).toBe(200);
-    expect((await res.json()).created).toHaveLength(1);
-    expect(generateEvalTestsMock).not.toHaveBeenCalled();
-    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+  }
+
+  // The backend hashes the job input to decide whether a replayed idempotency
+  // key is the SAME request. Resolving the suite's model into the payload put
+  // a value the caller never sent into that hash, so a suite whose model
+  // changed between a timeout and the retry made the retry look like a
+  // different request: it died with "Idempotency key was reused with a
+  // different request" for a caller who had sent byte-identical bytes twice.
+  //
+  // Nothing is lost by omitting it: a case with no models inherits the suite's
+  // model at RUN time, which is where the runner can see keys this route
+  // cannot.
+  it("sends the same import payload after the suite's model changes", async () => {
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const payloadFor = async (modelId: string) => {
+      const backend = authoringBackend({
+        status: {
+          jobId: "job",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          source: "import",
+          status: "completed",
+          drafts: [],
+        },
+      });
+      try {
+        await importWith({
+          body: { idempotencyKey: "same-key" },
+          query: (name) =>
+            name === "hostConfigsV2:getSuiteConfig"
+              ? Promise.resolve({ modelId })
+              : undefined,
+        });
+        return backend.sent();
+      } finally {
+        backend.restore();
+      }
+    };
+    try {
+      const first = await payloadFor("claude-sonnet-4-5");
+      const second = await payloadFor("claude-haiku-4-5");
+      expect(second).toEqual(first);
+      // The caller named no model, so the job carries none.
+      expect(first.options?.caseModels).toBeUndefined();
+    } finally {
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
   });
 
-  it("generate resolves a server NAME override to an ID before authorizing", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+  // Same hash, same failure, same fix as the import test above.
+  it("sends the same generate payload after the suite's model changes", async () => {
+    const payloadFor = async (modelId: string) => {
+      const backend = authoringBackend();
+      try {
+        await generateWith({
+          body: { mode: "normal" },
+          headers: { "Idempotency-Key": "same-key" },
+          query: (name) =>
+            name === "hostConfigsV2:getSuiteConfig"
+              ? Promise.resolve({ modelId })
+              : undefined,
+        });
+        return backend.sent();
+      } finally {
+        backend.restore();
+      }
+    };
+    const first = await payloadFor("claude-sonnet-4-5");
+    const second = await payloadFor("claude-haiku-4-5");
+    expect(second).toEqual(first);
+    expect(first.options).not.toHaveProperty("caseModels");
+  });
+
+  it("still forwards the models the caller names", async () => {
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const backend = authoringBackend({
+      status: {
+        jobId: "job",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "import",
+        status: "completed",
+        drafts: [],
+      },
     });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    convexQueryMock.mockImplementation((name: string) =>
-      name === "servers:getProjectServers"
-        ? Promise.resolve([{ _id: "srv_1", name: "Excalidraw (App)" }])
-        : defaultQueryImpl(name),
-    );
-    const res = await request(
+    try {
+      await importWith({
+        body: { caseModels: [{ model: "claude-haiku-4-5" }] },
+      });
+      expect(backend.sent().options.caseModels).toEqual([
+        expect.objectContaining({ model: "claude-haiku-4-5" }),
+      ]);
+    } finally {
+      backend.restore();
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it("forwards the document and a defaulted file name", async () => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi
+      .spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring")
+      .mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json(
+          { version: 1, jobId: "job", status: "pending" },
+          { status: 202 },
+        ),
+      );
+    try {
+      const response = await importWith({
+        body: { content: "title,prompt\nA,B" },
+        // Completed on the first poll. What this test is about is the payload
+        // we hand the backend, and leaving the job pending only bought a
+        // 15-second wait for the compatibility window to expire.
+        query: (name) =>
+          name === "evalAuthoringState:status"
+            ? Promise.resolve({
+                jobId: "job",
+                projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+                source: "import",
+                status: "completed",
+                drafts: [],
+              })
+            : undefined,
+      });
+      expect(response.status).toBe(200);
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0]?.[1] as RequestInit).body as string,
+      );
+      expect(sent).toMatchObject({
+        source: "import",
+        content: "title,prompt\nA,B",
+        // A pasted document has no file behind it, and nothing is gated on
+        // the name — it is only the label a reviewer sees.
+        fileName: "import.txt",
+      });
+    } finally {
+      capture.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined)
+        delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it("answers 202 with a job id when the wait runs out", async () => {
+    // The caller disconnecting is what ends the wait early here; a real slow
+    // job ends it by the clock. Either way the job is NOT cancelled — the id
+    // is how the caller comes back for it.
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi
+      .spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring")
+      .mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json(
+          { version: 1, jobId: "job", status: "pending" },
+          { status: 202 },
+        ),
+      );
+    try {
+      const response = await importWith({
+        signal: AbortSignal.abort(),
+        query: (name) =>
+          name === "evalAuthoringState:status"
+            ? Promise.resolve({ jobId: "job", status: "pending" })
+            : undefined,
+      });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ jobId: "job" });
+    } finally {
+      capture.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined)
+        delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
+
+  it("refuses a document over the 100 KiB ceiling", async () => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    try {
+      const response = await importWith({
+        body: { content: "x".repeat(100 * 1024 + 1) },
+      });
+      expect(response.status).toBe(400);
+    } finally {
+      if (oldFlag === undefined)
+        delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+    }
+  });
+
+  it("commits an import job, and still refuses the app's Markdown job", async () => {
+    // The app's Markdown drafts exist so a PERSON decides on them; an API
+    // commit would decide on their behalf. Import carries its own source and
+    // is committable, which is the whole reason the two are not one value.
+    for (const [source, expected] of [
+      ["import", 200],
+      ["markdown", 404],
+    ] as const) {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "evalAuthoringState:status"
+          ? Promise.resolve({
+              jobId: "job",
+              projectId: "p1",
+              suiteId: "s1",
+              source,
+              status: "completed",
+              drafts: [],
+            })
+          : defaultQueryImpl(name),
+      );
+      const response = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+        {},
+      );
+      expect(response.status).toBe(expected);
+    }
+  });
+
+  it("hands back a review link for the cases it could not finish", async () => {
+    // A skipped draft is not lost — it stays on the job. The link is what
+    // lets a caller stop: without it the only move is re-sending the whole
+    // document, which re-authors every case in it.
+    //
+    // A doubt is what holds a case back, not an addition: an addition is the
+    // model completing the case, and the API commits those the way the app
+    // does when the reader presses save.
+    const draft = {
+      version: 1,
+      draftId: "review",
+      revision: 0,
+      case: {
+        title: "Needs review",
+        steps: [{ id: "p", kind: "prompt", prompt: "Browse groceries" }],
+        expectedOutput: "The list renders",
+      },
+      issues: [
+        {
+          code: "missing_evidence",
+          message: "A widget locator is missing.",
+          blocking: false,
+          origin: "validation",
+        },
+      ],
+      additions: [],
+      review: "required",
+    };
+    convexQueryMock.mockResolvedValue({
+      jobId: "job77",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "import",
+      status: "completed",
+      drafts: [draft],
+    });
+    const response = await request(
       "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal", servers: ["Excalidraw (App)"] },
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
     );
-    expect(res.status).toBe(200);
-    // createAuthorizedManager receives the resolved ID, not the name.
-    const managerArgs = createAuthorizedManagerMock.mock.calls[0];
-    expect(managerArgs[3]).toEqual(["srv_1"]);
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.skipped).toHaveLength(1);
+    expect(result.reviewUrl).toContain("/evaluate/suite/s1");
+    expect(result.reviewUrl).toContain("importJob=job77");
   });
 
-  it("generate surfaces drafts that failed to persist under `skipped`", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+  it("omits the review link when every case landed", async () => {
+    convexQueryMock.mockResolvedValue({
+      jobId: "job77",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "import",
+      status: "completed",
+      drafts: [],
     });
-    generateEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [
-        { title: "Bad draft", query: "x", runs: 1, expectedToolCalls: [] },
+    const response = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
+    expect(await response.json()).not.toHaveProperty("reviewUrl");
+  });
+
+  it("carries a commit-time duplicate policy into the case writer", async () => {
+    convexQueryMock.mockResolvedValue({
+      jobId: "job",
+      projectId: "p1",
+      suiteId: "s1",
+      source: "import",
+      status: "completed",
+      drafts: [
+        {
+          version: 1,
+          draftId: "d",
+          revision: 0,
+          case: {
+            title: "Search",
+            steps: [{ id: "p", kind: "prompt", prompt: "Find my projects" }],
+            expectedOutput: "Projects listed",
+          },
+          issues: [],
+          additions: [],
+          review: "required",
+        },
       ],
     });
-    convexQueryMock.mockImplementation((name: string) =>
-      name === "testSuites:getSuiteRunServerSelection"
-        ? Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] })
-        : defaultQueryImpl(name),
-    );
-    convexMutationMock.mockImplementation((name: string, args?: any) => {
+    convexMutationMock.mockImplementation((name: string) => {
+      if (name === "evalAuthoringState:prepareCommit")
+        return Promise.resolve({ title: "Search" });
       if (name === "testSuites:createTestCases")
-        return Promise.reject(new Error("Server Error\nUncaught Error: nope"));
-      return defaultMutationImpl(name, args);
-    });
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal" },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.created).toHaveLength(0);
-    expect(body.skipped).toEqual([
-      { title: "Bad draft", error: expect.any(String) },
-    ]);
-  });
-
-  it("generate forwards caseMix + varyUserStyles as generationOptions", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
         return Promise.resolve({
-          serverIds: ["srv_1"],
-          serverNames: ["Excalidraw (App)"],
+          caseUpsert: { committed: [], failed: [] },
         });
-      return defaultQueryImpl(name);
+      return Promise.resolve(null);
     });
-
-    const res = await request(
+    const response = await request(
       "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      {
-        caseMix: { simple: 3, negative: 1 },
-        varyUserStyles: true,
-      },
+      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      { duplicatePolicy: "warn", overrideReason: "Re-importing a fixed case" },
     );
-    expect(res.status).toBe(200);
-    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
-    expect(forwarded?.generationOptions).toEqual({
-      caseMix: { simple: 3, negative: 1 },
-      varyUserStyles: true,
+    expect(response.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:createTestCases",
+      )?.[1],
+    ).toMatchObject({
+      duplicatePolicy: "warn",
+      overrideReason: "Re-importing a fixed case",
     });
   });
 
-  it("generate omits generationOptions when no knobs are provided", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({
-          serverIds: ["srv_1"],
-          serverNames: ["Excalidraw (App)"],
-        });
-      return defaultQueryImpl(name);
-    });
-
-    await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "normal" },
-    );
-    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
-    expect(forwarded?.generationOptions).toBeUndefined();
-  });
-
-  it("caseMix supersedes mode:negative — uses the plan-driven generator and forwards generationOptions", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-    generateNegativeEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [],
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({
-          serverIds: ["srv_1"],
-          serverNames: ["Excalidraw (App)"],
-        });
-      return defaultQueryImpl(name);
-    });
-
-    await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "negative", caseMix: { negative: 4 } },
-    );
-    // Routed to the plan-driven generator, NOT the legacy negative-only one.
-    expect(generateNegativeEvalTestsMock).not.toHaveBeenCalled();
-    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
-    expect(forwarded?.generationOptions).toEqual({
-      caseMix: { negative: 4 },
-    });
-  });
+  /**
+   * The key the caller sent must reach the JOB, because that is where a replay
+   * is now recognized. The failure this guards is silent: a key goes out on
+   * the wire, nothing reads it, and every retry re-authors and re-spends.
+   */
+  function sentRequestKey(fetchMock: { mock: { calls: unknown[][] } }): string {
+    return JSON.parse(
+      (fetchMock.mock.calls[0]?.[1] as RequestInit).body as string,
+    ).requestKey;
+  }
 
   it.each([
-    { label: "empty {}", caseMix: {} },
-    { label: "zero-sum { negative: 0 }", caseMix: { negative: 0 } },
-    {
-      label: "all-zero buckets",
-      caseMix: {
-        simple: 0,
-        multiTool: 0,
-        multiTurn: 0,
-        complex: 0,
-        negative: 0,
-      },
-    },
+    ["a BODY key", {}, { idempotencyKey: "body-key" }, "body-key"],
+    [
+      "the SDK client's transport header",
+      { "idempotency-key": "sdk-key" },
+      {},
+      "sdk-key",
+    ],
+    [
+      "the prefixed header",
+      { "x-mcpjam-idempotency-key": "prefixed" },
+      {},
+      "prefixed",
+    ],
   ])(
-    "treats a bucketless caseMix ($label) as absent — mode:negative still uses the negative-only generator",
-    async ({ caseMix }) => {
-      createAuthorizedManagerMock.mockResolvedValue({
-        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-      });
-      generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
-      generateNegativeEvalTestsMock.mockResolvedValue({
-        success: true,
-        tests: [],
-      });
-      convexQueryMock.mockImplementation((name: string) => {
-        if (name === "testSuites:getSuiteRunServerSelection")
-          return Promise.resolve({
-            serverIds: ["srv_1"],
-            serverNames: ["Excalidraw (App)"],
-          });
-        return defaultQueryImpl(name);
-      });
-
-      await request(
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-        { mode: "negative", caseMix },
-      );
-      // A caseMix with no bucket > 0 must not supersede mode: the negative-only
-      // generator is used, and no empty generationOptions leaks downstream.
-      expect(generateNegativeEvalTestsMock).toHaveBeenCalled();
-      expect(generateEvalTestsMock).not.toHaveBeenCalled();
-      const forwarded = generateNegativeEvalTestsMock.mock.calls.at(-1)?.[1];
-      expect(forwarded?.generationOptions).toBeUndefined();
+    "generate carries %s into the job's request key",
+    async (_label, headers, body, expected) => {
+      const backend = authoringBackend();
+      try {
+        await generateWith({
+          headers: headers as Record<string, string>,
+          body: { mode: "normal", ...(body as Record<string, unknown>) },
+        });
+        expect(sentRequestKey(backend.fetchMock)).toBe(expected);
+      } finally {
+        backend.restore();
+      }
     },
   );
 
-  it("mode:negative + caseMix persists per-draft negativity (positives keep tool calls)", async () => {
-    createAuthorizedManagerMock.mockResolvedValue({
-      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
-    });
-    // The plan-driven generator flags each draft; the request still carries
-    // mode:"negative", which must NOT force the positive draft negative.
-    generateEvalTestsMock.mockResolvedValue({
-      success: true,
-      tests: [
-        {
-          title: "Pos",
-          query: "do a thing",
-          runs: 1,
-          expectedToolCalls: [{ toolName: "list", arguments: {} }],
-          isNegativeTest: false,
+  it("generate lets the prefixed HEADER win over both other channels", async () => {
+    const backend = authoringBackend();
+    try {
+      await generateWith({
+        headers: {
+          "x-mcpjam-idempotency-key": "prefixed",
+          "idempotency-key": "plain",
         },
-        {
-          title: "Neg",
-          query: "meta question",
-          runs: 1,
-          expectedToolCalls: [],
-          isNegativeTest: true,
-        },
-      ],
-    });
-    convexQueryMock.mockImplementation((name: string) => {
-      if (name === "testSuites:getSuiteRunServerSelection")
-        return Promise.resolve({
-          serverIds: ["srv_1"],
-          serverNames: ["Excalidraw (App)"],
-        });
-      return defaultQueryImpl(name);
-    });
-
-    const res = await request(
-      "POST",
-      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
-      { mode: "negative", caseMix: { simple: 1, negative: 1 } },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.counts).toEqual({ normal: 1, negative: 1 });
-
-    const createArgs = allAuthoredCaseArgs();
-    const posArgs = createArgs.find((a: any) => a.title === "Pos");
-    const negArgs = createArgs.find((a: any) => a.title === "Neg");
-    // Positive draft keeps its tool calls and is NOT marked negative.
-    expect(posArgs.isNegativeTest).toBeUndefined();
-    expect(posArgs.expectedToolCalls).toEqual([
-      { toolName: "list", arguments: {} },
-    ]);
-    expect(posArgs.steps).toHaveLength(2);
-    expect(posArgs.steps[1]).toMatchObject({
-      kind: "assert",
-      assertion: { type: "toolCalledWith", toolName: "list" },
-    });
-    // Negative draft is marked negative with no tool calls.
-    expect(negArgs.isNegativeTest).toBe(true);
-    expect(negArgs.expectedToolCalls).toEqual([]);
-    expect(negArgs.steps).toEqual([
-      expect.objectContaining({ kind: "prompt", prompt: "meta question" }),
-    ]);
+        body: { mode: "normal", idempotencyKey: "body" },
+      });
+      expect(sentRequestKey(backend.fetchMock)).toBe("prefixed");
+    } finally {
+      backend.restore();
+    }
   });
+
+  it("generate still starts a job when no key is sent", async () => {
+    // Keyless is legal; the job simply gets a fresh key of its own, so a
+    // retry is a new job rather than a replay.
+    const backend = authoringBackend();
+    try {
+      await generateWith({ body: { mode: "normal" } });
+      expect(sentRequestKey(backend.fetchMock)).toEqual(expect.any(String));
+    } finally {
+      backend.restore();
+    }
+  });
+
+  it("generate forwards the generation knobs as job options", async () => {
+    const backend = authoringBackend();
+    try {
+      const res = await generateWith({
+        body: { caseMix: { simple: 3, negative: 1 }, varyUserStyles: true },
+      });
+      expect(res.status).toBe(200);
+      expect(backend.sent()).toMatchObject({
+        source: "generation",
+        options: {
+          caseMix: { simple: 3, negative: 1 },
+          varyUserStyles: true,
+        },
+      });
+    } finally {
+      backend.restore();
+    }
+  });
+
+  it("generate forwards mode:negative as the job's mode", async () => {
+    // The plan is the job's to make now. What this layer must not do is drop
+    // the caller's mode on the way there.
+    const backend = authoringBackend();
+    try {
+      await generateWith({ body: { mode: "negative" } });
+      expect(backend.sent()).toMatchObject({ options: { mode: "negative" } });
+    } finally {
+      backend.restore();
+    }
+  });
+
 
   // ── Wave-0 declared identity + the batch authoring surface ───────────────
 

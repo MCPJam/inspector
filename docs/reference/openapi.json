@@ -5112,6 +5112,231 @@
               }
             }
           },
+          "202": {
+            "$ref": "#/components/responses/EvalAuthoringJobAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/cases/import": {
+      "post": {
+        "operationId": "importEvalCases",
+        "tags": ["Eval runs"],
+        "summary": "Author eval cases from a document",
+        "description": "The sibling of `cases/generate`: generation invents cases from the suite's tools, import reads them out of something a person already wrote — a test plan, a spreadsheet of scenarios, a JSON export. MCPJam's own model turns the document into full cases (ordered steps, tool calls, assertions), so the caller does not have to guess the case shape. No format is declared: the model reads the document's shape itself, so Markdown, JSON, CSV and plain notes all work.\n\n**Spends the organization's credits**, unlike generation, which is on MCPJam. Pass an idempotency key so a retry replays the same job instead of authoring — and billing — the document twice.\n\nLike `cases/generate`, this discovers the suite's tools over a live MCP connection first, so the authored cases are grounded in tools the suite can actually call.\n\nAnswers `200` when the job finishes inside the wait window and `202` with a `jobId` when it does not — poll the job, then commit it. A case the commit could not write comes back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "x-mcpjam-idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Makes a retry replay the recorded job instead of re-authoring — and re-billing — the document."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCaseImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The cases the job authored and committed, or the job's own status when it finished without committing (failed, cancelled, or still pending at the end of the wait).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalCaseImported"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EvalAuthoringJobAccepted"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "$ref": "#/components/responses/EvalAuthoringJobAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}": {
+      "get": {
+        "operationId": "getEvalAuthoringJob",
+        "tags": ["Eval runs"],
+        "summary": "Read an eval authoring job",
+        "description": "Progress and drafts for a job started by `cases/generate` or `cases/import`. Poll this after a `202`, then commit the job once its `status` is `completed`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The job id returned by `cases/generate` or `cases/import`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The authoring job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalAuthoringJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit": {
+      "post": {
+        "operationId": "commitEvalAuthoringJob",
+        "tags": ["Eval runs"],
+        "summary": "Write a finished authoring job's cases into the suite",
+        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` — the in-app upload — is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalAuthoringCommitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The cases written and any the commit skipped, or the job's own status when it finished without committing (failed, cancelled, or still pending at the end of the wait).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalCaseImported"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EvalAuthoringJobAccepted"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/ValidationError"
           },
@@ -16731,6 +16956,199 @@
           }
         },
         "additionalProperties": false
+      },
+      "EvalAuthoringJobAccepted": {
+        "type": "object",
+        "required": ["jobId", "status"],
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "Poll this job, then commit it."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "completed", "failed", "cancelled"]
+          },
+          "error": {
+            "type": "string",
+            "description": "Why the job stopped. Present only on a failed job."
+          },
+          "generationModel": {
+            "type": "string"
+          },
+          "created": {
+            "type": "array",
+            "description": "Always empty here — nothing is written until the job is committed.",
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "normal": {
+                "type": "integer"
+              },
+              "negative": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "EvalAuthoringJob": {
+        "type": "object",
+        "required": ["jobId", "status"],
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["markdown", "generation", "agent", "import"],
+            "description": "How the job was started. `markdown` is the in-app upload, whose drafts a person reviews — it cannot be committed through this API."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "completed", "failed", "cancelled"]
+          },
+          "phase": {
+            "type": "string",
+            "enum": ["prepare", "plan", "draft", "validate", "publish"]
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "drafts": {
+            "type": "array",
+            "description": "The cases authored so far. A draft carrying unresolved blocking issues or proposed additions is skipped by a commit and left for review.",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "EvalAuthoringCommitRequest": {
+        "type": "object",
+        "properties": {
+          "duplicatePolicy": {
+            "type": "string",
+            "enum": ["block", "warn", "create_anyway"],
+            "description": "How to treat a case that duplicates one already in the suite. Anything but `block` requires `overrideReason`."
+          },
+          "overrideReason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "EvalCaseImportRequest": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 102400,
+            "description": "The document, as UTF-8 text. Markdown, JSON, CSV or plain notes — no format is declared, because the authoring model reads the document's shape itself. At most 100 KiB."
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Recorded on each case's provenance so a reviewer can find the source. Optional: a pasted document has no file behind it."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Server ids or names to discover tools from. Mutually exclusive with `environmentId`."
+          },
+          "environmentId": {
+            "type": "string",
+            "description": "Author against this environment's closed server set. Mutually exclusive with `servers`."
+          },
+          "caseModels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "duplicatePolicy": {
+            "type": "string",
+            "enum": ["block", "warn", "create_anyway"],
+            "description": "Applied when the cases are written, not when the job starts. Anything but `block` requires `overrideReason`."
+          },
+          "overrideReason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Makes a retry replay the recorded job instead of authoring — and billing — the document a second time."
+          }
+        }
+      },
+      "EvalCaseImported": {
+        "type": "object",
+        "required": ["generationModel", "created", "counts"],
+        "properties": {
+          "generationModel": {
+            "type": "string"
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "normal": {
+                "type": "integer"
+              },
+              "negative": {
+                "type": "integer"
+              }
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "description": "Cases the commit could not write, each with its reason. They stay on the job rather than being lost.",
+            "items": {
+              "type": "object"
+            }
+          },
+          "reviewUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Opens the app on exactly the skipped drafts. Present only when something was skipped — finishing them there costs nothing, whereas re-sending the document re-authors and re-bills every case in it."
+          }
+        }
       },
       "EvalCaseGenerated": {
         "type": "object",
@@ -33831,6 +34249,16 @@
             "example": {
               "code": "FEATURE_NOT_SUPPORTED",
               "message": "Server does not support resources"
+            }
+          }
+        }
+      },
+      "EvalAuthoringJobAccepted": {
+        "description": "The authoring job is still running when the wait window closes. Nothing has been written to the suite yet: poll the job, then commit it.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EvalAuthoringJobAccepted"
             }
           }
         }
