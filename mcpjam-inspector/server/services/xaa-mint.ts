@@ -387,6 +387,18 @@ export async function resolveServerTarget(deps: {
     );
   }
 
+  // A secret released for a declared target must say the backend checked it.
+  // A response without that acknowledgement came from a backend that did not
+  // make the check, and a secret it released may have been saved for another
+  // origin — so it is not spent. Fails closed.
+  if (deps.targetUrl && resolved.clientSecret && !resolved.targetEnforced) {
+    throw new WebRouteError(
+      503,
+      ErrorCode.SERVER_UNREACHABLE,
+      "The saved client secret for this server could not be confirmed for this address, so it was not used. Try again shortly."
+    );
+  }
+
   const target = await resolveAuthorizedServerTarget({
     resource: resolved.serverUrl ?? undefined,
     explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,

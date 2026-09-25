@@ -353,6 +353,16 @@ describe("bindingForAuthorizedHeaders", () => {
     });
   });
 
+  it("keeps an explicit empty binding: attach nowhere", () => {
+    expect(
+      bindingForAuthorizedHeaders({
+        url: "https://owner.example.com/mcp",
+        headers: { "x-api-key": "k" },
+        boundOrigins: [],
+      }),
+    ).toEqual({ headerNames: ["x-api-key"], boundOrigins: [] });
+  });
+
   it("is null when there is nothing to bind", () => {
     expect(
       bindingForAuthorizedHeaders({ url: "https://a.example", headers: {} }),

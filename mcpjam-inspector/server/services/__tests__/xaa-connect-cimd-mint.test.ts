@@ -74,6 +74,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
       xaaAuthzIssuer: baseArgs.explicitIssuer,
       clientId: "client-1",
       clientSecret: "secret-1",
+      targetEnforced: true,
     });
 
     await mintXaaAccessToken({
@@ -100,6 +101,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
       xaaAuthzIssuer: baseArgs.explicitIssuer,
       clientId: "client-1",
       clientSecret: "secret-1",
+      targetEnforced: true,
     });
 
     await mintXaaAccessToken({
@@ -140,6 +142,27 @@ describe("mintXaaAccessToken Connect client identity", () => {
       details: expect.objectContaining({ secretOriginMismatch: true }),
     });
     expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+  });
+
+  it("does not spend a secret the backend did not confirm it checked", async () => {
+    // A reveal answered without the target acknowledgement came from a
+    // backend that never compared the secret's origin with this resource.
+    const resolveServerSecret = vi.fn().mockResolvedValue({
+      serverUrl: baseArgs.resource,
+      xaaAuthzIssuer: baseArgs.explicitIssuer,
+      clientId: "client-1",
+      clientSecret: "secret-1",
+    });
+
+    await expect(
+      mintXaaAccessToken({
+        ...baseArgs,
+        registrationMode: "preregistered",
+        resolveServerSecret,
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+    expect(fetchOAuthMetadataMock).not.toHaveBeenCalled();
   });
 
   it("does not spend a secret approved for one origin at another", async () => {

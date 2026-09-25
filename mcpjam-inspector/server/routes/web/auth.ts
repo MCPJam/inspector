@@ -1636,6 +1636,29 @@ export async function createAuthorizedManager(
       continue;
     }
 
+    // The organization's policy withholds a credential that EXISTS. That holds
+    // for an auto-discovery server as much as an explicit-OAuth one: dialing
+    // it without the token would fall into a discovery flow that mints a
+    // token the same policy withholds, so both answer with the policy.
+    if (
+      auth.oauthUnavailableReason === "credential_export_denied" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId]) &&
+      (effectiveAuth === "oauth" || effectiveAuth === "discover")
+    ) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+        {
+          exportDenied: true,
+          policy: "credentialExportPolicy",
+          serverId,
+          serverName: serverNamesById?.[serverId] ?? null,
+          serverUrl: auth.serverConfig.url,
+        },
+      );
+    }
+
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
@@ -1664,20 +1687,6 @@ export async function createAuthorizedManager(
             ErrorCode.UNAUTHORIZED,
             `Server "${displayServerName}" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.`,
             { oauthRequired: true, ...errorDetails },
-          );
-        // The organization's policy keeps this token inside hosted
-        // connections. Sending the user to authorize again would mint a token
-        // the same policy withholds — only an organization admin can change it.
-        case "credential_export_denied":
-          throw new WebRouteError(
-            403,
-            ErrorCode.FORBIDDEN,
-            `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
-            {
-              exportDenied: true,
-              policy: "credentialExportPolicy",
-              ...errorDetails,
-            },
           );
         // The credential is intact; the authorization server never answered.
         // Authorizing again means talking to the same unreachable host, so
@@ -2256,16 +2265,18 @@ export async function createAuthorizedManager(
         releasePluginLeases();
         throw error;
       }
-      // Innermost-last: the transport rule sees every redirect hop as its own
-      // call, so each hop is observed and egress-guarded before the stored
-      // headers are (or are not) attached to it.
+      // The transport rule wraps the egress-guarded fetch, so every redirect
+      // hop is guarded before the stored headers are (or are not) attached.
+      // The observer goes OUTSIDE it: the challenge capture is keyed to the
+      // fetch the transport is actually given, and records the final response.
       const binding = credentialBindings.get(serverId);
-      const observed = observeConnectionFetch(baseFetch);
       return [
         id,
         {
           ...config,
-          baseFetch: binding ? bindCredentialHeaders(observed, binding) : observed,
+          baseFetch: observeConnectionFetch(
+            binding ? bindCredentialHeaders(baseFetch, binding) : baseFetch,
+          ),
         },
       ];
     }),

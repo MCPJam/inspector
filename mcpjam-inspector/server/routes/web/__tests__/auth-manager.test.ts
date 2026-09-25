@@ -874,6 +874,32 @@ describe("web auth manager batching", () => {
     expect(error.details?.oauthRequired).toBeUndefined();
   });
 
+  it("names the export policy for an auto-discovery server too", async () => {
+    const base = batchWithOAuthUnavailableReason("credential_export_denied");
+    global.fetch = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      const response = await base(...args);
+      const body = await response.json();
+      body.results["server-1"].serverConfig = {
+        transportType: "http",
+        url: "https://server-1.example.com/mcp",
+        headers: {},
+        authMethod: "auto",
+      };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: { exportDenied: true, policy: "credentialExportPolicy" },
+    });
+  });
+
   it("reports an unreachable authorization server as retryable, not as a missing authorization", async () => {
     global.fetch = batchWithOAuthUnavailableReason(
       "authorization_server_unreachable"

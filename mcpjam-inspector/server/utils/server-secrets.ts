@@ -374,6 +374,9 @@ export interface ServerClientSecretResult {
    * whose metadata advertises the origin root as issuer. Absent/false =
    * strict; the guard only relaxes on an explicit true. */
   xaaAllowPathScopedIssuer?: boolean;
+  /** The backend held the secret to the declared `targetUrl` before
+   * releasing it. Only an explicit true counts. */
+  targetEnforced?: boolean;
 }
 
 /**
@@ -416,6 +419,7 @@ export async function fetchServerClientSecret(args: {
     // Strict by default: only an explicit true from the stored config relaxes
     // the issuer check (older backends simply omit the field).
     xaaAllowPathScopedIssuer: body.xaaAllowPathScopedIssuer === true,
+    targetEnforced: body.targetEnforced === true,
   };
 }
 
