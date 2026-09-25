@@ -53,7 +53,8 @@ function buildTool(opts: { billingFeature?: string }) {
       ctx: { toolCallId: string; abortSignal?: AbortSignal },
     ) => Promise<{ error?: string; results?: unknown[] }>;
   };
-  return (n: number) => t.execute({ query: `q${n}` }, { toolCallId: `tc_${n}` });
+  return (n: number) =>
+    t.execute({ query: `q${n}` }, { toolCallId: `tc_${n}` });
 }
 
 describe("exa web search — platform billing attestation", () => {
@@ -148,6 +149,104 @@ describe("exa web search — platform billing attestation", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("stops CONCURRENT siblings after one failed attestation", async () => {
+    // The reported case, and the one the model produces most often:
+    // `executeToolCallsFromMessages` runs sibling tool calls concurrently, so
+    // all three used to read the unset latch before any response arrived and
+    // all three dispatched. Three customer-paid searches, not one.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse(null));
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const results = await Promise.all([run(1), run(2), run(3)]);
+
+    for (const result of results) {
+      expect(result.error).toBe("Web search is temporarily unavailable.");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds siblings until the first claimed search answers", async () => {
+    // The bound has to hold while the probe is still IN FLIGHT, not merely
+    // after it settles — that is the whole window the concurrent case exploits.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    let releaseFirst!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await firstInFlight;
+      return exaResponse(null);
+    });
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const pending = Promise.all([run(1), run(2), run(3)]);
+    // Let every sibling reach the gate while the probe is unresolved.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    const results = await pending;
+    for (const result of results) {
+      expect(result.error).toBe("Web search is temporarily unavailable.");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets concurrent siblings through once attestation is proven", async () => {
+    // The gate must cost one round trip per TURN, not serialize a healthy
+    // answer's searches forever.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    // Prove it first, then fan out.
+    expect((await run(0)).results).toHaveLength(1);
+    const results = await Promise.all([run(1), run(2), run(3)]);
+    for (const result of results) expect(result.results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("serializes an unproven batch but still answers all of it", async () => {
+    // Concurrent siblings arriving BEFORE anything is proven: the first probes,
+    // and because it comes back healthy the rest must all still run.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse());
+    global.fetch = fetchMock;
+
+    const run = buildTool({ billingFeature: BILLING_FEATURE });
+    const results = await Promise.all([run(1), run(2), run(3)]);
+    for (const result of results) expect(result.results).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("never gates an UNCLAIMED search, even concurrently", async () => {
+    // The Playground is customer-paid by design. Queueing its searches behind
+    // one another would be a pure latency regression for a path that has
+    // nothing to attest.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    let releaseAll!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await held;
+      return exaResponse(null);
+    });
+    global.fetch = fetchMock;
+
+    const run = buildTool({});
+    const pending = Promise.all([run(1), run(2), run(3)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // All three in flight at once: no gate on this path.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    releaseAll();
+    await pending;
+  });
+
   it("keeps searching for the whole turn while attestation holds", async () => {
     // The latch must not fire on a healthy turn: every search still goes out.
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
@@ -164,9 +263,7 @@ describe("exa web search — platform billing attestation", () => {
     // The Playground is customer-paid by design; a missing header is not a
     // signal there and must never stop its later searches.
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
-    const fetchMock = vi
-      .fn()
-      .mockImplementation(async () => exaResponse(null));
+    const fetchMock = vi.fn().mockImplementation(async () => exaResponse(null));
     global.fetch = fetchMock;
 
     const run = buildTool({});

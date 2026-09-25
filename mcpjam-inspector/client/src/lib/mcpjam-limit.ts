@@ -262,7 +262,8 @@ const hasFrontierSignInCode = (
   if (!value || typeof value !== "object" || seen.has(value)) return false;
   seen.add(value);
 
-  if (getStringProperty(value, "code") === "guest_model_not_allowed") return true;
+  if (getStringProperty(value, "code") === "guest_model_not_allowed")
+    return true;
   return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
 };
 
@@ -346,6 +347,69 @@ const collectCodes = (
 };
 
 /**
+ * The backend answers BOTH agent count caps with `code: "agent_turn_limit"`
+ * and tells them apart with `gatedBy`: `"user"` is the 150-a-day window,
+ * `"burst"` is the 6-a-minute one. They want opposite advice — one resets at
+ * midnight, the other in seconds — so reading only the code told a user who
+ * had paused for ten seconds to come back tomorrow.
+ */
+const findGatedBy = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): string | undefined => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findGatedBy(parsed, seen);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  return findStringPropertyDeep(value, "gatedBy", seen);
+};
+
+const findRetryAfterMs = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): number | undefined => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findRetryAfterMs(parsed, seen);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+  const direct = (value as Record<string, unknown>).retryAfterMs;
+  if (typeof direct === "number" && Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    const nested = findRetryAfterMs(item, seen);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+};
+
+/**
+ * `gatedBy` as a bare substring, for a body that never parses.
+ *
+ * The AI SDK folds a pre-stream refusal into `new Error(await res.text())` and
+ * a proxy can mangle that text, which is why the code scan below is a substring
+ * scan too. Matched as a quoted key/value pair rather than the bare word
+ * "burst", which is common enough in prose to be worth not guessing at.
+ */
+const BURST_GATED_BY_PATTERN = /"gatedBy"\s*:\s*"burst"/;
+
+const describeBurstRetry = (retryAfterMs: number | undefined): string => {
+  if (retryAfterMs === undefined) {
+    return "Too many Ask MCPJam turns in a row. Try again in a moment.";
+  }
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
+};
+
+/**
  * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
  * something else.
  *
@@ -372,6 +436,15 @@ export function describeAgentRefusalMessage(
   }
   for (const code of AGENT_UNAVAILABLE_CODES) {
     if (codes.has(code)) return "Ask MCPJam is temporarily unavailable.";
+  }
+  if (codes.has("agent_turn_limit")) {
+    // Only the DAILY cap resets at midnight. A burst throttle is seconds away,
+    // and telling that user to come back tomorrow is both wrong and the reason
+    // they would stop trying.
+    const gatedBy = findGatedBy(message);
+    if (gatedBy === "burst" || BURST_GATED_BY_PATTERN.test(message)) {
+      return describeBurstRetry(findRetryAfterMs(message));
+    }
   }
   if (codes.has("platform_capacity") || codes.has("agent_turn_limit")) {
     return "Ask MCPJam has reached today's limit. It resets at 00:00 UTC.";
