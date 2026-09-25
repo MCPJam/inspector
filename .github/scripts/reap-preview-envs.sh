@@ -194,6 +194,11 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN SERVICE_DOMAINS CUSTOM_DOMAINS <&
     skip "$ENV_NAME" "has ${SERVICE_DOMAINS} service domains"
     continue
   fi
+  # "-" means no service domain: the env never got a preview URL.
+  if [ "$DOMAIN" != "-" ] && ! [[ "$DOMAIN" =~ ^[A-Za-z0-9-]+\.up\.railway\.app$ ]]; then
+    skip "$ENV_NAME" "unexpected domain ${DOMAIN}"
+    continue
+  fi
   if [ "$REAPED" -ge "$MAX_DELETIONS" ]; then
     DEFERRED=$((DEFERRED + 1))
     continue
@@ -217,10 +222,6 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN SERVICE_DOMAINS CUSTOM_DOMAINS <&
   # An env with no service domain never got a preview URL, so there is
   # nothing registered with WorkOS to remove.
   if [ "$DOMAIN" != "-" ]; then
-    if ! [[ "$DOMAIN" =~ ^[A-Za-z0-9-]+\.up\.railway\.app$ ]]; then
-      skip "$ENV_NAME" "unexpected domain ${DOMAIN}"
-      continue
-    fi
     if ! WORKOS_CLEANUP_STRICT=1 WORKOS_CLEANUP_MAX_PAGES=50 \
       "$SCRIPT_DIR/workos-cleanup.sh" "https://${DOMAIN}"; then
       fail "$ENV_NAME" "WorkOS redirect URI removal unconfirmed; retrying next run"
