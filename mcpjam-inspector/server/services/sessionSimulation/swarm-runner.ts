@@ -15,6 +15,11 @@ import {
 } from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
+  readStoredModelSelection,
+  wireModelIdForSelection,
+} from "../../utils/model-resolution-local.js";
+import type { ModelDefinition } from "@/shared/types";
+import {
   captureAndPersistWidgetSnapshotsForSession,
   runSyntheticHostSession,
   type SimulationManagerFactory,
@@ -174,6 +179,48 @@ export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
 /** Session-id identity for a pinned execution target (shared mint — D1).
  * `environmentId` comes from the FIRST-CLASS `environmentRef`; the opaque
  * `targetId` is never parsed. */
+/**
+ * The model a swarm target runs on. With a saved selection in the snapshot,
+ * the selection decides the rail: `hosted` is marked hosted, and an explicit
+ * `org` / `local` selection is marked `hosted: false` so it never matches the
+ * hosted catalog first, executed with its provider-native id. A `local`
+ * selection also names its provider. Without one (legacy snapshot), the
+ * pinned `hosted` flag and id-based lookup apply exactly as before.
+ *
+ * An `org` selection's provider still comes from the id: the snapshot carries
+ * the connection's row id, not its provider key, and mapping one to the other
+ * is the backend resolver's job.
+ */
+export function swarmTargetModelDefinition(
+  target: Pick<
+    PinnedHostExecutionSpec,
+    "modelId" | "hosted" | "resolvedSelection"
+  >,
+): ModelDefinition {
+  const selection = readStoredModelSelection(target.resolvedSelection);
+  if (!selection || selection.modelId !== target.modelId.trim()) {
+    return buildSyntheticModelDefinition(target.modelId, {
+      hosted: target.hosted,
+    });
+  }
+  const wireModelId = wireModelIdForSelection(selection);
+  const definition = buildSyntheticModelDefinition(wireModelId, {
+    hosted: selection.source === "hosted",
+  });
+  const ref = selection.connectionRef;
+  if (selection.source === "local" && ref?.kind === "localProvider") {
+    return {
+      ...definition,
+      id: wireModelId,
+      provider: ref.providerKey,
+      ...(ref.customProviderName
+        ? { customProviderName: ref.customProviderName }
+        : {}),
+    };
+  }
+  return definition;
+}
+
 function targetSessionIdentity(target: PinnedHostExecutionSpec): {
   hostId: string;
   environmentId?: string;
@@ -635,9 +682,7 @@ async function runJourneyFanOut(
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId, {
-        hosted: target.hosted,
-      });
+      const modelDefinition = swarmTargetModelDefinition(target);
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
