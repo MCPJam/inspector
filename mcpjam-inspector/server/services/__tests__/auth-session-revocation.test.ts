@@ -254,6 +254,43 @@ describe("revokeSessionWithAcknowledgment", () => {
     expect(pendingSessionRevocationRetryCount()).toBe(0);
   });
 
+  it("keeps retrying with the newer token when the token it replaced gets a final answer", async () => {
+    let answerOlderAttempt!: (value: unknown) => void;
+    const revoke = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("backend unavailable"))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerOlderAttempt = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("backend unavailable"))
+      .mockResolvedValueOnce({ revoked: true });
+    const options = {
+      convexUrl: CONVEX_URL,
+      revoke,
+      verifiedSid: "session_1",
+    };
+
+    await revokeSessionWithAcknowledgment("token-1", options);
+    await vi.advanceTimersByTimeAsync(SESSION_REVOCATION_RETRY_DELAYS_MS[0]);
+    expect(revoke).toHaveBeenLastCalledWith(CONVEX_URL, "token-1");
+
+    // A second sign-out of the session joins while that attempt is in flight.
+    await revokeSessionWithAcknowledgment("token-2", options);
+    answerOlderAttempt({ revoked: false, reason: "no_session" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(pendingSessionRevocationRetryCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(SESSION_REVOCATION_RETRY_DELAYS_MS[0]);
+
+    expect(revoke).toHaveBeenCalledTimes(4);
+    expect(revoke).toHaveBeenLastCalledWith(CONVEX_URL, "token-2");
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
+  });
+
   it("reports failed when no retry can be scheduled", async () => {
     const revoke = vi.fn().mockRejectedValue(new Error("backend unavailable"));
     for (let i = 0; i < MAX_PENDING_SESSION_REVOCATION_RETRIES; i++) {

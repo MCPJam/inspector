@@ -186,7 +186,10 @@ async function runRetry(
 ): Promise<void> {
   entry.timer = null;
   entry.attempts += 1;
-  const result = await revokeAuthKitSession(entry.token, {
+  // The answer is about THIS token. A later sign-out of the same session can
+  // hand the entry a newer one while the attempt is in flight.
+  const token = entry.token;
+  const result = await revokeAuthKitSession(token, {
     convexUrl: options.convexUrl,
     revoke: options.revoke,
     timeoutMs: RETRY_ATTEMPT_TIMEOUT_MS,
@@ -196,14 +199,19 @@ async function runRetry(
 
   if (result.revoked) {
     pendingRetries.delete(key);
-    rememberAcknowledged(entry.token, entry.sid);
+    rememberAcknowledged(token, entry.sid);
     logger.info("Sign-out revocation acknowledged on retry", {
       event: "auth.session.revoke_retry_succeeded",
       attempts: entry.attempts,
     });
     return;
   }
-  if (result.reason !== "timeout" && result.reason !== "failed") {
+  const superseded = entry.token !== token;
+  if (
+    !superseded &&
+    result.reason !== "timeout" &&
+    result.reason !== "failed"
+  ) {
     // The backend answered, with nothing to revoke: not a transient failure.
     pendingRetries.delete(key);
     logger.info("Sign-out revocation retry ended without a session", {
@@ -213,6 +221,8 @@ async function runRetry(
     });
     return;
   }
+  // A transient failure, or an answer about a token a newer sign-out has
+  // since replaced: try again, with the entry's current token.
   const delays = options.delaysMs ?? SESSION_REVOCATION_RETRY_DELAYS_MS;
   if (entry.attempts >= delays.length) {
     pendingRetries.delete(key);
@@ -235,7 +245,8 @@ async function runRetry(
  * the background, with backoff, until it acknowledges, answers that there is
  * nothing to revoke, or the retries run out. Returns false when no retry could
  * be scheduled (the queue is full). A second request for a session already
- * being retried joins it, and the remaining attempts use its token.
+ * being retried joins it: the retries continue with its token, on a fresh
+ * schedule, and an answer about the token it replaced does not end them.
  *
  * In-process: a restart drops what is pending here. The session is still
  * ended at the identity provider by the sign-out itself, and the backend
@@ -251,6 +262,7 @@ export function scheduleSessionRevocationRetry(
   if (pending) {
     // A later sign-out of the same session carries the newer token.
     pending.token = token;
+    pending.attempts = 0;
     return true;
   }
   if (pendingRetries.size >= MAX_PENDING_SESSION_REVOCATION_RETRIES) {
