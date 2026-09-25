@@ -281,7 +281,25 @@ export function ElicitationDialog({
   };
 
   return (
-    <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
+    <Dialog
+      open={!!elicitationRequest}
+      onOpenChange={(next) => {
+        // The X, Escape and a click outside all arrive here, and an empty
+        // handler made all three inert: the only way out was a footer button,
+        // so any failure that left the request unanswered stranded the dialog
+        // open. Dismissing without choosing is `cancel`, not `decline`, the
+        // same distinction UrlElicitationConsent draws.
+        //
+        // Deliberately NOT gated on `loading`. The footer buttons are disabled
+        // while a response is in flight, but `authFetch` sends no abort signal
+        // and no timeout, so a respond call that hangs leaves `loading` true
+        // for good. Gating dismissal on it would lock the dialog shut in
+        // precisely the case this is meant to fix. A duplicate `cancel` for a
+        // request already being answered is the cheaper of the two failures.
+        if (next) return;
+        void handleResponse("cancel");
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">
