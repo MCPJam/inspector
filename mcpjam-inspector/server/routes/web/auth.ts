@@ -86,6 +86,10 @@ import {
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
 import {
+  assertRecordedSecretsOriginMatches,
+  assertSecretsOriginMatches,
+} from "../../utils/secret-origin-binding.js";
+import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
 } from "../../utils/server-secrets.js";
@@ -428,6 +432,7 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
+    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -1949,6 +1954,18 @@ export async function createAuthorizedManager(
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+      if (
+        useXaa &&
+        resolveXaaConnectRegistrationMode(
+          auth.serverConfig.registrationMode,
+        ) !== "cimd"
+      ) {
+        assertRecordedSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
+      }
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -2075,6 +2092,17 @@ export async function createAuthorizedManager(
         };
       }
 
+      // Reject an already-stale authorize snapshot before decrypting. The reveal
+      // helper also checks the binding returned with the values: the row may
+      // change between authorize and reveal.
+      if (auth.serverConfig.hasHeaders === true) {
+        assertSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
+      }
+
       const authForConfig =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
@@ -2086,6 +2114,7 @@ export async function createAuthorizedManager(
                   ...(auth.serverConfig.headers ?? {}),
                   ...((
                     await fetchRuntimeServerSecrets({
+                      expectedTargetUrl: auth.serverConfig.url,
                       bearerToken,
                       projectId,
                       serverId,

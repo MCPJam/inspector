@@ -268,15 +268,16 @@ function frozenToolEvidenceMissing(
  * Whether the runner's first pass declares the hosted tool scorers for this
  * frozen case. It does only when the matcher reports expected calls, which is
  * a positive case expecting at least one: `evaluateMultiTurnResults` reports
- * none for a negative test. An empty expectation or a negative test rules both
- * out on its own, whatever the other field says or whether it is there at all.
- * `undefined` when neither does and the frozen case does not say.
+ * none for a negative test. `undefined` only when neither half of the frozen
+ * case settles it.
  */
 function hostedToolScorersDeclared(row: EvidenceRow): boolean | undefined {
+  // Either half rules them out alone: a negative test, or a case that lists
+  // no expected call, whatever the other field says.
+  if (row.isNegativeTest === true) return false;
   if (
-    (Array.isArray(row.expectedToolCalls) &&
-      row.expectedToolCalls.length === 0) ||
-    row.isNegativeTest === true
+    Array.isArray(row.expectedToolCalls) &&
+    row.expectedToolCalls.length === 0
   ) {
     return false;
   }

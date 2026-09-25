@@ -486,7 +486,10 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
   ).toEqual(["toolCalls:arguments", "toolCalls:match"]);
 });
 
-it("declares no hosted tool scorer when one frozen field rules both out", () => {
+it("declares no hosted tool scorer when half the evidence already rules them out", () => {
+  // Either half alone is enough: a case that lists no expected call, or a
+  // negative test, is graded with neither scorer whatever the other field
+  // says. Only when NEITHER half settles it is the case an unknown.
   const hosted = resolveScoreDefinition(
     hostedPredicateScoreDefinition({ predicate: oldRule }),
   );
@@ -496,7 +499,6 @@ it("declares no hosted tool scorer when one frozen field rules both out", () => 
       oldRule,
     ])[0],
   );
-  // The base row carries neither `expectedToolCalls` nor `isNegativeTest`.
   const source = {
     ...row,
     evaluationConfig: { definitions: [hosted] },
@@ -506,30 +508,55 @@ it("declares no hosted tool scorer when one frozen field rules both out", () => 
     assertions: { mode: "replace" as const, list: [oldRule] },
     matchOptions: { argumentMatching: "exact" as const },
   };
-  const toolDifferences = (differences: ReturnType<typeof backtestIteration>) =>
-    differences.filter((item) => item.evaluatorId.startsWith("toolCalls:"));
-  // A case that expects no call is graded by neither, whatever its polarity…
+  const toolIds = (differences: ReturnType<typeof backtestIteration>) =>
+    differences
+      .map((item) => item.evaluatorId)
+      .filter((id) => id.startsWith("toolCalls:"));
+  type Evidence = Parameters<typeof backtestIteration>[0];
+  const base: Evidence = source;
+  const { isNegativeTest: _polarity, ...withoutPolarity } = base;
+  const { expectedToolCalls: _expected, ...withoutExpectations } = base;
+
+  // No expected call, polarity unknown.
   expect(
-    toolDifferences(
-      backtestIteration({ ...source, expectedToolCalls: [] }, draftWithMatch),
+    toolIds(
+      backtestIteration(
+        { ...withoutPolarity, expectedToolCalls: [] },
+        draftWithMatch,
+      ),
     ),
   ).toEqual([]);
-  // …and so is a negative test, whatever it expects.
+  // A negative test, expectations unknown.
   expect(
-    toolDifferences(
-      backtestIteration({ ...source, isNegativeTest: true }, draftWithMatch),
+    toolIds(
+      backtestIteration(
+        { ...withoutExpectations, isNegativeTest: true },
+        draftWithMatch,
+      ),
     ),
   ).toEqual([]);
-  // With neither field, the frozen case cannot say: both are not comparable.
-  const unknown = toolDifferences(backtestIteration(source, draftWithMatch));
+  // Expected calls with polarity unknown is still an unknown: both scorers
+  // are reported, as not comparable, never as a flip.
+  const unknown = backtestIteration(
+    {
+      ...withoutPolarity,
+      expectedToolCalls: [{ toolName: "search", arguments: {} }],
+    },
+    draftWithMatch,
+  ).filter((item) => item.evaluatorId.startsWith("toolCalls:"));
   expect(unknown.map((item) => item.evaluatorId).sort()).toEqual([
     "toolCalls:arguments",
     "toolCalls:match",
   ]);
-  for (const item of unknown) {
-    expect(item).toMatchObject({
-      comparable: false,
-      reason: "Frozen tool expectations or test polarity are unavailable",
-    });
-  }
+  expect(unknown.every((item) => item.comparable === false)).toBe(true);
+  // So is a case missing both halves.
+  expect(
+    backtestIteration(base, draftWithMatch)
+      .filter((item) => item.evaluatorId.startsWith("toolCalls:"))
+      .map((item) => [item.evaluatorId, item.comparable])
+      .sort(),
+  ).toEqual([
+    ["toolCalls:arguments", false],
+    ["toolCalls:match", false],
+  ]);
 });
