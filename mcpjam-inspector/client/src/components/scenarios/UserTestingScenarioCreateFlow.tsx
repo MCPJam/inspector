@@ -74,7 +74,7 @@ type CreateStep = (typeof CREATE_STEPS)[number]["id"];
 
 /**
  * How the backend compares study names: trimmed, case-insensitive. Mirrors
- * `findScenarioByName` in mcpjam-backend `convex/scenarios.ts` — a check here
+ * `findScenarioNamed` in mcpjam-backend `convex/scenarios.ts` — a check here
  * that is stricter or looser than that one either nags about a name the
  * backend would take or waves through one it will refuse.
  */
@@ -112,17 +112,22 @@ const STUDY_N_PATTERN = /^study\s+(\d+)$/i;
  * reading as "the next one", even after an old study is deleted.
  */
 export function nextStudyName(
-  scenarios: ReadonlyArray<Pick<ScenarioListItem, "name" | "environmentId">>,
+  scenarios: ReadonlyArray<Pick<ScenarioListItem, "name">>,
 ): string {
-  const taken = takenStudyNames(scenarios);
+  // Every row, not only the ones that reserve a name: counting past a
+  // host-backed "Study 4" costs nothing, and it means the answer is free by
+  // construction — the pattern accepts exactly what `normalizeStudyName`
+  // folds (surrounding space, case), so no "Study N" above the highest can
+  // be taken. An N past MAX_SAFE_INTEGER is skipped: `N + 1` would round
+  // back to N there, and the suggestion would be a name already in use.
   let highest = 0;
   for (const row of scenarios) {
     const match = STUDY_N_PATTERN.exec(row.name.trim());
-    if (match) highest = Math.max(highest, Number(match[1]));
+    if (!match) continue;
+    const n = Number(match[1]);
+    if (n < Number.MAX_SAFE_INTEGER) highest = Math.max(highest, n);
   }
-  let n = highest + 1;
-  while (taken.has(normalizeStudyName(`Study ${n}`))) n += 1;
-  return `Study ${n}`;
+  return `Study ${highest + 1}`;
 }
 
 /**
@@ -370,7 +375,10 @@ export function UserTestingScenarioCreateFlow({
   // The same subscription the User Testing list holds, so this costs no extra
   // round trip. What the suggested name counts past and what a typed name is
   // checked against.
-  const { scenarios } = useScenarioList({ isAuthenticated, projectId });
+  const { scenarios, isLoading: scenariosLoading } = useScenarioList({
+    isAuthenticated,
+    projectId,
+  });
   const [step, setStep] = useState<CreateStep>("study");
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
@@ -573,7 +581,9 @@ export function UserTestingScenarioCreateFlow({
    */
   const continueBlocker:
     "loading" | "permission" | "client" | "servers" | "name" | null =
-    !environmentsSettled || hostsLoading || roleLoading
+    // The study list too: until it answers, a taken name reads as free, and
+    // Continue would carry it to a step with no name field on it.
+    !environmentsSettled || hostsLoading || roleLoading || scenariosLoading
       ? "loading"
       : // Ranked above the two choices, because it is not one: telling an
         // editor to pick a client first would send them to fix something that
@@ -628,9 +638,11 @@ export function UserTestingScenarioCreateFlow({
   };
 
   const handleCreateEnvironment = () => {
-    // Carry the typed name across so the round trip doesn't cost it. The
-    // Environments route consumes this seed into its create form.
-    const typed = name.trim();
+    // Carry a name the creator TYPED across, so the round trip doesn't cost
+    // it. The untouched suggestion ("Study 3") names a study, not an
+    // environment, so it stays behind. The Environments route consumes this
+    // seed into its create form.
+    const typed = userEditedNameRef.current ? name.trim() : "";
     saveEnvironmentDraftSeed(projectId, {
       ...(typed ? { name: typed } : {}),
       hostId: null,
@@ -644,6 +656,15 @@ export function UserTestingScenarioCreateFlow({
 
   const handleSave = async () => {
     if (!hasTarget || savingRef.current) return;
+    // The list can learn of a taken name after Continue (another member's
+    // study, published meanwhile). Send the creator back to the field now
+    // rather than after a write the backend will refuse.
+    if (takenNames.has(normalizeStudyName(effectiveName))) {
+      setStep("study");
+      setName(effectiveName);
+      userEditedNameRef.current = true;
+      return;
+    }
     // Never an empty name in the database: the field is allowed to be empty,
     // the study is not — `effectiveName` falls back to the suggestion.
     savingRef.current = true;

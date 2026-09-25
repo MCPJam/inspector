@@ -55,6 +55,7 @@ const {
   // a typed name is checked against. Empty by default: a first study.
   scenarioListState: {
     scenarios: [] as Array<{ name: string; environmentId?: string | null }>,
+    isLoading: false,
   },
 }));
 
@@ -80,7 +81,7 @@ vi.mock("@/hooks/useScenarios", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/useScenarios")>()),
   useScenarioList: () => ({
     scenarios: scenarioListState.scenarios,
-    isLoading: false,
+    isLoading: scenarioListState.isLoading,
   }),
 }));
 vi.mock("@/hooks/useClients", () => ({
@@ -228,6 +229,7 @@ beforeEach(() => {
   ];
   hostListState.isLoading = false;
   scenarioListState.scenarios = [];
+  scenarioListState.isLoading = false;
   projectRoleState.canManageMembers = true;
   projectRoleState.isLoading = false;
   ensureAdhocMock.mockImplementation(
@@ -537,6 +539,20 @@ describe("UserTestingScenarioCreateFlow", () => {
       skillSelection: null,
     });
     expect(onCreateEnvironment).toHaveBeenCalled();
+  });
+
+  it("does not name the new environment after the study suggestion", () => {
+    // "Study 1" names a study. An environment seeded with it would read as a
+    // study's name in every picker it later appears in.
+    renderFlow();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-new-environment"));
+
+    expect(saveSeedMock).toHaveBeenCalledWith("p1", {
+      hostId: null,
+      serverAttachmentId: null,
+      skillSelection: null,
+    });
   });
 
   it("is not a dead end when the project has no environments", () => {
@@ -1617,14 +1633,28 @@ describe("nextStudyName", () => {
     ).toBe("Study 5");
   });
 
-  it("never suggests a name the project already holds", () => {
-    // "Study 2" is taken, but by a name the counter does not parse as N.
+  it("reads a Study N the way the backend folds names", () => {
+    // Surrounding space and case are what `normalizeStudyName` folds, so the
+    // counter has to see "  STUDY 2  " as 2 — or it would suggest a name the
+    // backend refuses.
     expect(
       nextStudyName([
         { name: "Study 1", environmentId: "env-1" },
         { name: "  STUDY 2  ", environmentId: "env-1" },
       ]),
     ).toBe("Study 3");
+  });
+
+  it("skips an N too large to count past, instead of hanging", () => {
+    // Past MAX_SAFE_INTEGER, N + 1 rounds back to N: a loop looking for a free
+    // "Study N" froze the create page there.
+    expect(
+      nextStudyName([
+        { name: "Study 3", environmentId: "env-1" },
+        { name: "Study 9007199254740992", environmentId: "env-1" },
+        { name: "Study 10000000000000000", environmentId: "env-1" },
+      ]),
+    ).toBe("Study 4");
   });
 });
 
@@ -1690,6 +1720,61 @@ describe("UserTestingScenarioCreateFlow — a taken name, said while typing", ()
     expect(
       screen.queryByTestId("user-testing-create-name-taken"),
     ).not.toBeInTheDocument();
+  });
+
+  it("waits for the study list before Continue carries a name", () => {
+    // Until the list answers, a taken name reads as free.
+    scenarioListState.isLoading = true;
+    renderFlow();
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "MCPJam" },
+    });
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
+  });
+
+  it("rechecks the name at Create, against the list as it stands then", async () => {
+    // Free at Continue, taken by the time Create is pressed.
+    scenarioListState.scenarios = [];
+    const onCreateScenario = vi.fn();
+    const { rerender } = render(
+      <UserTestingScenarioCreateFlow
+        projectId="p1"
+        onCancel={vi.fn()}
+        onCreateEnvironment={vi.fn()}
+        onCreateScenario={onCreateScenario}
+        onApplyStudySurfaces={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "Pricing study" },
+    });
+    goToTasks();
+    expect(onTasksStep()).toBe(true);
+
+    scenarioListState.scenarios = [
+      { name: "Pricing study", environmentId: "env-9" },
+    ];
+    rerender(
+      <UserTestingScenarioCreateFlow
+        projectId="p1"
+        onCancel={vi.fn()}
+        onCreateEnvironment={vi.fn()}
+        onCreateScenario={onCreateScenario}
+        onApplyStudySurfaces={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    expect(onCreateScenario).not.toHaveBeenCalled();
+    expect(
+      await screen.findByTestId("user-testing-create-name-taken"),
+    ).toHaveTextContent(/already exists in this project/i);
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
+      "Pricing study",
+    );
   });
 
   it("will not carry a taken name past Continue", () => {
