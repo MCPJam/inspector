@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import { PINNED_CODEX_VERSION } from "../codex-appserver/bridge/app-server-protocol";
 import {
   buildBrokerDummyAuth,
   getHarnessAdapter,
@@ -141,11 +146,25 @@ describe("harness registry", () => {
   // raw-key credential path (COMP-23) — the broker's proxyBaseUrl arrives
   // already protocol-correct from the backend.
 
-  it("supportsModel: Claude Code runs anything, Codex only gpt-5", () => {
+  it("supportsModel reads the evidence table: Claude Code runs its families, Codex only gpt-5", () => {
     const cc = getHarnessAdapter("claude-code");
     const codex = getHarnessAdapter("codex");
     expect(cc.supportsModel("anthropic/claude-haiku-4.5")).toBe(true);
-    expect(cc.supportsModel("openai/gpt-5-nano")).toBe(true);
+    expect(cc.supportsModel("anthropic/claude-sonnet-4.5")).toBe(true);
+    // Claude Code only runs Anthropic models; it used to accept anything and
+    // let the CLI silently run its own default instead.
+    expect(cc.supportsModel("openai/gpt-5-nano")).toBe(false);
+    expect(cc.modelSupport("openai/gpt-5.6-luna").status).toBe("unsupported");
+    // An Anthropic model outside haiku/sonnet/opus has no verified native id:
+    // unknown, which only Playground chat may run.
+    expect(cc.modelSupport("anthropic/claude-fable-5")).toMatchObject({
+      status: "unknown",
+      reason: `not verified for claude-code ${HARNESS_PINNED_VERSIONS["claude-code"]}`,
+    });
+    expect(cc.supportsModel("anthropic/claude-fable-5")).toBe(false);
+    expect(
+      cc.supportsModel("anthropic/claude-fable-5", { allowUnknown: true }),
+    ).toBe(true);
     expect(codex.supportsModel("openai/gpt-5-nano")).toBe(true);
     // MCPJam-provided but not Codex-mappable ⇒ unsupported (rejected in preflight).
     expect(codex.supportsModel("anthropic/claude-haiku-4.5")).toBe(false);
@@ -172,9 +191,16 @@ describe("harness registry", () => {
     ["openai/gpt-5.6"],
     ["openai/GPT-5.6-Terra"],
   ])("refuses the tool-less %s rather than running it chat-only", (modelId) => {
+    // Refused by the evidence table at the pinned 0.149.x CLI, not by the id
+    // mapping: `toNativeModel` still maps the gpt-5 family, and an unverified
+    // newer CLI reads the pair as `unknown` rather than inheriting the refusal.
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel(modelId)).toBe(false);
-    expect(codex.toNativeModel?.(modelId)).toBeUndefined();
+    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(false);
+    expect(codex.modelSupport(modelId).status).toBe("unsupported");
+    expect(codex.toNativeModel?.(modelId)).toBe(
+      modelId.slice("openai/".length),
+    );
   });
 
   it.each([
@@ -216,6 +242,47 @@ describe("harness registry", () => {
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel("openai/gpt-5.60")).toBe(true);
     expect(codex.supportsModel("openai/gpt-5.61-mini")).toBe(true);
+  });
+
+  it("claude-code maps an unverified Anthropic id to itself, never to the CLI default", () => {
+    // Playground chat may run an `unknown` pair with a warning; passing no
+    // model would silently run the CLI's default under this model's name.
+    const { toNativeModel } = getHarnessAdapter("claude-code");
+    expect(toNativeModel?.("anthropic/claude-fable-5")).toBe("claude-fable-5");
+  });
+
+  it("every adapter reports the shared pinned runtime version", () => {
+    for (const id of registeredHarnessIds()) {
+      expect(getHarnessAdapter(id).pinnedRuntimeVersion).toBe(
+        HARNESS_PINNED_VERSIONS[id] ?? undefined,
+      );
+    }
+  });
+
+  it("HARNESS_PINNED_VERSIONS matches the CLIs the installed adapters pin", () => {
+    // The evidence table is keyed by these versions, so a package bump that
+    // leaves them behind would evaluate the table at the wrong CLI.
+    const require = createRequire(import.meta.url);
+    const bridgePkg = (adapter: string) =>
+      JSON.parse(
+        readFileSync(
+          join(
+            dirname(require.resolve(`${adapter}/package.json`)),
+            "dist/bridge/package.json",
+          ),
+          "utf8",
+        ),
+      ) as { dependencies: Record<string, string> };
+    expect(
+      bridgePkg("@ai-sdk/harness-claude-code").dependencies[
+        "@anthropic-ai/claude-code"
+      ],
+    ).toBe(HARNESS_PINNED_VERSIONS["claude-code"]);
+    expect(
+      bridgePkg("@ai-sdk/harness-codex").dependencies["@openai/codex-sdk"],
+    ).toBe(HARNESS_PINNED_VERSIONS.codex);
+    // The app-server transport pins the same CLI.
+    expect(PINNED_CODEX_VERSION).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 
   it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {

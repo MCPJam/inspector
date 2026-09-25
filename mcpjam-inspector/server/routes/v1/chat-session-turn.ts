@@ -1428,6 +1428,13 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const engine: ChatSessionEngine = engineDecision.engine;
+    if (engineDecision.warning) {
+      logger.warn("[v1 chat-session] harness model not verified", {
+        harness: engine.kind === "harness" ? engine.harness : undefined,
+        modelId: String(modelDefinition.id),
+        reason: engineDecision.warning,
+      });
+    }
 
     if (body.browser) {
       const stored = await getConversationBrowser({

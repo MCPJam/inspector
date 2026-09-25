@@ -759,6 +759,9 @@ async function runJourneyFanOut(
                 // absent-host-config path.
                 xaaEnterprisePolicyOn:
                   readXaaEnterprisePolicy(target.mcpProfile).kind !== "off",
+                // A swarm's results are compared, so an unverified harness ×
+                // model pair is refused, not run with a warning.
+                purpose: "swarm",
               });
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined

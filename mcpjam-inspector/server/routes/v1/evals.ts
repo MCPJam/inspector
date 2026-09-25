@@ -4928,8 +4928,16 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // freeze, so the dry run and the launch judge one configuration.
       target.namedHostId ?? servers.environmentLaunch?.hostId,
     );
+    // …and the MODEL this target runs, which is the environment's override
+    // when it sets one — not the host's own model. Judging the host model
+    // would admit a harness environment whose override the harness cannot run
+    // (and refuse one whose override fixes a host the harness can't run).
+    const environmentModelOverride =
+      servers.environmentLaunch?.modelId?.trim() || undefined;
     const admission = checkEvalHarnessStaticAdmission({
-      hostConfig,
+      hostConfig: environmentModelOverride
+        ? { ...hostConfig, modelId: environmentModelOverride }
+        : hostConfig,
       serverIds: servers.serverIds,
     });
     if (!admission.ok) {

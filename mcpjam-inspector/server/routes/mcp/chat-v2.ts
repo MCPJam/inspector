@@ -1358,7 +1358,17 @@ chatV2.post("/", async (c) => {
           readXaaEnterprisePolicy(
             (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
           ).kind !== "off",
+        // Playground chat may run a harness × model pair the evidence table
+        // has not verified (with a warning); a scenario session may not.
+        purpose: isScenarioSession ? "eval" : "chat",
       });
+      if (availability.ok && availability.warning) {
+        logger.warn("[chat-v2] harness model not verified", {
+          harness: resolvedExecution.harness,
+          modelId: String(modelDefinition.id),
+          reason: availability.warning,
+        });
+      }
       if (!availability.ok) {
         return c.json(
           {
