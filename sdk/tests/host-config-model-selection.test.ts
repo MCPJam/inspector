@@ -350,19 +350,69 @@ describe("legacy selections", () => {
 });
 
 describe("selectionKey", () => {
-  it("builds source:connection:modelId", () => {
-    expect(selectionKey(hosted)).toBe("hosted::anthropic/claude-sonnet-4.5");
-    expect(selectionKey(org)).toBe("org:k17abc:openai/gpt-5");
-    expect(selectionKey(local)).toBe("local:azure:eastus:openai/gpt-5");
+  it("builds source:connection:modelId with each part URI-encoded", () => {
+    expect(selectionKey(hosted)).toBe("hosted::anthropic%2Fclaude-sonnet-4.5");
+    expect(selectionKey(org)).toBe("org:k17abc:openai%2Fgpt-5");
+    expect(selectionKey(local)).toBe("local:azure:eastus:openai%2Fgpt-5");
     expect(
       selectionKey({
         ...local,
         connectionRef: { kind: "localProvider", providerKey: "openai" },
       })
-    ).toBe("local:openai:openai/gpt-5");
+    ).toBe("local:openai:openai%2Fgpt-5");
     expect(selectionKey(selectionFromLegacyModelId("gpt-4o"))).toBe(
       "legacy::gpt-4o"
     );
+  });
+
+  it("cannot collide when a part contains the ':' separator", () => {
+    // Unencoded, both of these would be "local:custom:acme:custom:acme/m".
+    const a: ModelSelection = {
+      modelId: "custom:acme/m",
+      source: "local",
+      connectionRef: {
+        kind: "localProvider",
+        providerKey: "custom",
+        customProviderName: "acme",
+      },
+      fallback: { provider: "none", model: "none" },
+    };
+    const b: ModelSelection = {
+      ...a,
+      modelId: "acme/m",
+      connectionRef: {
+        kind: "localProvider",
+        providerKey: "custom:acme",
+        customProviderName: "custom",
+      },
+    };
+    const c: ModelSelection = {
+      ...a,
+      connectionRef: { kind: "localProvider", providerKey: "custom:acme" },
+    };
+    const d: ModelSelection = {
+      ...a,
+      connectionRef: {
+        kind: "localProvider",
+        providerKey: "custom",
+        customProviderName: "acme",
+      },
+      modelId: "custom:acme/m",
+    };
+    expect(isModelSelection(a)).toBe(true);
+    expect(isModelSelection(b)).toBe(true);
+    expect(isModelSelection(c)).toBe(true);
+    expect(selectionKey(a)).not.toBe(selectionKey(b));
+    // providerKey "custom" + name "acme" vs providerKey "custom:acme".
+    expect(selectionKey(a)).not.toBe(selectionKey(c));
+    expect(selectionKey(a)).toBe(selectionKey(d));
+    // Org ids containing ':' are encoded too.
+    expect(
+      selectionKey({
+        ...org,
+        connectionRef: { kind: "orgProvider", id: "a:b" },
+      })
+    ).toBe("org:a%3Ab:openai%2Fgpt-5");
   });
 
   it("keeps same-id rows through different connections distinct", () => {
