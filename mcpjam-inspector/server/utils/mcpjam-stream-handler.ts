@@ -585,6 +585,15 @@ export interface MCPJamEngineErrorEvent {
  */
 const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
 
+/**
+ * Backend code (convex `stream/routes.ts` `categorizeError`) for a 401/403
+ * whose upstream detail is the hosted gateway's provider-allowlist refusal:
+ * the model's provider is not enabled on MCPJam's gateway. Read by status it
+ * would become `provider/auth_error` and tell the user to fix their API key,
+ * which was never involved; retrying cannot help either.
+ */
+export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -602,6 +611,10 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -652,6 +665,10 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -1812,6 +1829,8 @@ const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
   "mcpjam_rate_limit",
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's gateway allowlist — our setting.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ]);
 
 /** See {@link MCPJAM_OWNED_FAILURE_CODES}. */

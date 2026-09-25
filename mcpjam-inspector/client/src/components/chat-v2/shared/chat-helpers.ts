@@ -1,4 +1,5 @@
 import { looksLikeErrorPage } from "@/shared/error-page";
+import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -111,6 +112,9 @@ const MCPJAM_PLATFORM_CODES = [
   MCPJAM_RATE_LIMIT_CODE,
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's hosted gateway: our setting, not
+  // the user's key. `ErrorBox` gives it its own banner.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ];
 const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
