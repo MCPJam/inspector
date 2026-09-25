@@ -56,7 +56,7 @@ import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bott
 import {
   formatErrorMessage,
   buildMcpPromptMessages,
-  buildSkillToolMessages,
+  buildSkillContextMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
@@ -4420,7 +4420,9 @@ export function PlaygroundMain({
     const promptMessages = buildMcpPromptMessages(
       mcpPromptResults,
     ) as UIMessage[];
-    const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
+    const skillMessages = buildSkillContextMessages(
+      skillResults,
+    ) as UIMessage[];
     const prependMessages = [...promptMessages, ...skillMessages];
 
     if (isCompareMode) {

@@ -118,6 +118,12 @@ import {
   verifyAssistantText,
 } from "../history-provenance";
 import { streamWebChatTurn } from "../web-chat-turn";
+import {
+  applyWidgetStateUpdates,
+  buildSkillContextMessages,
+  buildToolRunContextMessage,
+  promptExampleContextText,
+} from "@/shared/user-context-message";
 
 const CONVEX_HTTP_URL = "https://convex.test";
 const MARKER = "UNVERIFIED_MARKER";
@@ -712,6 +718,119 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
       "user",
     ]);
     expect(modelRequests[0]!.raw).toContain("LOCAL_REPLY_6");
+  });
+});
+
+describe("context the user adds reaches the model as the user's own message (MJ-009)", () => {
+  it("sends a picked skill, a tool run by hand, a prompt's example turn and widget state as user content", async () => {
+    // Each built the way the chat UI builds it.
+    const [skill] = buildSkillContextMessages([
+      {
+        name: "brand-guidelines",
+        content: "Use the brand colors.",
+        selectedFiles: [{ path: "palette.md", content: "#112233" }],
+      },
+    ]);
+    const runResult = { content: [{ type: "text", text: "Run npm install." }] };
+    const toolRun = buildToolRunContextMessage({
+      toolCallId: "playground-run-1",
+      toolName: "search_docs",
+      params: { query: "install" },
+      result: runResult,
+    });
+    // The Playground renders the run (and its widget) from this message.
+    const toolRunDisplay = {
+      id: "assistant-playground-run-1",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "Invoked `search_docs`" },
+        {
+          type: "dynamic-tool",
+          toolCallId: "playground-run-1",
+          toolName: "search_docs",
+          state: "output-available",
+          input: { query: "install" },
+          output: runResult,
+        },
+      ],
+    };
+    const promptExample = {
+      id: "prompt-2",
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: promptExampleContextText("server/review", "Send it over."),
+        },
+      ],
+    };
+    const [widgetState] = applyWidgetStateUpdates(
+      [] as Array<{ id: string; role: string; parts: unknown[] }>,
+      [{ toolCallId: "call_chart_1", state: { zoom: 2 } }],
+    );
+    const textsOf = (message: { parts: unknown[] }) =>
+      message.parts.map((part) => (part as { text: string }).text);
+
+    await runTurn([
+      user("u1", "Help me with the docs."),
+      skill,
+      user("prompt-1", "[server/review] Review this diff"),
+      promptExample,
+      toolRun,
+      toolRunDisplay,
+      widgetState,
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          { type: "step-start" },
+          {
+            type: "dynamic-tool",
+            toolCallId: "call_unissued_1",
+            toolName: "search_docs",
+            state: "output-available",
+            input: { query: `${MARKER}_ARGS_7` },
+            output: { content: [{ type: "text", text: `${MARKER}_OUTPUT_7` }] },
+          },
+        ],
+      },
+      user("u2", "What should I do next?"),
+    ]);
+
+    // The tool part the server did not issue is still left out.
+    expectNothingUnverifiedReachedTheModel();
+    const [request] = modelRequests;
+    expect(request!.messages.every((m: any) => m.role === "user")).toBe(true);
+    expect(
+      request!.messages.flatMap((m: any) =>
+        typeof m.content === "string"
+          ? [m.content]
+          : m.content.map((part: any) => part.text),
+      ),
+    ).toEqual([
+      "Help me with the docs.",
+      ...textsOf(skill!),
+      "[server/review] Review this diff",
+      ...textsOf(promptExample),
+      ...textsOf(toolRun),
+      ...textsOf(widgetState!),
+      "What should I do next?",
+    ]);
+    expect(textsOf(skill!).join("\n")).toContain("Use the brand colors.");
+    expect(textsOf(toolRun).join("\n")).toContain("Run npm install.");
+    expect(request!.raw).not.toContain("Invoked `search_docs`");
+
+    // The transcript keeps the display message, so a reopened chat still
+    // renders the run.
+    const persistedParts = (state.persisted.at(-1) as any[]).flatMap(
+      (message) => (Array.isArray(message.content) ? message.content : []),
+    );
+    expect(persistedParts).toContainEqual(
+      expect.objectContaining({
+        type: "tool-call",
+        toolCallId: "playground-run-1",
+      }),
+    );
   });
 });
 
