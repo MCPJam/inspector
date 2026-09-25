@@ -61,6 +61,7 @@ import {
   emitToolInput,
   emitToolOutput,
   emitToolOutputDenied,
+  emitToolOutputError,
   safelyInvoke,
 } from "./chat-stream-chunks.js";
 import { z } from "zod";
@@ -115,16 +116,24 @@ import {
   type HistoryPresentation,
 } from "./history-provenance.js";
 import {
+  claimToolApprovalUse,
+  EXPIRED_APPROVAL_RESULT,
   mintToolApprovalId,
   requiresServerVerifiedApproval,
   toolApprovalBindingFor,
   UNAPPROVED_HISTORY_CALL_RESULT,
   UNVERIFIED_APPROVAL_RESULT,
+  USED_APPROVAL_RESULT,
   verifyToolApprovalId,
   type ToolApprovalBinding,
 } from "./tool-approval-token.js";
 
-export { UNAPPROVED_HISTORY_CALL_RESULT, UNVERIFIED_APPROVAL_RESULT };
+export {
+  EXPIRED_APPROVAL_RESULT,
+  UNAPPROVED_HISTORY_CALL_RESULT,
+  UNVERIFIED_APPROVAL_RESULT,
+  USED_APPROVAL_RESULT,
+};
 
 let warnedLegacyUnsignedApproval = false;
 
@@ -2616,6 +2625,13 @@ function emitInheritedToolCalls(
  * calls a verified approval covers are executed here: a sibling sitting
  * unresolved in the same history is not the approval's to authorize.
  *
+ * On a client-sent history an approval also runs its call only ONCE: it is
+ * claimed immediately before the call runs, and an approval that was already
+ * claimed is answered with {@link USED_APPROVAL_RESULT} instead of running
+ * the call again. One that comes back after its lifetime is answered with
+ * {@link EXPIRED_APPROVAL_RESULT}. Both reach the user as an error on the
+ * tool card with that reason, not as a bare denial.
+ *
  * Returns true if approvals were found and handled (agentic loop should continue).
  */
 async function handlePendingApprovals(
@@ -2635,6 +2651,9 @@ async function handlePendingApprovals(
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The history came from the request body (MJ-008): each verified approval
+  // runs its call once.
+  singleUseApprovals?: boolean,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → tool call map,
   // and toolCallId → assistant message index map from assistant messages
@@ -2668,12 +2687,30 @@ async function handlePendingApprovals(
 
   if (approvalIdToToolCallId.size === 0) return false;
 
+  // Collect existing tool-result IDs once to avoid re-processing approvals
+  const existingResultIds = new Set<string>();
+  for (const msg of messageHistory) {
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-result") {
+          existingResultIds.add(part.toolCallId);
+        }
+      }
+    }
+  }
+
   // Scan tool messages for approval responses
   const approvedToolCallIds = new Set<string>();
   const deniedToolCallIds = new Set<string>();
   // Denials the SERVER made because an approval did not verify, and the
   // model-visible reason for each. A user's own denial keeps its old text.
   const unverifiedToolCallIds = new Set<string>();
+  // Approvals the server issued for exactly this call that it still did not
+  // run — expired, or already used — with the reason. The user approved these,
+  // so the reason is shown to them as well as the model, not a bare denial.
+  const refusedApprovalReasons = new Map<string, string>();
+  const answeredApprovalIds = new Set<string>();
 
   for (const msg of messageHistory) {
     if (msg?.role === "tool") {
@@ -2686,9 +2723,19 @@ async function handlePendingApprovals(
           // here: nothing about it goes to the browser, and
           // `settleUnapprovedHistoryToolCalls` answers it silently.
           if (unissuedToolCallIds.has(toolCallId)) continue;
+          // One answer per approval: a repeated response is not a second use.
+          if (answeredApprovalIds.has(part.approvalId)) continue;
+          answeredApprovalIds.add(part.approvalId);
 
           if (!part.approved) {
             deniedToolCallIds.add(toolCallId);
+            continue;
+          }
+          // Already answered in the history: nothing here runs it again, so
+          // there is nothing to check. Checking would re-refuse, and re-log,
+          // every past approval once its lifetime ends, on every later turn.
+          if (existingResultIds.has(toolCallId)) {
+            approvedToolCallIds.add(toolCallId);
             continue;
           }
 
@@ -2705,7 +2752,38 @@ async function handlePendingApprovals(
               })
             : ({ ok: false, reason: "malformed" } as const);
           if (verdict.ok) {
+            // ONCE (MJ-008). Claimed only for a call this server is about to
+            // run: a browser-fulfilled tool is run by the browser.
+            const runsHere =
+              typeof (
+                tools as Record<string, { execute?: unknown } | undefined>
+              )[call?.toolName ?? ""]?.execute === "function";
+            if (
+              singleUseApprovals &&
+              runsHere &&
+              !claimToolApprovalUse(part.approvalId)
+            ) {
+              logger.warn(
+                "[mcpjam-stream-handler] approval already used; not running the call again",
+                { toolCallId, toolName: call?.toolName },
+              );
+              deniedToolCallIds.add(toolCallId);
+              refusedApprovalReasons.set(toolCallId, USED_APPROVAL_RESULT);
+              continue;
+            }
             approvedToolCallIds.add(toolCallId);
+            continue;
+          }
+          // The server issued it for exactly this call, but the answer came
+          // back after its lifetime ended. Nothing runs, and the reason says
+          // so rather than reading as a denial.
+          if (verdict.reason === "expired") {
+            logger.info(
+              "[mcpjam-stream-handler] approval expired before it came back; not running the call",
+              { toolCallId, toolName: call?.toolName },
+            );
+            deniedToolCallIds.add(toolCallId);
+            refusedApprovalReasons.set(toolCallId, EXPIRED_APPROVAL_RESULT);
             continue;
           }
           // A deployment that cannot sign keeps the legacy trust for the
@@ -2742,19 +2820,6 @@ async function handlePendingApprovals(
 
   if (approvedToolCallIds.size === 0 && deniedToolCallIds.size === 0) {
     return false;
-  }
-
-  // Collect existing tool-result IDs once to avoid re-processing approvals
-  const existingResultIds = new Set<string>();
-  for (const msg of messageHistory) {
-    if (msg?.role === "tool") {
-      const toolMsg = msg as ToolModelMessage;
-      for (const part of toolMsg.content) {
-        if (part.type === "tool-result") {
-          existingResultIds.add(part.toolCallId);
-        }
-      }
-    }
   }
 
   // RE-INTRODUCE EVERY UNRESOLVED CALL BEFORE ANY ANSWER GOES OUT.
@@ -2801,10 +2866,18 @@ async function handlePendingApprovals(
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
       const toolName = toolCallById.get(toolCallId)?.toolName ?? "unknown";
-      const denialText = unverifiedToolCallIds.has(toolCallId)
-        ? UNVERIFIED_APPROVAL_RESULT
-        : "Tool execution denied by user.";
-      emitToolOutputDenied(writer, { toolCallId });
+      const refusal = refusedApprovalReasons.get(toolCallId);
+      const denialText =
+        refusal ??
+        (unverifiedToolCallIds.has(toolCallId)
+          ? UNVERIFIED_APPROVAL_RESULT
+          : "Tool execution denied by user.");
+      if (refusal) {
+        // The user approved this call: the card shows why it did not run.
+        emitToolOutputError(writer, { toolCallId, errorText: refusal });
+      } else {
+        emitToolOutputDenied(writer, { toolCallId });
+      }
 
       if (traceTurn && typeof stepIndex === "number") {
         writeTraceEvent(writer, {
@@ -4610,6 +4683,7 @@ export async function runChatEngineLoop(
         modelVisibleMcpToolResults,
         onToolResult,
         onToolCall,
+        options.clientSuppliedHistory === true,
       );
 
       // CLIENT-SENT HISTORY RUNS NOTHING THE SERVER DID NOT AUTHORIZE (MJ-008).

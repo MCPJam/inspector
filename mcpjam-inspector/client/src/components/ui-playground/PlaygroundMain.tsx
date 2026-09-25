@@ -186,7 +186,11 @@ import {
 } from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
+import {
+  shouldQueryProjectId,
+  useCanManageProjectClients,
+  useProjectMembers,
+} from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -1572,6 +1576,14 @@ export function PlaygroundMain({
   restoringAdhocRef.current = restoringAdhoc;
   const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
     useHostMutations();
+  // Creating clients is project-admin only (`hosts.ts` `requireAdminAccess`);
+  // a member or guest in an empty project gets no seed instead of refused
+  // creates (and their 1s/4s/10s retries).
+  const { canManage: canSeedHosts, isLoading: seedRoleLoading } =
+    useCanManageProjectClients({
+      isAuthenticated: isConvexAuthenticated,
+      projectId: multiHostProjectId,
+    });
   const seedCatalogState = useHostCatalog();
   const seedThemeMode = usePreferencesStore((s) => s.themeMode);
   // Mirrors `multiHostProjectId` so the seed effect's async continuation
@@ -1650,6 +1662,8 @@ export function PlaygroundMain({
       !isConvexAuthenticated ||
       hostListLoading ||
       !multiHostProjectId ||
+      seedRoleLoading ||
+      !canSeedHosts ||
       hostList.length > 0 ||
       restoringAdhoc ||
       playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
@@ -1883,6 +1897,8 @@ export function PlaygroundMain({
     isConvexAuthenticated,
     hostListLoading,
     multiHostProjectId,
+    seedRoleLoading,
+    canSeedHosts,
     hostList.length,
     restoringAdhoc,
     createPlaygroundHost,

@@ -180,9 +180,14 @@ function getPlanColumnCta(params: {
   // and per-seat -> flat means N seats -> 1. The server turns these away with
   // `billing_plan_change_requires_support`, so offering the button only buys a
   // refusal. Legacy per-seat Team orgs see every v2 column through this branch.
+  // The free plan has no price to swap — free -> paid is a fresh checkout and
+  // paid -> free is a cancellation — so a "free" model on either side is not a
+  // price-model change and falls through to the normal CTAs.
   if (
     isDifferentBundle &&
     currentPriceModel != null &&
+    currentPriceModel !== "free" &&
+    entry.billingModel !== "free" &&
     currentPriceModel !== entry.billingModel
   ) {
     return {
