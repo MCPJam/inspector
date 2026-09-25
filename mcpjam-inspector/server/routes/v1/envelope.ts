@@ -244,6 +244,19 @@ export function mapErrorToV1(
       slug: routeError.normalized?.slug,
     };
   }
+  // A revoked session (MJ-011). Inspector-only for the same reason as the
+  // branch above; publicly the canonical 401, with the specific reason in
+  // `details` — the convention `ORPHANED_KEY`/`EXPIRED_KEY` already follow.
+  if (routeError.code === ErrorCode.SESSION_REVOKED) {
+    return {
+      code: "UNAUTHORIZED",
+      message: routeError.message,
+      details: { ...(routeError.details ?? {}), reason: "SESSION_REVOKED" },
+      headers: routeError.headers,
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
+    };
+  }
   return {
     code: mapInternalCode(routeError.code),
     message: routeError.message,

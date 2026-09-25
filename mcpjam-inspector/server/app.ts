@@ -77,6 +77,7 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
+import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
@@ -148,6 +149,9 @@ export async function createHonoApp() {
   // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
   // dispatch classifies newly-added hosted models correctly. Memoized.
   startHostedModelCatalogRefresh();
+  // The revoked-session list (MJ-011). Mirror of the call in server/index.ts:
+  // loads in the background, idempotent, a no-op without the service token.
+  startRevokedSessionCache();
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
