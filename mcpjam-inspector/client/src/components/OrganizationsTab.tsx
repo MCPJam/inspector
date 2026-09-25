@@ -2442,5 +2442,3 @@ function OrganizationPage({
     </SettingsPageShell>
   );
 }
-const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
-  "Paid plan changes require an explicit confirmation.";
