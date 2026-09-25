@@ -1,3 +1,4 @@
+import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -8284,6 +8285,15 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       updateArgs.environmentSettings = environmentSettings;
     }
   } else if (body.environment !== undefined) {
+    logLegacyEvalRequest({
+      surface: "suite_patch",
+      use:
+        (suite!.environmentIds?.length ?? 0) > 0
+          ? "environment_envelope_on_environment_suite"
+          : "environment_envelope",
+      suiteId,
+      projectId,
+    });
     // `updateTestSuite` REPLACES the environment envelope wholesale, so this
     // has to be a merge over the suite's current one. Sending `{ servers }`
     // alone — which is what this did — silently dropped the server bindings

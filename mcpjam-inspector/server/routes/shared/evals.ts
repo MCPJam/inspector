@@ -101,6 +101,7 @@ import {
   type RunPluginServer,
 } from "../../services/plugins/run-plugin-servers.js";
 import { withPluginExecutionServers } from "../../services/evals/plugin-execution-servers.js";
+import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import { type RunPinnedSkill } from "../../services/evals/run-plugin-snapshot.js";
 import {
   buildPinnedSkillSource,
@@ -2430,6 +2431,14 @@ export async function prepareEvalRun(
       "At least one server must be selected",
     );
   }
+  if (!environmentLaunch) {
+    logLegacyEvalRequest({
+      surface: "suite_run",
+      use: "servers_from_request",
+      suiteId: suiteId ?? null,
+      projectId: projectId ?? null,
+    });
+  }
 
   const resolvedServerIds = resolveServerIdsOrThrow(
     environmentLaunch
@@ -3235,6 +3244,12 @@ export async function prepareSingleCaseExecution(
       );
     }
   } else {
+    logLegacyEvalRequest({
+      surface: "quick_run",
+      use: "model_and_servers_from_request",
+      projectId: projectId ?? null,
+      ...(namedHostId ? { fields: ["namedHostId"] } : {}),
+    });
     if (!model || !provider) {
       throw new WebRouteError(
         400,
@@ -3723,6 +3738,11 @@ async function resolveGenerationServers(
       "At least one server must be selected",
     );
   }
+  logLegacyEvalRequest({
+    surface: "generation",
+    use: "servers_from_request",
+    projectId: request.projectId ?? null,
+  });
   return {
     resolvedServerIds: resolveServerIdsOrThrow(
       request.serverIds,
