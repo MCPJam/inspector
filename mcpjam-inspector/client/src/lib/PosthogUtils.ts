@@ -1,3 +1,5 @@
+import type { CaptureResult } from "posthog-js";
+import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
@@ -84,6 +86,9 @@ export function scrubSensitiveUrl(value: string): string {
     const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
     out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
   }
+  // Organization ids are internal identifiers and organization routes are
+  // captured automatically by PostHog on otherwise privacy-safe events.
+  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
   return out;
 }
 
@@ -137,21 +142,68 @@ function attachFailedRequest(properties: Record<string, any>): void {
   const ageMs = Date.now() - failed.at;
   if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
 
-  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(failed.target)}`;
+  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(
+    failed.target,
+  )}`;
   properties.failed_request_age_ms = ageMs;
 }
 
-function sanitizeAnalyticsProperties(
+export function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
   eventName?: string,
 ): Record<string, any> {
-  for (const key of ["$current_url", "$referrer", "$pathname"]) {
+  for (const key of [
+    "$current_url",
+    "$referrer",
+    "$pathname",
+    "$session_entry_url",
+    "$session_entry_pathname",
+    "$session_entry_referrer",
+    "$initial_current_url",
+    "$initial_pathname",
+    "$initial_referrer",
+  ]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
     }
   }
   if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
+}
+
+/**
+ * Drop exceptions raised entirely by code the browser injected into the page.
+ *
+ * The rule, and the evidence behind it, lives in
+ * shared/injected-script-frames.ts. Sentry's client config applies the same
+ * one, so the two reporters cannot disagree about what counts as ours.
+ *
+ * Matching on frames rather than on the message is the point: a genuine stack
+ * overflow in our own code — the markdown lexer has produced one — still has
+ * app frames, and still reports.
+ */
+export function dropInjectedScriptException(
+  event: CaptureResult | null,
+): CaptureResult | null {
+  if (event?.event !== "$exception") return event;
+  if (typeof window === "undefined") return event;
+
+  const exceptions: unknown = event.properties?.$exception_list;
+  if (!Array.isArray(exceptions)) return event;
+
+  const stacks = exceptions.map((exception) => {
+    const frames = (exception as { stacktrace?: { frames?: unknown } })
+      ?.stacktrace?.frames;
+    return Array.isArray(frames)
+      ? frames.map(
+          (frame) => (frame as { filename?: unknown } | null)?.filename,
+        )
+      : [];
+  });
+
+  return isInjectedScriptException(stacks, window.location.origin)
+    ? null
+    : event;
 }
 
 // Public vanity landings (caniuse.dev host-compare, score.mcpjam.com score
@@ -319,6 +371,7 @@ export const options = {
   ...getPageviewCaptureOptions(),
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
+  before_send: dropInjectedScriptException,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe

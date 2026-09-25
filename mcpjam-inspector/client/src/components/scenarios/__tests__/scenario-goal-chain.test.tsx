@@ -54,6 +54,11 @@ vi.mock("@/lib/error-reporting", () => ({
   reportBoundaryError: (...args: unknown[]) => mockReportBoundaryError(...args),
 }));
 
+// Analyze now is offered to members only; the check is a Convex query.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
+}));
+
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 type TallySpec = {
@@ -345,6 +350,85 @@ describe("the Findings tab observes server-owned analysis", () => {
     expect(screen.getByTestId("scenario-findings-empty")).toHaveTextContent(
       "No sessions in this study yet.",
     );
+  });
+
+  /** The summary the breakdown carries (B5), for one waiting session. */
+  function summary(overrides: Record<string, unknown> = {}) {
+    return {
+      total: 2,
+      analyzed: 0,
+      owed: 0,
+      pending: 0,
+      running: 0,
+      failed: 0,
+      skipped: 0,
+      deferred: 0,
+      awaitingTaxonomy: 0,
+      unassigned: 0,
+      staleAssignments: 0,
+      projectionPending: 0,
+      projectionFailed: 0,
+      deferredUntil: null,
+      lastAnalyzedAt: null,
+      failures: {},
+      skips: {},
+      sampled: false,
+      taxonomies: [],
+      ...overrides,
+    };
+  }
+
+  it("says a session is waiting to go quiet, not 'a few minutes', and offers Analyze now", async () => {
+    // The 2026-09-22 report: one tester, "a few minutes", nothing for half an
+    // hour. The reason is the session's own settle window.
+    const user = userEvent.setup();
+    unanalyzed();
+    const rebuild = vi.fn().mockResolvedValue({
+      status: "queued",
+      alreadyRunning: false,
+    });
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: {
+        totalSessions: 2,
+        analysis: summary({
+          owed: 2,
+          pending: 2,
+          nextAnalysisAt: Date.now() + 2 * 60_000,
+        }),
+      },
+      rebuild,
+    });
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+
+    const status = screen.getByTestId("scenario-findings-status");
+    expect(status).toHaveAttribute("data-status", "waiting");
+    expect(status).toHaveTextContent("Waiting for the session to go quiet");
+    expect(status).not.toHaveTextContent("a few minutes");
+    expect(rebuild).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /Analyze now/ }));
+    expect(rebuild).toHaveBeenCalledWith({ settled: true });
+  });
+
+  it("counts the sessions actually being analyzed, and offers nothing", () => {
+    unanalyzed();
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: {
+        totalSessions: 2,
+        analysis: summary({ pending: 2, owed: 0, running: 0 }),
+      },
+      rebuild: vi.fn(),
+    });
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+
+    expect(screen.getByTestId("scenario-findings-status")).toHaveTextContent(
+      "Analyzing 2 sessions…",
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("leaves an already-analyzed study alone", () => {

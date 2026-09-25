@@ -205,7 +205,7 @@ describe("UserTestingTab — scenario resolution", () => {
       });
     });
     // Not a 404 while the redirect is in flight.
-    expect(screen.queryByText(/Scenario not found/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Study not found/i)).not.toBeInTheDocument();
   });
 
   it("an environment-backed row never absorbs the host's legacy links", async () => {
@@ -223,7 +223,7 @@ describe("UserTestingTab — scenario resolution", () => {
 
     renderScenario("host-real");
 
-    expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Study not found/i)).toBeInTheDocument();
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
@@ -234,7 +234,7 @@ describe("UserTestingTab — scenario resolution", () => {
     renderScenario();
 
     await waitFor(() => {
-      expect(screen.queryByText(/Scenario not found/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Study not found/i)).not.toBeInTheDocument();
     });
     expect(screen.queryByText(/Managed by Swarms/i)).not.toBeInTheDocument();
   });
@@ -247,7 +247,7 @@ describe("UserTestingTab — scenario resolution", () => {
 
     renderScenario();
 
-    expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Study not found/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Back to User Testing/i }),
     ).toBeInTheDocument();
@@ -266,7 +266,7 @@ describe("UserTestingTab — scenario resolution", () => {
 
     renderScenario("not-a-real-id");
 
-    expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Study not found/i)).toBeInTheDocument();
     expect(scenarioQuerySpy).toHaveBeenCalled();
     for (const [args] of scenarioQuerySpy.mock.calls) {
       expect(args.scenarioId).toBeNull();

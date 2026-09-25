@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+
+const { revokeAuthKitSessionMock } = vi.hoisted(() => ({
+  revokeAuthKitSessionMock: vi.fn(),
+}));
+
+vi.mock("../../services/auth-session-revocation.js", () => ({
+  revokeAuthKitSession: revokeAuthKitSessionMock,
+}));
+
 import workosAuthkitRoutes from "../workos-authkit.js";
 
 const ORIGINAL_FETCH = global.fetch;
@@ -87,7 +96,7 @@ describe("workos authkit local session bridge", () => {
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie).toContain("mcpjam_workos_sessions=");
     expect(setCookie).toContain("HttpOnly");
-    expect(setCookie).toContain("workos-has-session=true");
+    expect(setCookie).toContain("workos-has-session=1");
   });
 
   it("redirects authorize requests to WorkOS", async () => {
@@ -165,7 +174,7 @@ describe("workos authkit local session bridge", () => {
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:5173",
-          Cookie: `${sessionCookie}; workos-has-session=true`,
+          Cookie: `${sessionCookie}; workos-has-session=1`,
         },
         body: JSON.stringify({
           client_id: "client_123",
@@ -225,7 +234,7 @@ describe("workos authkit local session bridge", () => {
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:5174",
-          Cookie: `${sessionCookie}; workos-has-session=true`,
+          Cookie: `${sessionCookie}; workos-has-session=1`,
         },
         body: JSON.stringify({
           client_id: "client_123",
@@ -311,7 +320,7 @@ describe("workos authkit local session bridge", () => {
         headers: {
           "Content-Type": "application/json",
           Origin: "http://localhost:6274",
-          Cookie: `${sessionCookie}; workos-has-session=true`,
+          Cookie: `${sessionCookie}; workos-has-session=1`,
         },
         body: JSON.stringify({
           client_id: "client_123",
@@ -507,7 +516,7 @@ describe("workos authkit local session bridge", () => {
       );
 
       const hasSessionCookie = setCookieFor(res, "workos-has-session");
-      expect(hasSessionCookie).toContain("workos-has-session=true");
+      expect(hasSessionCookie).toContain("workos-has-session=1");
       // Secure asserted on THIS cookie specifically: a deployed browser drops
       // an insecure cookie on an https origin, and AuthKit would then skip its
       // refresh and demote the user to a guest.
@@ -516,5 +525,129 @@ describe("workos authkit local session bridge", () => {
       // JavaScript, so HttpOnly on it would break the flow it exists to drive.
       expect(hasSessionCookie).not.toContain("HttpOnly");
     });
+  });
+});
+
+describe("logout revokes the session it ends", () => {
+  const LOCAL = "http://localhost:6274";
+
+  beforeEach(() => {
+    process.env.MCPJAM_WORKOS_SESSION_SECRET = "test-workos-session-secret";
+    global.fetch = vi.fn();
+    revokeAuthKitSessionMock.mockReset();
+    revokeAuthKitSessionMock.mockResolvedValue({ revoked: true });
+    vi.stubEnv("WORKOS_CLIENT_ID", "client_123");
+  });
+
+  afterEach(() => {
+    global.fetch = ORIGINAL_FETCH;
+    vi.unstubAllEnvs();
+    if (ORIGINAL_SECRET === undefined) {
+      delete process.env.MCPJAM_WORKOS_SESSION_SECRET;
+    } else {
+      process.env.MCPJAM_WORKOS_SESSION_SECRET = ORIGINAL_SECRET;
+    }
+  });
+
+  /** Sign in through the proxy so the jar holds `refresh-token-1`. */
+  async function signedInJar(app: Hono): Promise<string> {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        access_token: "access-token-1",
+        refresh_token: "refresh-token-1",
+        user: { id: "user_1" },
+      }),
+    );
+    const res = await app.request(`${LOCAL}/user_management/authenticate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: "client_123",
+        grant_type: "authorization_code",
+        code: "code_123",
+        code_verifier: "verifier_123",
+      }),
+    });
+    return extractCookie(
+      res.headers.get("set-cookie") ?? "",
+      "mcpjam_workos_sessions",
+    );
+  }
+
+  it("proves the session with the cookie's refresh token, revokes it, then logs out", async () => {
+    const app = createTestApp();
+    const jar = await signedInJar(app);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        access_token: "access-token-for-revocation",
+        refresh_token: "refresh-token-2",
+      }),
+    );
+
+    // The query names some other session; it must not be what gets revoked.
+    const res = await app.request(
+      `${LOCAL}/user_management/sessions/logout?session_id=session_someone_else`,
+      { headers: { Cookie: jar } },
+    );
+
+    const [url, init] = vi.mocked(fetch).mock.calls[1];
+    expect(String(url)).toBe(
+      "https://api.workos.com/user_management/authenticate",
+    );
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      grant_type: "refresh_token",
+      client_id: "client_123",
+      refresh_token: "refresh-token-1",
+    });
+    expect(revokeAuthKitSessionMock).toHaveBeenCalledWith(
+      "access-token-for-revocation",
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "https://api.workos.com/user_management/sessions/logout?session_id=session_someone_else",
+    );
+    expect(setCookieFor(res, "mcpjam_workos_sessions")).toContain("Max-Age=0");
+  });
+
+  it("still logs out when the session cannot be refreshed", async () => {
+    const app = createTestApp();
+    const jar = await signedInJar(app);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ error: "invalid_grant" }, 400),
+    );
+
+    const res = await app.request(
+      `${LOCAL}/user_management/sessions/logout?session_id=session_123`,
+      { headers: { Cookie: jar } },
+    );
+
+    expect(revokeAuthKitSessionMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(302);
+  });
+
+  it("still logs out when the refresh itself throws", async () => {
+    const app = createTestApp();
+    const jar = await signedInJar(app);
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    const res = await app.request(
+      `${LOCAL}/user_management/sessions/logout?session_id=session_123`,
+      { headers: { Cookie: jar } },
+    );
+
+    expect(revokeAuthKitSessionMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(302);
+  });
+
+  it("does not call WorkOS when there is no stored session", async () => {
+    const app = createTestApp();
+
+    const res = await app.request(
+      `${LOCAL}/user_management/sessions/logout?session_id=session_123`,
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(revokeAuthKitSessionMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(302);
   });
 });

@@ -1,4 +1,5 @@
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { resolveRestoredModel } from "@/lib/model-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -266,6 +267,7 @@ import {
 } from "@/components/chat-v2/thread/thread-helpers";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { artifactStableKey } from "@/lib/artifact-urls";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -297,8 +299,10 @@ function buildHistoryContentSignature(
         snapshot._id,
         snapshot.toolCallId,
         snapshot.resourceUri ?? "",
-        snapshot.widgetHtmlUrl ?? "",
-        snapshot.toolOutputUrl ?? "",
+        // Artifact links are re-minted with new expiries; the object they
+        // point at is what says whether the content changed.
+        artifactStableKey(snapshot.widgetHtmlUrl ?? ""),
+        artifactStableKey(snapshot.toolOutputUrl ?? ""),
       ].join(":"),
     )
     .sort()
@@ -306,7 +310,7 @@ function buildHistoryContentSignature(
   return [
     session._id,
     session.chatSessionId,
-    session.messagesBlobUrl ?? "",
+    artifactStableKey(session.messagesBlobUrl ?? ""),
     snapshotSignature,
   ].join("::");
 }
@@ -657,6 +661,7 @@ export function PlaygroundMain({
   const pendingRestoredModelRef = useRef<{
     chatSessionId: string;
     modelId: string;
+    modelSource?: string;
   } | null>(null);
   // Set by `usePlaygroundConversationUrl` below; called from the chat hook's
   // `onReset` above it, which is why this is a ref rather than the callback.
@@ -2764,8 +2769,12 @@ export function PlaygroundMain({
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
-        const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId,
+        // By `modelSource` as well as id: an OpenRouter id can also be a
+        // hosted row, and this thread must reopen on the one it ran on (#5472).
+        const matchingModel = resolveRestoredModel(
+          availableModels,
+          detail.modelId,
+          detail.modelSource,
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -3188,6 +3197,7 @@ export function PlaygroundMain({
           ? {
               chatSessionId: detail.session.chatSessionId,
               modelId: detail.session.modelId,
+              modelSource: detail.session.modelSource,
             }
           : null;
         if (new URLSearchParams(window.location.search).get("browser") === "open") {
@@ -3262,8 +3272,10 @@ export function PlaygroundMain({
       pendingRestoredModelRef.current = null;
       return;
     }
-    const matchingModel = availableModels.find(
-      (model) => String(model.id) === pending.modelId,
+    const matchingModel = resolveRestoredModel(
+      availableModels,
+      pending.modelId,
+      pending.modelSource,
     );
     if (!matchingModel) return;
     pendingRestoredModelRef.current = null;

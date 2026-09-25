@@ -86,6 +86,10 @@ import {
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
 import {
+  assertRecordedSecretsOriginMatches,
+  assertSecretsOriginMatches,
+} from "../../utils/secret-origin-binding.js";
+import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
 } from "../../utils/server-secrets.js";
@@ -428,6 +432,7 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
+    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -878,6 +883,62 @@ export async function authorizeBatch(
       typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
     results: strippedResults,
   };
+}
+
+/**
+ * Project membership with no servers to authorize: the same backend
+ * `resolveProjectAccess` verdict {@link authorizeBatch} applies, for a turn
+ * that selected none (MJ-013). A refusal is rethrown with the backend's own
+ * status and body, so it reads exactly like the batch path's
+ * `403 Not a member of this project`.
+ */
+export async function authorizeProject(
+  caller: ManagerCallerContext,
+  bearerToken: string,
+  projectId: string,
+): Promise<void> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}/web/authorize-project`, {
+      method: "POST",
+      headers: buildConvexAuthHeaders(caller, bearerToken),
+      body: JSON.stringify({ projectId }),
+      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      `Failed to reach authorization service: ${parseErrorMessage(error)}`,
+    );
+  }
+  if (response.ok) return;
+
+  // A refusal with no JSON body still fails closed, with a generic message. A
+  // backend that predates the route is one: its router answers 404 in plain
+  // text, so guest chat stops until the backend half is deployed.
+  const body = (await response.json().catch(() => null)) as {
+    code?: unknown;
+    message?: unknown;
+  } | null;
+  throw new WebRouteError(
+    response.status,
+    (typeof body?.code === "string"
+      ? body.code
+      : ErrorCode.INTERNAL_ERROR) as ErrorCode,
+    typeof body?.message === "string"
+      ? body.message
+      : `Authorization failed (${response.status})`,
+  );
 }
 
 export function toHttpConfig(
@@ -1893,6 +1954,18 @@ export async function createAuthorizedManager(
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+      if (
+        useXaa &&
+        resolveXaaConnectRegistrationMode(
+          auth.serverConfig.registrationMode,
+        ) !== "cimd"
+      ) {
+        assertRecordedSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
+      }
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -2019,6 +2092,17 @@ export async function createAuthorizedManager(
         };
       }
 
+      // Reject an already-stale authorize snapshot before decrypting. The reveal
+      // helper also checks the binding returned with the values: the row may
+      // change between authorize and reveal.
+      if (auth.serverConfig.hasHeaders === true) {
+        assertSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
+      }
+
       const authForConfig =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
@@ -2030,6 +2114,7 @@ export async function createAuthorizedManager(
                   ...(auth.serverConfig.headers ?? {}),
                   ...((
                     await fetchRuntimeServerSecrets({
+                      expectedTargetUrl: auth.serverConfig.url,
                       bearerToken,
                       projectId,
                       serverId,

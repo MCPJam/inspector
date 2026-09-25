@@ -29,20 +29,22 @@ describe("fetchRuntimeServerSecrets", () => {
   it("preserves Convex error codes on failed reveals", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({ code: "FORBIDDEN", message: "No access" }),
-          { status: 403, headers: { "Content-Type": "application/json" } }
-        )
-      )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ code: "FORBIDDEN", message: "No access" }),
+            { status: 403, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
     );
 
     await expect(
       fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
         bearerToken: "bearer-token",
         projectId: "project-1",
         serverId: "server-1",
-      })
+      }),
     ).rejects.toMatchObject({
       status: 403,
       code: "FORBIDDEN",
@@ -52,10 +54,15 @@ describe("fetchRuntimeServerSecrets", () => {
 
   it("requires service authentication for scenario secrets and preserves the viewer bearer", async () => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      Response.json({ success: true, headers: { Authorization: "synthetic" } }),
+      Response.json({
+        success: true,
+        headers: { Authorization: "synthetic" },
+        secretsBoundOrigin: "https://example.com",
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const args = {
+      expectedTargetUrl: "https://example.com/mcp",
       bearerToken: "tester-token",
       projectId: "project-1",
       serverId: "server-1",
@@ -77,14 +84,26 @@ describe("fetchRuntimeServerSecrets", () => {
       Authorization: "Bearer tester-token",
       "x-inspector-service-token": "service-token",
     });
+
+    await expect(
+      fetchRuntimeServerSecrets({
+        ...args,
+        expectedTargetUrl: "https://other.example/mcp",
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: { secretOriginMismatch: true },
+    });
   });
 
   it("requires and unconditionally forwards the service token for DCR", async () => {
-    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -96,7 +115,7 @@ describe("fetchRuntimeServerSecrets", () => {
         body: { action: "get" },
         serviceName: "DCR",
         requireInspectorServiceToken: true,
-      })
+      }),
     ).rejects.toThrow(/INSPECTOR_SERVICE_TOKEN/);
     expect(fetchMock).not.toHaveBeenCalled();
 

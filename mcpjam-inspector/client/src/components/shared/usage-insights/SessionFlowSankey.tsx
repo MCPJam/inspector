@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { AlertTriangle, Info, Plus, RefreshCw, Target, X } from "lucide-react";
+import { AlertTriangle, Clock, Info, Plus, RefreshCw, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +25,15 @@ import {
   stageValueLabel,
 } from "@/components/shared/usage-insights/insights-sankey";
 import { useSankeyStageOrder } from "@/components/shared/usage-insights/sankey-stage-order";
+import {
+  analysisStatus,
+  themesNote,
+  type AnalysisStatus,
+} from "@/components/shared/usage-insights/analysis-status";
+import {
+  AnalysisStatusPanel,
+  AnalyzeNowForMembers,
+} from "@/components/shared/usage-insights/analysis-status-panel";
 import { cn } from "@/lib/utils";
 
 export interface SessionFlowSankeyProps {
@@ -40,19 +49,13 @@ export interface SessionFlowSankeyProps {
   onRebuild: () => void;
   rebuildBusy: boolean;
   /**
-   * Rebuild with explicit clustering settings. Omitted callers get no tuning
-   * control at all — the header is shared with surfaces that only ever want
-   * the plain rebuild affordance.
+   * Analyze now: treat the scope's sessions as finished instead of waiting
+   * out the idle window. Offered only where the empty state's reason
+   * is one it can change (sessions still waiting, a failed pass). Omitted on
+   * scopes that cannot settle sessions by hand, which then show the reason
+   * alone.
    */
-  /**
-   * This surface starts its own analysis, so a MISSING run means one is being
-   * arranged rather than waiting to be asked for (BB-196) — a working state,
-   * not an "Analyze sessions" button.
-   *
-   * Off by default: it is a promise the owner has to keep, and a surface that
-   * claimed it without queueing anything would spin forever.
-   */
-  analysisIsAutomatic?: boolean;
+  onAnalyzeNow?: () => void;
   /** False for scopes with no topic map, where link distance means nothing. */
   showLinkThreshold?: boolean;
   goalGroupsByJourney?: boolean;
@@ -270,6 +273,7 @@ export function SessionFlowSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  onAnalyzeNow,
   stageTitles,
   headerActions,
   fillHeight = false,
@@ -367,11 +371,31 @@ export function SessionFlowSankey({
     );
   }
 
-  if (!sankey || sankey.nodes.length === 0) {
+  // Placeholders ("Analyzing", "Other / unclassified", "Sign in to analyze")
+  // are not a flow: four such bars said nothing the reason could not say
+  // better (prod, 2026-09-22). A surface that reports its analysis gets the
+  // reason instead; one that waits to be asked keeps its diagram and banner.
+  const hasContent =
+    sankey?.nodes.some((node) => !node.key.startsWith("__")) ?? false;
+  if (
+    !sankey ||
+    sankey.nodes.length === 0 ||
+    (breakdown.analysis && !hasContent)
+  ) {
+    const status: AnalysisStatus = analysisStatus(
+      breakdown.analysis,
+      Date.now(),
+    ) ?? {
+      kind: analysisInFlight ? "analyzing" : "empty",
+      title: analysisInFlight ? "Analyzing sessions…" : "No session flow yet",
+      body: analysisInFlight
+        ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment.`
+        : "Sessions appear here as analysis completes.",
+    };
     return (
       <div
         className={cn(
-          "flex flex-col items-center gap-2 text-center",
+          "flex flex-col items-center gap-3",
           fillHeight
             ? "h-full justify-center px-0 py-6"
             : scrollLayout
@@ -379,29 +403,34 @@ export function SessionFlowSankey({
             : "px-5 py-10",
         )}
       >
-        {analysisInFlight ? (
-          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground/60" />
-        ) : (
-          <Target className="h-6 w-6 text-muted-foreground/60" />
-        )}
-        <p className="text-sm font-medium">
-          {analysisInFlight ? "Analyzing sessions…" : "No session flow yet"}
-        </p>
-        <p className="max-w-md text-xs text-muted-foreground">
-          {analysisInFlight
-            ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment. This can take a few minutes.`
-            : "Sessions appear here as analysis completes."}
-        </p>
-        <div className="flex items-center gap-2">
-          {headerActions}
-          {/* No voluntary rebuild here (#5277). Analysis runs on its own as
-              sessions settle; the one place to ask for a re-analysis is the
-              freshness chip's popover, so this empty state does not grow a
-              second door. */}
-        </div>
+        <AnalysisStatusPanel
+          status={status}
+          onAnalyzeNow={onAnalyzeNow}
+          busy={rebuildBusy}
+          testId="session-flow-status"
+        />
+        {/* The one voluntary action is Analyze now, and only where the reason
+            is one it can change. Re-analysis is otherwise automatic (#5277). */}
+        {headerActions ? (
+          <div className="flex items-center gap-2">{headerActions}</div>
+        ) : null}
       </div>
     );
   }
+
+  // Drawn, but not finished: say what is still coming, in one line. The
+  // provisional state is the common one for the first half hour of a study:
+  // goal, behavior and sentiment are in, and the outcome column waits.
+  const liveStatus = analysisStatus(breakdown.analysis, Date.now());
+  const liveBanner =
+    liveStatus &&
+    (liveStatus.kind === "analyzing" ||
+      liveStatus.kind === "waiting" ||
+      liveStatus.kind === "deferred" ||
+      liveStatus.kind === "provisional")
+      ? liveStatus
+      : null;
+  const note = themesNote(breakdown.analysis);
 
   const selectedKeys = new Set([
     ...(selection?.themes ?? []).map(
@@ -441,19 +470,29 @@ export function SessionFlowSankey({
         </div>
       ) : null}
 
-      {/* One analysis banner at a time, most-live state first: a rebuild in
-          flight beats advertising the button that starts one, and
-          never-analyzed beats the old-signals nudge (which requires a run to
-          exist at all). On a self-analyzing surface `analysisInFlight` absorbs
-          a missing run, so the never-analyzed branch below is unreachable
-          there but still serves the surfaces that wait to be asked. */}
-      {analysisInFlight ? (
+      {/* One analysis banner at a time, most-live state first: work in
+          flight (or waiting on its door, or held by the daily limit) beats
+          advertising the button that starts one. The never-analyzed branch
+          only serves surfaces that report no analysis and wait to be asked. */}
+      {liveBanner ? (
         <div
           role="status"
           className="flex shrink-0 items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
-          <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
-          <span>Analyzing sessions…</span>
+          {liveBanner.kind === "analyzing" ? (
+            <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="font-medium text-foreground">
+              {liveBanner.title}
+            </span>{" "}
+            {liveBanner.body}
+          </span>
+          {liveBanner.action === "analyze_now" && onAnalyzeNow ? (
+            <AnalyzeNowForMembers onAnalyzeNow={onAnalyzeNow} busy={rebuildBusy} />
+          ) : null}
         </div>
       ) : !breakdown?.analysis ? (
         <div
@@ -497,6 +536,14 @@ export function SessionFlowSankey({
                   <p>Ribbons connect neighboring columns.</p>
                 </TooltipContent>
               </Tooltip>
+              {note ? (
+                <span
+                  className="text-[11px] text-muted-foreground"
+                  data-testid="session-flow-themes-note"
+                >
+                  {note}
+                </span>
+              ) : null}
             </div>
             {headerActions ? (
               <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
