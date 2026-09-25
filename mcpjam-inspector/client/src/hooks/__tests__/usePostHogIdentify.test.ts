@@ -23,6 +23,7 @@ const mockState = vi.hoisted(() => ({
   convexUser: null as { occupation?: string } | null,
   actorKey: null as string | null,
   detectPlatform: vi.fn(() => "mac"),
+  refreshServerFeatureFlagsForActor: vi.fn(async () => undefined),
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -46,6 +47,11 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
+vi.mock("@/lib/server-feature-flags", () => ({
+  refreshServerFeatureFlagsForActor:
+    mockState.refreshServerFeatureFlagsForActor,
+}));
+
 vi.mock("@/hooks/use-actor-key", () => ({
   useActorKey: () => mockState.actorKey,
 }));
@@ -59,6 +65,23 @@ describe("usePostHogIdentify", () => {
     mockState.convexUser = null;
     mockState.actorKey = null;
     mockState.detectPlatform.mockReturnValue("mac");
+  });
+
+  it("fetches server-evaluated flags once per new actor", () => {
+    mockState.auth.user = { id: "user_123", email: "user@example.com" };
+    mockState.convexAuth.isAuthenticated = true;
+    mockState.actorKey = "user_123";
+
+    const { rerender } = renderHook(() => usePostHogIdentify());
+    rerender();
+
+    expect(mockState.refreshServerFeatureFlagsForActor).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(mockState.refreshServerFeatureFlagsForActor).toHaveBeenCalledWith(
+      mockState.posthog,
+      expect.objectContaining({ actorKey: "user_123", isAuthedActor: true }),
+    );
   });
 
   it("identifies authenticated users and registers their user_id", () => {

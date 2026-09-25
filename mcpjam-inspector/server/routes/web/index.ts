@@ -46,6 +46,7 @@ import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
 import browserProfiles from "./browser-profiles.js";
+import clientFlags from "./flags.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
@@ -284,6 +285,10 @@ web.route("/browser-profiles", browserProfiles);
 // Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
 // `/skills` above, which serves the project's durable Convex skills.
 web.route("/server-skills", serverSkills);
+// PostHog flag values for the client's bootstrap (MJ-015). No bearer
+// middleware: anonymous visitors need flags too. The router verifies a bearer
+// itself when one is sent and evaluates only the checked-in allowlist.
+web.route("/flags", clientFlags);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
 web.route("/caniuse", caniuse);

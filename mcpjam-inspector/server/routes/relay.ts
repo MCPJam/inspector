@@ -1,7 +1,9 @@
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
+import { gunzipSync } from "node:zlib";
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
+import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
 import { getClientIp } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 
@@ -10,18 +12,20 @@ import { getSystemLogger } from "../utils/request-logger.js";
  *
  * posthog-js in the client points its api_host at `/relay` on the app origin
  * (see client/src/lib/PosthogUtils.ts). Ad blockers block `*.posthog.com` by
- * hostname, which silently drops 25-40% of web events AND breaks feature-flag
- * evaluation (/flags) for those users; first-party traffic to our own origin
- * passes. This route forwards supported SDK requests to PostHog Cloud US,
- * per https://posthog.com/docs/advanced/proxy: static assets go to the assets
- * host, ingest/flags/replay go to the ingest host.
+ * hostname, which silently drops 25-40% of web events; first-party traffic to
+ * our own origin passes. This route forwards supported SDK requests to
+ * PostHog Cloud US, per https://posthog.com/docs/advanced/proxy: static
+ * assets go to the assets host, ingest/replay go to the ingest host. Feature
+ * flags are not relayed: the client gets them from GET /api/web/flags
+ * (MJ-015).
  *
  * Security shape: the route is deliberately OUTSIDE /api so it bypasses
  * session auth (analytics must flow before any session exists — see the note
  * in middleware/session-auth.ts). The upstream hosts are hardcoded constants,
  * never derived from the request, so there is no SSRF surface. Abuse is
  * bounded by path-scoped body limits, a hosted-only per-IP rate limit, and
- * the 30s upstream timeout.
+ * the 30s upstream timeout. Requests are forwarded for our own PostHog project
+ * only (see "Project pinning" below).
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -29,7 +33,7 @@ const ASSET_HOST = "https://us-assets.i.posthog.com";
 const PROXY_TIMEOUT_MS = 30_000;
 
 // Session-recording batches (/s/) legitimately exceed the default cap;
-// events, flags, and asset fetches never come close to it. Keeping the
+// events and asset fetches never come close to it. Keeping the
 // default small limits what an unauthenticated caller can make us buffer.
 const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const REPLAY_MAX_BODY_BYTES = 20 * 1024 * 1024;
@@ -90,6 +94,7 @@ const stats = {
   upstreamErrors: 0,
   bodyLimitRejects: 0,
   rateLimitRejects: 0,
+  projectRejects: 0,
   latenciesMs: [] as number[],
 };
 
@@ -124,6 +129,7 @@ export function flushRelayStats(): void {
     upstreamErrors: stats.upstreamErrors,
     bodyLimitRejects: stats.bodyLimitRejects,
     rateLimitRejects: stats.rateLimitRejects,
+    projectRejects: stats.projectRejects,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -138,6 +144,7 @@ export function flushRelayStats(): void {
   stats.upstreamErrors = 0;
   stats.bodyLimitRejects = 0;
   stats.rateLimitRejects = 0;
+  stats.projectRejects = 0;
   stats.latenciesMs = [];
 }
 
@@ -234,7 +241,7 @@ export function relayBodyLimit() {
 //   meaningless so it matches no analytics-proxy WAF signature.
 //
 // `/relay` stays mounted for already-shipped clients (Electron builds pin
-// old bundles), whose events and flags still flow through it.
+// old bundles), whose events still flow through it.
 export const RELAY_MOUNT_PREFIXES = ["/relay", "/tlm"] as const;
 
 // Inside a sub-app mounted via app.route(prefix, ...), c.req.path is still
@@ -265,10 +272,9 @@ function supportsRelayRequest(path: string, method: string): boolean {
   if (/^\/(?:e|i\/v0\/e)\/?$/.test(path)) {
     return read || method === "POST";
   }
-  if (/^\/(?:s|flags|i\/v1\/(?:logs|metrics))\/?$/.test(path)) {
+  if (/^\/(?:s|i\/v1\/(?:logs|metrics))\/?$/.test(path)) {
     return method === "POST";
   }
-  if (/^\/decide\/?$/.test(path)) return read || method === "POST";
   if (!read) return false;
   return (
     /^\/array\/[A-Za-z0-9_-]+\/config(?:\.js)?$/.test(path) ||
@@ -279,6 +285,130 @@ function supportsRelayRequest(path: string, method: string): boolean {
       path,
     )
   );
+}
+
+// ---------------------------------------------------------------------------
+// Project pinning (MJ-015). Every project token a request names — in the
+// path, the query string, or the capture payload — must be our own
+// POSTHOG_PROJECT_KEY. A capture payload whose tokens cannot be read (an
+// unknown encoding, malformed JSON, no token at all) is not forwarded either.
+// Only /static assets carry no token.
+// ---------------------------------------------------------------------------
+
+type ProjectCheck = "ours" | "other" | "unreadable";
+
+// How far a gzip body is inflated to read its tokens: well above what a real
+// SDK batch expands to, and a bound on what one request can make us allocate.
+const MAX_INFLATED_BODY_BYTES = 32 * 1024 * 1024;
+const REPLAY_MAX_INFLATED_BODY_BYTES = 64 * 1024 * 1024;
+
+const TOKEN_QUERY_PARAMS = ["token", "api_key"];
+const TOKEN_FIELDS = ["api_key", "token", "$token"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCapturePath(path: string): boolean {
+  return /^\/(?:e|i\/v0\/e|s)\/?$/.test(path);
+}
+
+// A `data=` value: JSON, or base64-encoded JSON (`compression=base64`).
+function parseDataParam(data: string): unknown {
+  const trimmed = data.trim();
+  const json =
+    trimmed.startsWith("{") || trimmed.startsWith("[")
+      ? trimmed
+      : Buffer.from(trimmed, "base64").toString("utf8");
+  return JSON.parse(json);
+}
+
+// posthog-js sends gzip (detected by its magic bytes — the SDK drops the
+// `compression` query param for gzip), a form-encoded `data=` body, or JSON.
+function parseCapturePayload(bytes: Uint8Array, maxInflatedBytes: number) {
+  const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const text = (
+    isGzip
+      ? gunzipSync(bytes, { maxOutputLength: maxInflatedBytes })
+      : Buffer.from(bytes)
+  )
+    .toString("utf8")
+    .trimStart();
+  if (text.startsWith("{") || text.startsWith("[")) return JSON.parse(text);
+  const data = new URLSearchParams(text).get("data");
+  if (data === null) throw new Error("no capture payload");
+  return parseDataParam(data);
+}
+
+function collectFieldTokens(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+  tokens: unknown[],
+): void {
+  for (const field of fields) {
+    if (field in record) tokens.push(record[field]);
+  }
+}
+
+// A single event, an array of events, or `{ api_key, batch: [...] }`.
+function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
+  let events: unknown[];
+  if (Array.isArray(payload)) {
+    events = payload;
+  } else if (isRecord(payload) && Array.isArray(payload.batch)) {
+    collectFieldTokens(payload, TOKEN_FIELDS, tokens);
+    events = payload.batch;
+  } else {
+    events = [payload];
+  }
+  for (const event of events) {
+    if (!isRecord(event)) continue;
+    collectFieldTokens(event, TOKEN_FIELDS, tokens);
+    if (isRecord(event.properties)) {
+      collectFieldTokens(event.properties, ["token"], tokens);
+    }
+  }
+}
+
+function checkProjectTokens(
+  subpath: string,
+  url: URL,
+  method: string,
+  body: ArrayBuffer | undefined,
+): ProjectCheck {
+  const tokens: unknown[] = [];
+  for (const param of TOKEN_QUERY_PARAMS) {
+    tokens.push(...url.searchParams.getAll(param));
+  }
+  const configToken = /^\/array\/([^/]+)\/config(?:\.js)?$/.exec(subpath)?.[1];
+  if (configToken !== undefined) tokens.push(configToken);
+
+  if (isCapturePath(subpath)) {
+    const payloadTokens: unknown[] = [];
+    try {
+      const payload =
+        method === "GET" || method === "HEAD"
+          ? parseDataParam(url.searchParams.get("data") ?? "")
+          : parseCapturePayload(
+              new Uint8Array(body ?? new ArrayBuffer(0)),
+              subpath.startsWith("/s")
+                ? REPLAY_MAX_INFLATED_BODY_BYTES
+                : MAX_INFLATED_BODY_BYTES,
+            );
+      collectPayloadTokens(payload, payloadTokens);
+    } catch {
+      return "unreadable";
+    }
+    if (payloadTokens.length === 0) return "unreadable";
+    tokens.push(...payloadTokens);
+  }
+
+  if (tokens.length === 0) {
+    return subpath.startsWith("/static/") ? "ours" : "unreadable";
+  }
+  return tokens.every((token) => token === POSTHOG_PROJECT_KEY)
+    ? "ours"
+    : "other";
 }
 
 const relayRoutes = new Hono();
@@ -351,6 +481,20 @@ relayRoutes.all("*", async (c) => {
     method === "GET" || method === "HEAD"
       ? undefined
       : await c.req.arrayBuffer();
+
+  const project = checkProjectTokens(subpath, url, method, body);
+  if (project !== "ours") {
+    stats.projectRejects++;
+    const status = project === "other" ? 403 : 400;
+    recordResponseStatus(status);
+    return c.json(
+      {
+        error:
+          project === "other" ? "unsupported_project" : "unreadable_payload",
+      },
+      status,
+    );
+  }
 
   let upstream: Response;
   try {

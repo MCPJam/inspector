@@ -1,11 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { gzipSync } from "node:zlib";
 import relayRoutes, { relayBodyLimit } from "../relay.js";
+import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { securityHeadersMiddleware } from "../../middleware/security-headers.js";
 import { originValidationMiddleware } from "../../middleware/origin-validation.js";
 import { sessionAuthMiddleware } from "../../middleware/session-auth.js";
 
 const ORIGINAL_FETCH = global.fetch;
+
+const OTHER_PROJECT_KEY = "phc_unrelated_project_key";
+
+// A capture body in the shape posthog-js sends: `{ api_key, batch, sent_at }`.
+function eventBatch(token: string = POSTHOG_PROJECT_KEY): string {
+  return JSON.stringify({
+    api_key: token,
+    batch: [
+      { event: "$pageview", properties: { token, distinct_id: "device-1" } },
+    ],
+    sent_at: "2026-09-25T00:00:00.000Z",
+  });
+}
+
+// The `data=` value of a base64-compressed request, URL-encoded.
+function dataParam(json: string): string {
+  return encodeURIComponent(Buffer.from(json).toString("base64"));
+}
+
+function base64Form(json: string): string {
+  return `data=${dataParam(json)}`;
+}
 
 // Mount on BOTH prefixes exactly like both production entries so the tests
 // exercise the mounted-path behavior: inside the sub-app c.req.path still
@@ -51,7 +75,7 @@ describe("posthog relay proxy", () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
 
-    const payload = "compressed-event-batch";
+    const payload = eventBatch();
     const res = await app.request(
       "http://localhost:6274/relay/i/v0/e/?compression=gzip-js&ip=1&ver=1.2.3",
       {
@@ -76,11 +100,13 @@ describe("posthog relay proxy", () => {
     vi.mocked(fetch).mockResolvedValue(upstreamResponse());
 
     await app.request("http://localhost:6274/tlm/static/recorder.js");
-    await app.request("http://localhost:6274/tlm/array/phc_x/config");
+    await app.request(
+      `http://localhost:6274/tlm/array/${POSTHOG_PROJECT_KEY}/config`,
+    );
     await app.request("http://localhost:6274/tlm/i/v0/e/?compression=gzip-js", {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: "batch",
+      body: gzipSync(eventBatch()),
     });
 
     // PostHog must receive the bare subpaths — never /tlm/... — and the
@@ -90,23 +116,21 @@ describe("posthog relay proxy", () => {
       "https://us-assets.i.posthog.com/static/recorder.js",
     );
     expect(mockedFetchUrl(1)).toBe(
-      "https://us.i.posthog.com/array/phc_x/config",
+      `https://us.i.posthog.com/array/${POSTHOG_PROJECT_KEY}/config`,
     );
     expect(mockedFetchUrl(2)).toBe(
       "https://us.i.posthog.com/i/v0/e/?compression=gzip-js",
     );
   });
 
-  it("routes /static to the assets host and /array + /flags to the ingest host", async () => {
+  it("routes /static to the assets host and /array to the ingest host", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValue(upstreamResponse());
 
     await app.request("http://localhost:6274/relay/static/recorder.js");
-    await app.request("http://localhost:6274/relay/array/phc_x/config.js");
-    await app.request("http://localhost:6274/relay/flags/?v=2", {
-      method: "POST",
-      body: "{}",
-    });
+    await app.request(
+      `http://localhost:6274/relay/array/${POSTHOG_PROJECT_KEY}/config.js`,
+    );
 
     expect(mockedFetchUrl(0)).toBe(
       "https://us-assets.i.posthog.com/static/recorder.js",
@@ -115,37 +139,50 @@ describe("posthog relay proxy", () => {
     // posthog-js does unproxied — the assets host rejects our production
     // egress (relay.ts routing comment).
     expect(mockedFetchUrl(1)).toBe(
-      "https://us.i.posthog.com/array/phc_x/config.js",
+      `https://us.i.posthog.com/array/${POSTHOG_PROJECT_KEY}/config.js`,
     );
-    expect(mockedFetchUrl(2)).toBe("https://us.i.posthog.com/flags/?v=2");
+  });
+
+  it.each([
+    ["POST", "/flags/?v=2"],
+    ["POST", "/flags"],
+    ["POST", "/decide/?v=3"],
+    ["GET", "/decide/?v=3"],
+  ])("serves no feature-flag endpoint: %s %s", async (method, path) => {
+    const response = await createTestApp().request(`/tlm${path}`, {
+      method,
+      ...(method === "POST"
+        ? { body: JSON.stringify({ token: POSTHOG_PROJECT_KEY }) }
+        : {}),
+    });
+    expect(response.status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   describe.each(["/relay", "/tlm"])("%s request compatibility", (prefix) => {
+    const key = POSTHOG_PROJECT_KEY;
     it.each([
-      ["GET", "/e/?data=encoded"],
+      ["GET", `/e/?data=${dataParam(eventBatch())}`],
       ["POST", "/e/"],
       ["POST", "/i/v0/e/?compression=gzip-js"],
       ["POST", "/s/?compression=gzip-js"],
-      ["POST", "/flags/?v=2"],
-      ["POST", "/decide/?v=3"],
-      ["GET", "/decide/?v=3"],
-      ["POST", "/i/v1/logs"],
-      ["POST", "/i/v1/metrics"],
-      ["GET", "/array/phc_example/config"],
-      ["GET", "/array/phc_example/config.js"],
+      ["POST", `/i/v1/logs?token=${key}`],
+      ["POST", `/i/v1/metrics?token=${key}`],
+      ["GET", `/array/${key}/config`],
+      ["GET", `/array/${key}/config.js`],
       ["GET", "/static/recorder.js"],
       ["GET", "/static/1.369.0/recorder.js"],
       ["GET", "/static/1.434.12/surveys.js"],
       ["HEAD", "/static/array.js"],
-      ["GET", "/api/surveys/?token=phc_example"],
-      ["GET", "/api/product_tours/?token=phc_example"],
-      ["GET", "/api/web_experiments/?token=phc_example"],
-      ["GET", "/api/early_access_features/?token=phc_example"],
+      ["GET", `/api/surveys/?token=${key}`],
+      ["GET", `/api/product_tours/?token=${key}`],
+      ["GET", `/api/web_experiments/?token=${key}`],
+      ["GET", `/api/early_access_features/?token=${key}`],
     ])("forwards %s %s", async (method, path) => {
       vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
       const response = await createTestApp().request(`${prefix}${path}`, {
         method,
-        ...(method === "POST" ? { body: "opaque-sdk-payload" } : {}),
+        ...(method === "POST" ? { body: eventBatch() } : {}),
       });
       expect(response.status).toBe(200);
       expect(fetch).toHaveBeenCalledTimes(1);
@@ -163,6 +200,9 @@ describe("posthog relay proxy", () => {
       ["DELETE", "/i/v0/e/"],
       ["PUT", "/flags/"],
       ["GET", "/flags/"],
+      ["POST", "/flags/?v=2"],
+      ["POST", "/decide/?v=3"],
+      ["GET", "/decide/?v=3"],
       ["POST", "/s/unexpected"],
       ["POST", "/i/v0/e/extra"],
       ["GET", "/static/recorder.js/extra"],
@@ -188,7 +228,7 @@ describe("posthog relay proxy", () => {
 
     await app.request("http://localhost:6274/relay/i/v0/e/", {
       method: "POST",
-      body: "{}",
+      body: eventBatch(),
       headers: {
         "x-mcpjam-edge-secret": "current",
         "x-mcpjam-edge-secret-previous": "previous",
@@ -234,7 +274,7 @@ describe("posthog relay proxy", () => {
 
     const res = await app.request("http://localhost:6274/relay/i/v0/e/", {
       method: "POST",
-      body: "{}",
+      body: eventBatch(),
     });
 
     expect(res.status).toBe(429);
@@ -254,14 +294,14 @@ describe("posthog relay proxy", () => {
     vi.mocked(fetch).mockRejectedValueOnce(timeoutError);
     const timedOut = await app.request("http://localhost:6274/relay/i/v0/e/", {
       method: "POST",
-      body: "{}",
+      body: eventBatch(),
     });
     expect(timedOut.status).toBe(504);
 
     vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
     const failed = await app.request("http://localhost:6274/relay/i/v0/e/", {
       method: "POST",
-      body: "{}",
+      body: eventBatch(),
     });
     expect(failed.status).toBe(502);
   });
@@ -282,7 +322,12 @@ describe("posthog relay proxy", () => {
 
     const replayRes = await app.request("http://localhost:6274/relay/s/", {
       method: "POST",
-      body: threeMb,
+      body: JSON.stringify([
+        {
+          event: "$snapshot",
+          properties: { token: POSTHOG_PROJECT_KEY, $snapshot_data: threeMb },
+        },
+      ]),
     });
     expect(replayRes.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -300,10 +345,122 @@ describe("posthog relay proxy", () => {
 
     const res = await app.request("http://localhost:6274/relay/i/v0/e/", {
       method: "POST",
-      body: "{}",
+      body: eventBatch(),
       headers: { Origin: "http://localhost:6274" },
     });
 
     expect(res.status).toBe(200);
+  });
+
+  describe("project pinning", () => {
+    const encodings: Array<
+      [string, (token: string) => string | ReturnType<typeof gzipSync>]
+    > = [
+      ["JSON batch", (token) => eventBatch(token)],
+      ["gzip batch", (token) => gzipSync(eventBatch(token))],
+      ["base64 form body", (token) => base64Form(eventBatch(token))],
+      [
+        "event array",
+        (token) =>
+          JSON.stringify([{ event: "$pageview", properties: { token } }]),
+      ],
+      [
+        "single event",
+        (token) =>
+          JSON.stringify({ event: "$pageview", properties: { token } }),
+      ],
+    ];
+
+    it.each(encodings)(
+      "forwards a %s for our project byte for byte",
+      async (_name, encode) => {
+        vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+        const body = encode(POSTHOG_PROJECT_KEY);
+
+        const response = await createTestApp().request("/tlm/i/v0/e/", {
+          method: "POST",
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(
+          Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(
+            typeof body === "string" ? Buffer.from(body) : body,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it.each(encodings)(
+      "refuses a %s for another project",
+      async (_name, encode) => {
+        const response = await createTestApp().request("/tlm/i/v0/e/", {
+          method: "POST",
+          body: encode(OTHER_PROJECT_KEY),
+        });
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({
+          error: "unsupported_project",
+        });
+        expect(fetch).not.toHaveBeenCalled();
+      },
+    );
+
+    it("refuses a batch that names a second project", async () => {
+      const response = await createTestApp().request("/tlm/s/", {
+        method: "POST",
+        body: gzipSync(
+          JSON.stringify([
+            { event: "$snapshot", properties: { token: POSTHOG_PROJECT_KEY } },
+            { event: "$snapshot", properties: { token: OTHER_PROJECT_KEY } },
+          ]),
+        ),
+      });
+
+      expect(response.status).toBe(403);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["GET", `/array/${OTHER_PROJECT_KEY}/config.js`],
+      ["GET", `/api/surveys/?token=${OTHER_PROJECT_KEY}`],
+      ["GET", `/api/early_access_features/?token=${OTHER_PROJECT_KEY}`],
+      ["POST", `/i/v1/logs?token=${OTHER_PROJECT_KEY}`],
+      ["POST", `/i/v1/metrics?token=${OTHER_PROJECT_KEY}`],
+      ["POST", `/i/v0/e/?token=${OTHER_PROJECT_KEY}`],
+      ["GET", `/e/?data=${dataParam(eventBatch(OTHER_PROJECT_KEY))}`],
+    ])("refuses %s %s", async (method, path) => {
+      const response = await createTestApp().request(`/tlm${path}`, {
+        method,
+        ...(method === "POST" ? { body: eventBatch() } : {}),
+      });
+
+      expect(response.status).toBe(403);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["POST", "/i/v0/e/", "opaque-sdk-payload"],
+      ["POST", "/i/v0/e/", "{}"],
+      ["POST", "/i/v0/e/", "[]"],
+      ["POST", "/s/", "data=%%%"],
+      ["POST", "/s/", Buffer.from([0x1f, 0x8b, 0x00, 0x01])],
+      ["POST", "/i/v1/logs", "{}"],
+      ["GET", "/e/", undefined],
+      ["GET", "/api/surveys/", undefined],
+    ])(
+      "refuses %s %s when its project cannot be read",
+      async (method, path, body) => {
+        const response = await createTestApp().request(`/tlm${path}`, {
+          method,
+          ...(body !== undefined ? { body } : {}),
+        });
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "unreadable_payload" });
+        expect(fetch).not.toHaveBeenCalled();
+      },
+    );
   });
 });
