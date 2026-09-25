@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { ScenarioShareEmptyPanel } from "@/components/scenarios/ScenarioShareEmptyPanel";
 import { ScenarioShareDialog } from "@/components/scenarios/ScenarioShareDialog";
@@ -18,6 +19,7 @@ import { ScenarioFindingsTab } from "@/components/scenarios/findings/scenario-fi
 import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPerTurnFeedbackToggle";
 import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
+import { isStudyNameTakenError } from "@/components/scenarios/UserTestingScenarioCreateFlow";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import {
@@ -68,11 +70,14 @@ import { toast } from "@/lib/toast";
 /**
  * One User Testing scenario.
  *
- * Detail (`/user-testing/:id`): Insights | Sessions under one header carrying
- * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the same
- * action row and holds Settings — environment, sharing permissions, ratings —
- * beside a docked live Preview. Only the back link differs: Edit is
- * a sub-route, so it returns to the scenario rather than out to the list.
+ * Detail (`/user-testing/:id`): Findings | Insights | Sessions under one
+ * header carrying Edit / Open preview / Share. Edit (`/user-testing/:id/edit`)
+ * holds Settings — name, description, environment, sharing permissions,
+ * ratings — under a plain header: back to the study (named after it), the
+ * word "Settings", and no action row. Those three buttons are how you LEAVE
+ * the detail page for here or for a tester's view; repeating them on the page
+ * they lead to was noise, and the back link naming the study while the title
+ * named it again read as two of the same thing.
  *
  * Preview embeds the share link, so opening Edit starts a REAL guest session —
  * it shows up in Sessions. The embed tags itself `?surface=preview` so that
@@ -118,6 +123,100 @@ const SETTINGS_CARD =
   "space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm";
 const SETTINGS_CARD_TITLE =
   "text-base font-medium tracking-tight text-foreground";
+
+/**
+ * The study's name as a Settings field, saved on blur or Enter.
+ *
+ * On Edit the header no longer carries the name — the back link already does,
+ * and the two side by side read as a duplicate — so this is where it is
+ * changed. A draft, reseeded from the stored name while the field is not
+ * focused, so a collaborator's rename is picked up without clobbering typing.
+ *
+ * A taken name is said ON the field (the backend's `CONFLICT` on `name`, the
+ * same refusal the create flow places), and the draft is kept so it can be
+ * corrected. Any other failure toasts and reverts to what is stored.
+ */
+function StudyNameField({
+  name,
+  onSave,
+}: {
+  name: string;
+  onSave: (name: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(name);
+  const [taken, setTaken] = useState<string | null>(null);
+  const focusedRef = useRef(false);
+  // Set by Escape, read by the blur it triggers: discard rather than save.
+  const discardRef = useRef(false);
+  useEffect(() => {
+    if (focusedRef.current) return;
+    setDraft(name);
+  }, [name]);
+
+  const commit = async () => {
+    focusedRef.current = false;
+    const discard = discardRef.current;
+    discardRef.current = false;
+    const next = draft.trim();
+    // Empty is not a name; unchanged is not a save.
+    if (discard || !next || next === name.trim()) {
+      setDraft(name);
+      setTaken(null);
+      return;
+    }
+    try {
+      await onSave(next);
+      setTaken(null);
+    } catch (err) {
+      if (isStudyNameTakenError(err)) {
+        setTaken(next);
+        return;
+      }
+      toast.error(getBillingErrorMessage(err, "Failed to rename the study"));
+      setDraft(name);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <Input
+        aria-label="Study name"
+        data-testid="user-testing-name"
+        value={draft}
+        maxLength={200}
+        placeholder="Study name"
+        aria-invalid={taken ? true : undefined}
+        aria-describedby={taken ? "user-testing-name-taken" : undefined}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onChange={(e) => {
+          setTaken(null);
+          setDraft(e.target.value);
+        }}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            discardRef.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      {taken ? (
+        <p
+          id="user-testing-name-taken"
+          className="text-xs text-destructive"
+          role="alert"
+          data-testid="user-testing-name-taken"
+        >
+          A study named &ldquo;{taken}&rdquo; already exists in this project.
+          Give this one a different name.
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 export function UserTestingScenarioDetail({
   scenario,
@@ -541,9 +640,19 @@ export function UserTestingScenarioDetail({
         className="-ml-2 min-w-0 shrink px-2 text-xl font-semibold tracking-tight"
         inputClassName="min-w-[8rem] max-w-full text-xl font-semibold tracking-tight"
       />
+    </div>
+  );
+
+  // Edit's title is the PAGE, not the study: the back link beside it already
+  // names the study, and the name is edited in its own card below.
+  const editHeaderTitle = (
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <h1 className="text-xl font-semibold tracking-tight text-foreground">
+        Settings
+      </h1>
       {/* Host-backed scenarios get no Environment section — nothing else on
           Edit names the client they run against, so the header does. */}
-      {editMode && !composerActive && scenario.namedHostName ? (
+      {!composerActive && scenario.namedHostName ? (
         <span
           className="shrink-0 text-sm text-muted-foreground"
           data-testid="user-testing-host-client"
@@ -554,9 +663,10 @@ export function UserTestingScenarioDetail({
     </div>
   );
 
-  // One action row, identical on the detail tabs and on Edit: Edit, Open
-  // preview, and the single primary Share. Sharing has no other entry point on
-  // either surface — a second affordance was the thing this row replaced.
+  // The detail tabs' action row: Edit, Open preview, and the single primary
+  // Share. Not shown on Edit — all three lead AWAY from the detail page, to
+  // Settings or to a tester's view, and Settings is where they lead. Sharing
+  // there lives in its own Sharing permissions card.
   const headerActions = (
     <>
       <Button
@@ -565,10 +675,6 @@ export function UserTestingScenarioDetail({
         size="sm"
         className="rounded-lg"
         data-testid="user-testing-edit-button"
-        // On Edit this is the current page, so it is marked rather than
-        // hidden: dropping a button out of the row on one route makes the
-        // shared header stop reading as the same header.
-        aria-current={editMode ? "page" : undefined}
         onClick={() =>
           navigate(buildUserTestingScenarioEditPath(scenario.scenarioId))
         }
@@ -627,16 +733,15 @@ export function UserTestingScenarioDetail({
         resource="user-testing study"
       >
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          {/* Back goes to the scenario, not the list: Edit is a sub-route, and
-            its own Edit button is inert here, so the list would strand it. */}
+          {/* Back goes to the scenario, not the list: Edit is a sub-route of
+            it, and the list would leave no one-click way back. */}
           <DetailPageHeader
             backLabel={scenario.name || "Study"}
             onBack={() =>
               navigate(buildUserTestingScenarioPath(scenario.scenarioId))
             }
             backTestId="user-testing-detail-back"
-            title={headerTitle}
-            actions={headerActions}
+            title={editHeaderTitle}
           />
           <div
             className="relative min-h-0 flex-1 overflow-hidden"
@@ -666,18 +771,36 @@ export function UserTestingScenarioDetail({
               reads as one long form that happens to have gaps. */}
             <div className="h-full overflow-y-auto px-6 py-6 sm:px-8">
               <div className="mx-auto w-full max-w-[960px] space-y-6">
-                <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                  Settings
-                </h1>
                 <div className="space-y-6">
                   <div className="min-w-0 space-y-6">
+                    <section
+                      className={SETTINGS_CARD}
+                      data-testid="user-testing-name-section"
+                    >
+                      <h2 className={SETTINGS_CARD_TITLE}>Study name</h2>
+                      <StudyNameField
+                        name={scenario.name}
+                        onSave={async (name) => {
+                          await updateScenario({
+                            scenarioId: scenario.scenarioId,
+                            name,
+                          } as any);
+                        }}
+                      />
+                    </section>
+
                     {/* Off the header row as of BB-202: a field that grows next to
                   the title crowds the tabs. Still the only editor for it. */}
                     <section
                       className={SETTINGS_CARD}
                       data-testid="user-testing-description-section"
                     >
-                      <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
+                      <div className="space-y-1">
+                        <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
+                        <p className="text-xs text-muted-foreground">
+                          For you and your project. Testers don&apos;t see it.
+                        </p>
+                      </div>
                       <TextareaAutosize
                         aria-label="Study description"
                         data-testid="user-testing-description"
@@ -821,12 +944,6 @@ export function UserTestingScenarioDetail({
               </div>
             </div>
           </div>
-
-          <ScenarioShareDialog
-            scenario={scenario}
-            open={shareOpen}
-            onOpenChange={setShareOpen}
-          />
 
           <ScenarioDeleteConfirmDialog
             entityLabel="study"

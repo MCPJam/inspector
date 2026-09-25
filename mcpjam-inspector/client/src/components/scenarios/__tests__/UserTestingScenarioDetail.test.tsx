@@ -401,12 +401,27 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
   });
 
-  it("offers the same Share modal on the Edit route", () => {
+  it("keeps the Edit / Open preview / Share row off the Edit route", () => {
+    // All three lead away from the detail page — to Settings, or to a
+    // tester's view. On Settings itself they were noise.
     renderEdit();
 
-    fireEvent.click(screen.getByTestId("user-testing-share-button"));
+    expect(screen.queryByTestId("user-testing-edit-button")).toBeNull();
+    expect(screen.queryByTestId("user-testing-open-preview")).toBeNull();
+    expect(screen.queryByTestId("user-testing-share-button")).toBeNull();
+  });
 
-    expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
+  it("titles Edit as Settings, leaving the study's name to the back link", () => {
+    renderEdit();
+
+    // The back link and the title both said the study's name.
+    expect(screen.getByTestId("user-testing-detail-back")).toHaveTextContent(
+      "Payments beta",
+    );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTitle("Payments beta")).toBeNull();
   });
 
   it("shows Settings and its sharing controls on the Edit route", () => {
@@ -852,6 +867,75 @@ describe("UserTestingScenarioDetail", () => {
       expect(toast.error).toHaveBeenCalled();
     });
 
+    it("edits the name in its own card on Edit, above Description", async () => {
+      const { container } = renderEdit();
+
+      const field = screen.getByTestId("user-testing-name");
+      expect(field).toHaveValue("Payments beta");
+      const ids = Array.from(container.querySelectorAll("[data-testid]")).map(
+        (el) => el.getAttribute("data-testid"),
+      );
+      expect(ids.indexOf("user-testing-name-section")).toBeLessThan(
+        ids.indexOf("user-testing-description-section"),
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "  Payments GA " } });
+      fireEvent.blur(field);
+
+      await waitFor(() =>
+        expect(updateScenarioMock).toHaveBeenCalledWith({
+          scenarioId: "cb-1",
+          name: "Payments GA",
+        }),
+      );
+    });
+
+    it("does not save an unchanged, empty, or escaped name", () => {
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.blur(field);
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "   " } });
+      fireEvent.blur(field);
+      // An emptied field goes back to the stored name.
+      expect(field).toHaveValue("Payments beta");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Nope" } });
+      fireEvent.keyDown(field, { key: "Escape" });
+      fireEvent.blur(field);
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+      expect(field).toHaveValue("Payments beta");
+    });
+
+    it("puts a taken name on the field and keeps the draft", async () => {
+      updateScenarioMock.mockRejectedValueOnce(
+        Object.assign(new Error("taken"), {
+          data: { code: "CONFLICT", field: "name" },
+        }),
+      );
+      renderEdit();
+      const field = screen.getByTestId("user-testing-name");
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: "Checkout flow" } });
+      fireEvent.blur(field);
+
+      expect(
+        await screen.findByTestId("user-testing-name-taken"),
+      ).toHaveTextContent(/already exists in this project/i);
+      expect(field).toHaveValue("Checkout flow");
+      expect(field).toHaveAttribute("aria-invalid", "true");
+
+      fireEvent.change(field, { target: { value: "Checkout flow 2" } });
+      expect(screen.queryByTestId("user-testing-name-taken")).toBeNull();
+    });
+
     it("keeps the description out of the header, where it crowded the tabs", () => {
       renderDetail({ description: "Old copy" });
 
@@ -1266,7 +1350,7 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     // their look-around lands in the study's own Sessions list as if a tester
     // had run it — and the docked pane that used to set this marker is gone,
     // so this link is the only thing that can.
-    renderEdit();
+    renderDetail();
 
     expect(screen.getByTestId("user-testing-open-preview")).toHaveAttribute(
       "href",
@@ -1277,7 +1361,7 @@ describe("UserTestingScenarioDetail — settings layout", () => {
   it("says what Open preview opens, without lengthening the label", () => {
     // Research read this button as a second step of setting the study up
     // rather than as the tester's own session.
-    renderEdit();
+    renderDetail();
 
     const link = screen.getByTestId("user-testing-open-preview");
     expect(link).toHaveTextContent("Open preview");
@@ -1298,19 +1382,24 @@ describe("UserTestingScenarioDetail — settings layout", () => {
   });
 
   it("still warns when the environment can't resolve, and offers no preview link", () => {
-    renderEdit({
+    const broken = {
       environmentId: "env-1",
       environmentName: "Checkout flow",
       environmentError: {
         code: "ENV_ARCHIVED",
         message: "Environment “Checkout flow” is archived.",
       },
-    });
+    };
+    const { unmount } = renderEdit(broken);
 
     expect(
       screen.getByTestId("user-testing-detail-environment-error"),
     ).toBeInTheDocument();
-    // The link doesn't open for testers either, so it is not offered.
+    unmount();
+
+    // The link doesn't open for testers either, so the detail page's action
+    // row does not offer it.
+    renderDetail(broken);
     expect(
       screen.queryByTestId("user-testing-open-preview"),
     ).not.toBeInTheDocument();
