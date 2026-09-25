@@ -438,9 +438,9 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     expect(screen.queryByText("GPT-4o (own key)")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
-    expect(screen.getByRole("button", { name: "Judge model" })).toHaveTextContent(
-      "Claude Haiku 4.5",
-    );
+    expect(
+      screen.getByRole("button", { name: "Judge model" }),
+    ).toHaveTextContent("Claude Haiku 4.5");
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
     expect(onRun).toHaveBeenCalledWith(
       { runOverride: { judgeModel: "anthropic/claude-haiku-4.5" } },
@@ -458,7 +458,10 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
             tests: [],
             environment: { servers: [] },
             judgeConfig: {
-              goalCompletion: { enabled: true, judgeModel: "openai/gpt-5-mini" },
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+              },
             },
           },
         })}
