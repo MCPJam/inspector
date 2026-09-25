@@ -27,6 +27,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import { isNamedEnvironment } from "@/lib/environment-label";
+import { clientDisplayName } from "@/lib/client-display-name";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -314,16 +315,11 @@ export async function resolveComposerEnvironments(args: {
       clientId: hostId,
       harness,
     });
+    // A client whose every choice is a pair its harness cannot run contributes
+    // no cells; its pairs stay in `skipped`, which the surface reports. The
+    // model picker admits a model any selected client can run, so one such
+    // client must not sink the resolve for the others.
     skipped.push(...expanded.skipped);
-    if (expanded.cells.length === 0) {
-      // Every choice for this client was a pair its harness cannot run: there
-      // is nothing to launch for it, and dropping the client silently would
-      // be worse than saying so.
-      throw new ComposerResolveError(
-        "NO_TARGETS",
-        `This client can't run any of the chosen models: ${expanded.skipped[0]!.reason}.`,
-      );
-    }
     for (const choice of expanded.cells) {
       cells.push({
         hostId,
@@ -331,6 +327,15 @@ export async function resolveComposerEnvironments(args: {
         key: cellKey(hostId, choice.modelId),
       });
     }
+  }
+
+  if (cells.length === 0) {
+    // Nothing runnable anywhere: every chosen pair was one its client's
+    // harness cannot run. Say so rather than persist an empty target list.
+    throw new ComposerResolveError(
+      "NO_TARGETS",
+      `None of the chosen clients can run the chosen models: ${skipped[0]?.reason ?? "no runnable model"}.`,
+    );
   }
 
   // Reuse named rows first; only the rest need minting.
@@ -423,6 +428,19 @@ export async function resolveComposerEnvironments(args: {
   }
 
   return { environmentIds, environments, createdIds, reusedIds, skipped };
+}
+
+/**
+ * The name a person knows a client by, for the skipped-pairs toast: the host
+ * list's display name when the id is in it, else the raw id.
+ */
+export function clientNameResolver(
+  hosts: ReadonlyArray<{ hostId: string; name: string; displayName?: string }>,
+): (clientId: string) => string {
+  return (clientId) => {
+    const host = hosts.find((candidate) => candidate.hostId === clientId);
+    return host ? clientDisplayName(host) : clientId;
+  };
 }
 
 /**
