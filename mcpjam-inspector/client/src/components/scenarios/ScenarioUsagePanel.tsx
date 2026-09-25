@@ -26,7 +26,11 @@ import {
 } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { sessionCountLabel } from "@/components/connection/share-usage/session-list-format";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
+import {
+  buildEvaluatePath,
+  buildUserTestingScenarioPath,
+  navigateApp,
+} from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -207,6 +211,20 @@ export function ScenarioUsagePanel({
       ? "thumbs"
       : "stars";
   const ratingOptions = RATING_FILTER_OPTIONS[ratingStyle];
+  /**
+   * Where "Promote to test case" lands from User Testing: the SUITE, with its
+   * case list, rather than the new case's editor that the other promote
+   * surfaces open, as asked for in User Testing's prod run-through
+   * (2026-09-24). Deliberately User Testing only — Swarms, chat history and
+   * the per-turn action keep the shared destination.
+   */
+  const landOnPromotedSuite = useCallback(
+    ({ suiteId }: { suiteId: string }) => {
+      navigateApp(buildEvaluatePath({ type: "suite-overview", suiteId }));
+    },
+    [],
+  );
+
   const [ratingChoice, setRatingFilter] = useState<RatingFilterValue>("all");
   // A choice the current style does not offer (the style changed under an
   // open filter — "Neutral" on a study now rated by thumbs) reads as "all"
@@ -401,7 +419,11 @@ export function ScenarioUsagePanel({
                   )}`}
                   promote={
                     scenario.projectId
-                      ? { projectId: scenario.projectId, canPromote }
+                      ? {
+                          projectId: scenario.projectId,
+                          canPromote,
+                          onImported: landOnPromotedSuite,
+                        }
                       : undefined
                   }
                   // Reported here: scrolling a tester's session felt like

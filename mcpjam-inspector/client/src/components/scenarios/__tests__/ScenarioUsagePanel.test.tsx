@@ -14,9 +14,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
-const { useUsageInsightsMock, threadListMock } = vi.hoisted(() => ({
-  useUsageInsightsMock: vi.fn(),
-  threadListMock: vi.fn(),
+const { useUsageInsightsMock, threadListMock, threadDetailMock, navigateAppMock } =
+  vi.hoisted(() => ({
+    useUsageInsightsMock: vi.fn(),
+    threadListMock: vi.fn(),
+    threadDetailMock: vi.fn(),
+    navigateAppMock: vi.fn(),
+  }));
+
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  navigateApp: (...args: unknown[]) => navigateAppMock(...args),
 }));
 
 vi.mock("@/hooks/useUsageInsights", async () => {
@@ -46,7 +54,10 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadList", () => ({
 }));
 
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
-  ShareUsageThreadDetail: () => <div data-testid="thread-detail" />,
+  ShareUsageThreadDetail: (props: Record<string, unknown>) => {
+    threadDetailMock(props);
+    return <div data-testid="thread-detail" />;
+  },
 }));
 
 vi.mock("@/components/scenarios/scenario-sessions-metric-strip", () => ({
@@ -361,5 +372,29 @@ describe("ScenarioUsagePanel rating filter", () => {
       threads?: SharedChatThread[];
     };
     expect(rendered.threads?.map((t) => t._id)).toEqual(["bad"]);
+  });
+});
+
+describe("ScenarioUsagePanel promote destination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useUsageInsightsMock.mockReturnValue({
+      threads: [thread({ _id: "t-1" })],
+    });
+  });
+
+  it("lands a promoted session on its suite, not the case editor", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+
+    const detailProps = threadDetailMock.mock.calls.at(-1)?.[0] as {
+      promote?: {
+        onImported?: (result: { suiteId: string; testCaseId: string }) => void;
+      };
+    };
+    expect(detailProps.promote?.onImported).toBeTypeOf("function");
+
+    detailProps.promote!.onImported!({ suiteId: "suite-9", testCaseId: "case-3" });
+
+    expect(navigateAppMock).toHaveBeenCalledWith("/evaluate/suite/suite-9");
   });
 });
