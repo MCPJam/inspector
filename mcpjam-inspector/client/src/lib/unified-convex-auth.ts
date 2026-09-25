@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
 import { reportCaught } from "@/lib/error-reporting";
@@ -278,6 +278,68 @@ export function useUnifiedConvexAuth() {
     };
   }, [skipGuest, workos.isLoading, workos.user, retryNonce]);
 
+  // The WorkOS adapter keys its Convex token fetcher on these callbacks.
+  // Changing one clears socket auth, even when the refreshed token is valid.
+  // Keep them stable across guest-token and WorkOS profile updates.
+  const getWorkosAccessToken = useCallback(
+    () =>
+      fetchTokenWithRetry(() => workos.getAccessToken(), {
+        source: "workos_token_refresh",
+        isTerminalError: isLoginRequiredError,
+      }),
+    [workos.getAccessToken, workos.user?.id, retryNonce],
+  );
+
+  const getGuestAccessToken = useCallback(
+    async (opts?: { forceRefreshToken?: boolean }): Promise<string | null> => {
+      // Convex asks for a token, gets one, and authenticates the guest —
+      // the true "activated as a guest" signal. Marking HERE (rather than
+      // in the resolve effect) is immune to the effect-cancel race when a
+      // guest signs in mid-resolve, and never fires for an authed user
+      // (whose memo branch returns the WorkOS getAccessToken above).
+      // Keyed by guestId; idempotent.
+      const activate = (token: string | null): string | null => {
+        if (token) markActiveGuest();
+        return token;
+      };
+
+      if (opts?.forceRefreshToken) {
+        const refreshed = await fetchTokenWithRetry(
+          () => forceRefreshGuestSessionOrThrow(),
+          {
+            source: "guest_token_refresh",
+            isTerminalNull: () => getGuestSessionRefusal() !== null,
+          },
+        );
+        setGuestToken(refreshed);
+        return activate(refreshed);
+      }
+
+      // Prefer the latest in-memory cache so a fresh token is used even
+      // if React hasn't yet re-rendered with the new state.
+      const cached = getCachedGuestSession()?.token;
+      if (cached) return activate(cached);
+
+      // No usable cache. Mint one rather than falling back to the
+      // `guestToken` state copy: once the cache lapses into its expiry
+      // buffer that copy is the SAME expired token, and handing it back is
+      // indistinguishable from having no token at all. This path is the one
+      // that actually runs on Convex's scheduled refetch, because the
+      // `@convex-dev/workos` adapter calls `getAccessToken()` with no
+      // arguments and so never sets `forceRefreshToken`.
+      const minted = await fetchTokenWithRetry(
+        () => getOrCreateGuestSessionOrThrow().then((s) => s?.token ?? null),
+        {
+          source: "guest_token_refresh",
+          isTerminalNull: () => getGuestSessionRefusal() !== null,
+        },
+      );
+      setGuestToken(minted);
+      return activate(minted);
+    },
+    [retryNonce],
+  );
+
   return useMemo(() => {
     if (workos.user) {
       return {
@@ -290,11 +352,7 @@ export function useUnifiedConvexAuth() {
         // re-throw). See `isLoginRequiredError` for why that error can only be
         // recognized by its message — matching on `name` silently classified
         // every dead session as transient.
-        getAccessToken: () =>
-          fetchTokenWithRetry(() => workos.getAccessToken(), {
-            source: "workos_token_refresh",
-            isTerminalError: isLoginRequiredError,
-          }),
+        getAccessToken: getWorkosAccessToken,
       };
     }
 
@@ -305,59 +363,13 @@ export function useUnifiedConvexAuth() {
       // guest of its own below: the adapter only calls this once `user` is
       // truthy, and under `skipGuest` `guestToken` never becomes non-null, so
       // it is unreachable there.
-      getAccessToken: async (opts?: {
-        forceRefreshToken?: boolean;
-      }): Promise<string | null> => {
-        // Convex asks for a token, gets one, and authenticates the guest —
-        // the true "activated as a guest" signal. Marking HERE (rather than
-        // in the resolve effect) is immune to the effect-cancel race when a
-        // guest signs in mid-resolve, and never fires for an authed user
-        // (whose memo branch returns the WorkOS getAccessToken above).
-        // Keyed by guestId; idempotent.
-        const activate = (token: string | null): string | null => {
-          if (token) markActiveGuest();
-          return token;
-        };
-
-        if (opts?.forceRefreshToken) {
-          const refreshed = await fetchTokenWithRetry(
-            () => forceRefreshGuestSessionOrThrow(),
-            {
-              source: "guest_token_refresh",
-              isTerminalNull: () => getGuestSessionRefusal() !== null,
-            },
-          );
-          setGuestToken(refreshed);
-          return activate(refreshed);
-        }
-
-        // Prefer the latest in-memory cache so a fresh token is used even
-        // if React hasn't yet re-rendered with the new state.
-        const cached = getCachedGuestSession()?.token;
-        if (cached) return activate(cached);
-
-        // No usable cache. Mint one rather than falling back to the
-        // `guestToken` state copy: once the cache lapses into its expiry
-        // buffer that copy is the SAME expired token, and handing it back is
-        // indistinguishable from having no token at all. This path is the one
-        // that actually runs on Convex's scheduled refetch, because the
-        // `@convex-dev/workos` adapter calls `getAccessToken()` with no
-        // arguments and so never sets `forceRefreshToken`.
-        const minted = await fetchTokenWithRetry(
-          () => getOrCreateGuestSessionOrThrow().then((s) => s?.token ?? null),
-          {
-            source: "guest_token_refresh",
-            isTerminalNull: () => getGuestSessionRefusal() !== null,
-          },
-        );
-        setGuestToken(minted);
-        return activate(minted);
-      },
+      getAccessToken: getGuestAccessToken,
     };
   }, [
     workos.isLoading,
     workos.user,
-    workos.getAccessToken,
+    getWorkosAccessToken,
+    getGuestAccessToken,
     guestToken,
     guestLoading,
     retryNonce,

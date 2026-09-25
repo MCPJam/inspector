@@ -14,14 +14,18 @@ import { useUnifiedConvexAuth } from "../unified-convex-auth";
 
 const auth = vi.hoisted(() => ({
   getAccessToken: vi.fn(),
-  user: { id: "test-user" },
+  user: { id: "test-user" } as { id: string } | null,
   isLoading: false,
 }));
 vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => auth }));
 vi.mock("@/lib/error-reporting", () => ({ reportCaught: vi.fn() }));
+const guest = vi.hoisted(() => ({
+  cached: null as null | { token: string; guestId: string },
+  mint: vi.fn(),
+}));
 vi.mock("@/lib/guest-session", () => ({
-  getCachedGuestSession: () => null,
-  getOrCreateGuestSessionOrThrow: vi.fn(),
+  getCachedGuestSession: () => guest.cached,
+  getOrCreateGuestSessionOrThrow: guest.mint,
   forceRefreshGuestSessionOrThrow: vi.fn(),
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
@@ -137,6 +141,9 @@ function jwt(n: number) {
 }
 const pauseQueries = useSessionRefreshStore.getState().pauseQueries;
 beforeEach(() => {
+  auth.user = { id: "test-user" };
+  guest.cached = null;
+  guest.mint.mockReset();
   auth.getAccessToken.mockReset();
   useSignOutStore.setState({ isSigningOut: false });
   useSessionRefreshStore.setState({
@@ -235,6 +242,72 @@ it("removes even ungated subscriptions before logout revokes the session", async
       // This is the point the caller can start session revocation.
       expect(peer.active.size).toBe(0);
     });
+  } finally {
+    view.unmount();
+    await client.close();
+  }
+});
+
+it("successful guest token rotation never clears auth with queries active", async () => {
+  auth.user = null;
+  guest.cached = { token: jwt(1), guestId: "guest-test" };
+  guest.mint.mockImplementation(async () => guest.cached);
+  const peer = protocolPeer();
+  const client = new ConvexReactClient("https://test.convex.cloud", {
+    webSocketConstructor: peer.Socket as unknown as typeof WebSocket,
+    unsavedChangesWarning: false,
+    authRefreshTokenLeewaySeconds: 2,
+    logger: false,
+  });
+  const setAuth = vi.spyOn(client, "setAuth");
+  const view = render(
+    <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+      <Shell />
+    </ConvexProviderWithAuthKit>,
+  );
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(8));
+    guest.cached = null;
+    guest.mint.mockImplementation(async () => {
+      guest.cached = { token: jwt(2), guestId: "guest-test" };
+      return guest.cached;
+    });
+    await act(async () => {
+      // Invoke the callback registered with the real client, as a refresh does.
+      expect(
+        await setAuth.mock.calls.at(-1)![0]({ forceRefreshToken: true }),
+      ).toBe(jwt(2));
+    });
+    await act(async () => {});
+    expect(peer.clearCounts).not.toContain(8);
+    expect(peer.active.size).toBe(8);
+  } finally {
+    view.unmount();
+    await client.close();
+  }
+}, 10000);
+
+it("updating the same WorkOS user does not reset socket auth", async () => {
+  auth.getAccessToken.mockResolvedValue(jwt(1));
+  const peer = protocolPeer();
+  const client = new ConvexReactClient("https://test.convex.cloud", {
+    webSocketConstructor: peer.Socket as unknown as typeof WebSocket,
+    unsavedChangesWarning: false,
+    logger: false,
+  });
+  const tree = () => (
+    <ConvexProviderWithAuthKit client={client} useAuth={useUnifiedConvexAuth}>
+      <Shell />
+    </ConvexProviderWithAuthKit>
+  );
+  const view = render(tree());
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(8));
+    auth.user = { id: "test-user" };
+    view.rerender(tree());
+    await act(async () => {});
+    expect(peer.clearCounts).toEqual([]);
+    expect(peer.active.size).toBe(8);
   } finally {
     view.unmount();
     await client.close();
