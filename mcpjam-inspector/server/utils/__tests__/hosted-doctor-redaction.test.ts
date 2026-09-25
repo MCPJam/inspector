@@ -1531,6 +1531,56 @@ describe("hosted connection failure logs", () => {
     expect(JSON.stringify(projected)).not.toMatch(/UNEXPECTED_MARKER/);
   });
 
+  it("bounds each log array by count and size and counts what it left out", async () => {
+    const { projectHostedConnectFailureLogs } =
+      await import("../hosted-connect-failure.js");
+    const { MAX_LOG_ARRAY_BYTES } =
+      await import("../hosted-upstream-projection.js");
+    const identity = (index: number) => ({
+      eventId: `event-${index}`,
+      serverId: "srv_1",
+      serverName: "Fixture",
+      timestamp: "2026-09-25T00:00:00.000Z",
+    });
+    const headers = Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => [
+        `x-header-${index}-${"h".repeat(100)}`,
+        "value",
+      ]),
+    );
+
+    const projected = projectHostedConnectFailureLogs({
+      _rpcLogs: Array.from({ length: 1000 }, (_, index) => ({
+        ...identity(index),
+        direction: "receive",
+        message: { jsonrpc: "2.0", method: "notifications/message" },
+      })),
+      _httpLogs: Array.from({ length: 150 }, (_, index) => ({
+        ...identity(index),
+        exchange: {
+          serverId: "srv_1",
+          request: {
+            method: "POST",
+            url: "https://mcp.example.test/mcp",
+            headers,
+          },
+          response: { status: 200, statusText: "OK", headers: {} },
+          durationMs: 1,
+        },
+      })),
+    }) as any;
+
+    expect(projected._rpcLogs).toHaveLength(200);
+    expect(projected._rpcLogs[99].eventId).toBe("event-99");
+    expect(projected._rpcLogs[100].eventId).toBe("event-900");
+    expect(projected._rpcLogsOmitted).toBe(800);
+    expect(
+      Buffer.byteLength(JSON.stringify(projected._httpLogs), "utf8"),
+    ).toBeLessThanOrEqual(MAX_LOG_ARRAY_BYTES);
+    expect(projected._httpLogs.length + projected._httpLogsOmitted).toBe(150);
+    expect(projected._httpLogsOmitted).toBeGreaterThan(0);
+  });
+
   it("keeps a failure's flags and scope challenge within their projection", async () => {
     const { projectHostedConnectFailureDetails } =
       await import("../hosted-connect-failure.js");

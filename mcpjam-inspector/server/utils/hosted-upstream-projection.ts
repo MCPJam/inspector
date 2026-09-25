@@ -722,13 +722,49 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/** Events kept per hosted log array: the first half and the last half. */
+export const MAX_LOG_EVENTS = 200;
+/** Upper bound on one serialized hosted log array. */
+export const MAX_LOG_ARRAY_BYTES = 1024 * 1024;
+
+/**
+ * A log array within {@link MAX_LOG_EVENTS} and {@link MAX_LOG_ARRAY_BYTES},
+ * and how many events it left out.
+ */
+function projectLogArray(
+  events: unknown[],
+  project: (event: Record<string, unknown>) => Record<string, unknown>,
+): { events: Record<string, unknown>[]; omitted: number } {
+  const records = events.filter(isPlainRecord);
+  const half = MAX_LOG_EVENTS / 2;
+  const candidates =
+    records.length > MAX_LOG_EVENTS
+      ? [...records.slice(0, half), ...records.slice(-half)]
+      : records;
+  let omitted = records.length - candidates.length;
+  let bytes = 0;
+  const kept: Record<string, unknown>[] = [];
+  for (const record of candidates) {
+    const projected = project(record);
+    const size = Buffer.byteLength(JSON.stringify(projected), "utf8");
+    if (bytes + size > MAX_LOG_ARRAY_BYTES) {
+      omitted += 1;
+      continue;
+    }
+    bytes += size;
+    kept.push(projected);
+  }
+  return { events: kept, omitted };
+}
+
 /**
  * The hosted log envelope (`_rpcLogs` / `_httpLogs`) attached to a failed
  * connection, reduced the same way as a probe answer: frames in either
  * direction keep their envelope, exchanges keep their status line and
  * allowlisted response headers, request headers go through
  * {@link projectRequestHeaders}, and a transport error goes through
- * `describeTransportError`.
+ * `describeTransportError`. Each array is bounded by {@link projectLogArray};
+ * `_rpcLogsOmitted` / `_httpLogsOmitted` count what was left out.
  */
 export function projectHostedLogEnvelope(
   envelope: Record<string, unknown> | undefined,
@@ -737,14 +773,16 @@ export function projectHostedLogEnvelope(
   if (!envelope) return envelope;
   const projected: Record<string, unknown> = {};
   if (Array.isArray(envelope._rpcLogs)) {
-    projected._rpcLogs = envelope._rpcLogs
-      .filter(isPlainRecord)
-      .map(projectRpcLogEvent);
+    const rpc = projectLogArray(envelope._rpcLogs, projectRpcLogEvent);
+    projected._rpcLogs = rpc.events;
+    if (rpc.omitted > 0) projected._rpcLogsOmitted = rpc.omitted;
   }
   if (Array.isArray(envelope._httpLogs)) {
-    projected._httpLogs = envelope._httpLogs
-      .filter(isPlainRecord)
-      .map((event) => projectHttpLogEvent(event, describeTransportError));
+    const http = projectLogArray(envelope._httpLogs, (event) =>
+      projectHttpLogEvent(event, describeTransportError),
+    );
+    projected._httpLogs = http.events;
+    if (http.omitted > 0) projected._httpLogsOmitted = http.omitted;
   }
   return projected;
 }
