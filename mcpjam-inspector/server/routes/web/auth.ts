@@ -32,6 +32,7 @@ import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
@@ -81,6 +82,7 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
+import { mapWebBoundaryError } from "./boundary-error.js";
 import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
@@ -1687,7 +1689,9 @@ export async function createAuthorizedManager(
             `Credentials for "${displayServerName}" are being refreshed by another request.${
               retryAfterSeconds === null
                 ? " Try again shortly."
-                : ` Try again in ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}.`
+                : ` Try again in ${retryAfterSeconds} second${
+                    retryAfterSeconds === 1 ? "" : "s"
+                  }.`
             }`,
             errorDetails,
           );
@@ -2215,7 +2219,9 @@ export async function createAuthorizedManager(
   // Each server owns its capture even when two configs use the same URL.
   // Install before construction: the manager starts connecting eagerly.
   const connectionsByKey = new Map(
-    Object.values(connectionsByServerId).flat().map((connection) => [connection.key, connection]),
+    Object.values(connectionsByServerId)
+      .flat()
+      .map((connection) => [connection.key, connection]),
   );
   const observedConfigs = Object.fromEntries(
     connectionEntries.map(([id, config]) => {
@@ -2224,11 +2230,18 @@ export async function createAuthorizedManager(
       const authorization = batch.results[serverId];
       let baseFetch = config.baseFetch ?? hostedMcpBaseFetch();
       try {
-        if (authorization?.ok && authorization.accessLevel === "project_member" &&
-            authorization.serverConfig.transportType === "http") {
+        if (
+          authorization?.ok &&
+          authorization.accessLevel === "project_member" &&
+          authorization.serverConfig.transportType === "http"
+        ) {
           baseFetch = hostedMcpBackpressureFetch({
-            fetch: baseFetch, projectId, serverId, userId: authorizedUserId,
-            connectionId: connection?.connectionId ?? options?.connectionIds?.[serverId],
+            fetch: baseFetch,
+            projectId,
+            serverId,
+            userId: authorizedUserId,
+            connectionId:
+              connection?.connectionId ?? options?.connectionIds?.[serverId],
           });
         }
       } catch (error) {
@@ -2237,7 +2250,6 @@ export async function createAuthorizedManager(
       }
       return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
     }),
-
   );
   const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
@@ -2332,7 +2344,10 @@ export async function handleRoute<T>(
     const result = await handler();
     return c.json(result, successStatus);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // The same mapper as the router-wide `onError`, so a structured backend
+    // refusal gets its own status whether a handler returns through here or
+    // throws past it.
+    const routeError = mapWebBoundaryError(error);
     return webErrorFromRoute(c, routeError);
   }
 }
@@ -2823,6 +2838,43 @@ function forwardLogMessagesInto(
   };
 }
 
+/**
+ * The egress guard's refusal as a 400, when one is anywhere in `error`'s chain.
+ *
+ * The MCP client wraps a refused dial in its own connect error — the refusal
+ * sits on `cause`, or on `streamableCause` when the SSE fallback failed after
+ * it — so a check of the top-level error alone would miss the common case.
+ * The guard's message is written to be shown to the caller; its `cause` is
+ * not, and stays out. A `WebRouteError` is a decision some other layer already
+ * made, and keeps it.
+ */
+function blockedEgressRouteError(error: unknown): WebRouteError | undefined {
+  if (error instanceof WebRouteError) return undefined;
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0 && seen.size < 8) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof BlockedEgressTargetError) {
+      return new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        current.message,
+      );
+    }
+    try {
+      pending.push(
+        (current as { cause?: unknown }).cause,
+        (current as { streamableCause?: unknown }).streamableCause,
+      );
+    } catch {
+      // A value whose getters throw has no chain worth reading.
+    }
+  }
+  return undefined;
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
@@ -2845,6 +2897,28 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Rewrites a mapped failure, and the log envelope sent with it, before the
+     * response is built. The hosted validate route uses it to report a status
+     * line in place of the server's own answer (MJ-001).
+     */
+    redactFailure?: (
+      routeError: WebRouteError,
+      error: unknown,
+      logs: Record<string, unknown> | undefined,
+    ) => {
+      routeError: WebRouteError;
+      logs: Record<string, unknown> | undefined;
+    };
+    /**
+     * Rewrites the log envelope attached to a SUCCESSFUL response. The hosted
+     * validate route projects received frames and header values the same way
+     * its failure path does, so a successful connect does not reflect what
+     * the target answered (MJ-001).
+     */
+    redactSuccessLogs?: (
+      logs: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2871,7 +2945,26 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
     );
 
-    return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
+    let response = attachHostedRpcLogs(result, rpcCollector);
+    if (
+      options?.redactSuccessLogs &&
+      response !== result &&
+      response &&
+      typeof response === "object"
+    ) {
+      const { _rpcLogs, _httpLogs, ...rest } = response as Record<
+        string,
+        unknown
+      >;
+      response = {
+        ...rest,
+        ...options.redactSuccessLogs({
+          ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
+          ...(_httpLogs !== undefined ? { _httpLogs } : {}),
+        }),
+      } as typeof response;
+    }
+    return c.json(response, 200);
   } catch (error) {
     // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
     // helper dials the caller's OWN MCP server, and a connection-class failure
@@ -2882,11 +2975,21 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // 424 still requires the message to positively name an MCP server, so this
     // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
     // Convex deployment — keeps its 5xx and keeps paging us.
-    const routeError = mapTargetServerError(error);
+    //
+    // A target the egress guard refused is the caller's to change, not a
+    // connection that failed: 400, with the guard's own message
+    // (MJ-020, MJ-021).
+    const routeError = mapTargetServerError(
+      blockedEgressRouteError(error) ?? error,
+    );
+    const logs = rpcCollector?.buildEnvelope() as
+      | Record<string, unknown>
+      | undefined;
+    const redacted = options?.redactFailure?.(routeError, error, logs);
     return webErrorFromRoute(
       c,
-      routeError,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      redacted?.routeError ?? routeError,
+      redacted ? redacted.logs : logs,
     );
   }
 }

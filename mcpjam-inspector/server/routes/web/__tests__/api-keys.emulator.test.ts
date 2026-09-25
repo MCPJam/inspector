@@ -79,6 +79,7 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 import {
   SEED,
+  emulatorSeed,
   listUserApiKeys,
   loginWithPkce,
   mintUserApiKey,
@@ -86,11 +87,39 @@ import {
   type WorkosEmulatorHandle,
 } from "../../../test/support/workos-emulator.js";
 
+/** A second member of the seeded organization, who holds keys of their own. */
+const MEMBER = {
+  id: "user_01EMULATORMEMBER000000000000",
+  email: "member@emulator.test",
+};
+
 let h: WorkosEmulatorHandle;
 let bearer: string;
 
 beforeAll(async () => {
-  h = await startWorkosEmulator();
+  const seed = emulatorSeed();
+  h = await startWorkosEmulator({
+    seed: {
+      ...seed,
+      users: [
+        ...(seed.users ?? []),
+        {
+          id: MEMBER.id,
+          email: MEMBER.email,
+          first_name: "Member",
+          password: "test123",
+          email_verified: true,
+        },
+      ],
+      organizations: [
+        {
+          id: SEED.org.id,
+          name: SEED.org.name,
+          memberships: [{ email: SEED.user.email }, { email: MEMBER.email }],
+        },
+      ],
+    },
+  });
   const session = await loginWithPkce(h, { email: SEED.user.email });
   bearer = session.accessToken;
 }, 30_000);
@@ -279,8 +308,9 @@ describe("list and revoke", () => {
   }, 30_000);
 
   it("reports an unknown key as not found rather than calling WorkOS", async () => {
-    // The ownership walk is the authorization check: an id the caller does not
-    // own must read as absent, whether it never existed or belongs elsewhere.
+    // Not in the caller's own list and bound to no organization, so no one
+    // could authorize revoking it.
+    vi.mocked(lookupWorkosKeyBinding).mockResolvedValueOnce(null);
     const res = await app().request("/api/web/api-keys/api_key_not_yours", {
       method: "DELETE",
       headers: authHeader(),
@@ -341,6 +371,63 @@ describe("organization admin revoke", () => {
 
     expect(status).toBe(403);
     const remaining = await listUserApiKeys(h, SEED.user.id);
+    expect(remaining.map((k) => k.id)).toContain(target.id);
+    expect(removeOrganizationKeyBinding).not.toHaveBeenCalled();
+  }, 30_000);
+});
+
+describe("revoke by id as an organization admin", () => {
+  function revokeById(keyId: string) {
+    return app().request(`/api/web/api-keys/${keyId}`, {
+      method: "DELETE",
+      headers: authHeader(),
+    });
+  }
+
+  it("revokes another member's key at WorkOS once the backend authorizes", async () => {
+    const target = await mintUserApiKey(h, {
+      userId: MEMBER.id,
+      organizationId: SEED.org.id,
+      name: "member's ci key",
+    });
+
+    const { status, data } = await expectJson(await revokeById(target.id));
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ ok: true, alreadyRevoked: false });
+    expect(authorizeOrganizationKeyRevoke).toHaveBeenCalledWith({
+      organizationId: "org_convex_1",
+      actorUserId: "mcpjam_user_1",
+      workosApiKeyId: target.id,
+    });
+    expect(removeOrganizationKeyBinding).toHaveBeenCalledWith({
+      organizationId: "org_convex_1",
+      actorUserId: "mcpjam_user_1",
+      workosApiKeyId: target.id,
+    });
+    expect(removeWorkosKeyBinding).not.toHaveBeenCalled();
+    // Gone at WorkOS from the member's own list.
+    const remaining = await listUserApiKeys(h, MEMBER.id);
+    expect(remaining.map((k) => k.id)).not.toContain(target.id);
+  }, 30_000);
+
+  it("leaves another member's key alive and answers 404 when the backend refuses", async () => {
+    const target = await mintUserApiKey(h, {
+      userId: MEMBER.id,
+      organizationId: SEED.org.id,
+      name: "stays",
+    });
+    vi.mocked(authorizeOrganizationKeyRevoke).mockRejectedValueOnce(
+      new WorkosKeyBindingError(403, "Revoke authorization refused (403)"),
+    );
+
+    const { status, data } = await expectJson<{ code: string }>(
+      await revokeById(target.id),
+    );
+
+    expect(status).toBe(404);
+    expect(data.code).toBe("NOT_FOUND");
+    const remaining = await listUserApiKeys(h, MEMBER.id);
     expect(remaining.map((k) => k.id)).toContain(target.id);
     expect(removeOrganizationKeyBinding).not.toHaveBeenCalled();
   }, 30_000);

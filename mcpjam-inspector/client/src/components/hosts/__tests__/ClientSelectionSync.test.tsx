@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   set: vi.fn(),
   catalog: vi.fn(),
   selected: null as string | null,
+  role: { canManage: true, isLoading: false },
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -15,6 +16,9 @@ vi.mock("convex/react", () => ({
 vi.mock("@/hooks/useClients", () => ({
   useHostList: mocks.list,
   useHostMutations: () => ({ createHost: mocks.create }),
+}));
+vi.mock("@/hooks/useProjects", () => ({
+  useCanManageProjectClients: () => mocks.role,
 }));
 vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: () => [mocks.selected, mocks.set],
@@ -38,6 +42,7 @@ describe("ClientSelectionSync", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.selected = null;
+    mocks.role = { canManage: true, isLoading: false };
     mocks.list.mockReturnValue({ hosts: [], isLoading: false });
     mocks.catalog.mockReturnValue({ status: "live", catalog: {} });
     mocks.create.mockResolvedValue("new-host");
@@ -85,6 +90,19 @@ describe("ClientSelectionSync", () => {
     expect(mocks.create).toHaveBeenCalledTimes(2);
     rerender(<ClientSelectionSync projectId="p1" />);
     expect(mocks.create).toHaveBeenCalledTimes(3);
+  });
+  it("does not seed a default client for a member or guest", () => {
+    mocks.role = { canManage: false, isLoading: false };
+    render(<ClientSelectionSync projectId="p1" />);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it("waits for the viewer's role before seeding", () => {
+    mocks.role = { canManage: false, isLoading: true };
+    const { rerender } = render(<ClientSelectionSync projectId="p1" />);
+    expect(mocks.create).not.toHaveBeenCalled();
+    mocks.role = { canManage: true, isLoading: false };
+    rerender(<ClientSelectionSync projectId="p1" />);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
   });
   it("waits for the host list before creating or reconciling", () => {
     mocks.list.mockReturnValue({ hosts: [], isLoading: true });

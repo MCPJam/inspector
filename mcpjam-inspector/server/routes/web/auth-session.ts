@@ -1,16 +1,23 @@
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
-import { revokeAuthKitSession } from "../../services/auth-session-revocation.js";
+import { revokeSessionWithAcknowledgment } from "../../services/auth-session-revocation.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 
 /**
  * `/api/web/auth-session/*` — the Inspector client's sign-out hook.
  *
  * `POST /revoke` revokes the WorkOS AuthKit session its own bearer belongs to,
- * so access tokens already issued for that session stop working in Convex the
- * moment the user signs out, instead of when they expire. The client calls it
- * with the token it is about to discard, just before WorkOS's `signOut()`.
+ * so access tokens already issued for that session stop working the moment
+ * the user signs out, instead of when they expire. The client calls it with
+ * the token it is about to discard, just before WorkOS's `signOut()`.
+ *
+ * In order (MJ-011): this process refuses the session at once, then the
+ * backend is asked for a durable record of the revocation, and only its
+ * acknowledgment is reported as `{ revoked: true }`. A timeout or failure is
+ * reported as `status: "pending"` — retries continue in the background — or
+ * `"failed"`, never as revoked. Other replicas, and this one after a restart,
+ * learn of the revocation from the backend's feed, not from this process.
  *
  * Same-origin on purpose: the client sends this as a `keepalive` request so it
  * survives the navigation `signOut()` starts, and a same-origin request needs
@@ -47,14 +54,16 @@ authSession.post("/revoke", async (c) => {
   }
 
   const token = (c.req.header("authorization") ?? "").slice("Bearer ".length);
-  const result = await revokeAuthKitSession(token);
-  if (
-    !result.revoked &&
-    (result.reason === "failed" || result.reason === "timeout")
-  ) {
+  const result = await revokeSessionWithAcknowledgment(token, {
+    // Only a session id the gateway VERIFIED is refused ahead of the backend's
+    // answer; anything else waits for the acknowledgment.
+    verifiedSid:
+      authMethod === "authkit_jwt" ? c.get("workosSessionId") : undefined,
+  });
+  if (!result.revoked && "status" in result) {
     getRequestLogger(c, "routes.web.auth-session").event(
       "auth.session.revoke_incomplete",
-      { reason: result.reason },
+      { reason: result.reason, status: result.status },
     );
   }
   return c.json(result);
