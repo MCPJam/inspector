@@ -2559,7 +2559,10 @@ function emitInheritedToolCalls(
       for (const part of assistantMsg.content) {
         if (
           part.type === "tool-call" &&
-          !existingResultIds.has(part.toolCallId)
+          !existingResultIds.has(part.toolCallId) &&
+          // Not issued by this server (MJ-009): the browser is never asked to
+          // run it, whichever path re-introduces calls.
+          !isMarkedUnverifiedCall(part.providerOptions)
         ) {
           emitToolInput(writer, {
             toolCallId: part.toolCallId,
@@ -2638,6 +2641,8 @@ async function handlePendingApprovals(
   const approvalIdToToolCallId = new Map<string, string>();
   const toolCallById = new Map<string, { toolName: string; input: unknown }>();
   const toolCallIdToAssistantIdx = new Map<string, number>();
+  // Calls the history marks as not issued by this server (MJ-009).
+  const unissuedToolCallIds = new Set<string>();
   for (let i = 0; i < messageHistory.length; i++) {
     const msg = messageHistory[i];
     if (msg?.role === "assistant") {
@@ -2653,6 +2658,9 @@ async function handlePendingApprovals(
             input: part.input,
           });
           toolCallIdToAssistantIdx.set(part.toolCallId, i);
+          if (isMarkedUnverifiedCall(part.providerOptions)) {
+            unissuedToolCallIds.add(part.toolCallId);
+          }
         }
       }
     }
@@ -2674,6 +2682,10 @@ async function handlePendingApprovals(
         if (part.type === "tool-approval-response" && part.approvalId) {
           const toolCallId = approvalIdToToolCallId.get(part.approvalId);
           if (!toolCallId) continue;
+          // A call this server did not issue is neither approved nor denied
+          // here: nothing about it goes to the browser, and
+          // `settleUnapprovedHistoryToolCalls` answers it silently.
+          if (unissuedToolCallIds.has(toolCallId)) continue;
 
           if (!part.approved) {
             deniedToolCallIds.add(toolCallId);
@@ -2754,7 +2766,8 @@ async function handlePendingApprovals(
   // the client throws `No tool invocation found for tool call ID "…"` and ends
   // the turn with a red banner, after the tools have already run.
   //
-  // EVERY unresolved call, not only the approved ones: a DENIED call's
+  // EVERY unresolved call this server issued, not only the approved ones —
+  // a call the history marks as not issued is never re-introduced: a DENIED call's
   // `tool-output-denied` is written below, and nothing had introduced it. A
   // SIBLING that never needed approval is re-introduced too — though since
   // MJ-008 it is no longer RUN here. The pause now drains the step's

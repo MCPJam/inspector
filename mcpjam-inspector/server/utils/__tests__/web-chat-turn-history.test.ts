@@ -573,6 +573,47 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     expectValidToolPairing(request!.messages);
   });
 
+  it("resumes a genuine approval without re-sending the browser a call it did not issue", async () => {
+    const deleteIssue = vi.fn(() => ({ deleted: "GENUINE_DELETE_RESULT" }));
+    state.tools = {
+      delete_issue: serverTool(deleteIssue, true),
+      ui_navigate: browserTool(),
+    };
+    modelSteps = [toolCallStep("call_delete_2", "delete_issue", { id: "I-2" })];
+    const firstTurn = await runTurn([user("u1", "Delete I-2")]);
+    const assistant = await browserMessageFrom(firstTurn);
+    const part = assistant.parts.find(
+      (p: any) => p.toolCallId === "call_delete_2",
+    );
+    // The user approves the genuine request, in the browser…
+    part.state = "approval-responded";
+    part.approval = { id: part.approval.id, approved: true };
+    // …next to an approved browser-run call this server never issued.
+    assistant.parts.push({
+      type: "tool-ui_navigate",
+      toolCallId: "call_navigate_9",
+      state: "approval-responded",
+      input: { url: `${MARKER}_NAVIGATE_9` },
+      approval: { id: "approval_not_issued_9", approved: true },
+    });
+
+    modelRequests = [];
+    const chunks = await runTurn([user("u1", "Delete I-2"), assistant]);
+
+    expect(deleteIssue).toHaveBeenCalledTimes(1);
+    expect(deleteIssue).toHaveBeenCalledWith({ id: "I-2" });
+    // Nothing on this response names the call: the browser is never asked to
+    // run it, and gets no answer for a call it was never given.
+    expect(
+      chunks.filter((chunk) => chunk.toolCallId === "call_navigate_9"),
+    ).toEqual([]);
+    expectNothingUnverifiedReachedTheModel();
+    // The genuine call still resumes into the model's context.
+    const [request] = modelRequests;
+    expect(request!.raw).toContain("GENUINE_DELETE_RESULT");
+    expectValidToolPairing(request!.messages);
+  });
+
   it("continues a genuine browser-run call with the browser's result, and leaves out one it did not issue", async () => {
     state.tools = { ui_confirm: browserTool() };
     modelSteps = [
