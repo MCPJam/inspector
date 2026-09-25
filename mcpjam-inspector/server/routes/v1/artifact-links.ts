@@ -8,8 +8,10 @@
  * the backend reports a missing artifact, as `null`, rather than forwarded.
  *
  * The backend origin is the one this server is configured with
- * (`CONVEX_HTTP_URL`) or a default `*.convex.site` host, which is what the
- * backend mints on when its site URL is not a custom domain.
+ * (`CONVEX_HTTP_URL`) or a Convex-hosted `https://*.convex.site` origin. Links
+ * are minted on the backend's own HTTP host, which on a deployment reached
+ * through a custom domain is Convex's host rather than the configured one, so
+ * a Convex-hosted origin is accepted alongside the configured one.
  */
 
 const ARTIFACT_PATH = "/web/artifact";

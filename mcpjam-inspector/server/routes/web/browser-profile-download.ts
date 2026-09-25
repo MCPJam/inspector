@@ -140,7 +140,16 @@ async function resolveArchiveLocation(
   } catch (error) {
     if (error instanceof WebRouteError) throw error;
     if (error instanceof BrowserSessionServiceError) {
-      throw refusalFor(error.status);
+      const refusal = refusalFor(error.status);
+      // A refusal of the caller is an answer; a failure of the backend is not.
+      if (refusal.status >= 500) {
+        reportFailure(c, {
+          stage: "lookup",
+          statusCode: error.status,
+          ...(error.detail ? { errorMessage: error.detail.slice(0, 500) } : {}),
+        });
+      }
+      throw refusal;
     }
     // A caller that hung up gets its own abort back.
     if (c.req.raw.signal.aborted) throw error;

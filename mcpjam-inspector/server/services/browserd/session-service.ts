@@ -131,10 +131,13 @@ function originOf(value: string | undefined): string | null {
 }
 
 /**
- * A saved profile archive is read only from this deployment's file storage:
- * the configured Convex origin, or a Convex-hosted deployment origin, under
- * `/api/storage/`. A location anywhere else is refused before any request is
- * made to it.
+ * A saved profile archive is read only from Convex file storage, under
+ * `/api/storage/` and with no embedded credentials: on the configured Convex
+ * origin, or on a Convex-hosted `https://*.convex.cloud` origin. Storage URLs
+ * are minted on the backend's own storage host, which on a deployment reached
+ * through a custom domain is Convex's host rather than the configured one, so
+ * a Convex-hosted origin is accepted alongside the configured one. A location
+ * anywhere else is refused before any request is made to it.
  */
 function assertArchiveStorageLocation(
   url: URL,

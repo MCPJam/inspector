@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   handleArtifactMediaError,
+  handleArtifactMediaLoad,
   useFreshArtifactUrl,
 } from "@/lib/artifact-urls";
 import { ArtifactImage } from "@/components/ui/artifact-image";
@@ -366,6 +367,12 @@ export function BrowserStepFilmstrip({
   // Cleared by `seeked` — the browser's own signal that the seek is done.
   const pendingSeekTargetRef = useRef<number | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
+  // A failed load that could not ask for a new link yet: the link to load
+  // again, and after how long (see the effect below).
+  const [videoRetry, setVideoRetry] = useState<{
+    url: string;
+    delayMs: number;
+  } | null>(null);
 
   // An artifact link expires; the freshest one known for the recording is
   // played, and a failed load asks for a new one (see `onError` below).
@@ -451,6 +458,19 @@ export function BrowserStepFilmstrip({
     setVideoFailed(false);
   }, [resolvedVideoUrl]);
 
+  // A failure while link refreshes were throttled asked for nothing. Load the
+  // same link again once a refresh may start; if that load fails too, it asks
+  // for one. Bound to the link it was scheduled for, so a renewed link or an
+  // unmount cancels it.
+  useEffect(() => {
+    if (!videoRetry || videoRetry.url !== resolvedVideoUrl) return;
+    const timer = setTimeout(() => {
+      setVideoRetry(null);
+      setVideoFailed(false);
+    }, videoRetry.delayMs);
+    return () => clearTimeout(timer);
+  }, [videoRetry, resolvedVideoUrl]);
+
   if (ordered.length === 0 && !resolvedVideoUrl) {
     return (
       <div
@@ -513,9 +533,16 @@ export function BrowserStepFilmstrip({
             onTimeUpdate={onTimeUpdate}
             onSeeked={onSeeked}
             onError={() => {
-              handleArtifactMediaError(resolvedVideoUrl);
+              const retryInMs = handleArtifactMediaError(resolvedVideoUrl);
               setVideoFailed(true);
+              setVideoRetry(
+                retryInMs !== null && retryInMs > 0
+                  ? { url: resolvedVideoUrl, delayMs: retryInMs }
+                  : null,
+              );
             }}
+            // `preload="metadata"`: metadata is the load that always happens.
+            onLoadedMetadata={() => handleArtifactMediaLoad(resolvedVideoUrl)}
             className="w-full rounded-md border border-border/60 bg-black"
             data-testid="browser-replay-video"
           />

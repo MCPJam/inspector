@@ -5,6 +5,7 @@ import {
   fetchArtifact,
   freshestArtifactUrl,
   handleArtifactMediaError,
+  handleArtifactMediaLoad,
   isSignedArtifactUrl,
   registerArtifactUrls,
   requestArtifactUrlRefresh,
@@ -315,6 +316,36 @@ describe("fetchArtifact on a missing answer (MJ-005)", () => {
     expect((await second).status).toBe(200);
   });
 
+  it("keeps an object's renewal when its refresh request was throttled", async () => {
+    const clock = controlClock();
+    const stale = artifactUrl("kg-late", T0);
+    const fresh = artifactUrl("kg-late", T0 + 3600);
+    const fresher = artifactUrl("kg-late", T0 + 7200);
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useArtifactUrlEpoch());
+
+    // Another link's refresh holds the throttle.
+    act(() => {
+      requestArtifactUrlRefresh();
+    });
+    const heldEpoch = result.current!;
+
+    // The 404 starts nothing, but still waits for the links that refresh mints.
+    const first = fetchArtifact(stale);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    registerArtifactUrls({ screenshotUrl: fresh });
+    expect((await first).status).toBe(404);
+    expect(result.current).toBe(heldEpoch);
+
+    // Past the window the object still has its renewal, so this 404 starts one.
+    clock.advance(60_000);
+    const second = fetchArtifact(fresh);
+    await vi.waitFor(() => expect(result.current).toBeGreaterThan(heldEpoch));
+    registerArtifactUrls({ screenshotUrl: fresher });
+    expect((await second).status).toBe(404);
+  });
+
   it("does not limit renewals of an expired link the same way", async () => {
     const clock = controlClock();
     const stale = artifactUrl("kg-exp", T0);
@@ -342,22 +373,26 @@ describe("fetchArtifact on a missing answer (MJ-005)", () => {
 });
 
 describe("handleArtifactMediaError", () => {
+  /** Report a media failure inside `act`, returning its retry hint. */
+  function fail(url: string | null, now?: number): number | null {
+    let hint: number | null = null;
+    act(() => {
+      hint = handleArtifactMediaError(url, now);
+    });
+    return hint;
+  }
+
   it("renews a link at or past its expiry every time it fails", () => {
     const { result } = renderHook(() => useArtifactUrlEpoch());
     const expiredAt = (T0 + 60) * 1000;
 
-    act(() =>
-      handleArtifactMediaError(artifactUrl("kg-rec", T0, "video"), expiredAt),
-    );
+    expect(fail(artifactUrl("kg-rec", T0, "video"), expiredAt)).toBe(0);
     const first = result.current;
     expect(first).toEqual(expect.any(Number));
 
-    act(() =>
-      handleArtifactMediaError(
-        artifactUrl("kg-rec", T0 + 30, "video"),
-        expiredAt + 60_000,
-      ),
-    );
+    expect(
+      fail(artifactUrl("kg-rec", T0 + 30, "video"), expiredAt + 60_000),
+    ).toBe(0);
     expect(result.current).toBeGreaterThan(first!);
   });
 
@@ -365,36 +400,61 @@ describe("handleArtifactMediaError", () => {
     const { result } = renderHook(() => useArtifactUrlEpoch());
     const validFor = (T0 - 3600) * 1000;
 
-    act(() =>
-      handleArtifactMediaError(artifactUrl("kg-rec", T0, "video"), validFor),
-    );
+    expect(fail(artifactUrl("kg-rec", T0, "video"), validFor)).toBe(0);
     const first = result.current;
     expect(first).toEqual(expect.any(Number));
 
     // The re-minted link for the same recording fails too: no further
     // renewal, however long after the first.
-    act(() =>
-      handleArtifactMediaError(
-        artifactUrl("kg-rec", T0 + 3600, "video"),
-        validFor + 60_000,
-      ),
-    );
+    expect(
+      fail(artifactUrl("kg-rec", T0 + 3600, "video"), validFor + 60_000),
+    ).toBeNull();
     expect(result.current).toBe(first);
 
     // Another object still has its own.
-    act(() =>
-      handleArtifactMediaError(
-        artifactUrl("kg-other", T0, "image"),
-        validFor + 120_000,
-      ),
+    expect(fail(artifactUrl("kg-other", T0, "image"), validFor + 120_000)).toBe(
+      0,
     );
     expect(result.current).toBeGreaterThan(first!);
   });
 
+  it("while refreshes are throttled, says when to load again and keeps the renewal", () => {
+    const { result } = renderHook(() => useArtifactUrlEpoch());
+    const validFor = (T0 - 3600) * 1000;
+    const link = artifactUrl("kg-rec", T0, "video");
+    act(() => {
+      requestArtifactUrlRefresh(validFor);
+    });
+    const heldEpoch = result.current!;
+
+    expect(fail(link, validFor + 10_000)).toBe(20_000);
+    expect(result.current).toBe(heldEpoch);
+
+    // Once the window has passed, the same failure starts the refresh…
+    expect(fail(link, validFor + 31_000)).toBe(0);
+    expect(result.current).toBeGreaterThan(heldEpoch);
+
+    // …and that one spent the object's renewal.
+    expect(fail(link, validFor + 62_000)).toBeNull();
+  });
+
+  it("lets an object renew again after it loads", () => {
+    const validFor = (T0 - 3600) * 1000;
+    const link = artifactUrl("kg-rec", T0, "video");
+
+    expect(handleArtifactMediaError(link, validFor)).toBe(0);
+    expect(handleArtifactMediaError(link, validFor + 31_000)).toBeNull();
+
+    // Any link to the same recording loading counts.
+    handleArtifactMediaLoad(artifactUrl("kg-rec", T0 + 3600, "video"));
+    expect(handleArtifactMediaError(link, validFor + 62_000)).toBe(0);
+  });
+
   it("ignores anything that is not a signed link", () => {
     const { result } = renderHook(() => useArtifactUrlEpoch());
-    act(() => handleArtifactMediaError("https://example.com/replay.webm"));
-    act(() => handleArtifactMediaError(null));
+    expect(fail("https://example.com/replay.webm")).toBeNull();
+    expect(fail(null)).toBeNull();
+    handleArtifactMediaLoad("https://example.com/replay.webm");
     expect(result.current).toBeUndefined();
   });
 });

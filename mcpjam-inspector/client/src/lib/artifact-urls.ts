@@ -252,13 +252,20 @@ const epochListeners = new Set<() => void>();
 /** Missing-object renewals spent, per object (`artifactStableKey`). */
 const missingRenewals = new Map<string, number>();
 
-/** Spend one of an object's missing-object renewals, if it has one left. */
-function takeMissingRenewal(url: string): boolean {
+/** Whether the object still has a missing-object renewal left. */
+function hasMissingRenewal(url: string): boolean {
+  return (
+    (missingRenewals.get(artifactStableKey(url)) ?? 0) < MISSING_RENEWAL_LIMIT
+  );
+}
+
+/**
+ * Spend one of the object's missing-object renewals. Only a call that
+ * actually started a refresh spends one: a throttled call started nothing.
+ */
+function spendMissingRenewal(url: string): void {
   const key = artifactStableKey(url);
-  const spent = missingRenewals.get(key) ?? 0;
-  if (spent >= MISSING_RENEWAL_LIMIT) return false;
-  missingRenewals.set(key, spent + 1);
-  return true;
+  missingRenewals.set(key, (missingRenewals.get(key) ?? 0) + 1);
 }
 
 /** The object was read: it may be renewed again if it later goes missing. */
@@ -317,8 +324,9 @@ export function resetArtifactUrlsForTests(): void {
  * if the backend answers 401 (expired), 403 (no longer valid, e.g. after a
  * key rotation), or 404/410 (the object is not where the link points),
  * requests a refresh, waits briefly for a re-run query to register a fresher
- * link and retries once with it. A 404/410 does this once per object until
- * the object is read successfully again. Otherwise returns the response
+ * link and retries once with it. A 404/410 starts at most one refresh per
+ * object until the object is read successfully again (a throttled request
+ * starts none, so it does not count). Otherwise returns the response
  * unchanged, so callers keep their own error handling.
  */
 export async function fetchArtifact(
@@ -335,10 +343,10 @@ export async function fetchArtifact(
     return response;
   }
   if (!RENEWABLE_STATUSES.has(response.status)) return response;
-  if (MISSING_STATUSES.has(response.status) && !takeMissingRenewal(target)) {
-    return response;
-  }
-  requestArtifactUrlRefresh();
+  const missing = MISSING_STATUSES.has(response.status);
+  if (missing && !hasMissingRenewal(target)) return response;
+  if (requestArtifactUrlRefresh() && missing) spendMissingRenewal(target);
+  // Throttled or not, a refresh is in flight: wait for the links it mints.
   const renewed = await waitForFresherUrl(target, RENEWAL_WAIT_MS);
   if (!renewed || init?.signal?.aborted) return response;
   const retried =
@@ -351,19 +359,39 @@ export async function fetchArtifact(
  * `onError` for an `<img>` / `<video>` showing an artifact link. The element
  * cannot see the status code. A link at or near its expiry requests a
  * (throttled) refresh every time; any other failure is treated like a
- * missing answer and gets the object's one renewal. The fresh link reaches
- * the element through `useFreshArtifactUrl`.
+ * missing answer and gets the object's one renewal, spent only when a
+ * refresh actually starts. The fresh link reaches the element through
+ * `useFreshArtifactUrl`.
+ *
+ * Returns when the element may usefully load again:
+ *   - `null`: nothing more will be requested for this link (it is not a
+ *     signed link, or its object's renewal is spent);
+ *   - `0`: a refresh started, and the fresh link will arrive on its own;
+ *   - more than `0`: refreshes are throttled, and this many ms remain until
+ *     one may start. Loading again after that lets a second failure start it.
  */
 export function handleArtifactMediaError(
   url: string | null | undefined,
   now: number = Date.now(),
-): void {
-  if (!isSignedArtifactUrl(url)) return;
+): number | null {
+  if (!isSignedArtifactUrl(url)) return null;
   const claims = readClaims(url);
   const expiring =
     claims !== null && claims.e * 1000 - now <= MEDIA_EXPIRY_MARGIN_MS;
-  if (!expiring && !takeMissingRenewal(url)) return;
-  requestArtifactUrlRefresh(now);
+  if (!expiring && !hasMissingRenewal(url)) return null;
+  if (requestArtifactUrlRefresh(now)) {
+    if (!expiring) spendMissingRenewal(url);
+    return 0;
+  }
+  return lastRefreshRequestAt + REFRESH_THROTTLE_MS - now;
+}
+
+/**
+ * `onLoad` for an `<img>` / `<video>` showing an artifact link: the object
+ * was read, so a later failure may renew it again.
+ */
+export function handleArtifactMediaLoad(url: string | null | undefined): void {
+  if (isSignedArtifactUrl(url)) restoreMissingRenewals(url);
 }
 
 // ── Subscriptions ──────────────────────────────────────────────────────────

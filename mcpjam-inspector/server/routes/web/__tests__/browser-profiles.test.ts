@@ -182,6 +182,32 @@ describe("POST /api/web/browser-profiles/download", () => {
     expect(res.status).toBe(status);
     expect(await res.json()).toMatchObject({ code });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // A refusal is the backend's answer, not a failure to report.
+    expect(
+      vi
+        .mocked(logger.event)
+        .mock.calls.filter(
+          ([event]) => event === "browser_profile.download.failed",
+        ),
+    ).toHaveLength(0);
+  });
+
+  it("reports a backend failure during the lookup", async () => {
+    serve({
+      lookup: () => lookupAnswers(500, { error: "lookup unavailable" }),
+    });
+
+    const res = await download(IDS);
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ code: "SERVER_UNREACHABLE" });
+    expect(logger.event).toHaveBeenCalledWith(
+      "browser_profile.download.failed",
+      expect.anything(),
+      { stage: "lookup", statusCode: 500, errorMessage: "lookup unavailable" },
+      undefined,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("answers 404 when the backend names no archive", async () => {
