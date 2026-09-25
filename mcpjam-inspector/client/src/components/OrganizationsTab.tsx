@@ -111,7 +111,6 @@ interface OrganizationsTabProps {
   children?: ReactNode;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
-  onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
   onOrganizationDeleted?: (organizationId: string) => void;
 }
@@ -470,7 +469,6 @@ export function OrganizationsTab({
   children,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
-  onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
@@ -567,7 +565,6 @@ export function OrganizationsTab({
           : null
       }
       onCheckoutIntentConsumed={onCheckoutIntentConsumed}
-      onCheckoutIntentNavigationStarted={onCheckoutIntentNavigationStarted}
       navigateBillingInSameTab={navigateBillingInSameTab}
       onOrganizationDeleted={onOrganizationDeleted}
     />
@@ -580,7 +577,6 @@ interface OrganizationPageProps {
   children?: ReactNode;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
-  onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
   onOrganizationDeleted?: (organizationId: string) => void;
 }
@@ -596,7 +592,6 @@ function OrganizationPage({
   children,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
-  onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationPageProps) {
@@ -1310,56 +1305,6 @@ function OrganizationPage({
       )
     : null;
 
-  const handleAutoPlanChange = useCallback(
-    async (tier: "pro" | "team", billingInterval: "monthly" | "annual") => {
-      try {
-        const result = await startPlanChange(
-          getBillingReturnUrl(),
-          tier,
-          billingInterval,
-          { confirmPaidPlanChange: false },
-        );
-
-        if (result.kind === "updated") {
-          toast.success(
-            `Plan updated to ${formatPlanName(
-              result.subscription.plan ?? tier,
-            )}.`,
-          );
-          return;
-        }
-
-        if (result.kind === "scheduled") {
-          toast.success("Plan change scheduled for renewal.");
-          return;
-        }
-
-        const billingUrl =
-          result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
-        onCheckoutIntentNavigationStarted?.();
-        openBillingUrl(billingUrl, "same-tab");
-      } catch (error) {
-        if (
-          !(
-            error instanceof Error &&
-            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-          )
-        ) {
-          toast.error(
-            error instanceof Error ? error.message : "Failed to change plan",
-          );
-        }
-        throw error;
-      }
-    },
-    [
-      getBillingReturnUrl,
-      onCheckoutIntentNavigationStarted,
-      openBillingUrl,
-      startPlanChange,
-    ],
-  );
-
   const pendingSeatPaymentNotice =
     activeSeatPaymentIntent && billingStatus?.canManageBilling ? (
       <PendingSeatPaymentNotice
@@ -1470,7 +1415,6 @@ function OrganizationPage({
               isOpeningPortal={isOpeningPortal}
               onDowngradePlan={handleDowngradePlan}
               onStartPlanChange={handlePlanChange}
-              onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
               currentPlanPanel={

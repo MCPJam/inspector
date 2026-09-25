@@ -1919,7 +1919,7 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     await waitFor(() =>
-      expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+      expect(window.location.pathname).toBe("/organizations/org-1/plans"),
     );
     expect(readPersistedCheckoutIntent()).toEqual({
       plan: "team",
@@ -2447,7 +2447,7 @@ describe("App hosted OAuth callback handling", () => {
               checkoutIntent?: { plan?: string; interval?: string };
             }
           ).organizationId === "org-1" &&
-          (props as { section?: string }).section === "billing" &&
+          (props as { section?: string }).section === "plans" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
@@ -2540,7 +2540,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
       expect(mockOrganizationsTab).toHaveBeenCalled();
     });
-    expect(window.location.pathname).toBe("/organizations/org-1/billing");
+    expect(window.location.pathname).toBe("/organizations/org-1/plans");
 
     expect(
       mockOrganizationsTab.mock.calls.some(
@@ -2557,7 +2557,7 @@ describe("App hosted OAuth callback handling", () => {
               checkoutIntent?: { plan?: string; interval?: string };
             }
           ).organizationId === "org-1" &&
-          (props as { section?: string }).section === "billing" &&
+          (props as { section?: string }).section === "plans" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
@@ -2603,7 +2603,7 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     await waitFor(() =>
-      expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+      expect(window.location.pathname).toBe("/organizations/org-1/plans"),
     );
   });
 
@@ -2635,7 +2635,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<RouterProvider router={router} />);
     try {
       await waitFor(() =>
-        expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+        expect(window.location.pathname).toBe("/organizations/org-1/plans"),
       );
 
       await act(async () => {
@@ -2643,7 +2643,7 @@ describe("App hosted OAuth callback handling", () => {
       });
 
       await waitFor(() =>
-        expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+        expect(window.location.pathname).toBe("/organizations/org-1/plans"),
       );
       expect(readPersistedCheckoutIntent()).toEqual({
         plan: "team",
@@ -2707,62 +2707,6 @@ describe("App hosted OAuth callback handling", () => {
         screen.queryByTestId("billing-handoff-overlay"),
       ).not.toBeInTheDocument();
     });
-  });
-
-  it("drops the billing overlay when checkout navigation starts", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
-    mockWorkOsAuthState.user = { id: "workos-user-1" };
-
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
-    mockUseQuery.mockImplementation((name: string) => {
-      if (name === "organizations:getMyOrganizations") {
-        return [
-          {
-            _id: "org-1",
-            name: "Org One",
-            updatedAt: 1,
-            createdAt: 1,
-            createdBy: "user-1",
-            myRole: "owner",
-          },
-        ];
-      }
-
-      return undefined;
-    });
-    mockOrganizationsTab.mockImplementation(
-      (props: { onCheckoutIntentNavigationStarted?: () => void }) => (
-        <button
-          type="button"
-          data-testid="start-checkout-navigation"
-          onClick={() => props.onCheckoutIntentNavigationStarted?.()}
-        >
-          Start checkout navigation
-        </button>
-      ),
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
-      expect(
-        screen.getByTestId("start-checkout-navigation"),
-      ).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId("start-checkout-navigation"));
-
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("billing-handoff-overlay"),
-      ).not.toBeInTheDocument();
-    });
-    expect(readPersistedCheckoutIntent()).toBeNull();
   });
 
   it("clears billing handoff state when no organization is available", async () => {

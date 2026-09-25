@@ -760,10 +760,6 @@ interface OrganizationBillingSectionProps {
     plan: "pro" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
-  onStartAutoPlanChange?: (
-    plan: "pro" | "team",
-    billingInterval: BillingInterval,
-  ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
   /** Rendered below the credit usage card (above payments history). */
@@ -786,7 +782,6 @@ export function OrganizationBillingSection({
   isOpeningPortal,
   onDowngradePlan,
   onStartPlanChange,
-  onStartAutoPlanChange,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
   currentPlanPanel,
@@ -797,7 +792,7 @@ export function OrganizationBillingSection({
   // the top of the page hides the one thing the user clicked for.
   const [arrivedForPlans, setArrivedForPlans] = useState(false);
   const plansHeadingRef = useRef<HTMLDivElement | null>(null);
-  const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
+  const deepLinkHandledForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("annual");
   const [checkoutPlanNotice, setCheckoutPlanNotice] = useState<{
@@ -848,114 +843,96 @@ export function OrganizationBillingSection({
       return;
     }
     if (!checkoutIntent) {
-      autoCheckoutStartedForKeyRef.current = null;
+      deepLinkHandledForKeyRef.current = null;
       return;
     }
 
     const intentKey = `${checkoutIntent.organizationId}:${checkoutIntent.plan}:${checkoutIntent.interval}`;
 
-    let cancelled = false;
+    if (isLoadingBilling || isLoadingPlanCatalog) {
+      return;
+    }
+    if (!billingStatus || !planCatalog) {
+      return;
+    }
 
-    const run = async () => {
-      if (isLoadingBilling || isLoadingPlanCatalog) {
-        return;
-      }
-      if (!billingStatus || !planCatalog) {
-        return;
-      }
-
-      if (
-        !canCheckoutPlan(
-          planCatalog,
-          checkoutIntent.plan,
-          checkoutIntent.interval,
-        )
-      ) {
-        if (!cancelled) {
-          toast.error(
-            "This plan or billing interval is not offered to this organization.",
-          );
-          onCheckoutIntentConsumed?.();
-        }
-        return;
-      }
-      const isAutoCheckoutEligible =
-        billingStatus.source === "trial" ||
-        (billingStatus.source === "free" && billingStatus.plan === "free");
-
-      if (!isAutoCheckoutEligible) {
-        if (!cancelled) {
-          onCheckoutIntentConsumed?.();
-        }
-        return;
-      }
-
-      if (!billingStatus.billingConfigured || !billingStatus.canManageBilling) {
-        if (!cancelled) {
-          toast.error(
-            !billingStatus.canManageBilling
-              ? "Only organization owners can start checkout."
-              : "Checkout isn't available in this environment.",
-          );
-          onCheckoutIntentConsumed?.();
-        }
-        return;
-      }
-
-      const intentGuard = guardCheckoutIntentAgainstBillingStatus(
-        billingStatus,
+    if (
+      !canCheckoutPlan(
+        planCatalog,
         checkoutIntent.plan,
+        checkoutIntent.interval,
+      )
+    ) {
+      toast.error(
+        "This plan or billing interval is not offered to this organization.",
       );
-      if (!intentGuard.proceed) {
-        if (!cancelled && autoCheckoutStartedForKeyRef.current !== intentKey) {
-          autoCheckoutStartedForKeyRef.current = intentKey;
-          const currentEntry = planCatalog.plans[intentGuard.currentPlan];
-          const requestedEntry = planCatalog.plans[checkoutIntent.plan];
-          setCheckoutPlanNotice({
-            reason: intentGuard.reason,
-            currentDisplayName:
-              currentEntry?.displayName ?? intentGuard.currentPlan,
-            requestedDisplayName:
-              requestedEntry?.displayName ?? checkoutIntent.plan,
-          });
-          onCheckoutIntentConsumed?.();
-        }
-        return;
-      }
+      onCheckoutIntentConsumed?.();
+      return;
+    }
+    const isDeepLinkEligible =
+      billingStatus.source === "trial" ||
+      (billingStatus.source === "free" && billingStatus.plan === "free");
 
-      if (autoCheckoutStartedForKeyRef.current === intentKey) {
-        return;
-      }
-      autoCheckoutStartedForKeyRef.current = intentKey;
+    if (!isDeepLinkEligible) {
+      onCheckoutIntentConsumed?.();
+      return;
+    }
 
-      try {
-        await (onStartAutoPlanChange ?? onStartPlanChange)(
-          checkoutIntent.plan,
-          checkoutIntent.interval,
-        );
-        if (!cancelled) {
-          onCheckoutIntentConsumed?.();
-        }
-      } catch {
-        if (!cancelled) {
-          onCheckoutIntentConsumed?.();
-        }
-      }
-    };
+    if (!billingStatus.billingConfigured || !billingStatus.canManageBilling) {
+      toast.error(
+        !billingStatus.canManageBilling
+          ? "Only organization owners can start checkout."
+          : "Checkout isn't available in this environment.",
+      );
+      onCheckoutIntentConsumed?.();
+      return;
+    }
 
-    void run();
+    if (deepLinkHandledForKeyRef.current === intentKey) {
+      return;
+    }
+    deepLinkHandledForKeyRef.current = intentKey;
 
-    return () => {
-      cancelled = true;
-    };
+    const intentGuard = guardCheckoutIntentAgainstBillingStatus(
+      billingStatus,
+      checkoutIntent.plan,
+    );
+    if (!intentGuard.proceed) {
+      const currentEntry = planCatalog.plans[intentGuard.currentPlan];
+      const requestedEntry = planCatalog.plans[checkoutIntent.plan];
+      setCheckoutPlanNotice({
+        reason: intentGuard.reason,
+        currentDisplayName:
+          currentEntry?.displayName ?? intentGuard.currentPlan,
+        requestedDisplayName:
+          requestedEntry?.displayName ?? checkoutIntent.plan,
+      });
+      onCheckoutIntentConsumed?.();
+      return;
+    }
+
+    // The deep link pre-selects the plan; the buyer still confirms it (and
+    // may switch interval) before anything reaches Stripe.
+    setBillingInterval(checkoutIntent.interval);
+    setPendingPlanChange({
+      plan: checkoutIntent.plan,
+      interval: checkoutIntent.interval,
+    });
+    track("plans_upgrade_confirm_shown", {
+      location: "billing_deep_link",
+      organization_id: organizationId,
+      target_plan: checkoutIntent.plan,
+      billing_interval: checkoutIntent.interval,
+      current_plan: billingStatus.plan ?? "free",
+    });
+    onCheckoutIntentConsumed?.();
   }, [
     billingStatus,
     checkoutIntent,
     isLoadingBilling,
     isLoadingPlanCatalog,
     onCheckoutIntentConsumed,
-    onStartAutoPlanChange,
-    onStartPlanChange,
+    organizationId,
     planCatalog,
     showPlanBilling,
   ]);
@@ -1212,7 +1189,7 @@ export function OrganizationBillingSection({
               data-testid="billing-deep-link-redirect"
             >
               <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-              Redirecting to checkout…
+              Loading your selected plan…
             </div>
           ) : null}
           <div className="space-y-1.5" ref={plansHeadingRef}>
