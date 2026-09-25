@@ -1,3 +1,4 @@
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { useMemo } from "react";
 import { useMutation, useQuery, useConvexAuth } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -111,6 +112,11 @@ export interface ProjectEnvironmentView {
    * the two could not tell "pinned to X" from "inheriting X".
    */
   modelId?: string;
+  /**
+   * The saved selection behind the `modelId` override (whose credentials run
+   * it). Absent ⇒ the override reads as a legacy id.
+   */
+  modelSelection?: ModelSelection;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
@@ -324,6 +330,11 @@ export function useEnsureAdhocEnvironments(): (args: {
     computerEnvironmentId?: string;
     /** Explicit model override. Omit to inherit the client's model. */
     modelId?: string;
+    /**
+     * Saved selection behind `modelId`. Sent only when the backend advertises
+     * the `modelSelections` capability.
+     */
+    modelSelection?: ModelSelection;
   }>;
 }) => Promise<
   Array<{ environment: ProjectEnvironmentView; created?: boolean }>

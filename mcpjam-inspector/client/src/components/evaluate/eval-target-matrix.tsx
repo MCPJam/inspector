@@ -12,6 +12,7 @@ import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   modelSelectionForHost,
+  syncExplicitModelSelections,
   type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
 
@@ -419,12 +420,19 @@ export function EvalModelChoices({
     const remaining = value.explicitModelIds.filter(
       (id) => inherited || id !== key,
     );
-    onChange({
-      includeClientDefaults: inherited ? false : value.includeClientDefaults,
-      explicitModelIds: model
-        ? [...new Set([...remaining, String(model.id)])]
-        : remaining,
-    });
+    onChange(
+      syncExplicitModelSelections(
+        {
+          includeClientDefaults: inherited
+            ? false
+            : value.includeClientDefaults,
+          explicitModelIds: model
+            ? [...new Set([...remaining, String(model.id)])]
+            : remaining,
+        },
+        { models: availableModels, previous: value, picked: model },
+      ),
+    );
   };
   return (
     <div data-testid={testId} className="space-y-1">
@@ -489,10 +497,15 @@ export function EvalModelChoices({
         disabled={disabled}
         analyticsLocation="eval_suite"
         onModelChange={(model) =>
-          onChange({
-            ...value,
-            explicitModelIds: [...value.explicitModelIds, String(model.id)],
-          })
+          onChange(
+            syncExplicitModelSelections(
+              {
+                ...value,
+                explicitModelIds: [...value.explicitModelIds, String(model.id)],
+              },
+              { models: availableModels, previous: value, picked: model },
+            ),
+          )
         }
         trigger={
           <Button

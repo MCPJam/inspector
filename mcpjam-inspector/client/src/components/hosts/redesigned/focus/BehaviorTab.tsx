@@ -42,6 +42,10 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
+import {
+  findModelForStoredChoice,
+  selectionBesideLegacyId,
+} from "@/components/chat-v2/shared/model-selection";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -161,6 +165,12 @@ function ImagePolicyRow({
   );
 }
 
+/**
+ * A host's saved model feeds evals and swarms as well as the Playground, so it
+ * is saved with the automated purposes' default: no silent provider fallback.
+ */
+const HOST_MODEL_SELECTION_PURPOSE = "evalTarget" as const;
+
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
@@ -189,7 +199,13 @@ export function BehaviorTab({
   // OpenRouter are selectable here too.
   const { availableModels } = useAvailableModels();
   const currentModel = useMemo<ModelDefinition>(() => {
-    const match = availableModels.find((m) => String(m.id) === draft.modelId);
+    // With a saved selection, the row it names (an org OpenRouter row and the
+    // hosted row of the same id are different rows); else the legacy id.
+    const match = findModelForStoredChoice(
+      { modelId: draft.modelId, selection: draft.modelSelection },
+      availableModels,
+      undefined,
+    );
     if (match) return match;
     // Stale or org-revoked id (or an empty/still-loading draft): keep the
     // raw id visible in the trigger instead of silently coercing to an
@@ -199,7 +215,7 @@ export function BehaviorTab({
       name: draft.modelId || "Select model",
       provider: "" as ModelDefinition["provider"],
     };
-  }, [availableModels, draft.modelId]);
+  }, [availableModels, draft.modelId, draft.modelSelection]);
 
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
@@ -311,7 +327,17 @@ export function BehaviorTab({
               <ModelSelector
                 currentModel={currentModel}
                 availableModels={availableModels}
-                onModelChange={(model) => update({ modelId: String(model.id) })}
+                onModelChange={(model) =>
+                  update({
+                    modelId: String(model.id),
+                    // Always written with the id: a selection left over from
+                    // the previous model would disagree with it.
+                    modelSelection: selectionBesideLegacyId(
+                      model,
+                      HOST_MODEL_SELECTION_PURPOSE,
+                    ),
+                  })
+                }
                 disabled={readOnly || !modelState.enforced}
                 align="end"
                 analyticsLocation="client_builder"

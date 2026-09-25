@@ -22,6 +22,25 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 export function useModelMatrixCapability(
   projectId: string | null | undefined
 ): boolean | undefined {
+  return useEnvironmentCapability(projectId, "modelMatrix");
+}
+
+/**
+ * Same probe for `getCapabilities.modelSelections`: whether this deployment
+ * stores a saved model selection (`modelSelection`) beside an environment's
+ * `modelId` override. Same tri-state; anything but `true` means the composer
+ * must mint with the legacy `modelId` alone.
+ */
+export function useModelSelectionsCapability(
+  projectId: string | null | undefined
+): boolean | undefined {
+  return useEnvironmentCapability(projectId, "modelSelections");
+}
+
+function useEnvironmentCapability(
+  projectId: string | null | undefined,
+  flag: "modelMatrix" | "modelSelections"
+): boolean | undefined {
   // Named `import { useConvex }` and even `ConvexReact.useConvex` throw
   // when a test mock omits the export (vitest: "No useConvex export is
   // defined"). Catch that so opted-out composers stay "no matrix".
@@ -50,12 +69,12 @@ export function useModelMatrixCapability(
         projectId: normalized,
       } as never)
       .then((caps: unknown) => {
-        const modelMatrix =
+        const advertised =
           caps !== null &&
           typeof caps === "object" &&
-          "modelMatrix" in caps &&
-          (caps as { modelMatrix?: unknown }).modelMatrix === true;
-        if (!cancelled) setState(modelMatrix);
+          flag in caps &&
+          (caps as Record<string, unknown>)[flag] === true;
+        if (!cancelled) setState(advertised);
       })
       .catch(() => {
         // Every failure means the same thing to a caller: do not offer the
@@ -67,7 +86,7 @@ export function useModelMatrixCapability(
     return () => {
       cancelled = true;
     };
-  }, [convex, projectId]);
+  }, [convex, projectId, flag]);
 
   return state;
 }

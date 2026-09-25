@@ -158,6 +158,13 @@ describe("ModelsPill", () => {
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: false,
       explicitModelIds: ["google/gemini-2.5-flash"],
+      // The picked row's saved selection rides beside the id.
+      explicitModelSelections: {
+        "google/gemini-2.5-flash": expect.objectContaining({
+          modelId: "google/gemini-2.5-flash",
+          source: "hosted",
+        }),
+      },
     });
   });
 
@@ -213,6 +220,13 @@ describe("ModelsPill", () => {
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: false,
       explicitModelIds: ["google/gemini-2.5-flash"],
+      // The picked row's saved selection rides beside the id.
+      explicitModelSelections: {
+        "google/gemini-2.5-flash": expect.objectContaining({
+          modelId: "google/gemini-2.5-flash",
+          source: "hosted",
+        }),
+      },
     });
   });
 });
