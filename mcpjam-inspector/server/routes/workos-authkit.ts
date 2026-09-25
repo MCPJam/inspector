@@ -215,7 +215,10 @@ function setSessionCookies(c: Context, session: StoredWorkosSession) {
     });
   }
 
-  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "true", {
+  // authkit-js (>= 0.20) only trusts "1" or a value naming the client id;
+  // any other value makes it skip the on-load refresh, so every reload
+  // lands signed out.
+  setCookie(c, WORKOS_HAS_SESSION_COOKIE, "1", {
     secure: !isLocalHttpUrl(c.req.url),
     sameSite: "Lax",
     path: "/",

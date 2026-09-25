@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/cli",
-  "version": "5.11.1",
+  "version": "5.11.3",
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "type": "module",
   "main": "dist/index.js",
@@ -20,7 +20,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@mcpjam/sdk": "^8.15.0",
+    "@mcpjam/sdk": "^8.16.1",
     "@modelcontextprotocol/server": "2.0.0",
     "commander": "^14.0.3",
     "posthog-node": "^5.52.4",
@@ -32,7 +32,7 @@
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "tsup": "^8.3.5",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.15",
     "typescript": "^5.8.3"
   },
   "keywords": [
