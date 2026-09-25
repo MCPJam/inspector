@@ -70,6 +70,19 @@ const BODY_HEADERS = [
 ];
 
 /**
+ * Credentials Fetch itself removes when a redirect crosses origins. Following
+ * redirects here (`redirect: "manual"` underneath) takes that job away from
+ * the underlying fetch, so it is done here too — for headers that are not
+ * the stored credential's, e.g. an OAuth or XAA bearer set on the same
+ * connection. Once removed they stay removed, as in Fetch.
+ */
+const CROSS_ORIGIN_CREDENTIAL_HEADERS = [
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+];
+
+/**
  * Wrap a transport fetch so the binding's headers only ever reach a bound
  * origin. A binding with no header names is a no-op wrapper.
  *
@@ -108,8 +121,8 @@ export function bindCredentialHeaders(
     let url = fromRequest
       ? fromRequest.url
       : typeof input === "string"
-      ? input
-      : input.toString();
+        ? input
+        : input.toString();
     let headers = new Headers(init?.headers ?? fromRequest?.headers);
     let method = (init?.method ?? fromRequest?.method ?? "GET").toUpperCase();
     let body = init?.body;
@@ -137,6 +150,13 @@ export function bindCredentialHeaders(
       const nextUrl = new URL(location, url).toString();
       // The redirect's own body is never read; release its socket.
       await response.body?.cancel().catch(() => undefined);
+      const nextOrigin = credentialOrigin(nextUrl);
+      if (nextOrigin === null || nextOrigin !== credentialOrigin(url)) {
+        headers = new Headers(headers);
+        for (const name of CROSS_ORIGIN_CREDENTIAL_HEADERS) {
+          headers.delete(name);
+        }
+      }
       // Fetch's method rewrite: 301/302 rewrite POST, 303 rewrites everything
       // except GET/HEAD, 307/308 rewrite nothing.
       if (

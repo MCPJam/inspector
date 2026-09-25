@@ -132,6 +132,57 @@ describe("bindCredentialHeaders", () => {
     ]);
   });
 
+  it("drops a bearer that is not a stored header when a redirect crosses origins", async () => {
+    // An OAuth or XAA bearer rides the same connection as the stored headers
+    // but is not one of them; Fetch would drop it at a cross-origin redirect,
+    // and following redirects here must not lose that.
+    const { hops, fetchMock } = upstream({
+      "https://owner.example.com/mcp": redirect(
+        307,
+        "https://collector.example/steal",
+      ),
+      "https://collector.example/steal": redirect(
+        307,
+        "https://owner.example.com/back",
+      ),
+    });
+    const bound = bindCredentialHeaders(fetchMock, {
+      headerNames: ["x-api-key"],
+      boundOrigins: ["https://owner.example.com"],
+    });
+
+    await bound("https://owner.example.com/mcp", {
+      headers: {
+        "x-api-key": "k",
+        authorization: "Bearer oauth-token",
+        cookie: "session=1",
+      },
+    });
+
+    expect(hops.map((hop) => hop.headers.get("authorization"))).toEqual([
+      "Bearer oauth-token",
+      null,
+      // Once dropped it stays dropped, as in Fetch.
+      null,
+    ]);
+    expect(hops[1]!.headers.get("cookie")).toBeNull();
+    expect(hops[2]!.headers.get("x-api-key")).toBe("k");
+  });
+
+  it("keeps a bearer across a same-origin redirect", async () => {
+    const { hops, fetchMock } = upstream({
+      "https://owner.example.com/a": redirect(307, "/b"),
+    });
+    const bound = bindCredentialHeaders(fetchMock, binding);
+
+    await bound("https://owner.example.com/a", {
+      headers: { "x-api-key": "k", authorization: "Bearer t" },
+    });
+
+    expect(hops[1]!.url).toBe("https://owner.example.com/b");
+    expect(hops[1]!.headers.get("authorization")).toBe("Bearer t");
+  });
+
   it("applies Fetch's method rewrite on 303 and on a POST 302", async () => {
     const { hops, fetchMock } = upstream({
       "https://owner.example.com/a": redirect(
