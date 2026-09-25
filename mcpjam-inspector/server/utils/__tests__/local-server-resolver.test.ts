@@ -325,7 +325,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       headers?: Record<string, string>;
       hasHeaders?: boolean;
-      secretsBoundOrigin?: string;
     };
     oauthAccessToken: string | null;
   }) {
@@ -619,7 +618,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://header.example.com/mcp",
-            secretsBoundOrigin: "https://header.example.com",
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
             hasHeaders: true,
@@ -654,7 +652,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hidden-header.example.com/mcp",
-            secretsBoundOrigin: "https://hidden-header.example.com",
             useOAuth: false,
             headers: {},
             hasHeaders: true,
@@ -671,13 +668,15 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           purpose: "runtime",
           projectId: "proj-1",
           serverId: "srv-hidden-headers",
+          // Where the headers are about to go; the backend decides.
+          targetUrl: "https://hidden-header.example.com/mcp",
         });
         return new Response(
           JSON.stringify({
             success: true,
             env: null,
             headers: { Authorization: "Bearer revealed-token" },
-            secretsBoundOrigin: "https://hidden-header.example.com",
+            boundOrigins: ["https://hidden-header.example.com"],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -697,6 +696,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.requestInit.headers).toMatchObject({
       Authorization: "Bearer revealed-token",
     });
+    // Revealed headers ride a transport that holds them to the bound origin.
+    expect(config.baseFetch).toEqual(expect.any(Function));
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -1026,7 +1027,6 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
                 serverConfig: {
                   transportType: "http",
                   url: "https://xaa.example.com/mcp",
-                  secretsBoundOrigin: "https://xaa.example.com",
                   headers: {},
                   useOAuth: false,
                   useXaa: true,

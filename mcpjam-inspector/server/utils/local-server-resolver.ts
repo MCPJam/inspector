@@ -52,9 +52,10 @@ import {
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
 import {
-  assertRecordedSecretsOriginMatches,
-  assertSecretsOriginMatches,
-} from "./secret-origin-binding.js";
+  bindCredentialHeaders,
+  type CredentialHeaderBinding,
+} from "./credential-header-binding.js";
+import { hostedMcpBaseFetch } from "./hosted-mcp-base-fetch.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -90,7 +91,6 @@ type LocalAuthorizeServerConfig =
       httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
-      secretsBoundOrigin?: string;
       timeout?: number;
       clientCapabilities?: unknown;
       useOAuth?: boolean;
@@ -142,6 +142,12 @@ type LocalAuthorizeBatchSuccess = {
   oauthAccessToken?: string | null;
   oauthConnections?: AuthorizedOAuthConnection[];
   internalLogContext?: InternalLogContext;
+  /**
+   * Set locally (never by the backend) once stored headers were revealed: the
+   * header names and the origins the backend bound them to. The transport
+   * attaches those headers to bound origins only.
+   */
+  credentialBinding?: CredentialHeaderBinding;
 };
 
 type LocalAuthorizeBatchFailure = {
@@ -793,6 +799,19 @@ export function toMCPServerConfig(
     url,
     requestInit: { headers },
   };
+  // The transport rule (credential unification §3.7): revealed stored
+  // headers ride only on requests — and redirect hops — whose origin the
+  // backend bound them to. A hop anywhere else is dialed without them.
+  //
+  // Over `hostedMcpBaseFetch()` — bare `fetch` outside hosted mode, the pinned
+  // egress-guarded transport inside it — so setting a per-server fetch here
+  // can never trade away the MJ-001 guard for the transport rule.
+  if (authResult.credentialBinding) {
+    http.baseFetch = bindCredentialHeaders(
+      hostedMcpBaseFetch(),
+      authResult.credentialBinding
+    );
+  }
   // Plugin-declared transports are authoritative: `sse` skips the Streamable
   // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
   // without a declaration keep the SDK's URL-heuristic + fallback behavior.
@@ -942,17 +961,9 @@ async function applyLocalRuntimeResolution<
     (result.serverConfig.transportType === "http" &&
       result.serverConfig.hasHeaders === true &&
       !hasNonEmptyStringRecord(result.serverConfig.headers));
-  if (
-    result.serverConfig.transportType === "http" &&
-    result.serverConfig.hasHeaders === true
-  ) {
-    assertSecretsOriginMatches({
-      boundOrigin: result.serverConfig.secretsBoundOrigin,
-      targetUrl: result.serverConfig.url,
-      serverName: args.serverDisplayName ?? args.managerKey,
-    });
-  }
-
+  // No client-side origin check: the reveal below sends the URL this
+  // connection will dial, and the backend refuses it when the stored
+  // credentials were saved for another origin.
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
       expectedTargetUrl:
@@ -982,6 +993,14 @@ async function applyLocalRuntimeResolution<
                 ...(secrets.headers ?? {}),
               },
             },
+      ...(result.serverConfig.transportType === "http" && secrets.headers
+        ? {
+            credentialBinding: {
+              headerNames: Object.keys(secrets.headers),
+              boundOrigins: secrets.boundOrigins ?? [],
+            },
+          }
+        : {}),
     };
   }
 
@@ -1399,13 +1418,10 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
-    if (registrationMode !== "cimd") {
-      assertRecordedSecretsOriginMatches({
-        boundOrigin: sc.secretsBoundOrigin,
-        targetUrl: sc.url,
-        serverName: options?.serverDisplayName ?? serverId,
-      });
-    }
+    // No client-side origin check for a preregistered/DCR secret: the mint
+    // resolves it with this server's URL as the declared target, and the
+    // backend refuses a secret saved for another origin (or registered with
+    // another authorization server).
     const xaaFailureTarget = {
       serverId,
       serverName: options?.serverDisplayName ?? serverId,

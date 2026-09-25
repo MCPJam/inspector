@@ -3,7 +3,7 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
-import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
+import { boundOriginsFromReveal } from "./credential-header-binding.js";
 import { logger } from "./logger.js";
 
 // One-shot guard so a misconfigured deployment logs once, not per request.
@@ -12,6 +12,39 @@ let warnedMissingServiceTokenForIp = false;
 export interface ServerSecretsResult {
   env: Record<string, string> | null;
   headers: Record<string, string> | null;
+  /**
+   * The origins the backend bound these credentials to. The transport attaches
+   * the revealed headers ONLY to requests whose origin is in this list
+   * (`bindCredentialHeaders`) — the decision itself is the backend's.
+   */
+  boundOrigins: string[];
+}
+
+/**
+ * The backend's refusal details for a credential it would not release — the
+ * shape `/web/server/reveal-secrets` and its siblings answer with. Forwarded
+ * onto the WebRouteError so the client can say why and open the right form.
+ */
+function credentialRefusalDetails(
+  body: any
+): Record<string, unknown> | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const details: Record<string, unknown> = {};
+  if (body.secretOriginMismatch === true) {
+    details.secretOriginMismatch = true;
+    details.boundOrigin =
+      typeof body.boundOrigin === "string" ? body.boundOrigin : null;
+    details.targetOrigin =
+      typeof body.targetOrigin === "string" ? body.targetOrigin : null;
+  }
+  if (body.exportDenied === true) {
+    details.exportDenied = true;
+    if (typeof body.policy === "string") details.policy = body.policy;
+  }
+  if (typeof body.code === "string" && !isErrorCode(body.code)) {
+    details.credentialRefusal = body.code;
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
 }
 
 function parseRecord(value: unknown): Record<string, string> | null {
@@ -165,7 +198,8 @@ export async function postToConvexAuthorized(args: {
     throw new WebRouteError(
       response.ok ? 500 : response.status,
       statusToErrorCode(response.ok ? 500 : response.status),
-      message
+      message,
+      credentialRefusalDetails(body)
     );
   }
   return body;
@@ -254,6 +288,11 @@ export async function fetchRuntimeServerSecrets(args: {
         purpose: "runtime",
         projectId: args.projectId,
         serverId: args.serverId,
+        // The URL this connection is about to dial. The backend refuses the
+        // reveal when it is not an origin the credentials were saved for.
+        ...(typeof args.expectedTargetUrl === "string"
+          ? { targetUrl: args.expectedTargetUrl }
+          : {}),
         ...(args.accessScope ? { accessScope: args.accessScope } : {}),
         ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
         ...(typeof args.accessVersion === "number"
@@ -295,7 +334,12 @@ export async function fetchRuntimeServerSecrets(args: {
         : typeof body?.error === "string"
         ? body.error
         : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(response.status, code, message);
+    throw new WebRouteError(
+      response.status,
+      code,
+      message,
+      credentialRefusalDetails(body)
+    );
   }
 
   if (!body?.success) {
@@ -306,17 +350,13 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
 
-  const revealedHeaders = parseRecord(body.headers);
-  if (args.expectedTargetUrl !== null && revealedHeaders) {
-    assertSecretsOriginMatches({
-      boundOrigin: body.secretsBoundOrigin,
-      targetUrl: args.expectedTargetUrl,
-      serverName: args.serverId,
-    });
-  }
+  // No origin comparison here: the backend decided, and refused above if the
+  // target is not where the credentials were saved for. What comes back is
+  // where they MAY go, for the transport rule.
   return {
     env: parseRecord(body.env),
-    headers: revealedHeaders,
+    headers: parseRecord(body.headers),
+    boundOrigins: boundOriginsFromReveal(body),
   };
 }
 
@@ -348,11 +388,20 @@ export async function fetchServerClientSecret(args: {
   serverId: string;
   projectId: string;
   clientIp?: string | null;
+  /**
+   * The resource the secret is about to be used for. The backend refuses the
+   * reveal when it is not the origin the secret was saved for.
+   */
+  targetUrl?: string;
 }): Promise<ServerClientSecretResult> {
   const body = await postToConvexAuthorized({
     path: "/web/xaa/server/reveal-secret",
     bearerToken: args.bearerToken,
-    body: { serverId: args.serverId, projectId: args.projectId },
+    body: {
+      serverId: args.serverId,
+      projectId: args.projectId,
+      ...(args.targetUrl ? { targetUrl: args.targetUrl } : {}),
+    },
     serviceName: "secret-reveal service",
     clientIp: args.clientIp,
   });

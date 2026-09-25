@@ -161,18 +161,6 @@ describe("buildXaaMintArgs", () => {
     expect(args.resource).toBe("https://mcp.example.com/mcp");
   });
 
-  it("threads the stored credential binding to the mint", () => {
-    const args = buildXaaMintArgs({
-      ...base,
-      hostedMode: true,
-      serverConfig: {
-        url: "https://mcp.example.com/mcp",
-        secretsBoundOrigin: "https://mcp.example.com",
-      },
-    });
-    expect(args.secretsBoundOrigin).toBe("https://mcp.example.com");
-  });
-
   it("joins scopes and defaults the mock-login identity", () => {
     const args = buildXaaMintArgs({
       ...base,

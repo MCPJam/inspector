@@ -32,6 +32,7 @@ vi.mock("@mcpjam/sdk", async (importOriginal) => {
 });
 
 import { mintXaaAccessToken } from "../xaa-mint.js";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 const baseArgs = {
   httpsOnly: true,
@@ -78,7 +79,6 @@ describe("mintXaaAccessToken Connect client identity", () => {
     await mintXaaAccessToken({
       ...baseArgs,
       registrationMode: "preregistered",
-      secretsBoundOrigin: "https://mcp.example.com",
       resolveServerSecret,
     });
 
@@ -94,7 +94,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
     );
   });
 
-  it("does not send a stored secret that has no recorded binding", async () => {
+  it("declares the resource the stored secret is about to be spent for", async () => {
     const resolveServerSecret = vi.fn().mockResolvedValue({
       serverUrl: baseArgs.resource,
       xaaAuthzIssuer: baseArgs.explicitIssuer,
@@ -102,32 +102,37 @@ describe("mintXaaAccessToken Connect client identity", () => {
       clientSecret: "secret-1",
     });
 
-    await expect(
-      mintXaaAccessToken({
-        ...baseArgs,
-        registrationMode: "preregistered",
-        resolveServerSecret,
-      })
-    ).rejects.toMatchObject({
-      status: 403,
-      details: expect.objectContaining({ secretOriginMismatch: true }),
+    await mintXaaAccessToken({
+      ...baseArgs,
+      registrationMode: "preregistered",
+      resolveServerSecret,
     });
-    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+
+    expect(resolveServerSecret).toHaveBeenCalledWith(
+      expect.objectContaining({ targetUrl: baseArgs.resource })
+    );
   });
 
-  it("does not send a stored secret bound to another origin", async () => {
-    const resolveServerSecret = vi.fn().mockResolvedValue({
-      serverUrl: baseArgs.resource,
-      xaaAuthzIssuer: baseArgs.explicitIssuer,
-      clientId: "client-1",
-      clientSecret: "secret-1",
-    });
+  it("does not send a stored secret the backend refused for this origin", async () => {
+    // The backend is the one deciding: a secret saved for another origin is
+    // refused at the reveal, and the refusal reaches the caller unchanged.
+    const resolveServerSecret = vi.fn().mockRejectedValue(
+      new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Stored credentials were saved for another origin.",
+        {
+          secretOriginMismatch: true,
+          boundOrigin: "https://owner.example.com",
+          targetOrigin: "https://mcp.example.com",
+        }
+      )
+    );
 
     await expect(
       mintXaaAccessToken({
         ...baseArgs,
         registrationMode: "preregistered",
-        secretsBoundOrigin: "https://owner.example.com",
         resolveServerSecret,
       })
     ).rejects.toMatchObject({

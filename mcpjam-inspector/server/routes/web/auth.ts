@@ -86,9 +86,9 @@ import {
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
 import {
-  assertRecordedSecretsOriginMatches,
-  assertSecretsOriginMatches,
-} from "../../utils/secret-origin-binding.js";
+  bindCredentialHeaders,
+  type CredentialHeaderBinding,
+} from "../../utils/credential-header-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -432,7 +432,6 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
-    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -500,7 +499,13 @@ export type ConvexOAuthUnavailableReason =
    * The server's URL was repointed, so the backend refuses to hand a
    * credential bound to the old destination to the new one.
    */
-  | "credential_origin_mismatch";
+  | "credential_origin_mismatch"
+  /**
+   * The organization keeps saved credentials inside MCPJam-hosted
+   * connections, and this connect would deliver the token elsewhere. The
+   * token is intact; authorizing again does not change the policy.
+   */
+  | "credential_export_denied";
 
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
@@ -1659,6 +1664,20 @@ export async function createAuthorizedManager(
             `Server "${displayServerName}" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.`,
             { oauthRequired: true, ...errorDetails },
           );
+        // The organization's policy keeps this token inside hosted
+        // connections. Sending the user to authorize again would mint a token
+        // the same policy withholds — only an organization admin can change it.
+        case "credential_export_denied":
+          throw new WebRouteError(
+            403,
+            ErrorCode.FORBIDDEN,
+            `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+            {
+              exportDenied: true,
+              policy: "credentialExportPolicy",
+              ...errorDetails,
+            },
+          );
         // The credential is intact; the authorization server never answered.
         // Authorizing again means talking to the same unreachable host, so
         // saying "reconnect" would send the user in a circle.
@@ -1763,6 +1782,11 @@ export async function createAuthorizedManager(
       pluginLeaseReleases.pop()!();
     }
   };
+
+  // Revealed stored headers, per server: which header names carry them and
+  // the origins the backend bound them to (filled in PASS 2, applied to the
+  // per-server transport below).
+  const credentialBindings = new Map<string, CredentialHeaderBinding>();
 
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
@@ -1954,18 +1978,9 @@ export async function createAuthorizedManager(
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
-      if (
-        useXaa &&
-        resolveXaaConnectRegistrationMode(
-          auth.serverConfig.registrationMode,
-        ) !== "cimd"
-      ) {
-        assertRecordedSecretsOriginMatches({
-          boundOrigin: auth.serverConfig.secretsBoundOrigin,
-          targetUrl: auth.serverConfig.url,
-          serverName: displayServerName,
-        });
-      }
+      // (No client-side origin check for a preregistered/DCR secret: the mint
+      // resolves it with this server's URL as the declared target, and the
+      // backend refuses a secret saved for another origin.)
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -2092,54 +2107,54 @@ export async function createAuthorizedManager(
         };
       }
 
-      // Reject an already-stale authorize snapshot before decrypting. The reveal
-      // helper also checks the binding returned with the values: the row may
-      // change between authorize and reveal.
-      if (auth.serverConfig.hasHeaders === true) {
-        assertSecretsOriginMatches({
-          boundOrigin: auth.serverConfig.secretsBoundOrigin,
-          targetUrl: auth.serverConfig.url,
-          serverName: displayServerName,
-        });
-      }
-
-      const authForConfig =
+      // The reveal sends the URL this connection will dial; the backend
+      // refuses it when the stored headers were saved for another origin, and
+      // answers with the origins they are bound to — which the transport then
+      // holds them to, hop by hop (see `credentialBindings` below).
+      const revealed =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
-          ? {
-              ...auth,
-              serverConfig: {
-                ...auth.serverConfig,
-                headers: {
-                  ...(auth.serverConfig.headers ?? {}),
-                  ...((
-                    await fetchRuntimeServerSecrets({
-                      expectedTargetUrl: auth.serverConfig.url,
-                      bearerToken,
-                      projectId,
-                      serverId,
-                      accessScope: options?.accessScope,
-                      scenarioId: options?.scenarioId,
-                      accessVersion: options?.accessVersion,
-                      // When the caller authed via WorkOS API key, secret
-                      // reveal must use the same delegated-identity exchange
-                      // as `authorizeBatch` — otherwise Convex would see the
-                      // service token without an acting-as user.
-                      workosApiKeyActingAs:
-                        caller.authMethod === "workos_api_key" &&
-                        caller.workosUserId &&
-                        caller.mcpjamOrganizationId
-                          ? {
-                              workosUserId: caller.workosUserId,
-                              mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                            }
-                          : undefined,
-                    })
-                  ).headers ?? {}),
-                },
+          ? await fetchRuntimeServerSecrets({
+              expectedTargetUrl: auth.serverConfig.url,
+              bearerToken,
+              projectId,
+              serverId,
+              accessScope: options?.accessScope,
+              scenarioId: options?.scenarioId,
+              accessVersion: options?.accessVersion,
+              // When the caller authed via WorkOS API key, secret
+              // reveal must use the same delegated-identity exchange
+              // as `authorizeBatch` — otherwise Convex would see the
+              // service token without an acting-as user.
+              workosApiKeyActingAs:
+                caller.authMethod === "workos_api_key" &&
+                caller.workosUserId &&
+                caller.mcpjamOrganizationId
+                  ? {
+                      workosUserId: caller.workosUserId,
+                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                    }
+                  : undefined,
+            })
+          : null;
+      if (revealed?.headers && auth.serverConfig.transportType === "http") {
+        credentialBindings.set(serverId, {
+          headerNames: Object.keys(revealed.headers),
+          boundOrigins: revealed.boundOrigins ?? [],
+        });
+      }
+      const authForConfig = revealed
+        ? {
+            ...auth,
+            serverConfig: {
+              ...auth.serverConfig,
+              headers: {
+                ...(auth.serverConfig.headers ?? {}),
+                ...(revealed.headers ?? {}),
               },
-            }
-          : auth;
+            },
+          }
+        : auth;
 
       // Spec (MCP enterprise-managed authorization): a client whose access is
       // enterprise-managed MUST advertise the extension in initialize. Merged
@@ -2235,7 +2250,18 @@ export async function createAuthorizedManager(
         releasePluginLeases();
         throw error;
       }
-      return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
+      // Innermost-last: the transport rule sees every redirect hop as its own
+      // call, so each hop is observed and egress-guarded before the stored
+      // headers are (or are not) attached to it.
+      const binding = credentialBindings.get(serverId);
+      const observed = observeConnectionFetch(baseFetch);
+      return [
+        id,
+        {
+          ...config,
+          baseFetch: binding ? bindCredentialHeaders(observed, binding) : observed,
+        },
+      ];
     }),
 
   );

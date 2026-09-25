@@ -23,7 +23,6 @@ import {
   fetchXaaDcrAuthorizedTarget,
   type XaaDcrRegistration,
 } from "./xaa-dcr.js";
-import { assertSecretsOriginMatches } from "../utils/secret-origin-binding.js";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -87,6 +86,11 @@ type ResolveServerSecretFn = (args: {
   projectId: string;
   bearerToken: string;
   clientIp?: string | null;
+  /**
+   * The resource the secret is about to be spent for. The backend refuses the
+   * reveal when the secret was saved for another origin.
+   */
+  targetUrl?: string;
 }) => Promise<ServerClientSecretResult>;
 
 // RFC 9728: ask the resource (the MCP server URL) which authorization server
@@ -332,6 +336,8 @@ export async function resolveServerTarget(deps: {
   projectId?: string;
   bearerToken: string;
   clientIp?: string | null;
+  /** Forwarded to the reveal as the declared target (see ResolveServerSecretFn). */
+  targetUrl?: string;
 }): Promise<ResolvedServerTarget> {
   if (!deps.resolveServerSecret) {
     throw new WebRouteError(
@@ -353,6 +359,7 @@ export async function resolveServerTarget(deps: {
     projectId: deps.projectId,
     bearerToken: deps.bearerToken,
     clientIp: deps.clientIp,
+    ...(deps.targetUrl ? { targetUrl: deps.targetUrl } : {}),
   });
 
   const target = await resolveAuthorizedServerTarget({
@@ -413,7 +420,6 @@ export interface XaaMintServerConfig {
   xaaEmail?: string;
   registrationMode?: RegistrationMode;
   xaaClientAuth?: XaaClientAuthMethod;
-  secretsBoundOrigin?: string;
 }
 
 type EnsureXaaDcrRegistrationFn = typeof ensureXaaDcrRegistration;
@@ -585,7 +591,6 @@ export function buildXaaMintArgs(args: {
     allowPathScopedIssuer: sc.xaaAllowPathScopedIssuer,
     registrationMode: sc.registrationMode,
     xaaClientAuth: sc.xaaClientAuth,
-    secretsBoundOrigin: sc.secretsBoundOrigin,
     confidentialCimdProvider: args.confidentialCimdProvider,
     scope: sc.oauthScopes?.join(" ") || undefined,
     // Mock-login identity: stored override if set, else the XAA IdP mock-login
@@ -616,11 +621,6 @@ export async function mintXaaAccessToken(args: {
   allowPathScopedIssuer?: boolean;
   registrationMode?: RegistrationMode;
   xaaClientAuth?: XaaClientAuthMethod;
-  /**
-   * MJ-003 binding from authorize. Checked when a stored preregistered secret
-   * is resolved; absent is a refusal only if a secret actually comes back.
-   */
-  secretsBoundOrigin?: string | null;
   confidentialCimdProvider?: ConfidentialCimdProvider;
   scope?: string;
   /** Mock-login subject — already resolved (override or signed-in user). */
@@ -747,6 +747,12 @@ export async function mintXaaAccessToken(args: {
       serverId: args.serverId,
       projectId: args.projectId,
       bearerToken: args.bearerToken,
+      // MJ-003 at spend time, decided by the backend: the reveal names the
+      // resource the secret is for, and a secret saved for another origin is
+      // refused there (a public client stores no secret and is never bound).
+      // DCR needs no twin of this: a stored registration is reused only when
+      // its fingerprint matches the current resource URL.
+      ...(args.resource ? { targetUrl: args.resource } : {}),
     });
     if (!target.clientId) {
       throw new WebRouteError(
@@ -754,17 +760,6 @@ export async function mintXaaAccessToken(args: {
         ErrorCode.VALIDATION_ERROR,
         "Client ID is required for pre-registered XAA Connect"
       );
-    }
-    // MJ-003 at spend time. The connect gate only refuses a recorded binding
-    // that points elsewhere, because a public client stores no secret and is
-    // never bound. Once a stored secret comes back, it needs a matching one.
-    // DCR needs no twin of this: a stored registration is reused only when its
-    // fingerprint matches the current resource URL.
-    if (target.clientSecret) {
-      assertSecretsOriginMatches({
-        boundOrigin: args.secretsBoundOrigin,
-        targetUrl: target.resource ?? args.resource,
-      });
     }
     clientId = target.clientId;
     clientSecret = target.clientSecret;
