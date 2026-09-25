@@ -611,19 +611,25 @@ export function isLegacySelection(
  * the org provider id, the local `providerKey[:customProviderName]`, or `""`
  * (hosted / legacy). Two rows for the same model id through different
  * connections get different keys, so pickers never collapse them.
+ *
+ * Every variable part is `encodeURIComponent`-encoded, so a `:` inside an id,
+ * a provider key, a custom provider name or a model id (all legal) can never
+ * make two different selections produce the same key. Only the separators
+ * are raw `:`. (`/` in a model id is encoded too: `anthropic%2Fclaude-…`.)
  */
 export function selectionKey(selection: RequestedModelSelection): string {
+  const enc = encodeURIComponent;
   let connection = "";
   if (selection.source !== "legacy" && selection.connectionRef) {
     const ref = selection.connectionRef;
     connection =
       ref.kind === "orgProvider"
-        ? ref.id
+        ? enc(ref.id)
         : ref.customProviderName !== undefined
-          ? `${ref.providerKey}:${ref.customProviderName}`
-          : ref.providerKey;
+          ? `${enc(ref.providerKey)}:${enc(ref.customProviderName)}`
+          : enc(ref.providerKey);
   }
-  return `${selection.source}:${connection}:${selection.modelId}`;
+  return `${selection.source}:${connection}:${enc(selection.modelId)}`;
 }
 
 /**
