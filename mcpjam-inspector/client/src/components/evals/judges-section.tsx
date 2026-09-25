@@ -13,8 +13,11 @@ import type { ModelDefinition } from "@/shared/types";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL,
   RESERVED_JUDGE_SLOTS,
+  type GoalCompletionJudgeSlot,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
+import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -34,6 +37,13 @@ interface JudgesSectionProps {
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
+  /**
+   * Save the picked row's model selection beside `judgeModel`. Defaults to
+   * whether the active project's deployment stores selections
+   * (`useModelSelectionsSupported`); when false only the legacy id is
+   * written, which every deployment accepts.
+   */
+  saveModelSelections?: boolean;
   title?: string;
   description?: string;
   /**
@@ -97,6 +107,31 @@ export function pruneEmpty(
   };
 }
 
+/**
+ * The goal-completion patch for a judge-model pick: the id plus, when the
+ * picked row can be saved as one beside that id, its model selection. Both
+ * are always written together (a stale selection naming the previous judge
+ * would be refused), and both clear for the managed default.
+ */
+export function judgeModelPatch(
+  next: string,
+  availableModels: readonly ModelDefinition[],
+  /** The deployment stores selections (`modelSelectionsSupported`). */
+  saveModelSelection = true,
+): Pick<GoalCompletionJudgeSlot, "judgeModel" | "judgeSelection"> {
+  if (next === MANAGED_DEFAULT_JUDGE_MODEL) {
+    return { judgeModel: undefined, judgeSelection: undefined };
+  }
+  // The option list keeps the FIRST row per id; save that same row.
+  const row = saveModelSelection
+    ? availableModels.find((model) => String(model.id) === next)
+    : undefined;
+  return {
+    judgeModel: next,
+    judgeSelection: row ? selectionBesideLegacyId(row, "judge") : undefined,
+  };
+}
+
 export function JudgesSection({
   policy,
   value,
@@ -107,7 +142,11 @@ export function JudgesSection({
   chrome = "panel",
   bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
   bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
+  saveModelSelections,
 }: JudgesSectionProps) {
+  // Explicit prop wins; otherwise ask the active project's deployment.
+  const deploymentStoresSelections = useModelSelectionsSupported();
+  const saveSelections = saveModelSelections ?? deploymentStoresSelections;
   const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
   // Default-on: GOAL_COMPLETION_DEFAULTS.enabled = true. Only an explicit
@@ -202,10 +241,7 @@ export function JudgesSection({
           <Select
             value={judgeModel}
             onValueChange={(next) =>
-              update({
-                judgeModel:
-                  next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
-              })
+              update(judgeModelPatch(next, availableModels, saveSelections))
             }
           >
             <SelectTrigger

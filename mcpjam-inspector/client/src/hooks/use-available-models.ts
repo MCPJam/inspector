@@ -10,6 +10,7 @@ import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 
 /**
  * Models the current user can pick on any model-picker surface (eval suite
@@ -33,7 +34,15 @@ export function useAvailableModels(options?: {
    * project is globally active.
    */
   projectId?: string | null;
-}): { availableModels: ModelDefinition[] } {
+}): {
+  availableModels: ModelDefinition[];
+  /**
+   * Whether this deployment stores a saved model selection beside a model id
+   * (`getCapabilities.modelSelections` for the scoped project). A picker that
+   * saves a `ModelSelection` sends it only when this is true.
+   */
+  modelSelectionsSupported: boolean;
+} {
   const appState = useSharedAppState();
   const scopedProjectId =
     options?.projectId ?? appState.activeProjectId ?? null;
@@ -59,6 +68,7 @@ export function useAvailableModels(options?: {
     useDetectedOllamaModels(getOllamaBaseUrl);
   const outOfCredits = useOutOfCredits(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
+  const modelSelectionsSupported = useModelSelectionsSupported(convexProjectId);
 
   const availableModels = useMemo(
     () =>
@@ -88,5 +98,5 @@ export function useAvailableModels(options?: {
     ]
   );
 
-  return { availableModels };
+  return { availableModels, modelSelectionsSupported };
 }

@@ -3,6 +3,7 @@ import { buildResolvedModelRequestPayload } from "../../utils/model-request-payl
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   appendToolCallsForPrompt,
@@ -137,6 +138,19 @@ export type LocalEvalTurnSinks = {
   onPinnedTurn?: (ctx: Omit<PinnedTurnSsePayload, "turnIndex">) => void;
 };
 
+/** See {@link DriveLocalEvalTurnParams.onModelCallSettled}. */
+export type LocalModelCallSettled = {
+  outcome: "ok" | "error" | "aborted";
+  /** Machine code of an `error` (`turn_timeout`, `empty_response`, …). */
+  code?: string;
+  /** This turn's token usage. */
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  finishReason?: string;
+  /** The model id the provider reported serving, when it reported one. */
+  upstreamModel?: string;
+  at: number;
+};
+
 export type DriveLocalEvalTurnParams = {
   promptIndex: number;
   promptTurn: PromptTurn;
@@ -172,6 +186,18 @@ export type DriveLocalEvalTurnParams = {
    */
   turnRetries: number;
   toolChoice: EvalToolChoice | undefined;
+  /**
+   * Provider options the case's effective settings resolve to on this direct
+   * call (a saved selection's reasoning effort). Absent ⇒ none.
+   */
+  providerOptions?: ProviderOptions;
+  /**
+   * How this turn's model call ended, once it has: `ok`, `error` (with a
+   * machine code), or `aborted` (cancelled, not by the turn clock). Fired
+   * once per model turn, never for a pinned turn. The runner uses it for the
+   * local-runtime usage writeback and its execution record.
+   */
+  onModelCallSettled?: (event: LocalModelCallSettled) => void;
   toolPolicyGate?: ToolPolicyGate | null;
   extractToolCalls: (params: {
     steps?: ReadonlyArray<any>;
@@ -205,11 +231,17 @@ async function consumeDirectChatTurnViaFullStream(
     const messages = Array.isArray(response?.messages)
       ? (response.messages as ModelMessage[])
       : [];
+    const upstreamModel =
+      typeof (response as { modelId?: unknown } | undefined)?.modelId ===
+      "string"
+        ? (response as { modelId: string }).modelId
+        : undefined;
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
+      upstreamModel,
       spans: handle.traceContext.recordedSpans,
       aborted: handle.isAborted(),
     };
@@ -242,6 +274,8 @@ export async function driveLocalEvalTurn(
     toolChoice,
     toolPolicyGate,
     sinks,
+    providerOptions,
+    onModelCallSettled,
   } = params;
 
   const localIsAborted = () => abortSignal?.aborted === true;
@@ -367,6 +401,7 @@ export async function driveLocalEvalTurn(
     // above, so the turn deadline still bounds the whole sequence rather than
     // each attempt.
     maxRetries: turnRetries,
+    ...(providerOptions ? { providerOptions } : {}),
     ...(toolChoice
       ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
       : {}),
@@ -430,12 +465,43 @@ export async function driveLocalEvalTurn(
   // stream does not leave the clock armed. The two readers below still work:
   // `firedClock` and `elapsedMs` close over their own state, and `dispose`
   // only stops the timer.
-  const headless = await consumeDirectChatTurnViaFullStream(
-    handle,
-    sinks
-  ).finally(() => turnDeadline.dispose());
+  let headless: Awaited<ReturnType<typeof consumeDirectChatTurnViaFullStream>>;
+  try {
+    headless = await consumeDirectChatTurnViaFullStream(handle, sinks).finally(
+      () => turnDeadline.dispose()
+    );
+  } catch (error) {
+    onModelCallSettled?.({
+      outcome: localIsAborted() ? "aborted" : "error",
+      ...(localIsAborted() ? {} : { code: "provider_error" }),
+      at: Date.now(),
+    });
+    throw error;
+  }
   const turnTimedOut = turnDeadline.firedClock() === "turn";
   const turnElapsedMs = turnDeadline.elapsedMs();
+  // How the model call ended, reported once (see `onModelCallSettled`).
+  const settle = (outcome: "ok" | "error" | "aborted", code?: string) =>
+    onModelCallSettled?.({
+      outcome,
+      ...(code ? { code } : {}),
+      ...(headless.totalUsage
+        ? {
+            usage: {
+              inputTokens: headless.totalUsage.inputTokens,
+              outputTokens: headless.totalUsage.outputTokens,
+              totalTokens: headless.totalUsage.totalTokens,
+            },
+          }
+        : {}),
+      ...(typeof headless.finishReason === "string"
+        ? { finishReason: headless.finishReason }
+        : {}),
+      ...(headless.upstreamModel
+        ? { upstreamModel: headless.upstreamModel }
+        : {}),
+      at: Date.now(),
+    });
 
   // Checked BEFORE the cancellation branch below, and that order is the whole
   // point: the turn clock aborts the same composed signal a user cancel does,
@@ -459,6 +525,7 @@ export async function driveLocalEvalTurn(
       elapsedMs: turnElapsedMs,
     };
     acc.iterationError = `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnElapsedMs}ms)`;
+    settle("error", "turn_timeout");
     // The provider held the connection open past the bound. No other layer
     // reaches this branch.
     acc.stepErrorSource = "model";
@@ -494,6 +561,7 @@ export async function driveLocalEvalTurn(
   }
 
   if (headless.aborted || localIsAborted()) {
+    settle("aborted");
     logger.debug(
       "[evals] local-BYOK iteration aborted mid-turn; skipping record"
     );
@@ -527,6 +595,7 @@ export async function driveLocalEvalTurn(
   if (promptResponseMessages.length === 0) {
     acc.iterationError =
       "Stream returned no content (local-BYOK driver failed)";
+    settle("error", "empty_response");
     // The model stream itself returned nothing. Unambiguously the model-call
     // layer — there is no other layer this branch can be reached from.
     acc.stepErrorSource = "model";
@@ -565,6 +634,7 @@ export async function driveLocalEvalTurn(
   );
   if (stepErrorSpan) {
     acc.iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+    settle("error", "provider_error");
     acc.stepErrorSource = modelLayerForErrorSpan(stepErrorSpan);
     logger.error(
       `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
@@ -604,6 +674,7 @@ export async function driveLocalEvalTurn(
     return { kind: "completed" };
   }
 
+  settle("ok");
   const promptToolsCalled = params.extractToolCalls({
     steps: headless.steps,
     messages: promptResponseMessages,

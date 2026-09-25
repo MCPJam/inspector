@@ -23,6 +23,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
+  syncExplicitModelSelections,
   targetProductCapReason,
   type ModelSelection,
   type TargetBudgetContext,
@@ -85,22 +86,31 @@ export function ModelsPill({
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
 
+  // Every edit keeps the saved selections in step with the picked ids.
+  const emit = (next: ModelSelection) =>
+    onChange(
+      syncExplicitModelSelections(next, {
+        models: availableModels,
+        previous: value,
+      }),
+    );
+
   const toggleDefaults = (checked: boolean) => {
     if (mode === "single") {
-      onChange({ includeClientDefaults: checked, explicitModelIds: [] });
+      emit({ includeClientDefaults: checked, explicitModelIds: [] });
       setOpen(false);
       return;
     }
     if (checked && replaceSoleChoice) {
-      onChange({ includeClientDefaults: true, explicitModelIds: [] });
+      emit({ includeClientDefaults: true, explicitModelIds: [] });
       return;
     }
-    onChange({ ...value, includeClientDefaults: checked });
+    emit({ ...value, includeClientDefaults: checked });
   };
 
   const toggleModel = (modelId: string, checked: boolean) => {
     if (mode === "single") {
-      onChange({
+      emit({
         includeClientDefaults: false,
         explicitModelIds: checked ? [modelId] : [],
       });
@@ -110,16 +120,16 @@ export function ModelsPill({
     if (checked) {
       if (explicit.includes(modelId)) return;
       if (replaceSoleChoice) {
-        onChange({
+        emit({
           includeClientDefaults: false,
           explicitModelIds: [modelId],
         });
         return;
       }
-      onChange({ ...value, explicitModelIds: [...explicit, modelId] });
+      emit({ ...value, explicitModelIds: [...explicit, modelId] });
       return;
     }
-    onChange({
+    emit({
       ...value,
       explicitModelIds: explicit.filter((id) => id !== modelId),
     });

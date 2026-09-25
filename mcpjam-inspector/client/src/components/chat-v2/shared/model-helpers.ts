@@ -166,9 +166,24 @@ export function buildAvailableModelsFromOrgConfig(
   // Explicit `hosted: false` for the same reason as the local BYOK rows in
   // `buildAvailableModels`: the bare id + provider would otherwise be read as
   // the hosted twin server-side and billed to MCPJam instead of the org's key.
+  // Every org-derived row names the connection that serves it, so a picker
+  // can save WHICH org connection was chosen (see `ModelDefinition.orgProvider`).
+  const orgStamp = (p: OrgModelProvider): ModelDefinition["orgProvider"] => ({
+    providerKey: p.providerKey,
+    ...(p.id ? { id: p.id } : {}),
+  });
+  const orgProviderByKey = new Map<string, OrgModelProvider>();
+  for (const p of orgConfig.providers) {
+    if (p.enabled && !orgProviderByKey.has(p.providerKey)) {
+      orgProviderByKey.set(p.providerKey, p);
+    }
+  }
   const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return availableProviderKeys.has(m.provider);
+  }).map((m) => {
+    const provider = orgProviderByKey.get(m.provider);
+    return provider ? { ...m, orgProvider: orgStamp(provider) } : m;
   });
   const models: ModelDefinition[] = [...orgKeyModels];
 
@@ -185,6 +200,7 @@ export function buildAvailableModelsFromOrgConfig(
         id,
         name: id,
         provider: "openrouter" as const,
+        orgProvider: orgStamp(openRouterConfig),
       }));
     models.push(...openRouterModels);
   }
@@ -204,6 +220,7 @@ export function buildAvailableModelsFromOrgConfig(
         id,
         name: id,
         provider: "bedrock" as const,
+        orgProvider: orgStamp(bedrockConfig),
       })
     );
     models.push(...bedrockModels);
@@ -221,6 +238,7 @@ export function buildAvailableModelsFromOrgConfig(
         id: modelId,
         name: modelId,
         provider: "ollama" as const,
+        orgProvider: orgStamp(p),
       });
     }
   }
@@ -242,6 +260,7 @@ export function buildAvailableModelsFromOrgConfig(
         name: `${displayLabel} / ${modelId}`,
         provider: "custom" as const,
         customProviderName: customSlug,
+        orgProvider: orgStamp(p),
       });
     }
   }
