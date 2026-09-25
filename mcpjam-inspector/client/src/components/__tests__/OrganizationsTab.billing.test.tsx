@@ -258,7 +258,6 @@ function createBillingHookState(overrides: Record<string, unknown>) {
 function renderAutoCheckoutTab(options?: {
   checkoutIntent?: CheckoutIntentWithOrganization;
   onCheckoutIntentConsumed?: () => void;
-  onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
 }) {
   const initialCheckoutIntent: CheckoutIntentWithOrganization =
@@ -281,9 +280,6 @@ function renderAutoCheckoutTab(options?: {
           options?.onCheckoutIntentConsumed?.();
           setCheckoutIntent(null);
         }}
-        onCheckoutIntentNavigationStarted={
-          options?.onCheckoutIntentNavigationStarted
-        }
         navigateBillingInSameTab={options?.navigateBillingInSameTab}
       />
     );
@@ -684,7 +680,7 @@ describe("OrganizationsTab billing", () => {
       }),
     ).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+    fireEvent.click(screen.getAllByRole("radio", { name: /^Annual/ })[0]);
 
     // Pro annual is a different price than the one this org is on, so the
     // column has to offer it rather than claim the org is already there.
@@ -722,7 +718,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
-    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+    fireEvent.click(screen.getAllByRole("radio", { name: /^Annual/ })[0]);
 
     const proColumn = within(getPlanColumn("Pro"));
     expect(
@@ -816,12 +812,16 @@ describe("OrganizationsTab billing", () => {
     fireEvent.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+      screen.getByText(
+        "Single sign-on connects your workspace to your organization’s identity provider. Availability is shown for each plan.",
+      ),
     ).toBeVisible();
     fireEvent.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+      screen.getByText(
+        "Single sign-on connects your workspace to your organization’s identity provider. Availability is shown for each plan.",
+      ),
     ).not.toBeVisible();
     const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
     expect(within(ssoRow).getAllByRole("cell")[3]).toHaveTextContent(
@@ -2387,13 +2387,13 @@ describe("OrganizationsTab billing", () => {
     const upsell = within(screen.getByTestId("free-plan-team-upsell"));
     // Default interval is annual — Team lists $30/seat/mo billed annually
     expect(upsell.getByText(/\$30/)).toBeInTheDocument();
-    fireEvent.click(upsell.getByRole("button", { name: /^Monthly$/ }));
+    fireEvent.click(upsell.getByRole("radio", { name: /^Monthly$/ }));
     expect(upsell.getByText(/\$38/)).toBeInTheDocument();
-    fireEvent.click(upsell.getByRole("button", { name: /^Annual$/ }));
+    fireEvent.click(upsell.getByRole("radio", { name: /^Annual/ }));
     expect(upsell.getByText(/\$30/)).toBeInTheDocument();
   });
 
-  it("marks the selected interval in the compare-table toggle without a discount badge", () => {
+  it("marks the selected interval in the compare-table toggle and advertises the annual discount", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture(),
@@ -2403,20 +2403,22 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     const toggle = within(
-      within(screen.getByRole("table")).getByRole("group", {
+      within(screen.getByTestId("compare-plans-card")).getByRole("group", {
         name: "Billing interval",
       }),
     );
-    const annual = toggle.getByRole("button", { name: /^Annual/ });
-    const monthly = toggle.getByRole("button", { name: "Monthly" });
-    expect(annual).toHaveAttribute("aria-pressed", "true");
-    expect(monthly).toHaveAttribute("aria-pressed", "false");
-    // The legacy Team prices imply a 21% annual discount; the toggle no longer
-    // advertises it.
-    expect(toggle.queryByText(/-\d+%/)).not.toBeInTheDocument();
+    const annual = toggle.getByRole("radio", { name: /^Annual/ });
+    const monthly = toggle.getByRole("radio", { name: "Monthly" });
+    expect(annual).toBeChecked();
+    expect(monthly).not.toBeChecked();
+    // The legacy Team prices imply a 21% annual discount.
+    expect(toggle.getByText("Save 21%")).toBeInTheDocument();
     fireEvent.click(monthly);
-    expect(annual).toHaveAttribute("aria-pressed", "false");
-    expect(monthly).toHaveAttribute("aria-pressed", "true");
+    expect(annual).not.toBeChecked();
+    expect(monthly).toBeChecked();
+    // Clicking the already-selected interval flips to the other one.
+    fireEvent.click(monthly);
+    expect(annual).toBeChecked();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
@@ -2959,7 +2961,7 @@ describe("OrganizationsTab billing", () => {
     expect(toasted).not.toContain("billing_plan_change_requires_support");
   });
 
-  it("auto-checks out billing deep links in the same tab", async () => {
+  it("opens the plan confirmation for a billing deep link instead of checking out", async () => {
     const startPlanChange = vi.fn().mockResolvedValue({
       kind: "checkout",
       checkoutUrl: "https://stripe.test/checkout",
@@ -2971,73 +2973,75 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const { openSpy } = mockReservedBillingTab();
+    const { openSpy, reservedTab } = mockReservedBillingTab();
     const navigateBillingInSameTab = vi.fn();
     const onCheckoutIntentConsumed = vi.fn();
-    const onCheckoutIntentNavigationStarted = vi.fn();
 
     renderAutoCheckoutTab({
       onCheckoutIntentConsumed,
-      onCheckoutIntentNavigationStarted,
       navigateBillingInSameTab,
     });
 
-    expect(
-      screen.getByTestId("billing-deep-link-redirect"),
-    ).toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("/organizations/org-1/billing"),
-        "team",
-        "annual",
-        { confirmPaidPlanChange: false },
-      );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Confirm your plan",
     });
-    expect(onCheckoutIntentNavigationStarted).toHaveBeenCalled();
+    expect(within(dialog).getByText("Team")).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: /Annual/ })).toBeChecked();
     await waitFor(() => {
       expect(onCheckoutIntentConsumed).toHaveBeenCalled();
     });
-    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
-    );
+    expect(startPlanChange).not.toHaveBeenCalled();
+    expect(navigateBillingInSameTab).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
-    expect(
-      trackMock.mock.calls.filter(
-        ([event, props]) =>
-          event === "billing_handoff_succeeded" &&
-          props.flow === "plan_change" &&
-          props.source === "pricing_deep_link",
-      ),
-    ).toHaveLength(1);
-    expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_flow_failed",
-      expect.objectContaining({
-        flow: "plan_change",
-        source: "pricing_deep_link",
-      }),
-    );
     await waitFor(() => {
       expect(
         screen.queryByTestId("billing-deep-link-redirect"),
       ).not.toBeInTheDocument();
     });
 
+    fireEvent.click(within(dialog).getByTestId("plan-confirm-cta"));
+    await waitFor(() => {
+      expect(startPlanChange).toHaveBeenCalledWith(
+        expect.stringContaining("/organizations/org-1/billing"),
+        "team",
+        "annual",
+        { confirmPaidPlanChange: true },
+      );
+    });
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/checkout");
     openSpy.mockRestore();
   });
 
-  it("starts auto-checkout only once for the same deep-link intent key", async () => {
-    const startPlanChange = vi.fn().mockResolvedValue({
-      kind: "checkout",
-      checkoutUrl: "https://stripe.test/checkout",
+  it("does not start checkout when the deep-link confirmation is dismissed", async () => {
+    const startPlanChange = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+
+    renderAutoCheckoutTab();
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Confirm your plan",
     });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Confirm your plan" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("opens the plan confirmation only once for the same deep-link intent key", async () => {
     const hookState = createBillingHookState({
       billingStatus: billingStatusFixture(),
-      startPlanChange,
     });
     mockUseOrganizationBilling.mockImplementation(() => hookState);
 
-    const navigateBillingInSameTab = vi.fn();
     const checkoutIntent = {
       organizationId: "org-1",
       plan: "team" as const,
@@ -3049,12 +3053,17 @@ describe("OrganizationsTab billing", () => {
         organizationId="org-1"
         section="plans"
         checkoutIntent={checkoutIntent}
-        navigateBillingInSameTab={navigateBillingInSameTab}
       />,
     );
 
+    const dialog = await screen.findByRole("dialog", {
+      name: "Confirm your plan",
+    });
+    fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByRole("dialog", { name: "Confirm your plan" }),
+      ).not.toBeInTheDocument();
     });
 
     view.rerender(
@@ -3062,23 +3071,16 @@ describe("OrganizationsTab billing", () => {
         organizationId="org-1"
         section="plans"
         checkoutIntent={{ ...checkoutIntent }}
-        navigateBillingInSameTab={navigateBillingInSameTab}
       />,
     );
 
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledTimes(1);
-    });
-    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
-    );
+    expect(
+      screen.queryByRole("dialog", { name: "Confirm your plan" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("auto-checks out solo deep links during an active solo trial", async () => {
-    const startPlanChange = vi.fn().mockResolvedValue({
-      kind: "checkout",
-      checkoutUrl: "https://stripe.test/checkout",
-    });
+  it("opens the plan confirmation for solo deep links during an active solo trial", async () => {
+    const startPlanChange = vi.fn();
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -3094,7 +3096,6 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const navigateBillingInSameTab = vi.fn();
     const onCheckoutIntentConsumed = vi.fn();
 
     renderAutoCheckoutTab({
@@ -3104,37 +3105,19 @@ describe("OrganizationsTab billing", () => {
         interval: "annual",
       },
       onCheckoutIntentConsumed,
-      navigateBillingInSameTab,
     });
 
-    expect(
-      screen.getByTestId("billing-deep-link-redirect"),
-    ).toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("/organizations/org-1/billing"),
-        "team",
-        "annual",
-        { confirmPaidPlanChange: false },
-      );
-    });
+    await screen.findByRole("dialog", { name: "Confirm your plan" });
     await waitFor(() => {
       expect(onCheckoutIntentConsumed).toHaveBeenCalled();
     });
-    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
-    );
+    expect(startPlanChange).not.toHaveBeenCalled();
     expect(
       screen.queryByText("You’re already on this plan"),
     ).not.toBeInTheDocument();
   });
 
-  it("auto-checks out team deep links during an active solo trial", async () => {
-    const startPlanChange = vi.fn().mockResolvedValue({
-      kind: "checkout",
-      checkoutUrl: "https://stripe.test/checkout",
-    });
+  it("opens the plan confirmation with the deep-linked monthly interval", async () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -3146,12 +3129,8 @@ describe("OrganizationsTab billing", () => {
           trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
           trialDaysRemaining: 7,
         }),
-        startPlanChange,
       }),
     );
-
-    const navigateBillingInSameTab = vi.fn();
-    const onCheckoutIntentConsumed = vi.fn();
 
     renderAutoCheckoutTab({
       checkoutIntent: {
@@ -3159,24 +3138,14 @@ describe("OrganizationsTab billing", () => {
         plan: "team",
         interval: "monthly",
       },
-      onCheckoutIntentConsumed,
-      navigateBillingInSameTab,
     });
 
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("/organizations/org-1/billing"),
-        "team",
-        "monthly",
-        { confirmPaidPlanChange: false },
-      );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Confirm your plan",
     });
-    await waitFor(() => {
-      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
-    });
-    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
-    );
+    expect(
+      within(dialog).getByRole("radio", { name: /Monthly/ }),
+    ).toBeChecked();
   });
 
   it("consumes billing deep-link checkout intent when billing is unavailable", async () => {
@@ -3287,59 +3256,6 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
-  });
-
-  it("consumes billing deep-link checkout intent when auto-checkout startup fails", async () => {
-    const startPlanChange = vi
-      .fn()
-      .mockRejectedValue(new Error("Failed to change plan"));
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture(),
-        startPlanChange,
-      }),
-    );
-
-    const navigateBillingInSameTab = vi.fn();
-    const onCheckoutIntentConsumed = vi.fn();
-
-    renderAutoCheckoutTab({
-      onCheckoutIntentConsumed,
-      navigateBillingInSameTab,
-    });
-
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("/organizations/org-1/billing"),
-        "team",
-        "annual",
-        { confirmPaidPlanChange: false },
-      );
-    });
-    await waitFor(() => {
-      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("billing-deep-link-redirect"),
-      ).not.toBeInTheDocument();
-    });
-    expect(navigateBillingInSameTab).not.toHaveBeenCalled();
-    expect(trackMock).toHaveBeenCalledWith(
-      "billing_flow_failed",
-      expect.objectContaining({
-        flow: "plan_change",
-        source: "pricing_deep_link",
-        failure_kind: "request_failed",
-      }),
-    );
-    expect(trackMock).not.toHaveBeenCalledWith(
-      "billing_handoff_succeeded",
-      expect.objectContaining({
-        flow: "plan_change",
-        source: "pricing_deep_link",
-      }),
-    );
   });
 
   it("attributes the cadence-change portal flow to the Plans route", async () => {
