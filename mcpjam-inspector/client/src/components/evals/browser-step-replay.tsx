@@ -19,6 +19,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import {
+  handleArtifactMediaError,
+  useFreshArtifactUrl,
+} from "@/lib/artifact-urls";
 import { ArtifactImage } from "@/components/ui/artifact-image";
 import type {
   EvalTraceBrowserInteractionStepView,
@@ -363,7 +367,9 @@ export function BrowserStepFilmstrip({
   const pendingSeekTargetRef = useRef<number | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
 
-  const resolvedVideoUrl = replayVideoUrl(videoUrl);
+  // An artifact link expires; the freshest one known for the recording is
+  // played, and a failed load asks for a new one (see `onError` below).
+  const resolvedVideoUrl = useFreshArtifactUrl(replayVideoUrl(videoUrl));
   const videoSummary = useMemo(() => summarizeRecording(videoMeta), [videoMeta]);
 
   const ordered = useMemo(
@@ -439,10 +445,11 @@ export function BrowserStepFilmstrip({
   }, [ordered, selectedKey]);
 
   // A run whose steps arrive before its video (mid-run, or a dropped upload)
-  // must not keep showing a stale failure state once the video lands.
+  // must not keep showing a stale failure state once the video lands — or
+  // once a renewed link for it does.
   useEffect(() => {
     setVideoFailed(false);
-  }, [videoUrl]);
+  }, [resolvedVideoUrl]);
 
   if (ordered.length === 0 && !resolvedVideoUrl) {
     return (
@@ -505,7 +512,10 @@ export function BrowserStepFilmstrip({
             preload="metadata"
             onTimeUpdate={onTimeUpdate}
             onSeeked={onSeeked}
-            onError={() => setVideoFailed(true)}
+            onError={() => {
+              handleArtifactMediaError(resolvedVideoUrl);
+              setVideoFailed(true);
+            }}
             className="w-full rounded-md border border-border/60 bg-black"
             data-testid="browser-replay-video"
           />

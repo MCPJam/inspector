@@ -14,13 +14,16 @@
  *     call `registerArtifactUrls`), keyed by the object a link points at, so
  *     the freshest link seen for an object is always known.
  *   - `fetchArtifact` fetches the freshest known link for the object. When the
- *     backend still answers 401/403 it requests a refresh, waits briefly for a
- *     fresher link to be registered, and retries once. A refresh makes every
- *     `useArtifactQuery` re-subscribe with a new `urlEpoch`, a cache-buster
- *     the backend never reads, which re-runs the query (authorization
- *     included) and mints new links.
- *   - `useFreshArtifactUrl` does the same for `<img>` sources (see
- *     `ArtifactImage`), which cannot see status codes.
+ *     backend still answers 401/403/404/410 it requests a refresh, waits
+ *     briefly for a fresher link to be registered, and retries once. A
+ *     refresh makes every `useArtifactQuery` re-subscribe with a new
+ *     `urlEpoch`, a cache-buster the backend never reads, which re-runs the
+ *     query (authorization included) and mints new links.
+ *   - A 404/410 says the object, not the link, is gone, so an object gets one
+ *     such renewal until it is read successfully again (MJ-005): an artifact
+ *     that really is missing does not keep re-running every query on the page.
+ *   - `useFreshArtifactUrl` does the same for `<img>` and `<video>` sources
+ *     (see `ArtifactImage`), which cannot see status codes.
  *   - `artifactStableKey` names the object a link points at, so a re-minted
  *     link to the same object is not mistaken for new content.
  *
@@ -49,6 +52,21 @@ const RENEWAL_WAIT_MS = 15_000;
 const REGISTRY_SWEEP_THRESHOLD = 2_000;
 /** Nodes visited when scanning one result for links. */
 const REGISTER_SCAN_BUDGET = 20_000;
+/** Answers that send a fetch to renew its link. */
+const RENEWABLE_STATUSES: ReadonlySet<number> = new Set([401, 403, 404, 410]);
+/** Of those, the answers that say the object itself is missing. */
+const MISSING_STATUSES: ReadonlySet<number> = new Set([404, 410]);
+/**
+ * Renewals an object gets for a missing answer — or, on a media element,
+ * which cannot see the status, for a failure on a link that has not expired —
+ * before it is next read successfully.
+ */
+const MISSING_RENEWAL_LIMIT = 1;
+/**
+ * A media link this close to its expiry is renewed like an expired one, so a
+ * clock that runs a little behind the backend's still renews it every time.
+ */
+const MEDIA_EXPIRY_MARGIN_MS = 10 * 60_000;
 
 // ── Link anatomy ───────────────────────────────────────────────────────────
 
@@ -231,6 +249,22 @@ export function useFreshArtifactUrl<T extends string | null | undefined>(
 let currentEpoch: number | undefined;
 let lastRefreshRequestAt = Number.NEGATIVE_INFINITY;
 const epochListeners = new Set<() => void>();
+/** Missing-object renewals spent, per object (`artifactStableKey`). */
+const missingRenewals = new Map<string, number>();
+
+/** Spend one of an object's missing-object renewals, if it has one left. */
+function takeMissingRenewal(url: string): boolean {
+  const key = artifactStableKey(url);
+  const spent = missingRenewals.get(key) ?? 0;
+  if (spent >= MISSING_RENEWAL_LIMIT) return false;
+  missingRenewals.set(key, spent + 1);
+  return true;
+}
+
+/** The object was read: it may be renewed again if it later goes missing. */
+function restoreMissingRenewals(url: string): void {
+  missingRenewals.delete(artifactStableKey(url));
+}
 
 /**
  * Ask every artifact-bearing subscription (and loader) to re-run, so it mints
@@ -272,6 +306,7 @@ export function resetArtifactUrlsForTests(): void {
   currentEpoch = undefined;
   lastRefreshRequestAt = Number.NEGATIVE_INFINITY;
   freshest.clear();
+  missingRenewals.clear();
   registryVersion = 0;
 }
 
@@ -279,10 +314,12 @@ export function resetArtifactUrlsForTests(): void {
 
 /**
  * `fetch` for artifact links. Reads the freshest known link for the object;
- * if the backend answers 401 (expired) or 403 (no longer valid, e.g. after a
- * key rotation), requests a refresh, waits briefly for a re-run query to
- * register a fresher link and retries once with it. Otherwise returns the
- * response unchanged, so callers keep their own error handling.
+ * if the backend answers 401 (expired), 403 (no longer valid, e.g. after a
+ * key rotation), or 404/410 (the object is not where the link points),
+ * requests a refresh, waits briefly for a re-run query to register a fresher
+ * link and retries once with it. A 404/410 does this once per object until
+ * the object is read successfully again. Otherwise returns the response
+ * unchanged, so callers keep their own error handling.
  */
 export async function fetchArtifact(
   url: string,
@@ -292,26 +329,41 @@ export async function fetchArtifact(
   // Same call shape as a plain `fetch(url)` when there is no init.
   const response =
     init === undefined ? await fetch(target) : await fetch(target, init);
-  if (
-    (response.status !== 401 && response.status !== 403) ||
-    !isSignedArtifactUrl(target)
-  ) {
+  if (!isSignedArtifactUrl(target)) return response;
+  if (response.ok) {
+    restoreMissingRenewals(target);
+    return response;
+  }
+  if (!RENEWABLE_STATUSES.has(response.status)) return response;
+  if (MISSING_STATUSES.has(response.status) && !takeMissingRenewal(target)) {
     return response;
   }
   requestArtifactUrlRefresh();
   const renewed = await waitForFresherUrl(target, RENEWAL_WAIT_MS);
   if (!renewed || init?.signal?.aborted) return response;
-  return init === undefined ? await fetch(renewed) : await fetch(renewed, init);
+  const retried =
+    init === undefined ? await fetch(renewed) : await fetch(renewed, init);
+  if (retried.ok) restoreMissingRenewals(renewed);
+  return retried;
 }
 
 /**
  * `onError` for an `<img>` / `<video>` showing an artifact link. The element
- * cannot see the status code, so any error on a signed link requests a
- * (throttled) refresh; the fresh link reaches the element through
- * `useFreshArtifactUrl`.
+ * cannot see the status code. A link at or near its expiry requests a
+ * (throttled) refresh every time; any other failure is treated like a
+ * missing answer and gets the object's one renewal. The fresh link reaches
+ * the element through `useFreshArtifactUrl`.
  */
-export function handleArtifactMediaError(url: string | null | undefined): void {
-  if (isSignedArtifactUrl(url)) requestArtifactUrlRefresh();
+export function handleArtifactMediaError(
+  url: string | null | undefined,
+  now: number = Date.now(),
+): void {
+  if (!isSignedArtifactUrl(url)) return;
+  const claims = readClaims(url);
+  const expiring =
+    claims !== null && claims.e * 1000 - now <= MEDIA_EXPIRY_MARGIN_MS;
+  if (!expiring && !takeMissingRenewal(url)) return;
+  requestArtifactUrlRefresh(now);
 }
 
 // ── Subscriptions ──────────────────────────────────────────────────────────
