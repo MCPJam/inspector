@@ -147,6 +147,7 @@ async function safeValidateHostedServer(
         hostedContext,
       );
   } catch (error) {
+    if (hostedContext?.queueSignal?.aborted) throw hostedContext.queueSignal.reason;
     if (hostedContext?.queueSignal && isServerCheckQueueError(error)) throw error;
     // Preserve the server-attached `normalized` block when the wrapped
     // error is a WebApiError. The string form (kept for back-compat) is

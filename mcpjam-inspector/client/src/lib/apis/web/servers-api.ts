@@ -194,13 +194,48 @@ export async function validateHostedServer(
         ),
       50_000,
     );
+    const metadata = serverCheckQueue.attemptMetadata(checkSignal) ?? {
+      requestId: crypto.randomUUID(),
+      intent: "manual" as const,
+    };
+    const promotionDone = new AbortController();
+    const promotionSignal = AbortSignal.any([
+      checkSignal,
+      deadline.signal,
+      promotionDone.signal,
+    ]);
+    const detachPromotion = serverCheckQueue.bindPromotion(
+      checkSignal,
+      async () => {
+        try {
+          // Promotion can race the validate POST arriving at another replica.
+          // Retry only a not-yet-admitted ID, never admit a second request here.
+          while (!promotionSignal.aborted) {
+            const result = await webPost<
+              { requestId: string },
+              { state: string }
+            >(
+              "/api/web/servers/checks/promote",
+              { requestId: metadata.requestId },
+              { signal: promotionSignal },
+            );
+            if (result.state !== "expired") return;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        } catch (error) {
+          if (!promotionDone.signal.aborted) throw error;
+        }
+      },
+    );
     try {
       return await webPost<typeof request, HostedServerValidateResponse>(
         "/api/web/servers/validate",
-        request,
+        { ...request, _serverCheck: metadata },
         { signal: AbortSignal.any([checkSignal, deadline.signal]) },
       );
     } finally {
+      promotionDone.abort();
+      detachPromotion();
       clearTimeout(timeout);
     }
   };

@@ -8,21 +8,60 @@ type Job = {
   scope: string;
   automatic: boolean;
   controller: AbortController;
+  attempt?: AbortController;
+  started?: number;
+  manualOrder: number;
+  promote?: () => Promise<void>;
+  requestId?: string;
   state: CheckQueueState;
   readyAt: number;
   retryStarted?: number;
+  resumed?: boolean;
   run: (signal: AbortSignal) => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
   promise: Promise<unknown>;
   detach?: () => void;
 };
+export const preemptedCheck = () =>
+  Object.assign(new Error("Automatic check interrupted"), {
+    status: 409,
+    details: { reason: "SERVER_CHECK_PREEMPTED" },
+  });
+export const isPreemptedCheck = (error: unknown) =>
+  (error as { details?: { reason?: string } } | null)?.details?.reason ===
+  "SERVER_CHECK_PREEMPTED";
 const cancelError = () =>
   new DOMException("Server check cancelled", "AbortError");
 
 export class ServerCheckQueue {
   private jobs = new Map<string, Job>();
   private running = 0;
+  private sequence = 0;
+  private attempts = new WeakMap<AbortSignal, Job>();
+  attemptMetadata(signal: AbortSignal) {
+    const job = this.attempts.get(signal);
+    return job
+      ? {
+          requestId: job.requestId!,
+          resumed: job.resumed ?? false,
+          intent: job.automatic ? ("automatic" as const) : ("manual" as const),
+        }
+      : undefined;
+  }
+  bindPromotion(signal: AbortSignal, promote: () => Promise<void>) {
+    const job = this.attempts.get(signal);
+    if (job) job.promote = promote;
+    return () => {
+      if (job?.promote === promote) job.promote = undefined;
+    };
+  }
+  private interrupt(job: Job) {
+    if (!job.attempt || job.attempt.signal.aborted) return;
+    for (const listener of this.cancelListeners)
+      listener(job.projectId, job.serverName);
+    job.attempt.abort(preemptedCheck());
+  }
   private listeners = new Set<() => void>();
   private cancelListeners = new Set<
     (projectId: string, name: string) => void
@@ -90,9 +129,29 @@ export class ServerCheckQueue {
   }
   markManual(projectId: string, name: string) {
     this.automatic.delete(JSON.stringify([projectId, name]));
-    for (const job of this.jobs.values())
-      if (job.projectId === projectId && job.serverName === name)
-        job.automatic = false;
+    for (const job of this.jobs.values()) {
+      if (
+        job.projectId !== projectId ||
+        job.serverName !== name ||
+        !job.automatic
+      )
+        continue;
+      job.automatic = false;
+      job.manualOrder = ++this.sequence;
+      const attempt = job.attempt;
+      if (job.promote)
+        void job.promote().catch(() => {
+          // Retry as manual if promotion cannot be acknowledged. Admission still
+          // waits for the old backend lease to be released before opening MCP.
+          if (
+            this.jobs.get(job.key) === job &&
+            job.attempt === attempt &&
+            !job.controller.signal.aborted
+          )
+            this.interrupt(job);
+        });
+    }
+    this.drainSoon();
   }
   cancelAutomatic(projectId: string) {
     this.cancel(
@@ -155,6 +214,7 @@ export class ServerCheckQueue {
       automatic: this.automatic.delete(
         JSON.stringify([options.projectId, options.serverName]),
       ),
+      manualOrder: ++this.sequence,
       controller: new AbortController(),
       state: "queued",
       readyAt: 0,
@@ -185,6 +245,8 @@ export class ServerCheckQueue {
     clearTimeout(this.wake);
     const pending = [...this.jobs.values()].filter((j) => j.state === "queued");
     pending.sort((a, b) => {
+      if (a.automatic !== b.automatic) return a.automatic ? 1 : -1;
+      if (!a.automatic) return a.manualOrder - b.manualOrder;
       if (a.projectId !== b.projectId) return 0;
       const order = this.orders.get(a.projectId) ?? [];
       const rank = (name: string) => {
@@ -198,22 +260,53 @@ export class ServerCheckQueue {
       if (job.readyAt > Date.now()) continue;
       this.running++;
       job.state = "connecting";
+      job.started = ++this.sequence;
+      job.attempt = new AbortController();
+      job.requestId = crypto.randomUUID();
+      const attemptSignal = AbortSignal.any([
+        job.controller.signal,
+        job.attempt.signal,
+      ]);
+      this.attempts.set(attemptSignal, job);
+      const requeuePreempted = () => {
+        if (job.controller.signal.aborted) return false;
+        if (job.automatic && this.automaticDisabled.has(job.projectId)) {
+          this.abort(job);
+          return false;
+        }
+        for (const listener of this.cancelListeners)
+          listener(job.projectId, job.serverName);
+        job.state = "queued";
+        job.resumed = true;
+        job.readyAt = Date.now() + (job.automatic ? 500 : 0);
+        this.emit();
+        return true;
+      };
       this.emit();
       void Promise.resolve()
         .then(() => {
-          job.controller.signal.throwIfAborted();
-          return job.run(job.controller.signal);
+          attemptSignal.throwIfAborted();
+          return job.run(attemptSignal);
         })
         .then(
-          (value) =>
+          (value) => {
+            if (isPreemptedCheck(attemptSignal.reason) && requeuePreempted())
+              return;
             this.finish(
               job,
               value,
               job.controller.signal.aborted
                 ? job.controller.signal.reason
                 : undefined,
-            ),
+            );
+          },
           (error) => {
+            if (
+              (isPreemptedCheck(error) ||
+                isPreemptedCheck(attemptSignal.reason)) &&
+              requeuePreempted()
+            )
+              return;
             if (
               job.automatic &&
               this.automaticDisabled.has(job.projectId) &&
@@ -246,15 +339,41 @@ export class ServerCheckQueue {
                 "Server checks are still busy. Click Connect to retry.",
               );
             }
-            this.finish(job, undefined, error);
+            this.finish(
+              job,
+              undefined,
+              job.controller.signal.aborted
+                ? job.controller.signal.reason
+                : error,
+            );
           },
         )
         .finally(() => {
+          job.promote = undefined;
+          this.attempts.delete(attemptSignal);
           this.running--;
           this.drainSoon();
         });
     }
-    const delayed = pending.filter(
+    // Each pending manual needs one slot, including interruptions already
+    // underway. Do not cancel active manual checks or over-cancel a batch.
+    const active = [...this.jobs.values()].filter(
+      (j) => j.state === "connecting",
+    );
+    let needed =
+      pending.filter(
+        (j) => !j.automatic && j.state === "queued" && j.readyAt <= Date.now(),
+      ).length - active.filter((j) => j.attempt?.signal.aborted).length;
+    for (const job of active.sort(
+      (a, b) => (b.started ?? 0) - (a.started ?? 0),
+    )) {
+      if (needed <= 0) break;
+      if (job.automatic && !job.attempt?.signal.aborted) {
+        this.interrupt(job);
+        needed--;
+      }
+    }
+    const delayed = [...this.jobs.values()].filter(
       (j) => j.state === "queued" && j.readyAt > Date.now(),
     );
     if (delayed.length)
@@ -309,9 +428,10 @@ export function isServerCheckQueueError(error: unknown): boolean {
     details?: { reason?: string };
   } | null;
   return (
-    candidate?.status === 429 &&
-    ["SERVER_CHECK_QUEUE_FULL", "SERVER_CHECK_QUEUE_TIMEOUT"].includes(
-      candidate.details?.reason ?? "",
-    )
+    isPreemptedCheck(error) ||
+    (candidate?.status === 429 &&
+      ["SERVER_CHECK_QUEUE_FULL", "SERVER_CHECK_QUEUE_TIMEOUT"].includes(
+        candidate.details?.reason ?? "",
+      ))
   );
 }

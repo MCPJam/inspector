@@ -17,6 +17,7 @@ describe("server check scheduler", () => {
   it("runs 120 cards ten at a time in card order and reprioritizes pending work", async () => {
     const queue = new ServerCheckQueue();
     const names = Array.from({ length: 120 }, (_, i) => String(i));
+    queue.markAutomatic("project", names);
     queue.setOrder("project", [...names].reverse());
     const starts: string[] = [];
     const releases = new Map<string, () => void>();
@@ -45,6 +46,123 @@ describe("server check scheduler", () => {
     expect(new Set(starts).size).toBe(120);
     expect(queue.state("project", "0")).toBeUndefined();
   });
+  it("interrupts only the newest automatic attempt, waits for cleanup, then resumes it", async () => {
+    vi.useFakeTimers();
+    const queue = new ServerCheckQueue();
+    const names = Array.from({ length: 10 }, (_, i) => String(i));
+    queue.markAutomatic("project", names);
+    const signals = new Map<string, AbortSignal>();
+    const releases = new Map<string, () => void>();
+    const starts: string[] = [];
+    const jobs = names.map((name) =>
+      queue.run(options(name), (signal) => {
+        signals.set(name, signal);
+        starts.push(name);
+        return new Promise<void>((resolve) => releases.set(name, resolve));
+      }),
+    );
+    await tick();
+    const firstSignal = signals.get("9")!;
+    const manualRun = vi.fn(async () => {
+      starts.push("manual");
+    });
+    const manual = queue.run(options("manual"), manualRun);
+    await tick();
+    expect(firstSignal.aborted).toBe(true);
+    expect([...signals.values()].filter((s) => s.aborted)).toHaveLength(1);
+    expect(manualRun).not.toHaveBeenCalled();
+    releases.get("9")!(); // The interrupted attempt has finished cleanup.
+    await tick();
+    await manual;
+    expect(starts.at(-1)).toBe("manual");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(starts.at(-1)).toBe("9");
+    expect(signals.get("9")).not.toBe(firstSignal);
+    expect(signals.get("9")!.aborted).toBe(false);
+    for (const release of releases.values()) release();
+    await Promise.all(jobs);
+  });
+
+  it("promotes queued work ahead of card order and protects active manual work", async () => {
+    const queue = new ServerCheckQueue();
+    const names = Array.from({ length: 12 }, (_, i) => String(i));
+    queue.markAutomatic("project", names);
+    const releases = new Map<string, () => void>();
+    const signals = new Map<string, AbortSignal>();
+    const starts: string[] = [];
+    const jobs = names.map((name) =>
+      queue.run(options(name), (signal) => {
+        signals.set(name, signal);
+        starts.push(name);
+        return new Promise<void>((resolve) => releases.set(name, resolve));
+      }),
+    );
+    await tick();
+    queue.markManual("project", "9");
+    queue.markManual("project", "11");
+    queue.markManual("project", "11");
+    await tick();
+    expect(signals.get("9")!.aborted).toBe(false);
+    expect(signals.get("8")!.aborted).toBe(true);
+    expect(signals.get("7")!.aborted).toBe(false);
+    releases.get("8")!();
+    await tick();
+    expect(starts.at(-1)).toBe("11");
+    queue.cancelAll();
+    for (const release of releases.values()) release();
+    await Promise.allSettled(jobs);
+  });
+
+  it("keeps manual checks running and queues additional manual clicks in order", async () => {
+    const queue = new ServerCheckQueue();
+    const signals: AbortSignal[] = [];
+    const releases: (() => void)[] = [];
+    const jobs = Array.from({ length: 10 }, (_, i) =>
+      queue.run(options(String(i)), (signal) => {
+        signals.push(signal);
+        return new Promise<void>((resolve) => releases.push(resolve));
+      }),
+    );
+    await tick();
+    const starts: string[] = [];
+    const first = queue.run(options("first"), async () => {
+      starts.push("first");
+    });
+    const second = queue.run(options("second"), async () => {
+      starts.push("second");
+    });
+    await tick();
+    expect(signals.every((s) => !s.aborted)).toBe(true);
+    expect(starts).toEqual([]);
+    releases[0]();
+    await Promise.all([first, second]);
+    expect(starts).toEqual(["first", "second"]);
+    releases.forEach((release) => release());
+    await Promise.all(jobs);
+  });
+
+  it("does not resume interrupted work after automatic connection is disabled", async () => {
+    vi.useFakeTimers();
+    const queue = new ServerCheckQueue();
+    queue.markAutomatic("project", ["one"]);
+    const run = vi
+      .fn()
+      .mockRejectedValue({
+        status: 409,
+        details: { reason: "SERVER_CHECK_PREEMPTED" },
+      });
+    const result = queue.run(options("one"), run);
+    const cancelled = expect(result).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queue.state("project", "one")).toBe("queued");
+    queue.setAutomaticEnabled("project", false);
+    await cancelled;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
   it("deduplicates mounts and cancels pending and active requests on scope changes", async () => {
     const queue = new ServerCheckQueue();
     queue.setScope("project", "a");
@@ -143,9 +261,16 @@ describe("server check scheduler", () => {
     queue.markAutomatic("project", ["manual"]);
     queue.markAutomatic("other", ["auto"]);
     queue.setAutomaticEnabled("project", false);
-    await expect(queue.run(options("manual"), async () => "ok")).resolves.toBe("ok");
-    const other = queue.run({ ...options("auto"), projectId: "other" }, async () => "unused");
-    const cancelled = expect(other).rejects.toMatchObject({ name: "AbortError" });
+    await expect(queue.run(options("manual"), async () => "ok")).resolves.toBe(
+      "ok",
+    );
+    const other = queue.run(
+      { ...options("auto"), projectId: "other" },
+      async () => "unused",
+    );
+    const cancelled = expect(other).rejects.toMatchObject({
+      name: "AbortError",
+    });
     queue.cancelAutomatic("other");
     await cancelled;
   });

@@ -645,6 +645,11 @@ export function ServerConnectionCard({
                 className="flex items-center gap-1.5"
                 onClick={(e) => e.stopPropagation()}
               >
+                {checkQueueState && (
+                  <Button variant="ghost" size="sm" onClick={() => serverCheckQueue.markManual(checkProjectId, server.name)}>
+                    {checkQueueState === "queued" ? "Connect next" : "Keep connecting"}
+                  </Button>
+                )}
                 <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                   {isPendingConnection ? (
                     <ConnectionStatusIcon className={iconClassName} />

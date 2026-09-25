@@ -134,6 +134,10 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={createServer()} projectId="queue-project" {...defaultProps} />);
       expect(screen.getByText("Queued")).toBeInTheDocument();
+      const promote = vi.spyOn(serverCheckQueue, "markManual");
+      fireEvent.click(screen.getByRole("button", { name: "Connect next" }));
+      expect(promote).toHaveBeenCalledWith("queue-project", "test-server");
+      promote.mockRestore();
       const toggle = screen.getByRole("switch");
       expect(toggle).toHaveAttribute("aria-checked", "true");
       fireEvent.click(toggle);

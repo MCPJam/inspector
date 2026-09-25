@@ -5237,6 +5237,7 @@ export function useServerState({
             { intent: "reconnect" }
           );
         } catch (error) {
+          if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
           if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
           const errorMessage =
             error instanceof Error
@@ -5277,6 +5278,7 @@ export function useServerState({
           });
           oauthResult = await initiateOAuth(oauthOptions);
         } catch (error) {
+          if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
           if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
           if (isStaleOp(serverName, token)) {
             return {
@@ -5513,6 +5515,7 @@ export function useServerState({
           );
           hadSyncedOAuthRetry = true;
         } catch (error) {
+          if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
           if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
           if (isStaleOp(serverName, token)) {
             return {
@@ -5691,7 +5694,8 @@ export function useServerState({
           error: errorMessage,
         };
       } catch (error) {
-        if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
+        if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
+          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         if (isStaleOp(serverName, token)) {

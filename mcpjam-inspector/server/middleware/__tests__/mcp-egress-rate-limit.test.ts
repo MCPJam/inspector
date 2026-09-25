@@ -3,6 +3,7 @@ import { Hono } from "hono";
 vi.mock("../../config.js", () => ({ HOSTED_MODE: true }));
 import {
   createServerCheckMiddleware,
+  promoteServerCheck,
   type CheckCoordinator,
   type CheckDecision,
 } from "../mcp-egress-rate-limit.js";
@@ -69,6 +70,61 @@ describe("shared server check admission", () => {
     } finally {
       vi.unstubAllEnvs();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("accepts automatic intent only for hosted web validation and scopes promotion to the verified user", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.example");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "fixture-service");
+    const calls: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input, init) => {
+        calls.push(JSON.parse(String(init.body)));
+        return Response.json(active());
+      }),
+    );
+    try {
+      const route = new Hono();
+      route.use("*", async (c, next) => {
+        c.set("workosUserId", "verified");
+        await next();
+      });
+      route.post("/api/web/servers/checks/promote", promoteServerCheck);
+      route.use("*", createServerCheckMiddleware());
+      route.post("/api/web/servers/validate", (c) => c.json({ ok: true }));
+      route.post("/api/v1/servers/validate", (c) => c.json({ ok: true }));
+      const requestId = crypto.randomUUID();
+      for (const surface of ["web", "v1"]) {
+        await route.request(`/api/${surface}/servers/validate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            _serverCheck: { requestId, intent: "automatic" },
+          }),
+        });
+      }
+      expect(calls[0]).toMatchObject({
+        requestId,
+        intent: "automatic",
+        principal: "user:verified",
+      });
+      expect(calls[2].intent).toBeUndefined();
+      expect(calls[2].requestId).not.toBe(requestId);
+      const response = await route.request("/api/web/servers/checks/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, principal: "user:attacker" }),
+      });
+      expect(response.status).toBe(200);
+      expect(calls.at(-1)).toMatchObject({
+        operation: "promote",
+        requestId,
+        principal: "user:verified",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -153,6 +209,37 @@ describe("shared server check admission", () => {
     expect(aborted).toBe(true);
     expect(coordinator).toHaveBeenLastCalledWith("release");
   });
+  it("returns preempted only after cancellation cleanup and lease release", async () => {
+    const coordinator = vi.fn(
+      async (operation: string): Promise<CheckDecision> => ({
+        ...active(),
+        state: operation === "poll" ? "preempted" : "active",
+      }),
+    );
+    let cleanup!: () => void;
+    let signal!: AbortSignal;
+    const handler = async () => {
+      signal = serverCheckScope.getStore()!;
+      await new Promise<void>((resolve) => {
+        cleanup = resolve;
+      });
+      return new Response("ok");
+    };
+    const result = app(coordinator, handler).request("/check", {
+      method: "POST",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(signal.aborted).toBe(true);
+    expect(coordinator.mock.calls.some(([op]) => op === "release")).toBe(false);
+    cleanup();
+    const response = await result;
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      details: { reason: "SERVER_CHECK_PREEMPTED" },
+    });
+    expect(coordinator).toHaveBeenLastCalledWith("release");
+  });
+
   it("does not run checks if the coordinator is unavailable", async () => {
     const handler = vi.fn(async () => new Response("ok"));
     const response = await app(async () => {

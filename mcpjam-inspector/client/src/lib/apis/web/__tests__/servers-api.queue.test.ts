@@ -53,31 +53,86 @@ describe("hosted validation scheduling", () => {
   });
   it("queues automatic preparation in card order without acquiring a second slot for HTTP", async () => {
     const order = Array.from({ length: 12 }, (_, i) => String(11 - i));
+    serverCheckQueue.markAutomatic("ordered", order);
     serverCheckQueue.setOrder("ordered", order);
     const started: string[] = [];
     post.mockImplementation(async (_path, body) => {
       started.push(body.serverId);
       return { success: true };
     });
-    const jobs = [...order]
-      .reverse()
-      .map((serverName) =>
-        serverCheckQueue.run(
-          {
+    const jobs = [...order].reverse().map((serverName) =>
+      serverCheckQueue.run(
+        {
+          projectId: "ordered",
+          serverName,
+          identity: "connection-operation",
+        },
+        (queueSignal) =>
+          validateHostedServer(serverName, undefined, undefined, {
             projectId: "ordered",
-            serverName,
-            identity: "connection-operation",
-          },
-          (queueSignal) =>
-            validateHostedServer(serverName, undefined, undefined, {
-              projectId: "ordered",
-              serverId: serverName,
-              queueSignal,
-            }),
-        ),
-      );
+            serverId: serverName,
+            queueSignal,
+          }),
+      ),
+    );
     await Promise.all(jobs);
     expect(started).toEqual(order);
+  });
+
+  it("promotes the same remote request and retries promotion when it races admission", async () => {
+    vi.useFakeTimers();
+    serverCheckQueue.markAutomatic("promote", ["one"]);
+    let finish!: () => void;
+    let metadata: { requestId: string; intent: string };
+    let promotions = 0;
+    post.mockImplementation(async (path, body) => {
+      if (path.endsWith("/promote")) {
+        expect(body.requestId).toBe(metadata.requestId);
+        return { state: ++promotions === 1 ? "expired" : "active" };
+      }
+      metadata = body._serverCheck;
+      expect(metadata.intent).toBe("automatic");
+      return new Promise((resolve) => {
+        finish = () => resolve({ success: true });
+      });
+    });
+    const result = validateHostedServer("one", undefined, undefined, {
+      projectId: "promote",
+      serverId: "one",
+      serverName: "one",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    serverCheckQueue.markManual("promote", "one");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(promotions).toBe(2);
+    expect(
+      post.mock.calls.filter(([path]) => path.endsWith("/validate")),
+    ).toHaveLength(1);
+    finish();
+    await result;
+  });
+
+  it("requeues a backend preemption without surfacing failure", async () => {
+    vi.useFakeTimers();
+    serverCheckQueue.markAutomatic("preempt", ["one"]);
+    post
+      .mockRejectedValueOnce({
+        status: 409,
+        details: { reason: "SERVER_CHECK_PREEMPTED" },
+      })
+      .mockResolvedValueOnce({ success: true });
+    const result = validateHostedServer("one", undefined, undefined, {
+      projectId: "preempt",
+      serverId: "one",
+      serverName: "one",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(serverCheckQueue.state("preempt", "one")).toBe("queued");
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(result).resolves.toEqual({ success: true });
+    expect(post.mock.calls[0][1]._serverCheck.requestId).not.toBe(
+      post.mock.calls[1][1]._serverCheck.requestId,
+    );
   });
 
   it("propagates user cancellation to the request signal", async () => {

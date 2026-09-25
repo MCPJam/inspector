@@ -8,7 +8,7 @@ import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
-import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { mcpEgressRateLimitMiddleware, promoteServerCheck } from "../../middleware/mcp-egress-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import servers from "./servers.js";
@@ -98,6 +98,7 @@ for (const startsWork of [
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
+web.post("/servers/checks/promote", promoteServerCheck);
 // All hosted checks share ten active slots per verified user across replicas.
 for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
