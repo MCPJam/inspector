@@ -335,7 +335,10 @@ export interface ResolvedEvalAttachment {
   path: string;
   contentHash: string;
   size: number;
-  /** Short-lived download URL for the pinned blob; null when the pin is gone. */
+  /**
+   * Download URL for the pinned blob, read by this server only (see
+   * `resolveEvalRunAttachments`); null when the pin is gone.
+   */
   url: string | null;
 }
 
@@ -348,8 +351,16 @@ export interface ResolvedEvalAttachmentsCase {
 /**
  * Resolve the run's frozen per-case attachments to download URLs (user-bearer
  * auth). The control plane joins each case's pinned content-hashes to their
- * blobs and mints short-lived URLs; a `url: null` means the pin vanished, and
+ * blobs and mints download URLs; a `url: null` means the pin vanished, and
  * the caller must fail the iteration honestly rather than seed a missing file.
+ *
+ * The service token rides along when this server holds one (MJ-005): the
+ * backend then answers with locations that serve an attachment of any size.
+ * Without it, it answers with signed links, which serve smaller files only.
+ * A token already rejected at boot (`markServiceTokenRejected`) is not
+ * presented, since the backend answers an invalid token with 403 rather than
+ * with signed links. Either way the URLs are read by this server alone
+ * (`seedAttachmentsIntoSandbox`) and are never returned to a caller.
  */
 export async function resolveEvalRunAttachments(args: {
   bearer: string;
@@ -358,7 +369,12 @@ export async function resolveEvalRunAttachments(args: {
 }): Promise<ControlPlaneResult<{ cases: ResolvedEvalAttachmentsCase[] }>> {
   return postJson<{ cases: ResolvedEvalAttachmentsCase[] }>(
     "/evals/sandbox/attachments",
-    bearerHeader(args.bearer),
+    {
+      ...bearerHeader(args.bearer),
+      ...(getServiceToken()
+        ? { "x-inspector-service-token": getServiceToken()! }
+        : {}),
+    },
     { runId: args.runId },
     args.signal,
   );
