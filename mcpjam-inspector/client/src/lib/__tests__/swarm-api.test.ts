@@ -259,6 +259,33 @@ describe("swarm rollup DTO contracts", () => {
     });
   });
 
+  it("journeySessionRowToThread resolves whether the session never ran (#5188)", () => {
+    const row = (
+      lifecycle: string | null,
+      messageCount: number,
+    ): JourneySessionRow => ({
+      id: "thread-1",
+      chatSessionId: "synth_1",
+      projectId: "proj-1",
+      hostId: "host-1",
+      startedAt: 10,
+      messageCount,
+      ...(lifecycle
+        ? { verdict: { lifecycle } as unknown as JourneySessionRow["verdict"] }
+        : {}),
+    });
+    // Refused before it said anything.
+    expect(journeySessionRowToThread(row("broke", 0)).neverRan).toBe(true);
+    expect(journeySessionRowToThread(row("limited", 0)).neverRan).toBe(true);
+    // Ran, then failed: a finding about the server, not a refusal.
+    expect(journeySessionRowToThread(row("broke", 5)).neverRan).toBe(false);
+    expect(journeySessionRowToThread(row("ran", 5)).neverRan).toBe(false);
+    // No verdict, no claim either way.
+    expect(journeySessionRowToThread(row(null, 0))).not.toHaveProperty(
+      "neverRan",
+    );
+  });
+
   it("groupSwarmSessionsByRun clusters rows by journeyRunId, newest run first", () => {
     const row = (
       id: string,

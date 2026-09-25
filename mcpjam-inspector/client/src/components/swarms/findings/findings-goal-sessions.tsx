@@ -18,6 +18,8 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
+import { threadNeverRan } from "@/components/swarms/swarm-session-not-run";
 
 const PAGE_SIZE = 25;
 
@@ -63,17 +65,34 @@ export type FindingsStageNarrowing = {
  * a caller that re-allocates must not be able to spin the effect below.
  */
 function samePage(
-  a: ReadonlyArray<{ _id: string; firstMessagePreview?: string }> | undefined,
-  b: ReadonlyArray<{ _id: string; firstMessagePreview?: string }>,
+  a: ReadonlyArray<SessionRow> | undefined,
+  b: ReadonlyArray<SessionRow>,
 ): boolean {
   if (a === b) return true;
   if (!a || a.length !== b.length) return false;
   return a.every(
     (row, i) =>
       row._id === b[i]!._id &&
-      row.firstMessagePreview === b[i]!.firstMessagePreview,
+      row.firstMessagePreview === b[i]!.firstMessagePreview &&
+      // Both decide whether the row reads "Didn't run", and an attempt that
+      // settles while the goal is open must be allowed to change it.
+      row.runAttemptStatus === b[i]!.runAttemptStatus &&
+      row.messageCount === b[i]!.messageCount,
   );
 }
+
+/** What one row renders, and what `threadNeverRan` reads. */
+type SessionRow = Pick<
+  SharedChatThread,
+  | "_id"
+  | "firstMessagePreview"
+  | "lastActivityAt"
+  | "sourceType"
+  | "messageCount"
+  | "neverRan"
+  | "runAttemptStatus"
+  | "runAttemptErrorCode"
+>;
 
 /** `undefined` (the first page) and a real cursor must not collide. */
 function cursorKey(cursor: number | null | undefined): string {
@@ -114,12 +133,6 @@ export function FindingsGoalSessions({
       ? { ...base, chips: [...base.chips, chip] }
       : { preset: "all" as const, chips: [chip] };
   }, [scope, stage]);
-
-  type SessionRow = {
-    _id: string;
-    firstMessagePreview?: string;
-    lastActivityAt: number;
-  };
 
   const [before, setBefore] = useState<number | undefined>(undefined);
   /**
@@ -227,9 +240,20 @@ export function FindingsGoalSessions({
                   <span className="shrink-0 text-xs font-medium text-orange-300">
                     Session {index + 1}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-50">
-                    {preview ? `"${preview}"` : "(no preview)"}
-                  </span>
+                  {/* A refused session has no preview, and "(no preview)"
+                      read as a session that ran and said nothing (#5188). */}
+                  {threadNeverRan(session) ? (
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs text-zinc-400"
+                      data-testid="findings-goal-session-never-ran"
+                    >
+                      Didn't run
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-50">
+                      {preview ? `"${preview}"` : "(no preview)"}
+                    </span>
+                  )}
                 </button>
               </li>
             );

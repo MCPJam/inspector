@@ -33,7 +33,12 @@ import type {
 } from "@mcpjam/sdk/contract";
 
 import { useMemo, useState } from "react";
-import type { SwarmWaveSignals } from "@/lib/swarm-api";
+import {
+  SWARM_QUERIES,
+  type RunLaunchFailures,
+  type SwarmWaveSignals,
+} from "@/lib/swarm-api";
+import { describeLaunchFailures } from "@/components/swarms/swarm-session-not-run";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
@@ -137,6 +142,35 @@ export function SwarmFindingsTab({
       ? null
       : clampNarration(generatedSummary);
 
+  // Why any of the wave's sessions never ran (#5188). The summary can only
+  // count them; the refusal itself is on the attempt rows. Read only when a
+  // session did not start, so an ordinary wave issues no extra query.
+  const someSessionsDidNotStart =
+    model.launch.failed + model.launch.rateLimited > 0;
+  const runIds = useMemo(() => wave.runs.map((run) => run.runId), [wave.runs]);
+  // Keyed to the runs it was read for, so a reason read for one wave is never
+  // shown on the next while that one's read is still in flight.
+  const runKey = runIds.join("\0");
+  const [launchFailures, setLaunchFailures] = useState<{
+    runKey: string;
+    value: RunLaunchFailures[];
+  } | null>(null);
+  const receiveLaunchFailures = useCallback(
+    (value: RunLaunchFailures[]) => setLaunchFailures({ runKey, value }),
+    [runKey],
+  );
+  const launchReason =
+    someSessionsDidNotStart && launchFailures?.runKey === runKey
+      ? describeLaunchFailures(launchFailures.value)
+      : null;
+  // A backend that predates the query throws on subscribe; the boundary turns
+  // that into no reason line rather than a broken tab.
+  const launchFailuresRead = someSessionsDidNotStart ? (
+    <ErrorBoundary fallback={null}>
+      <LaunchFailuresRead runIds={runIds} onRead={receiveLaunchFailures} />
+    </ErrorBoundary>
+  ) : null;
+
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
   // alphabetically, so a live wave adding a persona would shift indices under
   // the reader and silently select someone else.
@@ -201,12 +235,14 @@ export function SwarmFindingsTab({
     }
     return (
       <div data-testid="swarm-findings-tab">
+        {launchFailuresRead}
         {jobStatus}
         <FindingsSummaryCard
           sessionCount={model.sessionCount}
           summary={summary.lines}
           recommendation={recommendation}
           narration={waveProse}
+          launchReason={launchReason}
         />
       </div>
     );
@@ -224,12 +260,14 @@ export function SwarmFindingsTab({
             />
           ))}
       </ErrorBoundary>
+      {launchFailuresRead}
       {jobStatus}
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}
         recommendation={recommendation}
         narration={waveProse}
+        launchReason={launchReason}
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">
@@ -265,6 +303,23 @@ export function SwarmFindingsTab({
       />
     </div>
   );
+}
+
+function LaunchFailuresRead({
+  runIds,
+  onRead,
+}: {
+  runIds: readonly string[];
+  onRead: (value: RunLaunchFailures[]) => void;
+}) {
+  const value = useQuery(
+    SWARM_QUERIES.listRunLaunchFailures as never,
+    { journeyRunIds: runIds } as never,
+  ) as RunLaunchFailures[] | undefined;
+  useEffect(() => {
+    if (value !== undefined) onRead(value);
+  }, [value, onRead]);
+  return null;
 }
 
 function RunFunnelRead({

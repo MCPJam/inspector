@@ -95,11 +95,18 @@ const waveSignals: SwarmWaveSignals = {
   terminal: true,
 };
 
-const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
+const { mockUseGoalOutcomeDrilldown, launchFailuresState } = vi.hoisted(() => ({
   mockUseGoalOutcomeDrilldown: vi.fn(() => ({
     drilldown: undefined,
     isLoading: false,
   })),
+  // `journeyRuns:listRunLaunchFailures`: what it returns, whether the
+  // backend predates it, and every args object it was subscribed with.
+  launchFailuresState: {
+    value: undefined as unknown,
+    missing: false,
+    calls: [] as unknown[],
+  },
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
@@ -115,6 +122,13 @@ vi.mock("convex/react", () => ({
         return overview;
       case "swarmWaveInsights:getWaveSignals":
         return waveSignals;
+      case "journeyRuns:listRunLaunchFailures":
+        launchFailuresState.calls.push(args);
+        if (launchFailuresState.missing)
+          throw new Error(
+            "Could not find public function for 'journeyRuns:listRunLaunchFailures'",
+          );
+        return launchFailuresState.value;
       default:
         return undefined;
     }
@@ -191,6 +205,9 @@ afterEach(() => {
     drilldown: undefined,
     isLoading: false,
   });
+  launchFailuresState.value = undefined;
+  launchFailuresState.missing = false;
+  launchFailuresState.calls = [];
 });
 
 // ── SwarmFindingsTab (pure props) ───────────────────────────────────────────
@@ -633,6 +650,90 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("swarm-findings-tab").textContent).not.toContain(
       "handled every request",
     );
+  });
+
+  /**
+   * #5188: the summary could count the refused sessions but never say why,
+   * which is how "one endpoint returned 400 on every turn" read as a finding
+   * about the server under test for three days.
+   */
+  describe("why sessions didn't run", () => {
+    const deadWave = () =>
+      groupRunsIntoSwarmWaves([
+        run({
+          report: neverStartedReport(3),
+          summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+        }),
+      ])[0]!;
+
+    it("names the refusal the attempts recorded", () => {
+      launchFailuresState.value = [
+        {
+          runId: "run-1",
+          sessionsNotRun: 3,
+          sessionsTotal: 3,
+          reasons: [
+            {
+              errorCode: "session_failed",
+              errorMessage: "Persona turn failed: 400 invalid identity",
+              count: 3,
+            },
+          ],
+        },
+      ];
+      render(
+        <SwarmFindingsTab
+          wave={deadWave()}
+          waveSignals={{ ...waveSignals, candidates: [] }}
+          personas={personas}
+        />,
+      );
+
+      // Subscribed with the wave's runs (once per render, same args).
+      expect(launchFailuresState.calls.length).toBeGreaterThan(0);
+      for (const args of launchFailuresState.calls)
+        expect(args).toEqual({ journeyRunIds: ["run-1"] });
+      const reason = screen.getByTestId("findings-launch-reason");
+      expect(reason).toHaveTextContent("Why sessions didn't run");
+      expect(reason).toHaveTextContent(/invalid identity/i);
+      // The count stays where it was.
+      expect(screen.getByTestId("findings-headline").textContent).toContain(
+        "3 of 3 sessions failed to launch.",
+      );
+    });
+
+    it("leaves the summary intact on a backend without the query", () => {
+      launchFailuresState.missing = true;
+      render(
+        <SwarmFindingsTab
+          wave={deadWave()}
+          waveSignals={{ ...waveSignals, candidates: [] }}
+          personas={personas}
+        />,
+      );
+
+      expect(screen.getByTestId("findings-headline").textContent).toContain(
+        "3 of 3 sessions failed to launch.",
+      );
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("asks nothing of a wave whose sessions all started", () => {
+      render(
+        <SwarmFindingsTab
+          wave={wave()}
+          waveSignals={waveSignals}
+          personas={personas}
+        />,
+      );
+
+      expect(launchFailuresState.calls).toEqual([]);
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+    });
   });
 });
 
