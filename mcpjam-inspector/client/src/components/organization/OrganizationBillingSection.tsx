@@ -868,8 +868,6 @@ export function OrganizationBillingSection({
     .map((plan) => getAnnualDiscountPercent(planCatalog, plan))
     .filter((pct) => pct > 0);
   const compareAnnualDiscount = Math.max(0, ...annualDiscounts);
-  const compareDiscountPrefix =
-    new Set(annualDiscounts).size > 1 ? "Up to" : "Save";
   const [checkoutPlanNotice, setCheckoutPlanNotice] = useState<{
     reason: "already_on" | "already_higher";
     currentDisplayName: string;
@@ -1319,7 +1317,6 @@ export function OrganizationBillingSection({
                       billingInterval={billingInterval}
                       onChange={setBillingInterval}
                       annualDiscount={compareAnnualDiscount}
-                      discountPrefix={compareDiscountPrefix}
                     />
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">

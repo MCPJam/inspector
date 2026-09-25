@@ -14,14 +14,12 @@ export function BillingIntervalToggle({
   onChange,
   annualDiscount = 0,
   className,
-  discountPrefix = "Save",
   size = "default",
 }: {
   billingInterval: BillingInterval;
   onChange: (interval: BillingInterval) => void;
   annualDiscount?: number;
   className?: string;
-  discountPrefix?: string;
   size?: "default" | "sm";
 }) {
   const groupName = useId();
@@ -72,18 +70,14 @@ export function BillingIntervalToggle({
                   ? "text-background"
                   : "text-muted-foreground hover:text-foreground",
                 compact
-                  ? "min-h-8 gap-1 px-2.5 text-xs"
-                  : "min-h-10 gap-1.5 px-3 text-xs sm:gap-2 sm:px-4 sm:text-sm",
+                  ? "min-h-8 gap-1 px-2 text-xs"
+                  : "min-h-10 gap-1.5 px-2.5 text-xs sm:px-3 sm:text-sm",
               )}
             >
               {interval === "monthly" ? "Monthly" : "Annual"}
               {interval === "annual" && annualDiscount > 0 ? (
                 <Badge className="rounded-lg px-1 py-px text-[10px] leading-tight">
-                  {discountPrefix
-                    ? `${discountPrefix} ${annualDiscount}%${
-                        discountPrefix === "Up to" ? " off" : ""
-                      }`
-                    : `${annualDiscount}% off`}
+                  Save {annualDiscount}%
                 </Badge>
               ) : null}
             </span>
