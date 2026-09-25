@@ -332,6 +332,75 @@ describe("org rows carry their connection", () => {
   });
 });
 
+describe("org Azure deployments", () => {
+  const azureConfig = (modelIds?: string[]): OrgVisibleConfig => ({
+    providers: [
+      {
+        id: "orgprov_azure_1",
+        providerKey: "azure",
+        enabled: true,
+        hasSecret: true,
+        baseUrl: "https://contoso.openai.azure.com/openai",
+        ...(modelIds ? { modelIds } : {}),
+      },
+    ],
+  });
+
+  it("deployment rows replace the static azure rows and carry the deployment", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      azureConfig(["prod-gpt51", " prod-gpt51 ", "eval.mini"]),
+      [],
+    );
+    const azure = models.filter((m) => m.provider === "azure");
+    expect(azure).toEqual([
+      {
+        id: "azure/prod-gpt51",
+        name: "prod-gpt51 (Azure)",
+        provider: "azure",
+        nativeModelId: "prod-gpt51",
+        orgProvider: { providerKey: "azure", id: "orgprov_azure_1" },
+        hosted: false,
+      },
+      {
+        id: "azure/eval.mini",
+        name: "eval.mini (Azure)",
+        provider: "azure",
+        nativeModelId: "eval.mini",
+        orgProvider: { providerKey: "azure", id: "orgprov_azure_1" },
+        hosted: false,
+      },
+    ]);
+  });
+
+  it("the selection builder saves the deployment as nativeModelId", () => {
+    const [row] = buildAvailableModelsFromOrgConfig(
+      azureConfig(["prod-gpt51"]),
+      [],
+    ).filter((m) => m.provider === "azure");
+    expect(modelSelectionFromDefinition(row, undefined, "evalTarget")).toEqual({
+      modelId: "azure/prod-gpt51",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_azure_1" },
+      nativeModelId: "prod-gpt51",
+      fallback: { provider: "none", model: "none" },
+    });
+  });
+
+  it("with no deployments configured, the static rows stay and name none", () => {
+    const azure = buildAvailableModelsFromOrgConfig(azureConfig(), []).filter(
+      (m) => m.provider === "azure",
+    );
+    expect(azure.map((m) => m.id)).toContain("azure/gpt-5.1");
+    const selection = modelSelectionFromDefinition(
+      azure.find((m) => m.id === "azure/gpt-5.1")!,
+      undefined,
+      "chat",
+    );
+    // No deployment is invented by stripping the prefix.
+    expect(selection?.nativeModelId).toBeUndefined();
+  });
+});
+
 describe("stored choices", () => {
   it("store the canonical id beside the selection and read back the picked row", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);

@@ -1369,6 +1369,9 @@ export async function streamWebChatTurn(
       failureReporter,
       providerKey: orgRuntime.providerKey,
       modelId,
+      ...(typeof prepare.modelDefinition.nativeModelId === "string"
+        ? { nativeModelId: prepare.modelDefinition.nativeModelId }
+        : {}),
       chatSessionId: hostedChatSessionId,
       sourceType: persist.sourceType,
       messages: scrubbedMessages,
