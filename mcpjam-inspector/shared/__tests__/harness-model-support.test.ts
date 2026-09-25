@@ -89,6 +89,20 @@ describe("harnessModelSupport — seed evidence", () => {
     ).toBe("unsupported");
   });
 
+  it("the gpt-5.6 rows do not swallow a longer numeric line (gpt-5.60)", () => {
+    // `gpt-5.60` starts with the string "gpt-5.6" but is a different line: it
+    // must fall through to the general gpt-5 row, not the tool-less one.
+    for (const modelId of ["openai/gpt-5.60", "openai/gpt-5.61-mini"]) {
+      const verdict = harnessModelSupport({
+        harnessId: "codex",
+        runtimeVersion: "0.149.1",
+        modelId,
+      });
+      expect(verdict.status).toBe("supported");
+      expect(verdict.evidence?.familyPattern).toBe("^openai/gpt-5");
+    }
+  });
+
   it("codex runs gpt-5.5", () => {
     for (const runtimeVersion of ["0.149.1", "0.160.0", undefined]) {
       expect(
@@ -299,7 +313,7 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "b43850d20052e0f1f6b6091a9261209cde1af970f361af2a65f1a7d0fca72681",
+      "41b4b5c1219d35ba8891280f22a6600273a60c202de52f66dd5eda47d82068ee",
     );
   });
 });

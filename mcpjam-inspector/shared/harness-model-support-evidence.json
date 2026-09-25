@@ -28,7 +28,7 @@
     {
       "harness": "codex",
       "versionRange": "<=0.149.x",
-      "familyPattern": "^openai/gpt-5\\.6",
+      "familyPattern": "^openai/gpt-5\\.6($|-)",
       "status": "unsupported",
       "evidence": "Loopback capture 2026-09-01: the pinned Codex CLI sends tools: [] for the gpt-5.6 line, so the model cannot call MCP tools.",
       "observedAt": "2026-09-01"
@@ -36,7 +36,7 @@
     {
       "harness": "codex",
       "versionRange": ">0.149.x",
-      "familyPattern": "^openai/gpt-5\\.6",
+      "familyPattern": "^openai/gpt-5\\.6($|-)",
       "status": "unknown",
       "evidence": "The gpt-5.6 tool-less behavior was measured only on Codex <=0.149.x; newer CLI versions have not been captured.",
       "observedAt": "2026-09-01"
