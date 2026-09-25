@@ -60,7 +60,7 @@ import {
 } from "./evaluate/create-suite-navigation";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
-import { useEvalQueries } from "./evals/use-eval-queries";
+import { isBenchmarkOwned, useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
@@ -382,11 +382,50 @@ function EvaluateTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
-    if (!selectedSuiteEntry) {
-      navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+    if (selectedSuiteEntry) {
+      return;
     }
+    // Missing from the overview is not yet proof the suite is gone. A suite
+    // made a moment ago — "Promote to test case" into a NEW suite — is
+    // created by an ACTION, and an action's result can reach this client
+    // before the overview subscription's update does. The promote dialog
+    // holds that same subscription (same args), so the cached overview this
+    // page mounts with can predate the suite it was just sent to, and
+    // bouncing on it landed the promoter on the list instead of their case.
+    // Ask once, fresh, before calling the suite deleted.
+    const args = overviewQueries.suiteOverviewArgs;
+    if (!args) {
+      navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      let exists = false;
+      try {
+        const fresh = (await convex.query(
+          "testSuites:getTestSuitesOverview" as any,
+          args as any,
+        )) as EvalSuiteOverviewEntry[] | null | undefined;
+        exists = Boolean(
+          fresh?.some(
+            (entry) =>
+              entry.suite._id === selectedSuiteId &&
+              !isBenchmarkOwned(entry.suite),
+          ),
+        );
+      } catch {
+        // Unanswerable is treated as gone, as it was before this check.
+      }
+      if (cancelled || exists) return;
+      navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [
+    convex,
     overviewQueries.isOverviewLoading,
+    overviewQueries.suiteOverviewArgs,
     route,
     selectedSuiteEntry,
     selectedSuiteId,
