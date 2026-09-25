@@ -116,6 +116,28 @@ skills, built-in tools, progressive tool discovery, or interactive approvals.
 Clients requiring these features fail before tests execute. Existing
 `run(executor)` calls keep their current behavior.
 
+`runWithClient` only has access to the hosted MCPJam rail. If a saved client's
+model selection was configured to use an organization provider or a local
+provider, the call throws `UnsupportedModelSelectionError` (with `source` and
+`modelId` properties) before any tools are set up. To use such a client with
+`runWithClient`, re-save it in MCPJam with a hosted model.
+
+```typescript
+import { EvalSuite, UnsupportedModelSelectionError } from "@mcpjam/sdk";
+
+try {
+  await suite.runWithClient({ client: "My client", projectId, apiKey, manager });
+} catch (err) {
+  if (err instanceof UnsupportedModelSelectionError) {
+    console.error(
+      `Client uses ${err.source} credentials for "${err.modelId}" — ` +
+      `re-save it with a hosted model to use runWithClient.`
+    );
+  }
+  throw err;
+}
+```
+
 #### Several clients at once
 
 Pass a list to run the same cases against each saved client:
