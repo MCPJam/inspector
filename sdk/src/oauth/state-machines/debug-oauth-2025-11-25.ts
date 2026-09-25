@@ -13,6 +13,7 @@ import {
   describeTokenRequestFailure,
 } from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
+import { describeResourceMetadataRequestFailure } from "./shared/resource-metadata-error.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
@@ -46,6 +47,10 @@ import {
   describePkceMetadataNonConformance,
   selectAuthorizationServerFromResourceMetadata,
 } from "./shared/required-metadata.js";
+import {
+  describeAuthorizationServerDiscoveryFailure,
+  type AuthorizationServerMetadataAttempt,
+} from "./shared/authorization-server-discovery.js";
 import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
@@ -764,7 +769,7 @@ export const createDebugOAuthStateMachine = (
               });
 
               throw new Error(
-                `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`
+                describeResourceMetadataRequestFailure(error)
               );
             }
             break;
@@ -815,7 +820,7 @@ export const createDebugOAuthStateMachine = (
               state.authorizationServerUrl
             );
             let authServerMetadata = null;
-            let lastError = null;
+            const discoveryAttempts: AuthorizationServerMetadataAttempt[] = [];
             let finalResponseHeaders: Record<string, string> = {};
             let finalResponseData: any = null;
 
@@ -857,24 +862,23 @@ export const createDebugOAuthStateMachine = (
                   authServerMetadata = response.body;
                   finalResponseHeaders = response.headers;
                   finalResponseData = response;
+                  if (!authServerMetadata) {
+                    discoveryAttempts.push({ url, status: response.status });
+                  }
 
                   break;
-                } else if (response.status >= 400 && response.status < 500) {
-                  // Client error, try next URL
-                  continue;
-                } else {
-                  // Server error, might be temporary
-                  lastError = new Error(`HTTP ${response.status} from ${url}`);
                 }
+                // Any non-2xx: record it and fall through to the next URL.
+                discoveryAttempts.push({ url, status: response.status });
               } catch (error) {
-                lastError = error;
+                discoveryAttempts.push({ url, error });
                 continue;
               }
             }
 
             if (!authServerMetadata || !finalResponseData) {
               throw new Error(
-                `Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+                describeAuthorizationServerDiscoveryFailure(discoveryAttempts)
               );
             }
 

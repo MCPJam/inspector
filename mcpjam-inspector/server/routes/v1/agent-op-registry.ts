@@ -66,6 +66,7 @@ import {
   listConformanceRunsOperation,
   getConformanceReportOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
   nameEnvironmentOperation,
@@ -1800,6 +1801,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // Kept GATED rather than direct because it PERSISTS cases into the
       // suite and takes a slice of a bounded daily quota — see
       // TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: importEvalCasesOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Import eval cases from ${
+          named(input, "fileName") ?? "a document"
+        } into ${named(input, "suite") ?? "(unnamed)"}`,
+      buttonLabel: "Import them",
+      kind: "generate",
+      // `none`, not absent, and NOT "spend": the authoring model is
+      // platform-paid, exactly like generation, so a money warning on the
+      // Slack and Discord approval cards would be false. A host's DEFAULT
+      // approval copy is worded around cost, so saying nothing would inherit
+      // the same false warning.
+      //
+      // Kept GATED rather than direct because it PERSISTS cases into the
+      // suite — see TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
       confirmSeverity: "none",
     },
   },

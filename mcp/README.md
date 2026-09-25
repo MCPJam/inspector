@@ -79,6 +79,7 @@ so results respect the caller's project access.
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
+| `import_eval_cases` | Turn a markdown, JSON or CSV document into runnable test cases with MCPJam's AI and persist them into the suite. Costs customer credits. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
 | `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
 | `get_eval_run_gate` | Get one run's stored suite quality-gate report: passed, failed, non_gateable, or not_configured. `not_configured` is a real report, never an absent route. A deployment that does not serve the route is a different fact — do not report it as no policy. A run waiver never covers this report. | — |
@@ -228,9 +229,10 @@ require the project the run belongs to — `run_eval_suite` and
 The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
 (the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
 hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
-start LLM iterations against the organization's credits. `generate_eval_cases`
-also calls a model, but that one is on MCPJam — no credits are consumed; it
-counts against the organization's daily generation quota. By default the
+start LLM iterations against the organization's credits.
+`generate_eval_cases` and `import_eval_cases` also call a model, but those are
+on MCPJam — no credits are consumed; generation counts against the
+organization's daily generation quota. By default the
 platform connects the suite's saved server selection — the exact set the run
 snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the
