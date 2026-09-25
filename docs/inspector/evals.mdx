@@ -661,6 +661,18 @@ Once every draft has been saved or discarded, the workspace shows **Every genera
 
 When the suite has a saved server group spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved server group treat all available servers as a single pool.
 
+## Importing cases from a document
+
+The **Import cases** button lets you turn any text document — a test plan, a QA checklist, a spreadsheet of scenarios, plain notes — into runnable test cases. MCPJam's AI reads the document and authors full cases (prompt, tool calls, assertions), grounded in the suite's actual server tools. Any text format works: Markdown, JSON, CSV, or plain text, up to 100 KB.
+
+**This consumes customer credits**, unlike generation which is on MCPJam.
+
+Cases the model could not finish are not saved. They come back under `skipped` with a `reviewUrl` that opens the app on exactly those drafts so you can complete them. To fix a skipped case, import only that case's corrected text — re-sending the whole document re-authors and re-bills every case in it.
+
+Imported drafts open directly in the step editor so you can review the full case — prompt, tool calls, and assertions — before saving. A draft the model flagged with a doubt shows a **Check before saving** badge; it can still be saved individually but is excluded from **Add all to suite** so you decide on it explicitly.
+
+The same operation is available from the CLI (`mcpjam cloud eval cases import`) and the MCP server (`import_eval_cases`). See the [CLI reference](/cli/reference#cloud-eval-cases-import) for the full flag list, including `--idempotency-key` to make retries safe.
+
 ## Plugin provenance on runs
 
 When a run executed against an environment that pins a plugin, the run detail page shows a **Plugins** row directly below the environment label. Each chip displays the plugin name and a short bundle hash — the content-addressed identity of the exact bundle the run used.
