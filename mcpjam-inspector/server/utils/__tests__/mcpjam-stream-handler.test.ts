@@ -4542,6 +4542,147 @@ describe("mcpjam-stream-handler", () => {
         ).toBe(false);
       });
 
+      describe("each approval runs its call once", () => {
+        /** The history a browser sends back after the user approves. */
+        function approvedHistory(approvalId: string) {
+          return [
+            { role: "user", content: "run it" },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-gated-1",
+                  toolName: "run_eval_suite",
+                  input: CALL_INPUT,
+                },
+                {
+                  type: "tool-approval-request",
+                  approvalId,
+                  toolCallId: "call-gated-1",
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                { type: "tool-approval-response", approvalId, approved: true },
+              ],
+            },
+          ];
+        }
+
+        async function resume(
+          messages: unknown[],
+          options: { clientSuppliedHistory?: boolean } = {
+            clientSuppliedHistory: true,
+          },
+        ) {
+          vi.mocked(executeToolCallsFromMessages).mockClear();
+          writtenChunks = [];
+          const onConversationComplete = vi.fn();
+          await handleMCPJamFreeChatModel({
+            messages: messages as any,
+            modelId: "openai/gpt-5-mini",
+            systemPrompt: "You are helpful",
+            tools: {
+              run_eval_suite: { execute: vi.fn(), needsApproval: true },
+            } as any,
+            mcpClientManager: {
+              getAllToolsMetadata: vi.fn().mockReturnValue({}),
+            } as any,
+            ...options,
+            onConversationComplete,
+          });
+          await lastExecution;
+          const filters = vi
+            .mocked(executeToolCallsFromMessages)
+            .mock.calls.map(([, opts]) => (opts as any)?.filterToolCall);
+          const ran = filters.some(
+            (filter) =>
+              typeof filter === "function" &&
+              filter({
+                toolCallId: "call-gated-1",
+                toolName: "run_eval_suite",
+              }),
+          );
+          const history = onConversationComplete.mock.calls[0]?.[0] as any[];
+          const answer = history
+            ?.filter((message) => message.role === "tool")
+            .flatMap((message) => message.content)
+            .find(
+              (part: any) =>
+                part.type === "tool-result" &&
+                part.toolCallId === "call-gated-1",
+            );
+          return { ran, answer };
+        }
+
+        it("answers the same approval a second time without running the call again", async () => {
+          const approvalId = signedApprovalId(
+            "call-gated-1",
+            "run_eval_suite",
+            CALL_INPUT,
+          );
+
+          const first = await resume(approvedHistory(approvalId));
+          expect(first.ran).toBe(true);
+
+          const second = await resume(approvedHistory(approvalId));
+          expect(second.ran).toBe(false);
+          expect(
+            writtenChunks.some(
+              (chunk) =>
+                chunk?.type === "tool-output-denied" &&
+                chunk.toolCallId === "call-gated-1",
+            ),
+          ).toBe(true);
+          expect(second.answer?.output?.value).toMatch(/already used/);
+        });
+
+        it("does not use up an approval whose call the history already answers", async () => {
+          const approvalId = signedApprovalId(
+            "call-gated-1",
+            "run_eval_suite",
+            CALL_INPUT,
+          );
+          const answered = [
+            ...approvedHistory(approvalId),
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-gated-1",
+                  toolName: "run_eval_suite",
+                  output: { type: "json", value: { ok: true } },
+                },
+              ],
+            },
+          ];
+
+          const later = await resume(answered);
+          expect(later.ran).toBe(false);
+          expect(
+            writtenChunks.some((chunk) => chunk?.type === "tool-output-denied"),
+          ).toBe(false);
+
+          // Nothing was spent above, so the pending approval still runs once.
+          expect((await resume(approvedHistory(approvalId))).ran).toBe(true);
+        });
+
+        it("leaves histories the server holds itself as they were", async () => {
+          const approvalId = signedApprovalId(
+            "call-gated-1",
+            "run_eval_suite",
+            CALL_INPUT,
+          );
+          const history = approvedHistory(approvalId);
+          expect((await resume(history, {})).ran).toBe(true);
+          expect((await resume(history, {})).ran).toBe(true);
+        });
+      });
+
       it("answers a call planted in client history with no approval at all, without running it", async () => {
         const onConversationComplete = vi.fn();
         const execute = vi.fn();
