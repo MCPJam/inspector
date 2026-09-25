@@ -91,6 +91,8 @@ docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspecto
 
 For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`.
 
+Publishing the port on a network interface makes the inspector reachable by anything that can route to that address, so do it only on a network you trust and only for as long as you need it. If you just want to reach a remote install from your own machine, prefer leaving the bind on `127.0.0.1` and forwarding the port over SSH (`ssh -L 6274:127.0.0.1:6274 user@host`), which needs no network exposure at all.
+
 If you use a **wildcard** entry (e.g. `MCPJAM_ALLOWED_HOSTS=*.lan`), also set
 `MCPJAM_ALLOW_WILDCARD_ORIGINS=true`. Wildcards deliver the session token on
 their own, but for security the request-origin check ignores wildcard hosts
