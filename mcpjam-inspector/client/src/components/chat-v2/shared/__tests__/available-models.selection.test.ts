@@ -5,6 +5,7 @@ import type { OrgVisibleConfig } from "../model-helpers";
 import { buildAvailableModelsFromOrgConfig } from "../model-helpers";
 import {
   canonicalSelectionModelId,
+  caseModelEntry,
   findModelForStoredChoice,
   modelSelectionFromDefinition,
   storedModelChoice,
@@ -301,6 +302,36 @@ describe("modelSelectionFromDefinition", () => {
   });
 });
 
+describe("org rows carry their connection", () => {
+  it("rows built from an org config build org selections without the config at hand", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    const byok = models.find(
+      (m) =>
+        String(m.id) === "anthropic/claude-haiku-4.5" && m.hosted === false,
+    )!;
+    expect(byok.orgProvider).toEqual({
+      providerKey: "openrouter",
+      id: "orgprov_openrouter_1",
+    });
+    expect(
+      modelSelectionFromDefinition(byok, undefined, "evalTarget")
+        ?.connectionRef,
+    ).toEqual({ kind: "orgProvider", id: "orgprov_openrouter_1" });
+  });
+
+  it("an org row without an exposed id never degrades to a local selection", () => {
+    const noIds: OrgVisibleConfig = {
+      providers: orgConfig.providers.map(({ id: _id, ...rest }) => rest),
+    };
+    const models = buildAvailableModelsFromOrgConfig(noIds, [hostedHaiku]);
+    for (const model of models.filter((m) => m.orgProvider)) {
+      expect(
+        modelSelectionFromDefinition(model, undefined, "evalTarget"),
+      ).toBeNull();
+    }
+  });
+});
+
 describe("stored choices", () => {
   it("store the canonical id beside the selection and read back the picked row", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
@@ -335,5 +366,45 @@ describe("stored choices", () => {
       selection: { nativeModelId: String(bare.id), source: "org" },
     });
     expect(findModelForStoredChoice(stored, models, orgConfig)).toBe(bare);
+  });
+});
+
+describe("case model chips", () => {
+  it("attach the selection of the row the chip names, beside the unchanged id", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    expect(
+      caseModelEntry(
+        { provider: "openrouter", model: "anthropic/claude-haiku-4.5" },
+        models,
+      ),
+    ).toEqual({
+      provider: "openrouter",
+      model: "anthropic/claude-haiku-4.5",
+      selection: {
+        modelId: "anthropic/claude-haiku-4.5",
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_openrouter_1" },
+        fallback: { provider: "none", model: "none" },
+      },
+    });
+    expect(
+      caseModelEntry(
+        { provider: "anthropic", model: "anthropic/claude-haiku-4.5" },
+        models,
+      ).selection?.source,
+    ).toBe("hosted");
+  });
+
+  it("bare-id rows and unknown rows stay legacy", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    const bare = models.find(
+      (m) => m.provider === "openai" && !String(m.id).includes("/"),
+    )!;
+    expect(
+      caseModelEntry({ provider: "openai", model: String(bare.id) }, models),
+    ).toEqual({ provider: "openai", model: String(bare.id) });
+    expect(
+      caseModelEntry({ provider: "openai", model: "nope" }, models),
+    ).toEqual({ provider: "openai", model: "nope" });
   });
 });

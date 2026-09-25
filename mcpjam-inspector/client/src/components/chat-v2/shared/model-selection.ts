@@ -151,7 +151,8 @@ function localConnectionRef(model: ModelDefinition): ModelConnectionRef {
  * Build the saved selection for a picker row.
  *
  *  - hosted rows → `source: "hosted"`, no connection;
- *  - own-provider rows served by an org provider config → `source: "org"`
+ *  - own-provider rows served by an org provider config (the row's
+ *    `orgProvider` stamp, else a lookup in `orgConfig`) → `source: "org"`
  *    with `{ kind: "orgProvider", id }`. When the org config does not expose
  *    the provider row's id, returns `null`: a provider NAME cannot stand in for
  *    the connection, so the caller keeps the legacy id;
@@ -180,7 +181,10 @@ export function modelSelectionFromDefinition(
     const rowId = String(model.id).trim();
     const nativeModelId =
       rowId !== modelId ? { nativeModelId: rowId } : undefined;
-    const orgRow = findOrgProviderForModel(model, orgConfig);
+    // The row's own stamp (rows built from an org config carry it) wins;
+    // otherwise look the row up in the org config the caller passed.
+    const orgRow =
+      model.orgProvider ?? findOrgProviderForModel(model, orgConfig);
     if (orgRow) {
       const id = typeof orgRow.id === "string" ? orgRow.id.trim() : "";
       if (!id) return null;
@@ -255,4 +259,56 @@ export function findModelForStoredChoice(
     models.find((model) => String(model.id) === id && isHostedRow(model)) ??
     models.find((model) => String(model.id) === id)
   );
+}
+
+/**
+ * The selection a writer may store beside the row's UNCHANGED legacy id: only
+ * when `selection.modelId` is the row id itself (hosted rows, OpenRouter and
+ * Azure rows — including one id listed both in the hosted catalog and on an
+ * org OpenRouter connection). `undefined` for rows whose id is bare
+ * (`gpt-4o`, `llama3.2:latest`, `custom:…`): surfaces that key their chips
+ * and option lists by the raw row id keep saving the legacy id alone for
+ * those until they can read a stored canonical id back
+ * ({@link findModelForStoredChoice}).
+ */
+export function selectionBesideLegacyId(
+  model: ModelDefinition,
+  purpose: ModelSelectionPurpose,
+  orgConfig?: OrgVisibleConfig,
+): ModelSelection | undefined {
+  const selection = modelSelectionFromDefinition(model, orgConfig, purpose);
+  return selection && selection.modelId === String(model.id).trim()
+    ? selection
+    : undefined;
+}
+
+/** A test case's `models[]` entry, with its saved selection when it has one. */
+export type CaseModelEntry = {
+  provider: string;
+  model: string;
+  selection?: ModelSelection;
+};
+
+/**
+ * The `models[]` entry a case model chip writes: the legacy `{ provider,
+ * model }` pair plus the picked row's selection when it can be saved beside
+ * that unchanged id ({@link selectionBesideLegacyId}). The row is the one the
+ * chip names — same provider, same id — so an org OpenRouter row and the
+ * hosted row of the same id (different providers) stay distinct.
+ */
+export function caseModelEntry(
+  entry: { provider: string; model: string },
+  models: readonly ModelDefinition[],
+): CaseModelEntry {
+  const row = models.find(
+    (model) =>
+      String(model.provider) === entry.provider &&
+      String(model.id) === entry.model,
+  );
+  const selection = row
+    ? selectionBesideLegacyId(row, "evalTarget")
+    : undefined;
+  return selection
+    ? { provider: entry.provider, model: entry.model, selection }
+    : { provider: entry.provider, model: entry.model };
 }

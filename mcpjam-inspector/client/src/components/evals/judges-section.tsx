@@ -13,8 +13,10 @@ import type { ModelDefinition } from "@/shared/types";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL,
   RESERVED_JUDGE_SLOTS,
+  type GoalCompletionJudgeSlot,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
+import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -94,6 +96,27 @@ export function pruneEmpty(
   return {
     ...(hasGoalCompletion ? { goalCompletion: gc } : {}),
     ...reserved,
+  };
+}
+
+/**
+ * The goal-completion patch for a judge-model pick: the id plus, when the
+ * picked row can be saved as one beside that id, its model selection. Both
+ * are always written together (a stale selection naming the previous judge
+ * would be refused), and both clear for the managed default.
+ */
+export function judgeModelPatch(
+  next: string,
+  availableModels: readonly ModelDefinition[],
+): Pick<GoalCompletionJudgeSlot, "judgeModel" | "judgeSelection"> {
+  if (next === MANAGED_DEFAULT_JUDGE_MODEL) {
+    return { judgeModel: undefined, judgeSelection: undefined };
+  }
+  // The option list keeps the FIRST row per id; save that same row.
+  const row = availableModels.find((model) => String(model.id) === next);
+  return {
+    judgeModel: next,
+    judgeSelection: row ? selectionBesideLegacyId(row, "judge") : undefined,
   };
 }
 
@@ -202,10 +225,7 @@ export function JudgesSection({
           <Select
             value={judgeModel}
             onValueChange={(next) =>
-              update({
-                judgeModel:
-                  next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
-              })
+              update(judgeModelPatch(next, availableModels))
             }
           >
             <SelectTrigger

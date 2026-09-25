@@ -69,6 +69,7 @@ describe("org model helpers", () => {
       provider: "custom",
       hosted: false,
       customProviderName: "local",
+      orgProvider: { providerKey: "custom:local" },
     });
   });
 
@@ -95,12 +96,14 @@ describe("org model helpers", () => {
       name: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       provider: "bedrock",
       hosted: false,
+      orgProvider: { providerKey: "bedrock" },
     });
     expect(models).toContainEqual({
       id: "us.amazon.nova-pro-v1:0",
       name: "us.amazon.nova-pro-v1:0",
       provider: "bedrock",
       hosted: false,
+      orgProvider: { providerKey: "bedrock" },
     });
   });
 

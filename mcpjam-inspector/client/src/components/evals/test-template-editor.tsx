@@ -185,6 +185,10 @@ import { useHost } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
 import { parseDraftTestCaseId } from "./draft-test-case";
+import {
+  caseModelEntry,
+  type CaseModelEntry,
+} from "@/components/chat-v2/shared/model-selection";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
@@ -2671,13 +2675,13 @@ export function TestTemplateEditor({
 
   const buildSelectedCompareModels = (
     modelValues: string[],
-  ): Array<{ provider: string; model: string }> => {
+  ): CaseModelEntry[] => {
     return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
-      return { provider, model };
+      return caseModelEntry({ provider, model }, availableModels);
     });
   };
 

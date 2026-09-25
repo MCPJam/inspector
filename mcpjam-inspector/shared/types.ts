@@ -333,6 +333,13 @@ export interface ModelDefinition {
    */
   hosted?: boolean;
   /**
+   * Set on own-provider rows built from an organization's provider config:
+   * the org connection that serves the row. `id` is the provider row's id
+   * when the visible config exposes it — a saved `source: "org"` model
+   * selection references the connection by that id, never by name.
+   */
+  orgProvider?: { providerKey: string; id?: string };
+  /**
    * Whether MCPJam serves this hosted model to signed-out guests. Sourced from
    * the catalog DTO; absent → treated as guest-gated (locked for guests).
    */
