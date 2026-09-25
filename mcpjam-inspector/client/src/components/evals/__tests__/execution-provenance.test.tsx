@@ -99,7 +99,7 @@ describe("ExecutionProvenance", () => {
     const banner = screen.getByTestId("iteration-execution-deviation-banner");
     expect(banner.getAttribute("role")).toBe("status");
     expect(banner.textContent).toBe(
-      "Deviation: Provider fallback — The gateway attempt failed (provider_error); the openrouter fallback served the request.",
+      "Deviation: Provider fallback: The gateway attempt failed (provider_error); the openrouter fallback served the request.",
     );
   });
 

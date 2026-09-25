@@ -93,7 +93,7 @@ function ExecutionProvenanceView({
             <span className="font-semibold">
               Deviation: {summary.deviation.title}
             </span>
-            {summary.deviation.reason ? ` — ${summary.deviation.reason}` : null}
+            {summary.deviation.reason ? `: ${summary.deviation.reason}` : null}
           </span>
         </div>
       ) : null}
