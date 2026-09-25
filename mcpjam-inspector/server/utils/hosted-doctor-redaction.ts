@@ -648,6 +648,32 @@ function projectInitInfo(value: unknown) {
   };
 }
 
+const MAX_INSTRUCTIONS_LENGTH = 8192;
+
+/**
+ * The initialization info a successful hosted validate returns (MJ-001): the
+ * doctor's projection, plus the two fields the server panel shows beside it,
+ * the server's website URL and its instructions, validated and bounded.
+ */
+export function projectHostedValidateInitInfo(value: unknown) {
+  const projected = projectInitInfo(value);
+  if (!projected || !isPlainRecord(value)) return projected;
+  const websiteUrl = isPlainRecord(value.serverVersion)
+    ? parseHttpUrl(value.serverVersion.websiteUrl)
+    : undefined;
+  const instructions =
+    typeof value.instructions === "string" && value.instructions.trim()
+      ? value.instructions.slice(0, MAX_INSTRUCTIONS_LENGTH)
+      : undefined;
+  return {
+    ...projected,
+    ...(websiteUrl !== undefined && projected.serverVersion
+      ? { serverVersion: { ...projected.serverVersion, websiteUrl } }
+      : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+  };
+}
+
 /** Fields the doctor writes about its own run, carried as they are. */
 const CARRIED_DOCTOR_FIELDS = new Set(["target", "generatedAt", "status"]);
 

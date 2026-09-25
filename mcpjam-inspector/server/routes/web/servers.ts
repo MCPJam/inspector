@@ -29,7 +29,10 @@ import {
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { redactHostedDoctorTransportDetail } from "../../utils/hosted-doctor-redaction.js";
+import {
+  projectHostedValidateInitInfo,
+  redactHostedDoctorTransportDetail,
+} from "../../utils/hosted-doctor-redaction.js";
 import {
   describeHostedConnectFailure,
   projectHostedConnectFailureLogs,
@@ -127,8 +130,15 @@ export async function validateServerCore(
     });
   });
   // Same success envelope as the local /api/mcp/connect path so the inspector
-  // client's `storeInitInfo` takes one code path on both surfaces.
-  return buildConnectSuccessEnvelope(manager, body.serverId);
+  // client's `storeInitInfo` takes one code path on both surfaces. Hosted, its
+  // initialization info is projected (MJ-001).
+  const envelope = buildConnectSuccessEnvelope(manager, body.serverId);
+  return HOSTED_MODE
+    ? {
+        ...envelope,
+        initInfo: projectHostedValidateInitInfo(envelope.initInfo),
+      }
+    : envelope;
 }
 
 async function persistHostedConnectInspection(
