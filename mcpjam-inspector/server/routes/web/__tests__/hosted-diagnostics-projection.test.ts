@@ -969,6 +969,40 @@ describe("hosted validate responses (web and v1)", () => {
     },
   );
 
+  it("web: bounds the frame log and counts what it left out", async () => {
+    const notifications = Array.from({ length: 1000 }, (_, index) => ({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", data: `note ${index}` },
+    }));
+    upstream.current = async (request) => {
+      const message = await readMessage(request.clone());
+      if (message?.method === "tools/list") {
+        const events = [
+          ...notifications,
+          { jsonrpc: "2.0", id: message.id, result: { tools: [] } },
+        ];
+        return new Response(
+          events
+            .map(
+              (event) => `event: message\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return listingServer()(request);
+    };
+    const res = await webValidate(routes);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body._rpcLogs).toHaveLength(200);
+    expect(body._rpcLogsOmitted).toBeGreaterThanOrEqual(800);
+    expect(
+      body._rpcLogs.slice(0, 100).map((event: any) => event.message.method),
+    ).toContain("initialize");
+  });
+
   it("web: reports the frames it sent by their envelope", async () => {
     upstream.current = async (request) => {
       const message = await readMessage(request.clone());
