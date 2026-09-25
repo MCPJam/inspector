@@ -32,16 +32,28 @@
 #   0 — always. This is hygiene on the PR-close path: a missing entry, an
 #       unavailable endpoint, or a bad key must never block PR close.
 #       Problems surface as ::warning:: annotations instead.
+#   1 — only with WORKOS_CLEANUP_STRICT=1, when removal can't be confirmed:
+#       no key, a failed list or delete, or a scan that hit the page cap
+#       without a match. The preview reaper (reap-preview-envs.sh) uses this
+#       to keep an environment until its URL is known to be deregistered.
+#
+# WORKOS_CLEANUP_MAX_PAGES (default 10) caps pages scanned per resource.
 
 set -uo pipefail
+
+STRICT="${WORKOS_CLEANUP_STRICT:-0}"
+MAX_PAGES="${WORKOS_CLEANUP_MAX_PAGES:-10}"
+UNCONFIRMED=0
 
 PREVIEW_URL="${1:-}"
 if [ -z "$PREVIEW_URL" ]; then
   echo "::warning::workos-cleanup.sh called without a preview URL — nothing to clean" >&2
+  [ "$STRICT" = "1" ] && exit 1
   exit 0
 fi
 if [ -z "${STAGING_WORKOS_API_KEY:-}" ]; then
   echo "::warning::STAGING_WORKOS_API_KEY is not set — skipping WorkOS cleanup for ${PREVIEW_URL}" >&2
+  [ "$STRICT" = "1" ] && exit 1
   exit 0
 fi
 
@@ -63,7 +75,7 @@ delete_matching() {
   local resource="$1" field="$2" value="$3"
   local after="" page=0 ids="" scan_complete=0
 
-  while [ "$page" -lt 10 ]; do
+  while [ "$page" -lt "$MAX_PAGES" ]; do
     page=$((page + 1))
     local url="${WORKOS_API_BASE}/user_management/${resource}?limit=100"
     if [ -n "$after" ]; then
@@ -108,6 +120,7 @@ delete_matching() {
       echo "::notice::No WorkOS ${resource} entry matched '${value}' (already clean)"
     else
       echo "::warning::WorkOS ${resource} scan ended after ${page} page(s) without finding '${value}' — verify/remove it manually in the staging WorkOS dashboard" >&2
+      UNCONFIRMED=1
     fi
     return 0
   fi
@@ -121,7 +134,10 @@ delete_matching() {
     del_code="${del_code:-000}"
     case "$del_code" in
       2*) echo "::notice::Removed WorkOS ${resource} entry ${id} ('${value}')" ;;
-      *) echo "::warning::Failed to delete WorkOS ${resource} ${id} (HTTP ${del_code}) — remove '${value}' manually in the staging WorkOS dashboard" >&2 ;;
+      *)
+        echo "::warning::Failed to delete WorkOS ${resource} ${id} (HTTP ${del_code}) — remove '${value}' manually in the staging WorkOS dashboard" >&2
+        UNCONFIRMED=1
+        ;;
     esac
   done <<< "$ids"
 }
@@ -129,4 +145,7 @@ delete_matching() {
 delete_matching redirect_uris uri "${PREVIEW_URL}/callback"
 delete_matching cors_origins origin "${PREVIEW_URL}"
 
+if [ "$STRICT" = "1" ] && [ "$UNCONFIRMED" -eq 1 ]; then
+  exit 1
+fi
 exit 0
