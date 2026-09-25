@@ -395,23 +395,45 @@ describe("scope", () => {
 });
 
 describe("bounded table", () => {
-  it("at the cap, admits a newcomer without a bucket and keeps every resident one", async () => {
+  it("at the cap with no full bucket, still charges a newcomer: a burst, then 429", async () => {
     const app = createApp();
-    // One bucket spent down to empty...
-    await statuses(app, BURST, toolsList("srv-hot"));
-    // ...and the rest of the table filled with buckets still refilling.
-    for (let i = 1; i < MAX_ENTRIES; i++) {
+    // Filled to the cap with buckets that are all still refilling.
+    for (let i = 0; i < MAX_ENTRIES; i++) {
       expect((await toolsList(`srv-${i}`)(app)).status).toBe(200);
     }
     expect(mcpOperationRateLimitSizeForTests()).toBe(MAX_ENTRIES);
 
-    expect((await toolsList("srv-new")(app)).status).toBe(200);
+    expect(await statuses(app, BURST + 1, toolsList("srv-new"))).toEqual([
+      ...Array(BURST).fill(200),
+      429,
+    ]);
     expect(mcpOperationRateLimitSizeForTests()).toBe(MAX_ENTRIES);
-    // The spent bucket was not displaced, so it is still spent.
-    expect((await toolsList("srv-hot")(app)).status).toBe(429);
   }, 60_000);
 
-  it("makes room by dropping only buckets that have refilled", async () => {
+  it("drops the least recently used bucket and keeps a recently used spent one", async () => {
+    const app = createApp();
+    // The two oldest entries, both spent; `srv-busy` is the older one.
+    await statuses(app, BURST, toolsList("srv-busy"));
+    await statuses(app, BURST, toolsList("srv-idle"));
+    for (let i = 2; i < MAX_ENTRIES; i++) {
+      await toolsList(`srv-${i}`)(app);
+    }
+    // Using `srv-busy` again, even refused, moves it from oldest to newest.
+    expect((await toolsList("srv-busy")(app)).status).toBe(429);
+
+    // A newcomer at the cap pushes out the least recently used: `srv-idle`.
+    expect((await toolsList("srv-new")(app)).status).toBe(200);
+    expect(mcpOperationRateLimitSizeForTests()).toBe(MAX_ENTRIES);
+    expect((await toolsList("srv-busy")(app)).status).toBe(429);
+    // Dropped, `srv-idle` starts again from a full bucket: the one early
+    // refill an eviction can give, and no more than the burst.
+    expect(await statuses(app, BURST + 1, toolsList("srv-idle"))).toEqual([
+      ...Array(BURST).fill(200),
+      429,
+    ]);
+  }, 60_000);
+
+  it("drops buckets that have refilled before anything still refilling", async () => {
     const app = createApp();
     for (let i = 1; i < MAX_ENTRIES; i++) {
       await toolsList(`srv-${i}`)(app);

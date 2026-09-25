@@ -61,15 +61,18 @@ const BURST = 8;
 const REFILL_INTERVAL_MS = 2_000;
 
 /**
- * Bounded, and pruned only of buckets that have refilled to BURST. A new
- * bucket starts at BURST too, so dropping a full one changes nothing about what
- * its owner may send next; a bucket still below BURST is never dropped, at the
- * cap or otherwise.
+ * Bounded, and kept in least-recently-used order: every access, admitted or
+ * refused, moves its key to the end of the table.
  *
- * At the cap, with no full bucket left to drop, a request whose bucket is not
- * already in the table is admitted without one. The per-credential limits in
- * front of this one still apply to it; refusing instead would turn a full
- * table into refusals for callers who have not sent anything yet.
+ * Buckets that have refilled to BURST are dropped first — on a timer, and at
+ * the cap. A new bucket starts at BURST too, so dropping a full one changes
+ * nothing about what its owner may send next.
+ *
+ * At the cap with no full bucket to drop, the least recently used bucket is
+ * dropped instead. That can give its owner at most one early refill (at most
+ * BURST extra requests), and pushing one bucket out takes about MAX_ENTRIES
+ * newer keys, so the effect is bounded and small. Every request is charged to
+ * a bucket; none is admitted without one.
  */
 const MAX_ENTRIES = 10_000;
 
@@ -110,6 +113,19 @@ function pruneFull(now: number): void {
 
 setInterval(() => pruneFull(Date.now()), 60_000).unref();
 
+/** Free one slot at the cap. See MAX_ENTRIES. */
+function makeRoom(now: number): void {
+  if (now - lastPruneAtCap >= PRUNE_AT_CAP_INTERVAL_MS) {
+    lastPruneAtCap = now;
+    pruneFull(now);
+  }
+  if (buckets.size < MAX_ENTRIES) return;
+  // Iteration order is insertion order, and every access re-inserts its key,
+  // so the first key is the least recently used.
+  const leastRecentlyUsed = buckets.keys().next();
+  if (!leastRecentlyUsed.done) buckets.delete(leastRecentlyUsed.value);
+}
+
 /**
  * Spend one token from every bucket in `keys`, or from none of them.
  *
@@ -123,6 +139,9 @@ function spend(keys: readonly string[], now: number): number | null {
     const bucket = buckets.get(key);
     // An absent bucket is a full one.
     if (!bucket) continue;
+    // Every access moves the key to the end, before anything is evicted below.
+    buckets.delete(key);
+    buckets.set(key, bucket);
     const tokens = available(bucket, now);
     if (tokens < 1) {
       waitMs = Math.max(waitMs, (1 - tokens) * REFILL_INTERVAL_MS);
@@ -137,16 +156,8 @@ function spend(keys: readonly string[], now: number): number | null {
       bucket.updatedAt = now;
       continue;
     }
-    if (
-      buckets.size >= MAX_ENTRIES &&
-      now - lastPruneAtCap >= PRUNE_AT_CAP_INTERVAL_MS
-    ) {
-      lastPruneAtCap = now;
-      pruneFull(now);
-    }
-    if (buckets.size < MAX_ENTRIES) {
-      buckets.set(key, { tokens: BURST - 1, updatedAt: now });
-    }
+    if (buckets.size >= MAX_ENTRIES) makeRoom(now);
+    buckets.set(key, { tokens: BURST - 1, updatedAt: now });
   }
   return null;
 }
