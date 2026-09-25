@@ -5,6 +5,7 @@ import {
 } from "../routes/web/errors.js";
 import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 
 // One-shot guard so a misconfigured deployment logs once, not per request.
 let warnedMissingServiceTokenForIp = false;
@@ -158,10 +159,12 @@ export async function postToConvexAuthorized(args: {
   }
 
   if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `The ${args.serviceName} request failed (${response.status})`;
+    const message = backendFailureText({
+      source: "server-secrets",
+      status: response.ok ? 500 : response.status,
+      detail: body?.error,
+      fallback: `The ${args.serviceName} request failed (${response.status})`,
+    });
     throw new WebRouteError(
       response.ok ? 500 : response.status,
       statusToErrorCode(response.ok ? 500 : response.status),
@@ -289,12 +292,12 @@ export async function fetchRuntimeServerSecrets(args: {
     const code = isErrorCode(body?.code)
       ? body.code
       : statusToErrorCode(response.status);
-    const message =
-      typeof body?.message === "string"
-        ? body.message
-        : typeof body?.error === "string"
-        ? body.error
-        : `Secret reveal failed (${response.status})`;
+    const message = backendFailureText({
+      source: "server-secrets",
+      status: response.status,
+      detail: typeof body?.message === "string" ? body.message : body?.error,
+      fallback: `Secret reveal failed (${response.status})`,
+    });
     throw new WebRouteError(response.status, code, message);
   }
 
