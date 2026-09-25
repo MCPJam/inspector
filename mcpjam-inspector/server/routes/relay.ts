@@ -311,9 +311,13 @@ const INFLATE_RATIO_LIMIT = 32;
 const MAX_INFLATED_BODY_BYTES = 8 * 1024 * 1024;
 const REPLAY_MAX_INFLATED_BODY_BYTES = 20 * 1024 * 1024;
 
-// Payloads that may take more than the floor to read are read a few at a
-// time. Past that the relay answers 503, and posthog-js retries later.
+// Capture payloads are admitted before their bodies are read: a limited
+// number at a time, and fewer still of those that may take more than the
+// floor to read. Past either limit the relay answers 503, and posthog-js
+// retries later.
+export const RELAY_MAX_PAYLOAD_CHECKS = 16;
 export const RELAY_MAX_LARGE_PAYLOAD_CHECKS = 2;
+let payloadChecks = 0;
 let largePayloadChecks = 0;
 
 const gunzipAsync = promisify(gunzip);
@@ -356,9 +360,15 @@ function inflateBudget(compressedBytes: number, cap: number): number {
   );
 }
 
-// The most text reading `bytes` can produce.
-function payloadReadBytes(bytes: Uint8Array, cap: number): number {
-  return isGzip(bytes) ? inflateBudget(bytes.length, cap) : bytes.length;
+// The most text a capture request's payload can produce, judged from its
+// declared length before the body is read; the path's cap when it declares
+// none.
+function declaredReadBytes(c: Context, subpath: string): number {
+  const cap = capturePayloadCap(subpath);
+  const declared = Number(c.req.header("content-length"));
+  return Number.isSafeInteger(declared) && declared >= 0
+    ? inflateBudget(declared, cap)
+    : cap;
 }
 
 // posthog-js sends gzip (detected by its magic bytes — the SDK drops the
@@ -517,27 +527,29 @@ relayRoutes.all("*", async (c) => {
   // than streaming: undici streaming request bodies require duplex:"half"
   // and posthog batches are small enough that buffering is simpler.
   const method = c.req.method;
-  const body =
-    method === "GET" || method === "HEAD"
-      ? undefined
-      : await c.req.arrayBuffer();
-
+  const bodyless = method === "GET" || method === "HEAD";
+  const readsPayload = !bodyless && isCapturePath(subpath);
   const largePayload =
-    body !== undefined &&
-    isCapturePath(subpath) &&
-    payloadReadBytes(new Uint8Array(body), capturePayloadCap(subpath)) >
-      INFLATE_FLOOR_BYTES;
-  if (largePayload && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS) {
+    readsPayload && declaredReadBytes(c, subpath) > INFLATE_FLOOR_BYTES;
+  if (
+    readsPayload &&
+    (payloadChecks >= RELAY_MAX_PAYLOAD_CHECKS ||
+      (largePayload && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS))
+  ) {
     stats.busyRejects++;
     recordResponseStatus(503);
     c.header("Retry-After", "1");
     return c.json({ error: "relay_busy" }, 503);
   }
+  if (readsPayload) payloadChecks++;
   if (largePayload) largePayloadChecks++;
+  let body: ArrayBuffer | undefined;
   let project: ProjectCheck;
   try {
+    body = bodyless ? undefined : await c.req.arrayBuffer();
     project = await checkProjectTokens(subpath, url, method, body);
   } finally {
+    if (readsPayload) payloadChecks--;
     if (largePayload) largePayloadChecks--;
   }
   if (project !== "ours") {

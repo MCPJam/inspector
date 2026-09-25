@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import relayRoutes, {
   RELAY_MAX_LARGE_PAYLOAD_CHECKS,
+  RELAY_MAX_PAYLOAD_CHECKS,
   relayBodyLimit,
 } from "../relay.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
@@ -49,6 +50,15 @@ function dataParam(json: string): string {
 
 function base64Form(json: string): string {
   return `data=${dataParam(json)}`;
+}
+
+// A POST the way a browser sends it: with its body's declared length.
+function sized(body: string | ReturnType<typeof gzipSync>): RequestInit {
+  return {
+    method: "POST",
+    body,
+    headers: { "content-length": String(Buffer.byteLength(body)) },
+  };
 }
 
 // A replay batch whose snapshot data barely compresses.
@@ -541,21 +551,18 @@ describe("posthog relay proxy", () => {
 
       const pending = Array.from(
         { length: RELAY_MAX_LARGE_PAYLOAD_CHECKS },
-        () => app.request("/tlm/s/", { method: "POST", body }),
+        () => app.request("/tlm/s/", sized(body)),
       );
       await vi.waitFor(() =>
         expect(zlibControl.held).toHaveLength(RELAY_MAX_LARGE_PAYLOAD_CHECKS),
       );
 
-      const refused = await app.request("/tlm/s/", { method: "POST", body });
+      const refused = await app.request("/tlm/s/", sized(body));
       expect(refused.status).toBe(503);
       expect(refused.headers.get("retry-after")).toBe("1");
       expect(await refused.json()).toEqual({ error: "relay_busy" });
 
-      const small = await app.request("/tlm/i/v0/e/", {
-        method: "POST",
-        body: eventBatch(),
-      });
+      const small = await app.request("/tlm/i/v0/e/", sized(eventBatch()));
       expect(small.status).toBe(200);
 
       zlibControl.hold = false;
@@ -564,8 +571,60 @@ describe("posthog relay proxy", () => {
         expect(response.status).toBe(200);
       }
 
-      const after = await app.request("/tlm/s/", { method: "POST", body });
+      const after = await app.request("/tlm/s/", sized(body));
       expect(after.status).toBe(200);
+    });
+
+    it("answers 503 once the payloads being read fill every slot, small ones included", async () => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      const body = gzipSync(eventBatch());
+      zlibControl.hold = true;
+
+      const pending = Array.from({ length: RELAY_MAX_PAYLOAD_CHECKS }, () =>
+        app.request("/tlm/i/v0/e/", sized(body)),
+      );
+      await vi.waitFor(() =>
+        expect(zlibControl.held).toHaveLength(RELAY_MAX_PAYLOAD_CHECKS),
+      );
+
+      const refused = await app.request("/tlm/i/v0/e/", sized(body));
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+      zlibControl.hold = false;
+      for (const run of zlibControl.held.splice(0)) run();
+      for (const response of await Promise.all(pending)) {
+        expect(response.status).toBe(200);
+      }
+    });
+
+    it("answers 503 without reading the body of a payload it cannot admit", async () => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      const body = gzipSync(largeReplayBatch(2 * 1024 * 1024));
+      zlibControl.hold = true;
+      const pending = Array.from(
+        { length: RELAY_MAX_LARGE_PAYLOAD_CHECKS },
+        () => app.request("/tlm/s/", sized(body)),
+      );
+      await vi.waitFor(() =>
+        expect(zlibControl.held).toHaveLength(RELAY_MAX_LARGE_PAYLOAD_CHECKS),
+      );
+
+      // A body that never finishes arriving: reading it first would hang.
+      const unfinished = new Request("http://localhost:6274/tlm/s/", {
+        method: "POST",
+        body: new ReadableStream({ start() {} }),
+        headers: { "content-length": String(3 * 1024 * 1024) },
+        duplex: "half",
+      } as RequestInit);
+      const refused = await app.request(unfinished);
+      expect(refused.status).toBe(503);
+
+      zlibControl.hold = false;
+      for (const run of zlibControl.held.splice(0)) run();
+      await Promise.all(pending);
     });
   });
 });
