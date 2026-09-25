@@ -22,7 +22,12 @@ import {
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
-import type { MCPClientManager, Harness, ModelSelection } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  Harness,
+  ModelReasoningEffort,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -299,7 +304,14 @@ export interface SyntheticHostRuntime {
    */
   modelSelection?: ModelSelection;
   systemPrompt: string;
+  /**
+   * The effective temperature: the saved selection's setting over the host's
+   * (`resolveEffectiveModelSettings`), so the top-level field the backend
+   * prefers can never contradict the forwarded selection.
+   */
   temperature?: number;
+  /** The saved selection's reasoning effort, applied on the resolved rail. */
+  reasoningEffort?: ModelReasoningEffort;
   /**
    * Tool-step cap for ONE assistant turn. Absent ⇒ the engine's own default
    * (the Playground's 30). A synthetic persona turn resends every tool result
@@ -526,6 +538,7 @@ export async function runSyntheticHostSession(
     scenarioId,
     environmentId,
     modelSelection,
+    reasoningEffort,
   } = runtime;
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
@@ -1273,6 +1286,7 @@ export async function runSyntheticHostSession(
               ? { journeyRunId: persist.journeyRunId }
               : {}),
             ...(modelSelection ? { modelSelection } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
           }),
         admissionOptions,
       ).catch((error: unknown) => {
@@ -1884,6 +1898,11 @@ export async function drainAssistantTurn(
      * on the rail it names.
      */
     modelSelection?: ModelSelection;
+    /**
+     * The effective reasoning effort (see `SyntheticHostRuntime`), applied by
+     * `resolveTurnRuntime` on the rail it resolves.
+     */
+    reasoningEffort?: ModelReasoningEffort;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   },
@@ -1911,6 +1930,7 @@ export async function drainAssistantTurn(
     extraBodyFields,
     hooks,
     modelSelection,
+    reasoningEffort,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1971,6 +1991,18 @@ export async function drainAssistantTurn(
       : {}),
     ...(attribution ? { attribution } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    // What the engine is handed below, so the rail applies the effort and
+    // the local execution record states the settings actually sent.
+    ...(args.temperature !== undefined || reasoningEffort !== undefined
+      ? {
+          settings: {
+            ...(args.temperature !== undefined
+              ? { temperature: args.temperature }
+              : {}),
+            ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+          },
+        }
+      : {}),
   });
 
   // Engine-error signal. Structural type covers both the hosted
@@ -2034,7 +2066,12 @@ export async function drainAssistantTurn(
     // `traceTurn.turnUsage` even on error, so `result.usage` carries the
     // consumed tokens. Finalize BEFORE throwing so a failed local-BYOK turn's
     // real spend is still recorded (cubic P1: post-consumption undercount).
-    await rt.finalizeUsage(result);
+    await rt.finalizeUsage(
+      result,
+      lastEngineError
+        ? { engineError: { message: lastEngineError.message } }
+        : undefined,
+    );
 
     // The direct engine always produces a trace, so a turn-terminating failure
     // is signalled by `onEngineError` (its `onError` fires only for fatal
