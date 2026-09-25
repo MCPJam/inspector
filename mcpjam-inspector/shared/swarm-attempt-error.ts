@@ -42,9 +42,13 @@ const URL_PATTERN = /https?:\/\/\S+/g;
  * "<message> (provider_error)", "<message> (user_rate_limit, HTTP 429)" or
  * "<message> (HTTP 502)". The code must contain an underscore so an ordinary
  * trailing parenthetical like "(timeout)" stays part of the sentence.
+ *
+ * Anchored at the "(" with no leading `\s*`: that prefix is retried from every
+ * position in a whitespace run, which is quadratic on a long raw error. The
+ * space left before the match is trimmed by `scrub`.
  */
 const ENGINE_DETAIL_SUFFIX =
-  /\s*\((?:([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:, HTTP (\d{3}))?|HTTP (\d{3}))\)$/;
+  /\((?:([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:, HTTP (\d{3}))?|HTTP (\d{3}))\)$/;
 
 export const SPEND_REFUSAL_REASONS = [
   "holds_committed",
