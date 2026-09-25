@@ -206,4 +206,42 @@ describe("FindingsGoalSessions for sessions that never ran", () => {
       screen.queryByTestId("findings-goal-session-never-ran")
     ).not.toBeInTheDocument();
   });
+
+  it("refreshes a row when only a field threadNeverRan reads changes", () => {
+    // The drilldown is live, and the page cache bails out on an equal page.
+    // Equal has to mean equal by everything the row's state is read from, or
+    // a session that settles while the goal is open keeps its stale row.
+    const row = (neverRan: boolean) => ({
+      ...session("sess-a", ""),
+      sourceType: "swarm",
+      messageCount: 0,
+      runAttemptStatus: "failed",
+      neverRan,
+    });
+    const page = (neverRan: boolean) => ({
+      drilldown: {
+        sessions: [row(neverRan)],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const props = {
+      scope: { kind: "swarm" as const, projectId: "proj-1" },
+      goalId: "run-1",
+      expectedCount: 1,
+      onOpenSession: vi.fn(),
+    };
+
+    mockUseGoalOutcomeDrilldown.mockReturnValue(page(false));
+    const { rerender } = render(<FindingsGoalSessions {...props} />);
+    expect(screen.getByText("(no preview)")).toBeInTheDocument();
+
+    mockUseGoalOutcomeDrilldown.mockReturnValue(page(true));
+    rerender(<FindingsGoalSessions {...props} />);
+    expect(
+      screen.getByTestId("findings-goal-session-never-ran")
+    ).toHaveTextContent("Didn't run");
+  });
 });

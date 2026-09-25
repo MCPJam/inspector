@@ -74,9 +74,13 @@ function samePage(
     (row, i) =>
       row._id === b[i]!._id &&
       row.firstMessagePreview === b[i]!.firstMessagePreview &&
-      // Both decide whether the row reads "Didn't run", and an attempt that
-      // settles while the goal is open must be allowed to change it.
+      // Every field `threadNeverRan` reads decides whether the row reads
+      // "Didn't run", and an attempt that settles while the goal is open must
+      // be allowed to change it.
+      row.sourceType === b[i]!.sourceType &&
+      row.neverRan === b[i]!.neverRan &&
       row.runAttemptStatus === b[i]!.runAttemptStatus &&
+      row.runAttemptErrorCode === b[i]!.runAttemptErrorCode &&
       row.messageCount === b[i]!.messageCount,
   );
 }
