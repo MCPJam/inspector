@@ -10,6 +10,7 @@ import {
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 import {
   compareThreadsForUsageList,
+  threadFeedbackBucket,
   threadMatchesFilterState,
   EMPTY_USAGE_FILTER,
 } from "@/hooks/scenario-usage-filters";
@@ -210,12 +211,35 @@ export function ScenarioUsagePanel({
     scenario.chatUi?.surfaces?.perTurnFeedback?.style === "thumbs"
       ? "thumbs"
       : "stars";
-  const ratingOptions = RATING_FILTER_OPTIONS[ratingStyle];
+  /**
+   * Whether this study holds 3-star sessions. A study can switch from stars
+   * to thumbs after sessions exist, and those keep their neutral rating —
+   * which the thumbs menu alone would leave with no way to filter for.
+   * Sticky once seen (per study): the list below is filtered by the very
+   * menu this feeds, so re-deriving it would drop the option the moment
+   * another bucket is picked. Read from the loaded page, so a neutral
+   * session older than that page does not by itself surface the option.
+   */
+  const [neutralHistory, setNeutralHistory] = useState<{
+    scenarioId: string;
+    seen: boolean;
+  }>({ scenarioId: scenario.scenarioId, seen: false });
+  const hasNeutralHistory =
+    neutralHistory.scenarioId === scenario.scenarioId && neutralHistory.seen;
+  const ratingOptions = useMemo(() => {
+    const base = RATING_FILTER_OPTIONS[ratingStyle];
+    if (ratingStyle !== "thumbs" || !hasNeutralHistory) return base;
+    // Before "No feedback", which stays last in both menus.
+    return [
+      ...base.slice(0, -1),
+      { value: "neutral" as const, label: "Neutral (3 stars)" },
+      ...base.slice(-1),
+    ];
+  }, [ratingStyle, hasNeutralHistory]);
   /**
    * Where "Promote to test case" lands from User Testing: the SUITE, with its
    * case list, rather than the new case's editor that the other promote
-   * surfaces open, as asked for in User Testing's prod run-through
-   * (2026-09-24). Deliberately User Testing only — Swarms, chat history and
+   * surfaces open. Deliberately User Testing only — Swarms, chat history and
    * the per-turn action keep the shared destination.
    */
   const landOnPromotedSuite = useCallback(
@@ -266,6 +290,12 @@ export function ScenarioUsagePanel({
   // inside its index walk (which is what makes the filter reach past the
   // 100-row page); re-checking here catches a live update that arrives after
   // the page was built — a session whose rating changes under an open filter.
+  useEffect(() => {
+    if (hasNeutralHistory) return;
+    if (!threads?.some((t) => threadFeedbackBucket(t) === "neutral")) return;
+    setNeutralHistory({ scenarioId: scenario.scenarioId, seen: true });
+  }, [threads, hasNeutralHistory, scenario.scenarioId]);
+
   const sortedThreads = useMemo(() => {
     if (!threads) return undefined;
     return threads

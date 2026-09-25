@@ -1395,9 +1395,7 @@ export function ScenarioChatPage({
             (server) => server.serverName,
           )}
           // No `showContextPopover`: the token/cost ring is a developer's
-          // gauge. It came along from the hosted Chatbox (#3270) when that
-          // page became this one, and here it showed outside testers an empty
-          // circle with their session's cost behind it.
+          // gauge, and here it showed outside testers their session's cost.
           minimalMode
           reasoningDisplayMode="hidden"
           hostedContext={{

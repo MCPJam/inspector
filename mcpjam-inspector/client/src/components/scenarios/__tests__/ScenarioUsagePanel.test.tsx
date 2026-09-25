@@ -182,6 +182,53 @@ describe("ScenarioUsagePanel rating filter", () => {
     ).toBe(false);
   });
 
+  it("keeps 3-star history filterable after a study switches to thumbs", () => {
+    // Sessions rated before the switch keep their neutral 3; the thumbs menu
+    // alone would leave no way to find them.
+    useUsageInsightsMock.mockReturnValue({
+      threads: [
+        thread({
+          _id: "old-3-star",
+          feedback: {
+            count: 1,
+            avg: 3,
+            min: 3,
+            hasComment: false,
+            latestRating: 3,
+            latestAt: 0,
+          },
+        }),
+      ],
+    });
+    render(
+      <ScenarioUsagePanel
+        scenario={
+          {
+            ...SCENARIO,
+            chatUi: {
+              surfaces: { perTurnFeedback: { enabled: true, style: "thumbs" } },
+            },
+          } as unknown as ScenarioSettings
+        }
+      />
+    );
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All ratings",
+      "Thumbs up",
+      "Thumbs down",
+      "Neutral (3 stars)",
+      "No feedback",
+    ]);
+    fireEvent.click(screen.getByText("Neutral (3 stars)"));
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "feedbackBucket", value: "neutral" },
+      ])
+    );
+  });
+
   it("offers thumbs, not star counts, on a study rated by thumbs", () => {
     render(
       <ScenarioUsagePanel
