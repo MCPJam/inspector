@@ -2,10 +2,11 @@
  * One goal's `ChatSessionStageFunnel` mapped to the six stage buttons Findings
  * renders.
  *
- * PURE, and deliberately split from the query that feeds it. The backend
- * argument this consumes (`getScenarioStageFunnel({ clusterId })`) is still in
- * review, so keeping the mapping holdable against a fixture is what lets these
- * rules be settled now instead of eyeballed later against live data.
+ * PURE, and deliberately split from the query that feeds it. That query is
+ * `getScenarioStageFunnel({ scenarioId, clusterId, sentiment })`, whose last
+ * argument is still in review, so keeping the mapping holdable against a
+ * fixture is what lets these rules be settled now instead of eyeballed later
+ * against live data.
  *
  * NOTHING HERE DECIDES A VERDICT. Every state below is read off tallies the
  * backend already folded (`convex/lib/chatSessionStageAggregate.ts`); this
