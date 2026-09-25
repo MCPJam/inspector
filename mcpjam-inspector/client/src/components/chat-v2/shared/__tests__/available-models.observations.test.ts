@@ -3,6 +3,7 @@ import type { ModelDefinition } from "@/shared/types";
 import {
   applyFreeTierLocks,
   applyWorkloadCapabilityLocks,
+  catalogFreshnessLabel,
   composeAvailableModels,
   FREE_TIER_MODEL_REASON,
   GUEST_LOCKED_MODEL_REASON,
@@ -216,6 +217,31 @@ describe("retiringTag", () => {
       retiringTag(hosted("a/b", { deprecatedAt: Date.UTC(2027, 2, 3) })),
     ).toBe("Retiring Mar 3, 2027");
     expect(retiringTag(hosted("a/b"))).toBeUndefined();
+  });
+});
+
+describe("catalogFreshnessLabel", () => {
+  it("names the newest observation across the rows", () => {
+    expect(
+      catalogFreshnessLabel([
+        hosted("a/old", { catalogObservedAt: Date.UTC(2026, 0, 2) }),
+        hosted("a/new", { catalogObservedAt: OBSERVED_AT }),
+        hosted("a/legacy"),
+      ]),
+    ).toBe("Catalog updated Sep 21, 2026");
+  });
+
+  it("is absent when no row carries an observation time", () => {
+    expect(catalogFreshnessLabel([hosted("a/legacy")])).toBeUndefined();
+    expect(catalogFreshnessLabel([])).toBeUndefined();
+  });
+
+  it("reports an old catalog as a date, not a failure", () => {
+    expect(
+      catalogFreshnessLabel([
+        hosted("a/b", { catalogObservedAt: Date.UTC(2020, 5, 1) }),
+      ]),
+    ).toBe("Catalog updated Jun 1, 2020");
   });
 });
 

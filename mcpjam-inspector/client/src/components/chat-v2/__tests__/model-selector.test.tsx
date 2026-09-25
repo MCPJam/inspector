@@ -930,6 +930,40 @@ describe("catalog observations", () => {
       { userInitiated: true }
     );
   });
+
+  it("shows when the hosted catalog was last updated", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        currentModel={verified}
+        availableModels={catalog}
+        onModelChange={vi.fn()}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      screen.getByTestId("model-selector-catalog-freshness")
+    ).toHaveTextContent("Catalog updated Sep 21, 2026");
+  });
+
+  it("shows no freshness line for a catalog without observation times", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        currentModel={legacy}
+        availableModels={[legacy]}
+        onModelChange={vi.fn()}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(screen.getByRole("option", { name: /gpt legacy/i })).toBeVisible();
+    expect(
+      screen.queryByTestId("model-selector-catalog-freshness")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/catalog updated/i)).not.toBeInTheDocument();
+  });
 });
 
 describe("multi-select rows are keyed by source and connection", () => {

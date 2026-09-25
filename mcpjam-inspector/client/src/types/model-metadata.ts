@@ -60,9 +60,3 @@ export interface CatalogObservationDto {
   source?: string;
   observedAt?: number | null;
 }
-
-export interface ModelMetadataResponse {
-  ok: boolean;
-  data?: OpenRouterModel[];
-  error?: string;
-}

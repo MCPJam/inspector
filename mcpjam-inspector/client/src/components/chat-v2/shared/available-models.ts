@@ -258,6 +258,27 @@ export function retiringTag(model: ModelDefinition): string | undefined {
   return `Retiring ${RETIRING_DATE_FORMAT.format(date)}`;
 }
 
+/**
+ * "Catalog updated Sep 21, 2026": when the hosted catalog these rows came
+ * from was last observed, for the picker footer. Takes the newest
+ * `catalogObservedAt` across the rows (each row carries the time of the sync
+ * that last saw it). Undefined when no row carries one, as with the offline
+ * snapshot, so the footer shows nothing rather than a guess. Never an error:
+ * an old date is information, not a failure.
+ */
+export function catalogFreshnessLabel(
+  models: readonly ModelDefinition[]
+): string | undefined {
+  let newest: number | undefined;
+  for (const model of models) {
+    const observedAt = model.catalogObservedAt;
+    if (observedAt === undefined || !Number.isFinite(observedAt)) continue;
+    if (newest === undefined || observedAt > newest) newest = observedAt;
+  }
+  if (newest === undefined) return undefined;
+  return `Catalog updated ${RETIRING_DATE_FORMAT.format(new Date(newest))}`;
+}
+
 export const JUDGE_INELIGIBLE_TAG = "Not eligible";
 
 export const JUDGE_INELIGIBLE_REASON =

@@ -36,6 +36,7 @@ import {
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   applyWorkloadCapabilityLocks,
+  catalogFreshnessLabel,
   NOT_VERIFIED_TAG,
   retiringTag,
   sortModelsNewestFirst,
@@ -442,6 +443,14 @@ export function ModelSelector({
         applyWorkloadCapabilityLocks(availableModels, workload),
       ),
     [availableModels, workload],
+  );
+  // Freshness of the hosted catalog, from the rows MCPJam provides.
+  const catalogFreshness = useMemo(
+    () =>
+      catalogFreshnessLabel(
+        displayModels.filter((model) => isMCPJamProvidedModelMenuItem(model)),
+      ),
+    [displayModels],
   );
   const groupedModels = useMemo(
     () => groupModelsByProvider(displayModels),
@@ -1100,6 +1109,15 @@ export function ModelSelector({
                       </CommandGroup>
                     ) : null}
                   </CommandList>
+
+                  {showProvided && catalogFreshness ? (
+                    <p
+                      className="border-t px-3 py-1.5 text-[10px] text-muted-foreground"
+                      data-testid="model-selector-catalog-freshness"
+                    >
+                      {catalogFreshness}
+                    </p>
+                  ) : null}
 
                   {/* Only under the user's own providers — while searching the
                       rows are a transient mix of both sections. */}

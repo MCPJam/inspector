@@ -2,6 +2,7 @@
 import { modelRejectsTemperature } from "@mcpjam/sdk/browser";
 
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
+import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
 
 import type {
   AuthMethod,
@@ -147,20 +148,12 @@ const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] = [...MCPJAM_PROVIDED_MODEL_IDS];
  * catalog. */
 export type CanonicalModelCandidate = { id: string | Model; provider: string };
 
-// Canonical (OpenRouter-style) id prefixes whose ModelProvider key differs from
-// the prefix. Everything else uses the prefix verbatim.
-const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
-  "x-ai": "xai",
-  spacexai: "xai",
-  "meta-llama": "meta",
-  mistralai: "mistral",
-};
-
 /** Derive the provider key from a canonical hosted id's prefix. */
 export function hostedProviderFromCanonicalId(id: string): string {
   const slash = id.indexOf("/");
   const prefix = (slash > 0 ? id.slice(0, slash) : id).toLowerCase();
-  return HOSTED_PROVIDER_ALIASES[prefix] ?? prefix;
+  // Prefixes whose provider key differs (`x-ai` → `xai`); the rest verbatim.
+  return MODEL_ID_PREFIX_ALIASES[prefix] ?? prefix;
 }
 
 // The hosted snapshot projected to `{ id, provider }` so `getCanonicalModelId`
