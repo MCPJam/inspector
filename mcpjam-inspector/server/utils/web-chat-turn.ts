@@ -1310,15 +1310,16 @@ export async function streamWebChatTurn(
 
     if (orgRuntime.runtimeLocation === "local") {
       // The local runtime cannot resume a server-executed approval, and it
-      // refuses a WHOLE turn that advertises one. The always-ask workspace
-      // operations (MJ-008) would therefore take every other tool down with
-      // them; they are withheld here instead — refused, not run unasked.
+      // refuses a WHOLE turn that advertises one. The workspace operations
+      // that pause for approval (MJ-008) would therefore take every other tool
+      // down with them; they are withheld here instead — refused, not run
+      // unasked.
       const localTools = withoutServerVerifiedApprovalTools(
         allTools as ToolSet,
       );
       if (localTools.removed.length > 0) {
         logger.warn(
-          "[web-chat-turn] local-runtime org provider cannot serve always-ask workspace tools; withholding them",
+          "[web-chat-turn] local-runtime org provider cannot serve workspace tools that pause for approval; withholding them",
           { toolNames: localTools.removed },
         );
       }
