@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
 import { SwarmGenerateError } from "@/lib/swarm-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
@@ -1301,6 +1302,36 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in when the refusal arrives as the OTHER error type", async () => {
+    // The proxy does not always raise `SwarmGenerateError`. `handleRoute`
+    // backfills `normalized` on every route error, and that path throws
+    // `WebApiError` — which has no `signInRequired` flag, only the backend's
+    // envelope in `details`. A consumer keyed on the class showed a guest the
+    // generic card; `signInRemedyMessage` asks the error instead, so both
+    // shapes land on the same remedy.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new WebApiError(
+        401,
+        "UNAUTHORIZED",
+        "Sign in to generate personas and journeys.",
+        undefined,
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("offers sign-in for a guest refusal instead of carding it", async () => {

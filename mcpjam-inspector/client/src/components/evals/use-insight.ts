@@ -198,6 +198,19 @@ export function useInsight<TResult extends { summary?: string }>(
    * an older request loses the right to latch.
    */
   const explicitRequestGenerationRef = useRef(0);
+  /** Monotonic per request, so an older attempt cannot answer for a newer one. */
+  const attemptRef = useRef(0);
+  /**
+   * The refusal's own copy, kept WITH the latch rather than only in React state.
+   *
+   * State is per-run and the run-change effect clears it; the latch is per
+   * identity and outlives the run. Keeping only the latch meant navigating to
+   * another completed run left the surface with requests suppressed and nothing
+   * on screen to explain why — no message, no Sign in control, and
+   * `SuiteInsightsCollapsible` falling through to "Open a completed run…" with
+   * one already open. The suppression and its remedy have to travel together.
+   */
+  const signInRefusalMessageRef = useRef<string | null>(null);
   // The result `generatedAt` captured at request time. Lets us clear the
   // optimistic `requested` flag the instant a NEW result lands — even when a
   // reactive update skips an observable `pending` frame — so the controls
@@ -234,12 +247,14 @@ export function useInsight<TResult extends { summary?: string }>(
       // below carries no such assertion and leaves the latch alone.
       if (!autoClaimedRunId) {
         signInRefusedRef.current = false;
+        signInRefusalMessageRef.current = null;
         explicitRequestGenerationRef.current += 1;
       }
       // Captured at REQUEST time: what this rejection, whenever it lands, is
       // allowed to speak for. See the two guards in the catch below.
       const originRunId = run._id;
       const generationAtRequest = explicitRequestGenerationRef.current;
+      const attempt = ++attemptRef.current;
       setError(null);
       setSignInRequired(false);
       requestedAtStampRef.current = latestResultStampRef.current;
@@ -264,12 +279,17 @@ export function useInsight<TResult extends { summary?: string }>(
             explicitRequestGenerationRef.current === generationAtRequest
           ) {
             signInRefusedRef.current = true;
+            signInRefusalMessageRef.current = classified.message;
           }
-          // Everything below is what the viewer SEES. A request for run A can
-          // reject after they have moved to run B, and run B is owed its own
-          // verdict rather than A's — including `requested`, which B may have
-          // set for a request of its own that is still in flight.
-          if (runIdRef.current !== originRunId) {
+          // Everything below is what the viewer SEES, and this answer may be
+          // about something no longer on screen. SUPERSEDED covers both ways
+          // that happens: a newer attempt started (possibly for this same run —
+          // checking the run alone let an earlier attempt's rejection overwrite
+          // a newer one's state, and clear its `requested`), or the viewer moved
+          // to another run, which is owed its own verdict rather than this one's.
+          const superseded =
+            attemptRef.current !== attempt || runIdRef.current !== originRunId;
+          if (superseded) {
             return;
           }
           setRequested(false);
@@ -297,9 +317,19 @@ export function useInsight<TResult extends { summary?: string }>(
   useEffect(() => {
     if (runIdRef.current !== runKey) {
       runIdRef.current = runKey;
-      setError(null);
-      setSignInRequired(false);
       setRequested(false);
+      // Per-run state resets; the IDENTITY refusal does not. While requests are
+      // suppressed the viewer keeps the explanation and the Sign in control,
+      // because the thing being refused is who they are, not which run they
+      // opened. Clearing these here while the latch still blocked the
+      // auto-request left the surface silent on every later run.
+      if (signInRefusedRef.current) {
+        setSignInRequired(true);
+        setError(signInRefusalMessageRef.current);
+      } else {
+        setError(null);
+        setSignInRequired(false);
+      }
       // Re-assess availability per run for run-specific/transient failures
       // (e.g. "Suite run not found") so one bad run doesn't hide the panel for
       // every later run — but keep it sticky when the backend feature is

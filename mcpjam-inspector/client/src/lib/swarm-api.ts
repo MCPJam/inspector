@@ -1098,6 +1098,21 @@ async function postGenerate<T>(
     if (limitDialogRaised) {
       throw new SwarmGenerateError(response.status, message, true);
     }
+    // BEFORE the `normalized` branch, and that order is the whole point.
+    // `handleRoute` runs every route error through `mapRuntimeError`, which
+    // backfills `normalized`, so on the real proxy response `normalized` is
+    // always present — a sign-in check below it never ran, and the guest got
+    // the generic error card instead of the Sign in control. The card is not
+    // wanted here anyway: `normalized` exists to feed it, and this refusal has
+    // its own affordance.
+    if (signInRequired) {
+      throw new SwarmGenerateError(
+        response.status,
+        message,
+        false,
+        true
+      );
+    }
     if (normalized) {
       throw new WebApiError(
         response.status,
@@ -1107,12 +1122,7 @@ async function postGenerate<T>(
         details,
       );
     }
-    throw new SwarmGenerateError(
-      response.status,
-      message,
-      false,
-      signInRequired
-    );
+    throw new SwarmGenerateError(response.status, message, false, false);
   }
   return parsed as T;
 }

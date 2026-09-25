@@ -104,6 +104,7 @@ import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { WebApiError } from "@/lib/apis/web/base";
+import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
 
@@ -1074,10 +1075,11 @@ export function NewSwarmCreateFlow({
       // Same argument as the limit dialog one line up, for the same reason:
       // this refusal gets its own affordance below, so repeating it in the
       // error card would say it twice and offer nothing to act on either time.
-      const signInRefusal =
-        err instanceof SwarmGenerateError && err.signInRequired
-          ? err.message
-          : null;
+      // Asked of the error, not of its class: the proxy raises
+      // `SwarmGenerateError` on some paths and `WebApiError` on others, and
+      // checking only the first is what put the generic card in front of a
+      // guest. `signInRemedyMessage` owns that question for both.
+      const signInRefusal = signInRemedyMessage(err);
       setGenerateSignInRequired(signInRefusal);
       setDescribeStepError(limitDialogRaised || signInRefusal ? null : err);
       setErrorMessage(

@@ -512,6 +512,27 @@ describe("generateSwarmPersonaBatch — sign-in refusal", () => {
     expect(err.message).toBe("Sign in to generate personas and journeys.");
   });
 
+  it("survives the `normalized` block the real proxy always attaches", async () => {
+    // The fixture above omits `normalized`, and that omission hid a bug.
+    // `handleRoute` runs every route error through `mapRuntimeError`, which
+    // backfills `normalized`, and `webErrorFromRoute` serializes it — so on the
+    // response a guest actually receives, `normalized` is ALWAYS there. With
+    // the sign-in check below that branch, this threw `WebApiError` instead,
+    // and the create flow — which recognized the refusal only on
+    // `SwarmGenerateError` — drew the generic error card.
+    const err = await refusalFrom({
+      code: "UNAUTHORIZED",
+      message: "Sign in to generate personas and journeys.",
+      details: { ok: false, code: "SIGN_IN_REQUIRED" },
+      normalized: {
+        title: "Sign in to generate personas and journeys.",
+        detail: "Sign in to generate personas and journeys.",
+      },
+    });
+    expect(err.signInRequired).toBe(true);
+    expect(err.message).toBe("Sign in to generate personas and journeys.");
+  });
+
   it("does NOT flag a 403 that signing in cannot fix", async () => {
     const err = await refusalFrom({
       code: "FORBIDDEN",
