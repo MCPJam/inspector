@@ -1376,12 +1376,28 @@ export interface PlatformCaptureDisclosure {
     isDlp: boolean;
     limitation: string;
     appliesTo: readonly string[];
+    /**
+     * What an analysis provider may keep or train on, read off the backend's
+     * per-call provider policy. Absent on older backends.
+     */
+    providerRetention?: PlatformProviderRetentionDisclosure;
   };
   exportDefaults: {
     includeContent: boolean;
     ruleLocation: string;
     note: string;
   };
+}
+
+export interface PlatformProviderRetentionDisclosure {
+  openrouter: { data_collection: "allow" | "deny"; zdr?: boolean };
+  gateway: { disallowPromptTraining: boolean; zeroDataRetention?: boolean };
+  /** True when both rails require zero data retention on every call. */
+  zeroDataRetention: boolean;
+  appliesTo: readonly string[];
+  /** Named, not omitted: what this policy deliberately does not cover. */
+  notAppliedTo: readonly string[];
+  note: string;
 }
 
 export interface PlatformRetentionDisclosure {

@@ -1,5 +1,53 @@
 # `@mcpjam/sdk` changelog
 
+## 8.16.0
+
+### Minor Changes
+
+- [#5488](https://github.com/MCPJam/inspector/pull/5488) [`befa526`](https://github.com/MCPJam/inspector/commit/befa5263261db80298b9fed658bb92dfc1fed913) Thanks [@chelojimenez](https://github.com/chelojimenez)! - On a run's scorecard, Connection, Discovery, Tool call and Response each start with a built-in runner check whenever the stage analysis measured that stage. The check reports what the runner itself observed there, in the same Expected / Actual form as the evaluators. It fails only for the runner's own reason: the connection failed, listing tools failed, a call never produced a result, or the server reported a tool error. When one of the stage's evaluators failed it instead (an assertion, the argument matcher, a widget check), the runner check says so and stays undecided rather than repeating the failure. A stage that does not apply to the case shows no runner check. A case's own scorecard lists Tool call and Response only when the case gives the runner a call or response to measure.
+
+  A runner check wears a **Built-in** badge instead of a role and decides nothing on its own. It is not a score row, so gates and the evaluation config are unchanged.
+
+  `STANDARD_CHECKS` gains the two runner checks this needs, `call.completed` ("Tool call completed") and `response.returned` ("Result returned to the model"). The `measuredBy` field of a runner check can now be `"call"` or `"response"` as well as `"connection"` or `"discovery"`.
+
+  The settings tables now label runner checks **Built-in** instead of Required. Response gets its runner check too, and a case's own evaluator table describes its match rows with the case's match options rather than the defaults.
+
+- [#5492](https://github.com/MCPJam/inspector/pull/5492) [`936e037`](https://github.com/MCPJam/inspector/commit/936e0372b89c19b24d34ef16129f79754b886676) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Split the argument check out of the expected-tool-calls score. A hosted case that expects tool calls is now graded by two scorers:
+
+  - `toolCalls:match` (version 3) now covers **selection only**: every expected tool was called, and no turn made more extra calls than `maxExtraToolCalls` allows. A right tool called with a wrong argument no longer fails it.
+  - `toolCalls:arguments` (new, at the Tool call stage) checks that the expected tools were called with the expected arguments. Its reason names the tool and the argument, never the value. It is declared only when the case compares arguments (`argumentMatching` is not `"ignore"`).
+
+  Both scorers are required. Together they pass exactly when the old single score did, so an existing gate on `toolCalls:match` keeps its meaning in aggregate. The scorecard shows an **Arguments match** row under Tool call. Runs graded before this change show no such row and render as before.
+
+  **Re-baseline after upgrading.** The set of score definitions changed, so `evaluationConfigHash` changed with it. The first run after this release cannot be gated against a `--baseline` from before it: `eval gate --baseline <older run>` exits 3 (not gateable). Record a new baseline from a run on this version.
+
+  `EVALUATOR_STAGE` (and `GRADER_STAGE`) in `@mcpjam/sdk/contract` now files `toolCalls:arguments` at `call`.
+
+### Patch Changes
+
+- [#5459](https://github.com/MCPJam/inspector/pull/5459) [`048493a`](https://github.com/MCPJam/inspector/commit/048493af764d446457935e4e6ec498eaf7495e6f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Keep persisted conformance runs behind the hosted egress guard.
+
+  `runConformance`'s protocol suite now dials through the fetch attached to the server config — `fetchFn`, then `baseFetch` — which is what the apps and tasks suites of the same run already did. It rebuilt its config from the URL, token and headers alone, so a caller's fetch never reached it and the suite, raw probes and MCP client both, fell back to the global `fetch`. An explicit `protocol.fetchFn` still wins.
+
+  In the hosted inspector, every persisted conformance run — the public `/v1` start route, the GitHub checks worker and the benchmark worker — now dials through the DNS-pinned, hop-by-hop egress guard whoever starts it:
+
+  - the executor defaults the MCP and OAuth transports to the hosted conformance guard when a caller passes none, and both workers now pass it explicitly instead of a bare `{ url }`;
+  - a target the guard refuses outright is never handed to a suite. The run records the refusal as each suite's could-not-run reason. This also covers the protocol suite's localhost host-header checks, which open raw sockets that no fetch can guard;
+  - a refused or failed dial reaches the stored report as the guard's verdict or one uniform message, never as the address a hostname resolved to or the socket, TLS or DNS error text;
+  - the GitHub-check health probe dials the pull request's server through the hosted MCP transport rather than the global `fetch`.
+
+  The CI guard (`check-hosted-manager-base-fetch.mjs`) now also scans `server/routes/shared` and fails when a hosted file imports an `@mcpjam/sdk` entry point that opens its own connection (`runConformance`, the conformance suites, `withEphemeralClient`, `probeMcpServer`, `runServerDoctor` and the like) without being listed with the guard it dials through.
+
+  Local and desktop behaviour is unchanged: every guard, the up-front refusal and the redaction are no-ops outside hosted mode.
+
+- [#5545](https://github.com/MCPJam/inspector/pull/5545) [`6c21ff2`](https://github.com/MCPJam/inspector/commit/6c21ff26bdc639bb1fedc4f49d67615393f5a008) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5464](https://github.com/MCPJam/inspector/pull/5464) [`6e2f260`](https://github.com/MCPJam/inspector/commit/6e2f2609e45927f7c27bba6542ef8d234372e12a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Profile pictures and organization logos now upload through the MCPJam backend, which accepts PNG, JPEG, GIF and WebP only and checks the file's own bytes rather than its declared type. The file picker offers only those formats, and a refused file says which formats are accepted.
+
+  Widget snapshots captured by the inspector and uploaded by `reportEvalResults` are now stored as plain text instead of `text/html`, so a stored snapshot is never served as a web page. Replays read the same bytes and render as before.
+
 ## 8.15.0
 
 ### Minor Changes
