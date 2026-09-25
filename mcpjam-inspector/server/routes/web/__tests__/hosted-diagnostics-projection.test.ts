@@ -816,11 +816,99 @@ describe("hosted validate responses (web and v1)", () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
     const body = (await res.json()) as any;
     expect(JSON.stringify(body)).not.toMatch(MARKER);
-    // v1 carries no exchange log to take the reason phrase from.
     expect(body.message).toMatch(
       /^The MCP server responded with HTTP 500(?: Internal x+)?\.$/,
     );
   });
+
+  it.each([
+    ["HTML", htmlAnswer],
+    ["non-JSON-RPC JSON", jsonPayloadAnswer],
+    [
+      "malformed JSON",
+      fixedAnswer(
+        () =>
+          new Response("{UNEXPECTED_MARKER_60", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    ],
+    [
+      "malformed event stream",
+      fixedAnswer(
+        () =>
+          new Response("data: {UNEXPECTED_MARKER_61\n\n", {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+      ),
+    ],
+  ])(
+    "v1: reports a non-MCP HTTP 200 %s answer by its status line",
+    async (_kind, answer) => {
+      upstream.current = answer;
+      const res = await v1Validate(routes);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      const body = (await res.json()) as any;
+      expect(JSON.stringify(body)).not.toMatch(MARKER);
+      expect(body.message).toBe(
+        "The MCP server responded with HTTP 200, but not with a valid MCP response.",
+      );
+    },
+  );
+
+  it.each([
+    ["web", webValidate],
+    ["v1", v1Validate],
+  ])(
+    "%s: returns a successful connection's initialization info through its projection",
+    async (_surface, validate) => {
+      upstream.current = async (request) => {
+        const message = await readMessage(request.clone());
+        if (message?.method === "initialize") {
+          return json(
+            {
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: {
+                  tools: { listChanged: true, extra: "UNEXPECTED_MARKER_50" },
+                  experimental: { nested: { deep: "UNEXPECTED_MARKER_51" } },
+                },
+                serverInfo: {
+                  name: "fixture-server",
+                  version: "1.0.0",
+                  websiteUrl: "https://mcp.example.test/about",
+                  extra: "UNEXPECTED_MARKER_52",
+                },
+                instructions: `Use search first.${"i".repeat(10_000)}`,
+              },
+            },
+            { headers: { "mcp-session-id": "session-1" } },
+          );
+        }
+        return mcpServer()(request);
+      };
+      const res = await validate(routes);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      const initInfo = body.initInfo;
+      expect(JSON.stringify(body)).not.toMatch(MARKER);
+      expect(initInfo).toMatchObject({
+        protocolVersion: "2025-06-18",
+        serverCapabilities: { tools: { listChanged: true } },
+        serverVersion: {
+          name: "fixture-server",
+          version: "1.0.0",
+          websiteUrl: "https://mcp.example.test/about",
+        },
+      });
+      expect(initInfo.instructions).toMatch(/^Use search first\.i+$/);
+      expect(initInfo.instructions).toHaveLength(8192);
+    },
+  );
 
   it("v1: answers 400 for a target the hosted inspector will not dial", async () => {
     serverUrlRef.current = "http://10.0.0.5/mcp";
