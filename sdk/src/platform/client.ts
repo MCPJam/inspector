@@ -68,6 +68,7 @@ import type {
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
+  PlatformEvalCasesImported,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
   PlatformEvalVerdictPolicyDefaults,
@@ -3555,6 +3556,66 @@ export class PlatformApiClient {
       { body: params.body },
       options
     );
+    return this.awaitAuthoringJob(params, started, {}, "Generation", options);
+  }
+
+  /**
+   * AI-author eval cases from a document the caller supplies, then persist the
+   * ones that came back clean.
+   *
+   * Shares the authoring job with generation, so the reply is the same shape:
+   * `created` for the cases that landed, `skipped` for drafts the model could
+   * not finish, and `reviewUrl` to hand a person the unfinished ones.
+   */
+  async importEvalCases(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalCasesImported> {
+    const { duplicatePolicy, overrideReason } = params.body as {
+      duplicatePolicy?: string;
+      overrideReason?: string;
+    };
+    const started = await this.request<
+      PlatformEvalCasesImported & { jobId?: string }
+    >(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/import`,
+      { body: params.body },
+      options
+    );
+    return this.awaitAuthoringJob(
+      params,
+      started,
+      {
+        ...(duplicatePolicy ? { duplicatePolicy } : {}),
+        ...(overrideReason ? { overrideReason } : {}),
+      },
+      "Import",
+      options
+    );
+  }
+
+  /**
+   * Follow an authoring job to its end and commit it.
+   *
+   * The start call answers 202 with a job id whenever the work outran the
+   * route's own short wait, so both authoring entry points have to poll. The
+   * refusal on timeout names the job id deliberately: starting a second job
+   * re-authors and re-bills every case in the document.
+   */
+  private async awaitAuthoringJob<T>(
+    params: { projectId: string; suiteId: string },
+    started: T & { jobId?: string },
+    commitBody: Record<string, unknown>,
+    label: string,
+    options?: RequestOptions
+  ): Promise<T> {
     if (!started.jobId) return started;
     const jobPath = `/projects/${encodeURIComponent(
       params.projectId
@@ -3571,14 +3632,21 @@ export class PlatformApiClient {
         options
       );
       if (status.status === "completed") {
-        return this.request("POST", `${jobPath}/commit`, { body: {} }, options);
+        return this.request(
+          "POST",
+          `${jobPath}/commit`,
+          { body: commitBody },
+          options
+        );
       }
       if (status.status !== "pending")
-        throw new Error(status.error ?? `Generation ${status.status}.`);
+        throw new Error(status.error ?? `${label} ${status.status}.`);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(
-      `Generation is still running. Resume authoring job ${started.jobId}; do not start another generation.`
+      `${label} is still running. Resume authoring job ${
+        started.jobId
+      }; do not start another ${label.toLowerCase()}.`
     );
   }
 

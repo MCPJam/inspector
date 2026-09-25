@@ -67,6 +67,7 @@ function authorizeResponse(
             authMethod: "xaa",
             useXaa: true,
             useOAuth: false,
+            secretsBoundOrigin: "https://resource.example.com",
             ...serverConfig,
           },
           oauthAccessToken: null,
@@ -209,6 +210,83 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
 
     expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({ registrationMode: "dcr" })
+    );
+  });
+
+  it("lets an unbound DCR row reach the mint, where registration happens", async () => {
+    // A DCR row is bound only once it stores a confidential registration, and
+    // that registration happens inside the mint. Refusing the unbound row here
+    // would stop it from ever registering.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "dcr",
+          secretsBoundOrigin: undefined,
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "dcr" })
+    );
+  });
+
+  it("refuses a mismatched DCR binding before minting", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "dcr",
+          secretsBoundOrigin: "https://owner.example.com",
+        })
+      )
+    );
+
+    await expect(
+      resolveLocalServerForConnect(
+        context,
+        "local-bearer",
+        "project-1",
+        "server-1"
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ secretOriginMismatch: true }),
+    });
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale binding block a CIMD row", async () => {
+    // CIMD sends no secret of the row's — public client, or an org-level key
+    // whose assertion is audience-bound to the endpoint it goes to — so a
+    // binding left over from the server's OAuth days must not refuse it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "cimd",
+          secretsBoundOrigin: "https://owner.example.com",
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "cimd" })
     );
   });
 });
