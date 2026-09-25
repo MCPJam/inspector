@@ -25,6 +25,9 @@
  *   revoked however it was found) but does not move the watermark or the
  *   freshness clock; the next tick starts over from the last complete
  *   watermark.
+ * - A page that breaks the contract fails the scan: a row that names no
+ *   session, or a final watermark that is not a non-negative integer or is
+ *   well ahead of this process's clock.
  * - Entries are dropped once past their `expiresAt`, by which time every
  *   access token the session was issued has expired as well.
  *
@@ -90,6 +93,14 @@ const FEED_REQUEST_TIMEOUT_MS = 10_000;
  */
 const MAX_PAGES_PER_SCAN = 5_000;
 
+/**
+ * How far past a scan's local start its final watermark may be. The feed's
+ * watermark trails the feed's own clock by its overlap, so one well ahead of
+ * this clock is a clock or contract fault: accepting it would skip the rows
+ * recorded before it.
+ */
+const WATERMARK_CLOCK_ALLOWANCE_MS = 5 * 60_000;
+
 /** Scan failures are logged at most this often; the stale transition always is. */
 const FAILURE_LOG_INTERVAL_MS = 60_000;
 
@@ -154,11 +165,12 @@ function isFiniteNumber(value: unknown): value is number {
 
 /**
  * Validate one feed page. The page's STRUCTURE is strict — a final page
- * without a watermark, or an unfinished one without a cursor, cannot be
- * continued safely and fails the scan. Individual rows are lenient in the
- * direction that keeps a revocation: a row without a usable session id cannot
- * refuse anything and is skipped; a row without a usable expiry is kept with
- * the local default.
+ * without a usable watermark (the next scan's `since`: a non-negative
+ * integer), or an unfinished one without a cursor, cannot be continued safely
+ * and fails the scan. So does a row that names no session: the feed always
+ * names one, and a feed that stops doing so (a renamed field, say) would
+ * otherwise look complete while refusing nothing. A row without a usable
+ * expiry is kept with the local default.
  */
 export function parseRevokedSessionFeedPage(
   body: unknown,
@@ -177,9 +189,16 @@ export function parseRevokedSessionFeedPage(
       "Revoked-session feed page is missing `sessions` or `isDone`",
     );
   }
-  if (isDone && !isFiniteNumber(watermark)) {
+  if (
+    isDone &&
+    !(
+      typeof watermark === "number" &&
+      Number.isSafeInteger(watermark) &&
+      watermark >= 0
+    )
+  ) {
     throw new RevokedSessionFeedError(
-      "Revoked-session feed final page carries no watermark",
+      "Revoked-session feed final page carries no usable watermark",
     );
   }
   if (!isDone && (typeof cursor !== "string" || cursor.length === 0)) {
@@ -189,9 +208,13 @@ export function parseRevokedSessionFeedPage(
   }
   const entries: RevokedSessionEntry[] = [];
   for (const row of sessions) {
-    if (!row || typeof row !== "object") continue;
-    const { sid, expiresAt } = row as Record<string, unknown>;
-    if (typeof sid !== "string" || sid.length === 0) continue;
+    const { sid, expiresAt } =
+      row && typeof row === "object" ? (row as Record<string, unknown>) : {};
+    if (typeof sid !== "string" || sid.length === 0) {
+      throw new RevokedSessionFeedError(
+        "Revoked-session feed row carries no session id",
+      );
+    }
     entries.push(isFiniteNumber(expiresAt) ? { sid, expiresAt } : { sid });
   }
   return {
@@ -405,6 +428,14 @@ export class RevokedSessionCache {
           if (!isFiniteNumber(page.watermark)) {
             throw new RevokedSessionFeedError(
               "Revoked-session feed final page carries no watermark",
+            );
+          }
+          if (
+            page.watermark < 0 ||
+            page.watermark > startedAt + WATERMARK_CLOCK_ALLOWANCE_MS
+          ) {
+            throw new RevokedSessionFeedError(
+              "Revoked-session feed watermark is out of range",
             );
           }
           this.completeScan(startedAt, page.watermark);

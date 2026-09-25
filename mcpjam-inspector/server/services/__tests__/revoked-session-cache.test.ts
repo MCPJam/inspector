@@ -182,6 +182,29 @@ describe("RevokedSessionCache — scans", () => {
     expect(cache.isRevoked("long")).toBe(true);
   });
 
+  it("fails a scan whose final watermark is ahead of this clock, and keeps the last one", async () => {
+    const watermarks = [T0 - 60_000, T0 + 10 * 60_000];
+    const cache = new RevokedSessionCache({
+      fetchPage: async () => ({
+        sessions: [{ sid: "late" }],
+        cursor: null,
+        isDone: true,
+        watermark: watermarks.shift()!,
+      }),
+    });
+    await expect(cache.scan()).resolves.toBe(true);
+
+    vi.setSystemTime(T0 + 15_000);
+    await expect(cache.scan()).resolves.toBe(false);
+
+    expect(cache.state()).toMatchObject({
+      watermark: T0 - 60_000,
+      lastCompleteScanAt: T0,
+    });
+    // What it read is still refused; only the watermark is not trusted.
+    expect(cache.isRevoked("late")).toBe(true);
+  });
+
   it("fails a scan whose feed never advances its cursor", async () => {
     const cache = new RevokedSessionCache({
       fetchPage: async () => ({
@@ -319,6 +342,14 @@ describe("parseRevokedSessionFeedPage", () => {
   it.each([
     ["no sessions array", { cursor: null, isDone: true, watermark: 1 }],
     ["a final page with no watermark", { sessions: [], isDone: true }],
+    [
+      "a final page with a negative watermark",
+      { sessions: [], isDone: true, watermark: -1 },
+    ],
+    [
+      "a final page with a fractional watermark",
+      { sessions: [], isDone: true, watermark: 1.5 },
+    ],
     ["an unfinished page with no cursor", { sessions: [], isDone: false }],
     ["a non-object", "nope"],
   ])("refuses %s", (_label, body) => {
@@ -327,14 +358,30 @@ describe("parseRevokedSessionFeedPage", () => {
     );
   });
 
-  it("skips rows without a session id and keeps rows without an expiry", () => {
+  it.each([
+    ["no session id", { expiresAt: 5 }],
+    ["an empty session id", { sid: "" }],
+    ["a session id that is not a string", { sid: 7 }],
+    ["no object", null],
+  ])("refuses a page with a row that has %s", (_label, row) => {
+    expect(() =>
+      parseRevokedSessionFeedPage({
+        sessions: [{ sid: "kept" }, row],
+        cursor: null,
+        isDone: true,
+        watermark: 1,
+      }),
+    ).toThrow("Revoked-session feed row carries no session id");
+  });
+
+  it("keeps rows without an expiry", () => {
     const page = parseRevokedSessionFeedPage({
-      sessions: [{ expiresAt: 5 }, { sid: "" }, { sid: "kept" }],
+      sessions: [{ sid: "kept" }, { sid: "also", expiresAt: "soon" }],
       cursor: null,
       isDone: true,
       watermark: 1,
     });
-    expect(page.sessions).toEqual([{ sid: "kept" }]);
+    expect(page.sessions).toEqual([{ sid: "kept" }, { sid: "also" }]);
   });
 });
 
