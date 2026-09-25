@@ -1,11 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import relayRoutes, { relayBodyLimit } from "../relay.js";
+import relayRoutes, {
+  RELAY_MAX_LARGE_PAYLOAD_CHECKS,
+  relayBodyLimit,
+} from "../relay.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import { securityHeadersMiddleware } from "../../middleware/security-headers.js";
 import { originValidationMiddleware } from "../../middleware/origin-validation.js";
 import { sessionAuthMiddleware } from "../../middleware/session-auth.js";
+
+// Lets a test hold gzip reads in flight; everything else is the real module.
+const zlibControl = vi.hoisted(() => ({
+  hold: false,
+  held: [] as Array<() => void>,
+}));
+
+vi.mock("node:zlib", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:zlib")>();
+  const gunzip = (...args: unknown[]) => {
+    const run = () => Reflect.apply(actual.gunzip, actual, args);
+    if (zlibControl.hold) zlibControl.held.push(run);
+    else run();
+  };
+  return { ...actual, gunzip };
+});
 
 const ORIGINAL_FETCH = global.fetch;
 
@@ -29,6 +49,19 @@ function dataParam(json: string): string {
 
 function base64Form(json: string): string {
   return `data=${dataParam(json)}`;
+}
+
+// A replay batch whose snapshot data barely compresses.
+function largeReplayBatch(snapshotBytes: number): string {
+  return JSON.stringify([
+    {
+      event: "$snapshot",
+      properties: {
+        token: POSTHOG_PROJECT_KEY,
+        $snapshot_data: randomBytes(snapshotBytes).toString("base64"),
+      },
+    },
+  ]);
 }
 
 // Mount on BOTH prefixes exactly like both production entries so the tests
@@ -69,6 +102,8 @@ describe("posthog relay proxy", () => {
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    zlibControl.hold = false;
+    for (const run of zlibControl.held.splice(0)) run();
   });
 
   it("forwards ingest POSTs with the /relay prefix stripped, preserving trailing slash, query, and body bytes", async () => {
@@ -462,5 +497,75 @@ describe("posthog relay proxy", () => {
         expect(fetch).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe("capture payload reads", () => {
+    it.each(["/i/v0/e/", "/s/"])(
+      "refuses a small gzip body on %s that inflates past its budget",
+      async (path) => {
+        // Whitespace compresses about a thousandfold.
+        const body = gzipSync(`${" ".repeat(3 * 1024 * 1024)}${eventBatch()}`);
+        expect(body.length).toBeLessThan(64 * 1024);
+
+        const response = await createTestApp().request(`/tlm${path}`, {
+          method: "POST",
+          body,
+        });
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "unreadable_payload" });
+        expect(fetch).not.toHaveBeenCalled();
+      },
+    );
+
+    it("forwards a large gzip replay batch that stays within its ratio", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+      const body = gzipSync(largeReplayBatch(2 * 1024 * 1024));
+
+      const response = await createTestApp().request("/tlm/s/", {
+        method: "POST",
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(
+        Buffer.from(mockedFetchInit().body as ArrayBuffer).equals(body),
+      ).toBe(true);
+    });
+
+    it("answers 503 for a large payload while others are being read", async () => {
+      vi.mocked(fetch).mockResolvedValue(upstreamResponse());
+      const app = createTestApp();
+      const body = gzipSync(largeReplayBatch(2 * 1024 * 1024));
+      zlibControl.hold = true;
+
+      const pending = Array.from(
+        { length: RELAY_MAX_LARGE_PAYLOAD_CHECKS },
+        () => app.request("/tlm/s/", { method: "POST", body }),
+      );
+      await vi.waitFor(() =>
+        expect(zlibControl.held).toHaveLength(RELAY_MAX_LARGE_PAYLOAD_CHECKS),
+      );
+
+      const refused = await app.request("/tlm/s/", { method: "POST", body });
+      expect(refused.status).toBe(503);
+      expect(refused.headers.get("retry-after")).toBe("1");
+      expect(await refused.json()).toEqual({ error: "relay_busy" });
+
+      const small = await app.request("/tlm/i/v0/e/", {
+        method: "POST",
+        body: eventBatch(),
+      });
+      expect(small.status).toBe(200);
+
+      zlibControl.hold = false;
+      for (const run of zlibControl.held.splice(0)) run();
+      for (const response of await Promise.all(pending)) {
+        expect(response.status).toBe(200);
+      }
+
+      const after = await app.request("/tlm/s/", { method: "POST", body });
+      expect(after.status).toBe(200);
+    });
   });
 });

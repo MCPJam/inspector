@@ -523,6 +523,7 @@ export type SystemEventMap = {
     bodyLimitRejects: number;
     rateLimitRejects: number;
     projectRejects: number;
+    busyRejects: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   };

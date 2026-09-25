@@ -1,5 +1,6 @@
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
-import { gunzipSync } from "node:zlib";
+import { promisify } from "node:util";
+import { gunzip } from "node:zlib";
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
@@ -23,9 +24,9 @@ import { getSystemLogger } from "../utils/request-logger.js";
  * session auth (analytics must flow before any session exists — see the note
  * in middleware/session-auth.ts). The upstream hosts are hardcoded constants,
  * never derived from the request, so there is no SSRF surface. Abuse is
- * bounded by path-scoped body limits, a hosted-only per-IP rate limit, and
- * the 30s upstream timeout. Requests are forwarded for our own PostHog project
- * only (see "Project pinning" below).
+ * bounded by path-scoped body limits, bounded payload reads, a hosted-only
+ * per-IP rate limit, and the 30s upstream timeout. Requests are forwarded for
+ * our own PostHog project only (see "Project pinning" below).
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -95,6 +96,7 @@ const stats = {
   bodyLimitRejects: 0,
   rateLimitRejects: 0,
   projectRejects: 0,
+  busyRejects: 0,
   latenciesMs: [] as number[],
 };
 
@@ -130,6 +132,7 @@ export function flushRelayStats(): void {
     bodyLimitRejects: stats.bodyLimitRejects,
     rateLimitRejects: stats.rateLimitRejects,
     projectRejects: stats.projectRejects,
+    busyRejects: stats.busyRejects,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -145,6 +148,7 @@ export function flushRelayStats(): void {
   stats.bodyLimitRejects = 0;
   stats.rateLimitRejects = 0;
   stats.projectRejects = 0;
+  stats.busyRejects = 0;
   stats.latenciesMs = [];
 }
 
@@ -297,10 +301,22 @@ function supportsRelayRequest(path: string, method: string): boolean {
 
 type ProjectCheck = "ours" | "other" | "unreadable";
 
-// How far a gzip body is inflated to read its tokens: well above what a real
-// SDK batch expands to, and a bound on what one request can make us allocate.
-const MAX_INFLATED_BODY_BYTES = 32 * 1024 * 1024;
-const REPLAY_MAX_INFLATED_BODY_BYTES = 64 * 1024 * 1024;
+// Reading a capture payload's tokens means inflating and parsing it, so that
+// work is bounded (MJ-015). A gzip body inflates off the event loop, to at
+// most INFLATE_RATIO_LIMIT times its compressed size (never below the floor)
+// and never past its path's cap. posthog-js flushes a replay batch at about
+// 0.9 MiB uncompressed, so real payloads sit well inside these bounds.
+const INFLATE_FLOOR_BYTES = 2 * 1024 * 1024;
+const INFLATE_RATIO_LIMIT = 32;
+const MAX_INFLATED_BODY_BYTES = 8 * 1024 * 1024;
+const REPLAY_MAX_INFLATED_BODY_BYTES = 20 * 1024 * 1024;
+
+// Payloads that may take more than the floor to read are read a few at a
+// time. Past that the relay answers 503, and posthog-js retries later.
+export const RELAY_MAX_LARGE_PAYLOAD_CHECKS = 2;
+let largePayloadChecks = 0;
+
+const gunzipAsync = promisify(gunzip);
 
 const TOKEN_QUERY_PARAMS = ["token", "api_key"];
 const TOKEN_FIELDS = ["api_key", "token", "$token"];
@@ -323,13 +339,39 @@ function parseDataParam(data: string): unknown {
   return JSON.parse(json);
 }
 
+function capturePayloadCap(subpath: string): number {
+  return subpath.startsWith("/s")
+    ? REPLAY_MAX_INFLATED_BODY_BYTES
+    : MAX_INFLATED_BODY_BYTES;
+}
+
+function isGzip(bytes: Uint8Array): boolean {
+  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+function inflateBudget(compressedBytes: number, cap: number): number {
+  return Math.min(
+    cap,
+    Math.max(INFLATE_FLOOR_BYTES, compressedBytes * INFLATE_RATIO_LIMIT),
+  );
+}
+
+// The most text reading `bytes` can produce.
+function payloadReadBytes(bytes: Uint8Array, cap: number): number {
+  return isGzip(bytes) ? inflateBudget(bytes.length, cap) : bytes.length;
+}
+
 // posthog-js sends gzip (detected by its magic bytes — the SDK drops the
 // `compression` query param for gzip), a form-encoded `data=` body, or JSON.
-function parseCapturePayload(bytes: Uint8Array, maxInflatedBytes: number) {
-  const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+async function parseCapturePayload(
+  bytes: Uint8Array,
+  cap: number,
+): Promise<unknown> {
   const text = (
-    isGzip
-      ? gunzipSync(bytes, { maxOutputLength: maxInflatedBytes })
+    isGzip(bytes)
+      ? await gunzipAsync(bytes, {
+          maxOutputLength: inflateBudget(bytes.length, cap),
+        })
       : Buffer.from(bytes)
   )
     .toString("utf8")
@@ -370,12 +412,12 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
   }
 }
 
-function checkProjectTokens(
+async function checkProjectTokens(
   subpath: string,
   url: URL,
   method: string,
   body: ArrayBuffer | undefined,
-): ProjectCheck {
+): Promise<ProjectCheck> {
   const tokens: unknown[] = [];
   for (const param of TOKEN_QUERY_PARAMS) {
     tokens.push(...url.searchParams.getAll(param));
@@ -389,11 +431,9 @@ function checkProjectTokens(
       const payload =
         method === "GET" || method === "HEAD"
           ? parseDataParam(url.searchParams.get("data") ?? "")
-          : parseCapturePayload(
+          : await parseCapturePayload(
               new Uint8Array(body ?? new ArrayBuffer(0)),
-              subpath.startsWith("/s")
-                ? REPLAY_MAX_INFLATED_BODY_BYTES
-                : MAX_INFLATED_BODY_BYTES,
+              capturePayloadCap(subpath),
             );
       collectPayloadTokens(payload, payloadTokens);
     } catch {
@@ -482,7 +522,24 @@ relayRoutes.all("*", async (c) => {
       ? undefined
       : await c.req.arrayBuffer();
 
-  const project = checkProjectTokens(subpath, url, method, body);
+  const largePayload =
+    body !== undefined &&
+    isCapturePath(subpath) &&
+    payloadReadBytes(new Uint8Array(body), capturePayloadCap(subpath)) >
+      INFLATE_FLOOR_BYTES;
+  if (largePayload && largePayloadChecks >= RELAY_MAX_LARGE_PAYLOAD_CHECKS) {
+    stats.busyRejects++;
+    recordResponseStatus(503);
+    c.header("Retry-After", "1");
+    return c.json({ error: "relay_busy" }, 503);
+  }
+  if (largePayload) largePayloadChecks++;
+  let project: ProjectCheck;
+  try {
+    project = await checkProjectTokens(subpath, url, method, body);
+  } finally {
+    if (largePayload) largePayloadChecks--;
+  }
   if (project !== "ours") {
     stats.projectRejects++;
     const status = project === "other" ? 403 : 400;
