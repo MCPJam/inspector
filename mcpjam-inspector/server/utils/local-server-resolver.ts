@@ -53,6 +53,7 @@ import {
 } from "./internal-log-context.js";
 import {
   bindCredentialHeaders,
+  bindingForAuthorizedHeaders,
   type CredentialHeaderBinding,
 } from "./credential-header-binding.js";
 import { hostedMcpBaseFetch } from "./hosted-mcp-base-fetch.js";
@@ -1002,6 +1003,11 @@ async function applyLocalRuntimeResolution<
           }
         : {}),
     };
+  } else if (result.serverConfig.transportType === "http") {
+    // Stored headers the authorize response carried inline: no reveal ran,
+    // but they are held to an origin on the wire all the same.
+    const binding = bindingForAuthorizedHeaders(result.serverConfig);
+    if (binding) result = { ...result, credentialBinding: binding };
   }
 
   if (result.serverConfig.transportType === "stdio") {

@@ -87,6 +87,7 @@ import {
 } from "../../utils/hosted-oauth-refresh.js";
 import {
   bindCredentialHeaders,
+  bindingForAuthorizedHeaders,
   type CredentialHeaderBinding,
 } from "../../utils/credential-header-binding.js";
 import {
@@ -2142,6 +2143,11 @@ export async function createAuthorizedManager(
           headerNames: Object.keys(revealed.headers),
           boundOrigins: revealed.boundOrigins ?? [],
         });
+      } else if (!revealed && auth.serverConfig.transportType === "http") {
+        // Stored headers the authorize response carried inline: no reveal
+        // ran, but they are held to an origin on the wire all the same.
+        const binding = bindingForAuthorizedHeaders(auth.serverConfig);
+        if (binding) credentialBindings.set(serverId, binding);
       }
       const authForConfig = revealed
         ? {

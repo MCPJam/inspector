@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   bindCredentialHeaders,
+  bindingForAuthorizedHeaders,
   boundOriginsFromReveal,
   credentialOrigin,
 } from "../credential-header-binding.js";
@@ -282,5 +283,38 @@ describe("boundOriginsFromReveal", () => {
     expect(boundOriginsFromReveal({ secretsBoundOrigin: "ftp://x" })).toEqual(
       [],
     );
+  });
+});
+
+describe("bindingForAuthorizedHeaders", () => {
+  it("holds inline headers to the server's own origin", () => {
+    expect(
+      bindingForAuthorizedHeaders({
+        url: "https://owner.example.com/mcp",
+        headers: { "x-api-key": "k", empty: "" },
+      }),
+    ).toEqual({
+      headerNames: ["x-api-key"],
+      boundOrigins: ["https://owner.example.com"],
+    });
+  });
+
+  it("prefers the origin the authorize response recorded", () => {
+    expect(
+      bindingForAuthorizedHeaders({
+        url: "https://moved.example.com/mcp",
+        headers: { "x-api-key": "k" },
+        secretsBoundOrigin: "https://owner.example.com",
+      }),
+    ).toEqual({
+      headerNames: ["x-api-key"],
+      boundOrigins: ["https://owner.example.com"],
+    });
+  });
+
+  it("is null when there is nothing to bind", () => {
+    expect(
+      bindingForAuthorizedHeaders({ url: "https://a.example", headers: {} }),
+    ).toBeNull();
   });
 });

@@ -641,6 +641,34 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       Authorization: "Bearer static-token",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Inline headers are held to the server's origin on the wire too: a
+    // redirect elsewhere is followed without them.
+    expect(config.baseFetch).toEqual(expect.any(Function));
+    const hops: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any, init?: RequestInit) => {
+        const url = String(input);
+        hops.push({
+          url,
+          auth: new Headers(init?.headers).get("authorization"),
+        });
+        return url === "https://header.example.com/mcp"
+          ? new Response(null, {
+              status: 307,
+              headers: { Location: "https://elsewhere.example/mcp" },
+            })
+          : new Response("ok");
+      })
+    );
+    await config.baseFetch("https://header.example.com/mcp", {
+      headers: config.requestInit.headers,
+    });
+    expect(hops).toEqual([
+      { url: "https://header.example.com/mcp", auth: "Bearer static-token" },
+      { url: "https://elsewhere.example/mcp", auth: null },
+    ]);
   });
 
   it("reveals runtime headers only when authorize-batch-local omits them", async () => {

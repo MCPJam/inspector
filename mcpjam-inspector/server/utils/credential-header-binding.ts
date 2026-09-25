@@ -205,3 +205,30 @@ export function boundOriginsFromReveal(body: {
       : null;
   return legacy ? [legacy] : [];
 }
+
+/**
+ * The binding for stored headers an authorize response carried INLINE (a row
+ * whose headers were never moved behind the reveal). No reveal ran, so no
+ * backend answer names their origins: they are held to the origin the
+ * authorize response recorded for them, or failing that to the server's own
+ * origin — the one connection the backend just authorized. `null` when there
+ * are no header values to bind.
+ */
+export function bindingForAuthorizedHeaders(serverConfig: {
+  url?: string | null;
+  headers?: Record<string, string> | null;
+  boundOrigins?: unknown;
+  secretsBoundOrigin?: unknown;
+}): CredentialHeaderBinding | null {
+  const headers = serverConfig.headers ?? {};
+  const headerNames = Object.keys(headers).filter(
+    (name) => typeof headers[name] === "string" && headers[name] !== "",
+  );
+  if (headerNames.length === 0) return null;
+  const recorded = boundOriginsFromReveal(serverConfig);
+  const own = credentialOrigin(serverConfig.url);
+  return {
+    headerNames,
+    boundOrigins: recorded.length > 0 ? recorded : own ? [own] : [],
+  };
+}
