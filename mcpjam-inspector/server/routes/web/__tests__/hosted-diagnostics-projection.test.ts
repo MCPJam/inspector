@@ -896,6 +896,71 @@ describe("hosted validate responses (web and v1)", () => {
     },
   );
 
+  it.each([
+    ["web", webValidate],
+    ["v1", v1Validate],
+  ])(
+    "%s: reports a scope challenge by its scope tokens and metadata URL",
+    async (_surface, validate) => {
+      upstream.current = mcpServer(
+        () =>
+          new Response(null, {
+            status: 403,
+            headers: {
+              "www-authenticate": `Bearer error="insufficient_scope", scope="tools:read tools:write", resource_metadata="${PRM_URL}", error_description="${"e".repeat(4000)}UNEXPECTED_MARKER_62"`,
+            },
+          }),
+      );
+      const res = await validate(routes);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      const body = (await res.json()) as any;
+      expect(JSON.stringify(body)).not.toMatch(MARKER);
+      expect(body.details.insufficientScope).toEqual({
+        requiredScope: "tools:read tools:write",
+        resourceMetadataUrl: PRM_URL,
+      });
+    },
+  );
+
+  it("web: reports the frames it sent by their envelope", async () => {
+    upstream.current = async (request) => {
+      const message = await readMessage(request.clone());
+      if (message?.method === "tools/list") {
+        const firstPage = message.params?.cursor === undefined;
+        return json({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: firstPage
+            ? {
+                tools: [{ name: "first", inputSchema: { type: "object" } }],
+                nextCursor: `${"c".repeat(4000)}UNEXPECTED_MARKER_63`,
+              }
+            : {
+                tools: [{ name: "second", inputSchema: { type: "object" } }],
+              },
+        });
+      }
+      return listingServer()(request);
+    };
+    const res = await webValidate(routes);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(JSON.stringify(body)).not.toMatch(MARKER);
+    const sent = (body._rpcLogs ?? []).filter(
+      (event: any) => event.direction === "send",
+    );
+    expect(sent.map((event: any) => event.message.method)).toEqual(
+      expect.arrayContaining(["initialize", "tools/list"]),
+    );
+    for (const event of body._rpcLogs) {
+      expect(
+        Object.keys(event.message).every((key) =>
+          ["jsonrpc", "id", "method", "error", "contentOmitted"].includes(key),
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("v1: answers 400 for a target the hosted inspector will not dial", async () => {
     serverUrlRef.current = "http://10.0.0.5/mcp";
     upstream.current = htmlAnswer;

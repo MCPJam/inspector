@@ -23,6 +23,7 @@ import {
   isPlainRecord,
   parseHttpStatus,
   projectHostedLogEnvelope,
+  projectScopeChallenge,
 } from "./hosted-upstream-projection.js";
 
 export type HostedConnectFailure = {
@@ -234,11 +235,31 @@ export function redactNormalizedError(
   };
 }
 
+/** Flags this server sets on a mapped failure; they carry no answer text. */
+const FAILURE_DETAIL_FLAGS = ["upstreamAuthRequired", "oauthRequired"] as const;
+
+/**
+ * The details a hosted connection failure may carry: the flags above, and a
+ * scope challenge through its projection. Anything else is dropped.
+ */
+export function projectHostedConnectFailureDetails(
+  details: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!details) return undefined;
+  const projected: Record<string, unknown> = {};
+  for (const flag of FAILURE_DETAIL_FLAGS) {
+    if (details[flag] === true) projected[flag] = true;
+  }
+  const insufficientScope = projectScopeChallenge(details.insufficientScope);
+  if (insufficientScope) projected.insufficientScope = insufficientScope;
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
 /**
  * The log envelope of a hosted connection — failed or successful — reduced
- * like a probe answer: allowlisted headers, bounded status text, received frames without
- * their content, and transport errors as {@link describeHostedConnectFailure}
- * words them.
+ * like a probe answer: allowlisted headers, bounded status text, frames
+ * without their content, and transport errors as
+ * {@link describeHostedConnectFailure} words them.
  */
 export function projectHostedConnectFailureLogs(
   logs: Record<string, unknown> | undefined,

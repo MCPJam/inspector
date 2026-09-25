@@ -440,6 +440,31 @@ export function projectResourceMetadata(
   });
 }
 
+export type ScopeChallengeProjection = {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+};
+
+/**
+ * An insufficient-scope challenge, reduced to what a step-up reads: its scope
+ * tokens and a valid metadata URL. The description is not kept.
+ */
+export function projectScopeChallenge(
+  value: unknown,
+): ScopeChallengeProjection | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const scopes =
+    typeof value.requiredScope === "string"
+      ? projectTokenList(value.requiredScope.split(/\s+/).filter(Boolean))
+      : undefined;
+  const resourceMetadataUrl = parseHttpUrl(value.resourceMetadataUrl);
+  if (!scopes && resourceMetadataUrl === undefined) return undefined;
+  return {
+    ...(scopes ? { requiredScope: scopes.join(" ") } : {}),
+    ...(resourceMetadataUrl !== undefined ? { resourceMetadataUrl } : {}),
+  };
+}
+
 export type AuthorizationServerMetadataProjection = {
   issuer: string;
   authorization_endpoint?: string;
@@ -670,13 +695,10 @@ const JSONRPC_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A JSON-RPC frame received from a server, as its envelope only: `id`,
- * `method` and an error code survive; `result`, `params`, error text and
- * anything else do not.
+ * A JSON-RPC frame as its envelope only: `id`, `method` and an error code
+ * survive; `result`, `params`, error text and anything else do not.
  */
-export function projectReceivedJsonRpcFrame(
-  message: unknown,
-): Record<string, unknown> {
+export function projectJsonRpcFrame(message: unknown): Record<string, unknown> {
   if (!isPlainRecord(message)) return { contentOmitted: true };
   const frame: Record<string, unknown> = {};
   if (message.jsonrpc === "2.0") frame.jsonrpc = "2.0";
@@ -702,11 +724,11 @@ function optionalString(value: unknown): string | undefined {
 
 /**
  * The hosted log envelope (`_rpcLogs` / `_httpLogs`) attached to a failed
- * connection, reduced the same way as a probe answer: received frames keep
- * their envelope, exchanges keep their status line and allowlisted response
- * headers, request headers go through {@link projectRequestHeaders}, and a
- * transport error goes through `describeTransportError`. Frames this server
- * sent are kept.
+ * connection, reduced the same way as a probe answer: frames in either
+ * direction keep their envelope, exchanges keep their status line and
+ * allowlisted response headers, request headers go through
+ * {@link projectRequestHeaders}, and a transport error goes through
+ * `describeTransportError`.
  */
 export function projectHostedLogEnvelope(
   envelope: Record<string, unknown> | undefined,
@@ -745,14 +767,30 @@ function logEventIdentity(
 function projectRpcLogEvent(
   event: Record<string, unknown>,
 ): Record<string, unknown> {
-  const direction = event.direction === "send" ? "send" : "receive";
   return {
     ...logEventIdentity(event),
-    direction,
-    message:
-      direction === "send"
-        ? event.message
-        : projectReceivedJsonRpcFrame(event.message),
+    direction: event.direction === "send" ? "send" : "receive",
+    message: projectJsonRpcFrame(event.message),
+  };
+}
+
+/**
+ * The request facts an exchange was logged with, as the correlation needs
+ * them: a JSON-RPC method name and a protocol version. The routing name is
+ * not kept.
+ */
+function projectBodyValues(value: unknown): Record<string, string> | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const method =
+    typeof value.method === "string" &&
+    JSONRPC_METHOD_PATTERN.test(value.method)
+      ? value.method
+      : undefined;
+  const protocolVersion = parseProtocolVersion(value.protocolVersion);
+  if (method === undefined && protocolVersion === undefined) return undefined;
+  return {
+    ...(method !== undefined ? { method } : {}),
+    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
   };
 }
 
@@ -770,6 +808,7 @@ function projectHttpLogEvent(
     Number.isFinite(exchange.durationMs)
       ? exchange.durationMs
       : 0;
+  const bodyValues = projectBodyValues(exchange.bodyValues);
   return {
     ...logEventIdentity(event),
     exchange: {
@@ -792,9 +831,7 @@ function projectHttpLogEvent(
         ? { error: describeTransportError(exchange.error) }
         : {}),
       durationMs,
-      ...(isPlainRecord(exchange.bodyValues)
-        ? { bodyValues: exchange.bodyValues }
-        : {}),
+      ...(bodyValues ? { bodyValues } : {}),
     },
   };
 }
