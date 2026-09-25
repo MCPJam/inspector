@@ -30,7 +30,7 @@
  */
 
 import type { ToolSet } from "ai";
-import type { Harness } from "@mcpjam/sdk";
+import type { Harness, ModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
   assertOrgModelAllowed,
@@ -91,6 +91,14 @@ export interface ResolveTurnRuntimeArgs {
   extraBodyFields?: Record<string, unknown>;
   /** Per-run attribution stamped onto the local-BYOK usage record. */
   attribution?: TurnRunAttribution;
+  /**
+   * The saved selection behind `modelDefinition`, already checked with
+   * `backendModelSelection()` (so never `local`). Sent as the body's
+   * `modelSelection` only on the rail it names: a `hosted` one on `/stream`,
+   * an `org` one on `/stream/org` and `/stream/org/resolve`. The backend
+   * re-resolves it and records it as the requested selection.
+   */
+  modelSelection?: ModelSelection;
 }
 
 export interface ResolvedTurnRuntime {
@@ -134,7 +142,14 @@ export async function resolveTurnRuntime(
     scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
+    ...(args.modelSelection?.source === "org"
+      ? { modelSelection: args.modelSelection }
+      : {}),
   });
+  const hostedSelection =
+    args.modelSelection?.source === "hosted" ? args.modelSelection : undefined;
+  const orgSelection =
+    args.modelSelection?.source === "org" ? args.modelSelection : undefined;
 
   // --- Local-runtime org BYOK → direct engine ---
   if (
@@ -272,6 +287,13 @@ export async function resolveTurnRuntime(
 
   // --- MCPJam-provided → hosted `/stream` ---
   if (resolution.source === "mcpjam") {
+    const hostedExtraBodyFields =
+      args.extraBodyFields || hostedSelection
+        ? {
+            ...(args.extraBodyFields ?? {}),
+            ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+          }
+        : undefined;
     return {
       runtime: {
         kind: "hosted",
@@ -279,7 +301,9 @@ export async function resolveTurnRuntime(
         // set endpointPath; `resolvedEndpointPath = endpointPath ?? "/stream"`
         // makes passing "/stream" explicitly byte-identical on the wire.
         endpointPath: "/stream",
-        ...(args.extraBodyFields ? { extraBodyFields: args.extraBodyFields } : {}),
+        ...(hostedExtraBodyFields
+          ? { extraBodyFields: hostedExtraBodyFields }
+          : {}),
         ...(args.harness ? { harness: args.harness } : {}),
       },
       modelSource: "mcpjam",
@@ -314,6 +338,7 @@ export async function resolveTurnRuntime(
         ...(args.extraBodyFields ?? {}),
         providerKey,
         ...(args.serverIds?.length ? { serverIds: args.serverIds } : {}),
+        ...(orgSelection ? { modelSelection: orgSelection } : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
     },

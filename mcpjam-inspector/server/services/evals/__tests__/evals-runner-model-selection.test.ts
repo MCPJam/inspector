@@ -632,4 +632,74 @@ describe("eval runner reads saved model selections", () => {
       expect(probed).toBe(false);
     });
   });
+
+  describe("eval attribution ids on the backend request", () => {
+    /** A suite run: its iteration row was pre-created and is found by case. */
+    function precreatedSuiteIteration() {
+      convexClient.query.mockImplementation(async (name: string) =>
+        name === "testSuites:getTestSuiteRunDetails"
+          ? {
+              iterations: [
+                {
+                  _id: "iter-suite-1",
+                  testCaseId: "case-1",
+                  iterationNumber: 1,
+                },
+              ],
+            }
+          : { status: "running" },
+      );
+    }
+
+    it("a suite run's /stream body names the iteration and the run", async () => {
+      precreatedSuiteIteration();
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: HOSTED },
+        { runId: "run-1", orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toMatchObject({
+        evalIterationId: "iter-suite-1",
+        evalRunId: "run-1",
+        modelSelection: HOSTED,
+      });
+    });
+
+    it("a suite run's /stream/org body names the iteration and the run", async () => {
+      precreatedSuiteIteration();
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+        { runId: "run-1", orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream/org")).toMatchObject({
+        providerKey: "openrouter",
+        evalIterationId: "iter-suite-1",
+        evalRunId: "run-1",
+        modelSelection: ORG_OPENROUTER,
+      });
+    });
+
+    it("a legacy suite case still names its iteration and run", async () => {
+      precreatedSuiteIteration();
+      await run(
+        { model: SAME_ID, provider: "openrouter" },
+        { runId: "run-1", orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const body = requestTo("/stream");
+      expect(body).toMatchObject({
+        evalIterationId: "iter-suite-1",
+        evalRunId: "run-1",
+      });
+      expect(body).not.toHaveProperty("modelSelection");
+    });
+
+    it("a quick run (no suite run) names only its iteration", async () => {
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: HOSTED },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const body = requestTo("/stream");
+      expect(body).toMatchObject({ evalIterationId: "iter-1" });
+      expect(body).not.toHaveProperty("evalRunId");
+    });
+  });
 });
