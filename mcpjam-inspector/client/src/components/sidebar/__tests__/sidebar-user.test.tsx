@@ -1,3 +1,5 @@
+import { useSignOutStore } from "@/stores/sign-out-store";
+import { SignOutBoundary } from "@/components/SignOutBoundary";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
@@ -7,10 +9,15 @@ import {
   resetSignOutLatchForTests,
   SIGN_OUT_REQUEST_TIMEOUT_MS,
 } from "@/lib/auth/sign-out-latch";
+import {
+  REVOKE_SESSION_PATH,
+  SIGN_OUT_REVOKE_TOKEN_TIMEOUT_MS,
+} from "@/lib/auth/revoke-session";
 
 const authState = vi.hoisted(() => ({
   signInMock: vi.fn(),
   signOutMock: vi.fn(),
+  getAccessTokenMock: vi.fn(),
   user: null as null | {
     email: string;
     firstName?: string;
@@ -23,6 +30,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
     user: authState.user,
     signIn: authState.signInMock,
     signOut: authState.signOutMock,
+    getAccessToken: authState.getAccessTokenMock,
   }),
 }));
 
@@ -120,9 +128,18 @@ describe("SidebarUser", () => {
     authState.user = null;
     authState.signInMock.mockClear();
     authState.signOutMock.mockReset();
+    authState.getAccessTokenMock.mockReset();
+    authState.getAccessTokenMock.mockResolvedValue("access-token-1");
+    vi.mocked(global.fetch).mockClear();
     window.isElectron = false;
     resetSignOutLatchForTests();
+    useSignOutStore.setState({ isSigningOut: false });
   });
+
+  const revokeCalls = () =>
+    vi
+      .mocked(global.fetch)
+      .mock.calls.filter(([url]) => url === REVOKE_SESSION_PATH);
 
   it("renders nothing when unauthenticated", () => {
     const { container } = render(<SidebarUser />);
@@ -157,7 +174,7 @@ describe("SidebarUser", () => {
     expect(screen.getByText("Support")).toBeInTheDocument();
   });
 
-  it("latches sign-out before calling WorkOS, not after", () => {
+  it("latches sign-out before calling WorkOS, not after", async () => {
     // authkit's refresh timer fires ~1s later, sees the revoked session, and
     // would redirect this tab to the hosted login page on top of the logout
     // navigation. The latch has to be set by the time `signOut` is entered.
@@ -175,11 +192,13 @@ describe("SidebarUser", () => {
 
     fireEvent.click(screen.getByText("Log out"));
 
-    expect(authState.signOutMock).toHaveBeenCalled();
+    // Latched synchronously, before the revocation step even starts.
+    expect(isSignOutInProgress()).toBe(true);
+    await waitFor(() => expect(authState.signOutMock).toHaveBeenCalled());
     expect(latchedWhenSignOutRan).toBe(true);
   });
 
-  it("returns logout to the app origin instead of the callback route", () => {
+  it("returns logout to the app origin instead of the callback route", async () => {
     authState.user = {
       email: "owner@example.com",
       firstName: "Owner",
@@ -190,9 +209,73 @@ describe("SidebarUser", () => {
 
     fireEvent.click(screen.getByText("Log out"));
 
-    expect(authState.signOutMock).toHaveBeenCalledWith({
-      returnTo: window.location.origin,
-    });
+    await waitFor(() =>
+      expect(authState.signOutMock).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+        navigate: false,
+      }),
+    );
+  });
+
+  it("revokes the session with its own token before handing over to WorkOS", async () => {
+    // WorkOS's logout cannot recall access tokens it already issued; the
+    // revocation is what stops them working in Convex (MJ-011).
+    authState.user = { email: "owner@example.com", firstName: "Owner" };
+
+    render(<SidebarUser />);
+    fireEvent.click(screen.getByText("Log out"));
+
+    await waitFor(() => expect(authState.signOutMock).toHaveBeenCalled());
+    expect(revokeCalls()).toEqual([
+      [
+        REVOKE_SESSION_PATH,
+        expect.objectContaining({
+          method: "POST",
+          keepalive: true,
+          headers: { Authorization: "Bearer access-token-1" },
+        }),
+      ],
+    ]);
+    const fetchMock = vi.mocked(global.fetch);
+    const revokeIndex = fetchMock.mock.calls.findIndex(
+      ([url]) => url === REVOKE_SESSION_PATH,
+    );
+    expect(fetchMock.mock.invocationCallOrder[revokeIndex]).toBeLessThan(
+      authState.signOutMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("signs out anyway when there is no token to revoke with", async () => {
+    authState.user = { email: "owner@example.com", firstName: "Owner" };
+    authState.getAccessTokenMock.mockRejectedValue(new Error("Login required"));
+
+    render(<SidebarUser />);
+    fireEvent.click(screen.getByText("Log out"));
+
+    await waitFor(() => expect(authState.signOutMock).toHaveBeenCalled());
+    expect(revokeCalls()).toEqual([]);
+  });
+
+  it("does not wait on a token that never arrives", async () => {
+    authState.user = { email: "owner@example.com", firstName: "Owner" };
+    authState.getAccessTokenMock.mockReturnValue(new Promise(() => {}));
+
+    render(<SidebarUser />);
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByText("Log out"));
+      expect(authState.signOutMock).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(SIGN_OUT_REVOKE_TOKEN_TIMEOUT_MS);
+
+      expect(authState.signOutMock).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+        navigate: false,
+      });
+      expect(revokeCalls()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("runs sign-out cleanup before WorkOS signOut", async () => {
@@ -211,6 +294,7 @@ describe("SidebarUser", () => {
     await waitFor(() => {
       expect(authState.signOutMock).toHaveBeenCalledWith({
         returnTo: window.location.origin,
+        navigate: false,
       });
     });
     expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
@@ -218,49 +302,108 @@ describe("SidebarUser", () => {
     );
   });
 
-  it("leaves Electron even when the logout request never answers", async () => {
-    // Nothing else navigates this window: `signOut({navigate: false})` settles
-    // only when its logout fetch does. A request that hung used to outlast the
-    // sign-out latch, and the refresh timer would then redirect the window to
-    // the hosted login page — the same hijack, arriving on a slow network.
-    authState.user = {
-      email: "owner@example.com",
-      firstName: "Owner",
-      lastName: "Example",
-    };
-    window.isElectron = true;
-    authState.signOutMock.mockReturnValue(new Promise(() => {}));
+  it.each([false, true])(
+    "leaves when logout hangs (Electron: %s)",
+    async (electron) => {
+      // Nothing else navigates this window: `signOut({navigate: false})` settles
+      // only when its logout fetch does. A request that hung used to outlast the
+      // sign-out latch, and the refresh timer would then redirect the window to
+      // the hosted login page — the same hijack, arriving on a slow network.
+      authState.user = {
+        email: "owner@example.com",
+        firstName: "Owner",
+        lastName: "Example",
+      };
+      window.isElectron = electron;
+      authState.signOutMock.mockReturnValue(new Promise(() => {}));
 
-    const assign = vi.fn();
-    const realLocation = window.location;
-    // jsdom's `location` is not writable and its `assign` throws "not
-    // implemented", so replacing the property is the only way to see where the
-    // sign-out would have gone.
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { assign, origin: "https://app.example.test" },
-    });
-
-    render(<SidebarUser />);
-    vi.useFakeTimers();
-    try {
-      fireEvent.click(screen.getByText("Log out"));
-
-      expect(assign).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(SIGN_OUT_REQUEST_TIMEOUT_MS);
-
-      expect(assign).toHaveBeenCalledWith("https://app.example.test");
-    } finally {
-      vi.useRealTimers();
+      const assign = vi.fn();
+      const realLocation = window.location;
+      // jsdom's `location` is not writable and its `assign` throws "not
+      // implemented", so replacing the property is the only way to see where the
+      // sign-out would have gone.
       Object.defineProperty(window, "location", {
         configurable: true,
-        value: realLocation,
+        value: { assign, origin: "https://app.example.test" },
       });
-    }
+
+      render(<SidebarUser />);
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(screen.getByText("Log out"));
+
+        expect(assign).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(SIGN_OUT_REQUEST_TIMEOUT_MS);
+
+        expect(assign).toHaveBeenCalledWith("https://app.example.test");
+      } finally {
+        vi.useRealTimers();
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          value: realLocation,
+        });
+      }
+    },
+  );
+
+  it("unmounts the app and shows the logo before revocation, through slow logout", async () => {
+    authState.user = { email: "owner@example.com" };
+    authState.signOutMock.mockReturnValue(new Promise(() => {}));
+    authState.getAccessTokenMock.mockImplementation(async () => {
+      expect(screen.queryByText("Log out")).toBeNull();
+      expect(screen.getByRole("img", { name: "MCPJam" })).toBeVisible();
+      expect(screen.getByRole("status")).toHaveTextContent("Loading");
+      return "access-token-1";
+    });
+    render(
+      <SignOutBoundary>
+        <SidebarUser />
+      </SignOutBoundary>,
+    );
+    fireEvent.click(screen.getByText("Log out"));
+    expect(screen.getByRole("img", { name: "MCPJam" })).toBeVisible();
+    await waitFor(() => expect(authState.signOutMock).toHaveBeenCalled());
+    expect(revokeCalls()).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading");
   });
 
-  it("uses non-navigation logout in Electron", () => {
+  it.each(["throws", "rejects", "no token"])(
+    "returns to the app when logout %s",
+    async (result) => {
+      authState.user = { email: "owner@example.com" };
+      authState.signOutMock.mockImplementation(() => {
+        if (result === "throws") throw new Error("Logout failed");
+        if (result === "rejects")
+          return Promise.reject(new Error("Logout failed"));
+      });
+      const realLocation = window.location;
+      const assign = vi.fn();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { assign, origin: "https://app.example.test" },
+      });
+      try {
+        render(
+          <SignOutBoundary>
+            <SidebarUser />
+          </SignOutBoundary>,
+        );
+        fireEvent.click(screen.getByText("Log out"));
+        await waitFor(() =>
+          expect(assign).toHaveBeenCalledWith("https://app.example.test"),
+        );
+        expect(screen.getByRole("img", { name: "MCPJam" })).toBeVisible();
+      } finally {
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          value: realLocation,
+        });
+      }
+    },
+  );
+
+  it("uses non-navigation logout in Electron", async () => {
     authState.user = {
       email: "owner@example.com",
       firstName: "Owner",
@@ -273,9 +416,11 @@ describe("SidebarUser", () => {
 
     fireEvent.click(screen.getByText("Log out"));
 
-    expect(authState.signOutMock).toHaveBeenCalledWith({
-      returnTo: window.location.origin,
-      navigate: false,
-    });
+    await waitFor(() =>
+      expect(authState.signOutMock).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+        navigate: false,
+      }),
+    );
   });
 });

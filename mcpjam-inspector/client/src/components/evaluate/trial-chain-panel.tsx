@@ -39,15 +39,13 @@ export function TrialChainPanel({
   /** Resets the reader's selection when the pane swaps to another trial. */
   resetKey,
   heading,
-  layout = "cards",
   maskedStage = null,
-  initialStage,
 }: {
   chain: EvalRunDecisionChain | null | undefined;
   nextAction?: string;
   /**
    * A line under each card saying what GRADES that link on this case — "2
-   * gates · 1 warn", "Observed by the runner", or, when a gap has something
+   * gates · 1 warn", "Built-in runner check", or, when a gap has something
    * that would fill it, "Nothing checks this · N suggested".
    *
    * Merged on top of the card views rather than computed inside
@@ -61,7 +59,6 @@ export function TrialChainPanel({
   stageFooter?: (stage: UserValueStage) => ReactNode;
   resetKey?: string;
   heading?: ReactNode;
-  layout?: "cards" | "report";
   /**
    * One stage whose state, reason and evidence are withheld — blind judge
    * review, where the User value card would otherwise print the verdict the
@@ -74,14 +71,6 @@ export function TrialChainPanel({
    * choice itself leaks nothing.
    */
   maskedStage?: UserValueStage | null;
-  /**
-   * The card to open before the reader chooses, when the caller has a rule
-   * that outranks "the first failed stage". Blind review passes User value:
-   * the judge row the reviewer must label lives in that card's footer, and a
-   * default chosen by the trial's state would put it behind a click on some
-   * trials and not others.
-   */
-  initialStage?: UserValueStage;
 }) {
   const [chosenStage, setChosenStage] = useState<
     UserValueStage | null | undefined
@@ -130,74 +119,16 @@ export function TrialChainPanel({
     const detail = detailByStage?.[card.stage];
     return detail ? { ...card, detail } : card;
   });
-  // A caller's rule first, then the masked card itself — never the first
-  // failed stage while a mask is on, which would reveal whether the masked
-  // stage is that stage.
+  // The masked card itself first, never the first failed stage while a mask
+  // is on, which would reveal whether the masked stage is that stage.
   const selectedStage =
     chosenStage === undefined
-      ? (initialStage ?? maskedStage ?? defaultSelectedTrialStage(chain))
+      ? (maskedStage ?? defaultSelectedTrialStage(chain))
       : chosenStage;
   const selectedRow =
     chain.stages.find((row) => row.stage === selectedStage) ?? null;
   const selectedIsMasked =
     selectedRow !== null && selectedRow.stage === maskedStage;
-
-  if (layout === "report") {
-    return (
-      <div
-        className="grid gap-6 rounded-lg border border-border/60 p-4 sm:grid-cols-[170px_minmax(0,1fr)]"
-        data-testid="trial-chain-panel"
-      >
-        <nav className="space-y-1" aria-label="Iteration stages">
-          {cards.map((card) => (
-            <button
-              key={card.stage}
-              type="button"
-              aria-label={`${card.ordinal} ${card.label}: ${card.chip.label}`}
-              aria-pressed={selectedStage === card.stage}
-              onClick={() => setChosenStage(card.stage)}
-              className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring ${
-                selectedStage === card.stage ? "bg-muted font-semibold" : ""
-              }`}
-            >
-              <span
-                className={card.chip.toneClass}
-                title={card.chip.label}
-                aria-label={card.chip.label}
-              >
-                ●
-              </span>
-              <span className="font-mono text-[10px] text-muted-foreground">
-                {card.ordinal}
-              </span>
-              {card.label}
-            </button>
-          ))}
-        </nav>
-        <div className="min-w-0 rounded-lg bg-card">
-          {selectedRow && selectedIsMasked ? (
-            <MaskedStageCard stage={selectedRow.stage}>
-              {stageFooter?.(selectedRow.stage)}
-            </MaskedStageCard>
-          ) : selectedRow ? (
-            <TrialStageDetailCard
-              row={selectedRow}
-              report
-              {...(nextAction && selectedRow.stage === chain.firstFailedStage
-                ? { nextAction }
-                : {})}
-            >
-              {stageFooter?.(selectedRow.stage)}
-            </TrialStageDetailCard>
-          ) : (
-            <p className="p-4 text-xs text-muted-foreground">
-              Select a stage to inspect its recorded evidence.
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div data-testid="trial-chain-panel">

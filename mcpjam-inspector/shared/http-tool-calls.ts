@@ -1,3 +1,4 @@
+import { toolConnectionAttribution } from "./mcp-tool-origin-metadata";
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   type McpLinkedResourceReader,
@@ -182,6 +183,15 @@ type ExecuteToolCallOptionsBase = {
    * calls before pausing the turn for approval on real MCP tools.
    */
   filterToolName?: (toolName: string) => boolean;
+  /**
+   * Per-CALL counterpart of `filterToolName`, with the same skip semantics: a
+   * call it rejects is left unresolved — neither executed nor answered.
+   *
+   * The unit a caller can vouch for is the call, not the name. A resumed
+   * approval authorizes ONE tool call id; a name filter would also run any
+   * other unresolved call to that tool sitting in client-sent history (MJ-008).
+   */
+  filterToolCall?: (call: { toolCallId: string; toolName: string }) => boolean;
   /**
    * SEP-1865 App-Provided Tools: when true, tool calls whose name isn't in
    * the tool index OR whose tool entry has no `execute` function are SKIPPED
@@ -374,7 +384,12 @@ export async function executeToolCallsFromMessages(
         content?.type === "tool-call" &&
         !existingToolResultIds.has(content.toolCallId) &&
         (!options.filterToolName ||
-          options.filterToolName(content.toolName as string))
+          options.filterToolName(content.toolName as string)) &&
+        (!options.filterToolCall ||
+          options.filterToolCall({
+            toolCallId: content.toolCallId as string,
+            toolName: content.toolName as string,
+          }))
       ) {
         pendingToolCalls.push({ assistantIdx: i, content });
       }
@@ -409,7 +424,7 @@ export async function executeToolCallsFromMessages(
       const tool = index[toolName];
       const directTool = tools[toolName];
       const serverId = extractServerId(toolName);
-      const readResource = buildLinkedResourceReader(serverId);
+
       if (!tool) {
         if (
           isSkippableClientFulfilledToolCall(
@@ -449,6 +464,16 @@ export async function executeToolCallsFromMessages(
         ...(signal ? { abortSignal: signal } : {}),
       });
 
+      const connection = toolConnectionAttribution(
+        tool,
+        input,
+        content.toolCallId,
+      );
+      const selectedKey =
+        tool._connectionForCall?.(content.toolCallId)?.key ??
+        tool._connectionForInput?.(input)?.key;
+      const readResource = buildLinkedResourceReader(selectedKey ?? serverId);
+
       // If a tool ignored the signal (or returned `result` after the
       // signal fired) the result must NOT be serialized into a
       // tool-result — that would persist into conversation history
@@ -467,6 +492,8 @@ export async function executeToolCallsFromMessages(
       const toModelOutput = (
         tool as {
           toModelOutput?: (ctx: {
+            toolCallId: string;
+            input: unknown;
             output: unknown;
             abortSignal?: AbortSignal;
           }) => ToolResultPart | Promise<ToolResultPart>;
@@ -474,6 +501,8 @@ export async function executeToolCallsFromMessages(
       ).toModelOutput;
       if (typeof toModelOutput === "function") {
         const mappedOutput = await toModelOutput({
+          toolCallId: content.toolCallId,
+          input,
           output: result,
           ...(signal ? { abortSignal: signal } : {}),
         });
@@ -501,6 +530,7 @@ export async function executeToolCallsFromMessages(
             toolCallId: content.toolCallId,
             toolName,
             serverId,
+            connection,
             output: mappedOutput,
             rawResult: result,
             // UI-only raw result for app-tool widgets (stripped from the model
@@ -589,6 +619,7 @@ export async function executeToolCallsFromMessages(
         toolCallId: content.toolCallId,
         toolName,
         serverId,
+        connection,
         output: llmOutput,
         rawResult: result,
         includeRawResult: true,

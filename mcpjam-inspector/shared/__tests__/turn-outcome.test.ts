@@ -260,6 +260,42 @@ describe("turn-outcome invariants", () => {
     }
   });
 
+  it("and the NUMERIC reject rows reject on the number, not on the shape", () => {
+    // Same discipline as the invariant rows above, for the constraints the
+    // backend parser was found to be missing. These cannot be tested by
+    // DELETING the offending field — `recordedAt` and the timeout legs are
+    // required, so the row would then be refused for absence and pin nothing
+    // again. So each is REPAIRED to a legal value instead, and must parse.
+    const repairs: Array<[RegExp, (v: any) => void]> = [
+      [/recordedAt/, (v) => void (v.recordedAt = 1750000000000)],
+      [/budgetMs/, (v) => void (v.termination.timeout.budgetMs = 10)],
+      [/elapsedMs/, (v) => void (v.termination.timeout.elapsedMs = 10)],
+      [/errorHttpStatus/, (v) => void (v.termination.errorHttpStatus = 500)],
+      [/superseded/, (v) =>
+        void (v.termination.superseded[0].at = 1750000000000)],
+    ];
+    const rows = fixtures.reject.filter((row) =>
+      /must be an INTEGER|must be NONNEGATIVE|HTTP range/.test(row.label),
+    );
+    // Guards against the set silently shrinking to nothing if labels change.
+    expect(rows.length).toBeGreaterThanOrEqual(11);
+    for (const row of rows) {
+      expect(
+        turnOutcomeRecordZ.safeParse(row.value).success,
+        `${row.label} should be refused`,
+      ).toBe(false);
+      const repaired = JSON.parse(JSON.stringify(row.value));
+      const repair = repairs.find(([re]) => re.test(row.label));
+      expect(repair, `no repair known for: ${row.label}`).toBeDefined();
+      repair![1](repaired);
+      expect(
+        turnOutcomeRecordZ.safeParse(repaired).success,
+        `${row.label} should be VALID once the number is legal — if it is ` +
+          `not, the row is refused for some other reason and pins nothing`,
+      ).toBe(true);
+    }
+  });
+
   it("but `superseded` stays valid under every lifecycle", () => {
     // A late mark arriving after the turn settled is diagnosis ABOUT the race,
     // not a second claim about the ending. Restricting it the same way would

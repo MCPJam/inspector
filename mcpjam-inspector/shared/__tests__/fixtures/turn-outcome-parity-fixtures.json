@@ -1,12 +1,15 @@
 {
-  "__readme": "Parity fixtures for TurnOutcomeRecord (shared/turn-outcome.ts) across repos. Kept in lockstep with mcpjam-backend (tests/convex/fixtures/turn-outcome-parity-fixtures.json) and pinned in convex/lib/mirrors.json. The backend cannot import this repo's Zod (Convex bundling isolation), so this JSON is the common ground truth: turnOutcomeRecordZ must parse every 'accept' row and refuse every 'reject' row, and the backend's parseTurnOutcomeRecord() must reach the SAME verdict on each. A producer emitting a record the backend refuses would be silently stripped at ingest and the turn would read as 'unrecorded' — which is why the backend deploys first. The 'reject' rows are the contract's invariants, one per row: a timed_out with no clock is the bare 'aborted' this contract replaces; a completed carrying a termination claims both that it finished and that something ended it.",
+  "__readme": "Parity fixtures for TurnOutcomeRecord (shared/turn-outcome.ts) across repos. Kept in lockstep with mcpjam-backend (tests/convex/fixtures/turn-outcome-parity-fixtures.json) and pinned in convex/lib/mirrors.json. The backend cannot import this repo's Zod (Convex bundling isolation), so this JSON is the common ground truth: turnOutcomeRecordZ must parse every 'accept' row and refuse every 'reject' row, and the backend's parseTurnOutcomeRecord() must reach the SAME verdict on each. A producer emitting a record the backend refuses would be silently stripped at ingest and the turn would read as 'unrecorded' \u2014 which is why the backend deploys first. The 'reject' rows are the contract's invariants, one per row: a timed_out with no clock is the bare 'aborted' this contract replaces; a completed carrying a termination claims both that it finished and that something ended it.",
   "accept": [
     {
       "label": "completed emulated hosted turn",
       "value": {
         "contractVersion": 1,
         "lifecycle": "completed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "finishReason": "stop",
         "recordedAt": 1750000000000
       }
@@ -30,7 +33,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "cancellationSource": "client_disconnect",
           "unresolvedToolCalls": [
@@ -54,8 +60,13 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "direct" },
-        "termination": { "cancellationSource": "caller" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "direct"
+        },
+        "termination": {
+          "cancellationSource": "caller"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -69,7 +80,9 @@
           "harness": "codex",
           "modelAccess": "hosted"
         },
-        "termination": { "cancellationSource": "lease_lost" },
+        "termination": {
+          "cancellationSource": "lease_lost"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -78,9 +91,16 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "timed_out",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
-          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360412 }
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 360000,
+            "elapsedMs": 360412
+          }
         },
         "recordedAt": 1750000000000
       }
@@ -90,7 +110,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "timed_out",
-        "runtime": { "engine": "harness", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "harness",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "timeout": {
             "clock": "sandboxCapacity",
@@ -107,7 +130,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "failed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "errorSource": "setup",
           "errorCode": "MCP_CONNECT_FAILED"
@@ -120,7 +146,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "failed",
-        "runtime": { "engine": "emulated", "modelAccess": "direct" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "direct"
+        },
         "finishReason": "error",
         "termination": {
           "errorSource": "model",
@@ -135,7 +164,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "failed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "errorSource": "setup",
           "errorCode": "no_terminal_mark"
@@ -153,7 +185,9 @@
           "harness": "claude-code",
           "modelAccess": "hosted"
         },
-        "paused": { "kind": "tool_approval" },
+        "paused": {
+          "kind": "tool_approval"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -167,7 +201,9 @@
           "harness": "claude-code",
           "modelAccess": "hosted"
         },
-        "paused": { "kind": "scope_step_up" },
+        "paused": {
+          "kind": "scope_step_up"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -176,8 +212,13 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "paused",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
-        "paused": { "kind": "client_fulfilled" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "paused": {
+          "kind": "client_fulfilled"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -186,8 +227,13 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "paused",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
-        "paused": { "kind": "tool_input_required" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "paused": {
+          "kind": "tool_input_required"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -196,10 +242,18 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "cancellationSource": "client_disconnect",
-          "superseded": [{ "mark": "completed", "at": 1750000000123 }]
+          "superseded": [
+            {
+              "mark": "completed",
+              "at": 1750000000123
+            }
+          ]
         },
         "recordedAt": 1750000000000
       }
@@ -209,8 +263,95 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "interrupted",
-        "runtime": { "engine": "harness", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "harness",
+          "modelAccess": "hosted"
+        },
         "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "recordedAt at the zero boundary",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 0
+      }
+    },
+    {
+      "label": "timeout budget and elapsed at the zero boundary",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 0,
+            "elapsedMs": 0
+          }
+        }
+      }
+    },
+    {
+      "label": "errorHttpStatus at the low boundary (100)",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "errorSource": "model",
+          "errorHttpStatus": 100
+        }
+      }
+    },
+    {
+      "label": "errorHttpStatus at the high boundary (599)",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "errorSource": "model",
+          "errorHttpStatus": 599
+        }
+      }
+    },
+    {
+      "label": "superseded[].at at the zero boundary",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "cancellationSource": "caller",
+          "superseded": [
+            {
+              "mark": "completed",
+              "at": 0
+            }
+          ]
+        }
       }
     }
   ],
@@ -220,7 +361,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "timed_out",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -229,7 +373,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {},
         "recordedAt": 1750000000000
       }
@@ -239,7 +386,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "paused",
-        "runtime": { "engine": "harness", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "harness",
+          "modelAccess": "hosted"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -248,8 +398,13 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "completed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
-        "termination": { "errorSource": "model" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "termination": {
+          "errorSource": "model"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -258,7 +413,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "aborted",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -267,8 +425,13 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
-        "termination": { "cancellationSource": "network" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "termination": {
+          "cancellationSource": "network"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -277,9 +440,16 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "timed_out",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
-          "timeout": { "clock": "wall", "budgetMs": 1000, "elapsedMs": 1001 }
+          "timeout": {
+            "clock": "wall",
+            "budgetMs": 1000,
+            "elapsedMs": 1001
+          }
         },
         "recordedAt": 1750000000000
       }
@@ -289,7 +459,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "completed",
-        "runtime": { "engine": "codex", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "codex",
+          "modelAccess": "hosted"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -298,7 +471,9 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "completed",
-        "runtime": { "engine": "emulated" },
+        "runtime": {
+          "engine": "emulated"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -307,11 +482,18 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "cancellationSource": "caller",
           "unresolvedToolCalls": [
-            { "toolCallId": "c1", "toolName": "t", "state": "pending" }
+            {
+              "toolCallId": "c1",
+              "toolName": "t",
+              "state": "pending"
+            }
           ]
         },
         "recordedAt": 1750000000000
@@ -322,7 +504,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "completed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "clock": "turn",
         "recordedAt": 1750000000000
       }
@@ -332,7 +517,10 @@
       "value": {
         "contractVersion": 2,
         "lifecycle": "completed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "recordedAt": 1750000000000
       }
     },
@@ -341,7 +529,10 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "completed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" }
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        }
       }
     },
     {
@@ -349,10 +540,17 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "failed",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
           "errorSource": "model",
-          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360100 }
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 360000,
+            "elapsedMs": 360100
+          }
         },
         "recordedAt": 1750000000000
       }
@@ -362,9 +560,16 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "timed_out",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
         "termination": {
-          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360100 },
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 360000,
+            "elapsedMs": 360100
+          },
           "cancellationSource": "caller"
         },
         "recordedAt": 1750000000000
@@ -375,10 +580,207 @@
       "value": {
         "contractVersion": 1,
         "lifecycle": "cancelled",
-        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
-        "termination": { "cancellationSource": "caller" },
-        "paused": { "kind": "tool_approval" },
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "termination": {
+          "cancellationSource": "caller"
+        },
+        "paused": {
+          "kind": "tool_approval"
+        },
         "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "recordedAt must be an INTEGER \u2014 a fractional epoch was accepted by the backend only",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000.5
+      }
+    },
+    {
+      "label": "recordedAt must be NONNEGATIVE",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "completed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": -1
+      }
+    },
+    {
+      "label": "timeout budgetMs must be an INTEGER",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 10.5,
+            "elapsedMs": 10
+          }
+        }
+      }
+    },
+    {
+      "label": "timeout elapsedMs must be an INTEGER",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 10,
+            "elapsedMs": 10.5
+          }
+        }
+      }
+    },
+    {
+      "label": "timeout budgetMs must be NONNEGATIVE",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": -1,
+            "elapsedMs": 10
+          }
+        }
+      }
+    },
+    {
+      "label": "timeout elapsedMs must be NONNEGATIVE",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "timeout": {
+            "clock": "turn",
+            "budgetMs": 10,
+            "elapsedMs": -2
+          }
+        }
+      }
+    },
+    {
+      "label": "errorHttpStatus above the HTTP range",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "errorSource": "model",
+          "errorHttpStatus": 999
+        }
+      }
+    },
+    {
+      "label": "errorHttpStatus below the HTTP range",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "errorSource": "model",
+          "errorHttpStatus": 99
+        }
+      }
+    },
+    {
+      "label": "errorHttpStatus must be an INTEGER",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "errorSource": "model",
+          "errorHttpStatus": 200.5
+        }
+      }
+    },
+    {
+      "label": "superseded[].at must be an INTEGER (cancelled, so the termination itself is legal)",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "cancellationSource": "caller",
+          "superseded": [
+            {
+              "mark": "completed",
+              "at": 1750000000000.5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "superseded[].at must be NONNEGATIVE (cancelled, so the termination itself is legal)",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": {
+          "engine": "emulated",
+          "modelAccess": "hosted"
+        },
+        "recordedAt": 1750000000000,
+        "termination": {
+          "cancellationSource": "caller",
+          "superseded": [
+            {
+              "mark": "completed",
+              "at": -1
+            }
+          ]
+        }
       }
     }
   ]

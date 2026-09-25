@@ -426,6 +426,8 @@ export type EvalServerAttachment = {
   name: string;
   serverIds: string[];
   resolvedServerNames: string[];
+  /** A live suite, journey, or environment still uses it; delete would fail. */
+  inUse?: boolean;
 };
 
 export type EvalCase = {
@@ -788,6 +790,42 @@ export type EvalRunVerdictSummary = {
   } & Record<string, unknown>;
 } & Record<string, unknown>;
 
+/** Mirrors backend `convex/lib/evalRunMetrics.ts` (`testSuiteRun.metrics`). */
+export type EvalRunMetrics = {
+  version: 1;
+  computedAt?: number;
+  sourceMaxUpdatedAt?: number;
+  iterationCount: number;
+  results: {
+    passed: number;
+    failed: number;
+    timedOut: number;
+    cancelled: number;
+    pending: number;
+    setupFailed: number;
+    skipped: number;
+    /** Completed without a stored verdict; only the browser can grade these. */
+    unscored: number;
+  };
+  completedCount: number;
+  latencyP50Ms?: number;
+  latencyP95Ms?: number;
+  tokensTotal?: number;
+  tokensMeasuredIterations: number;
+  toolCallsTotal?: number;
+  toolCallsMeasuredIterations: number;
+  costUsd?: number;
+  costedIterations: number;
+  hasRunnerReportedCost: boolean;
+  models: Array<{
+    model: string;
+    total: number;
+    passed: number;
+    failed: number;
+    timedOut: number;
+  }>;
+};
+
 export type EvalSuiteRunSummary = {
   total: number;
   passed: number;
@@ -935,6 +973,13 @@ export type EvalSuiteRun = {
     | "cancelled"
     | "timed_out";
   summary?: EvalSuiteRunSummary;
+  /**
+   * Server-stored per-run rollup (tokens, latency, cost, models, result
+   * counts), written when the run goes terminal. Absent on runs that finished
+   * before the rollup existed and on runs still in flight — readers fold the
+   * run's own iterations instead (see `run-metrics.ts`).
+   */
+  metrics?: EvalRunMetrics;
   passCriteria?: {
     minimumPassRate: number;
   };

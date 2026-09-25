@@ -1,3 +1,4 @@
+import { observeDesktopOperation } from "@/lib/desktop-diagnostics";
 import type {
   HttpServerConfig,
   MCPServerConfig,
@@ -252,36 +253,39 @@ export async function testConnection(
     connectionDefaults?: ConnectionDefaults;
   },
 ) {
-  if (HOSTED_MODE) {
-    return safeValidateHostedServer(
-      serverId,
-      serverConfig,
-      buildHostedValidationContext(serverId, options),
-    );
-  }
+  return observeDesktopOperation("connect", async (setStatus) => {
+    if (HOSTED_MODE) {
+      return safeValidateHostedServer(
+        serverId,
+        serverConfig,
+        buildHostedValidationContext(serverId, options),
+      );
+    }
 
-  if (!options?.projectId) {
-    throw new Error(
-      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
-    );
-  }
+    if (!options?.projectId) {
+      throw new Error(
+        "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+      );
+    }
 
-  const body = buildResolverBody(serverId, {
-    projectId: options.projectId,
-    serverName: options.serverName,
-    connectionDefaults: options.connectionDefaults,
+    const body = buildResolverBody(serverId, {
+      projectId: options.projectId,
+      serverName: options.serverName,
+      connectionDefaults: options.connectionDefaults,
+    });
+
+    const res = await authFetchWithTimeout(
+      "/api/mcp/connect",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      20000, // 20 second timeout
+    );
+    setStatus(res.status);
+    return res.json();
   });
-
-  const res = await authFetchWithTimeout(
-    "/api/mcp/connect",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    20000, // 20 second timeout
-  );
-  return res.json();
 }
 
 export async function deleteServer(serverId: string) {
@@ -362,36 +366,39 @@ export async function reconnectServer(
     connectionDefaults?: ConnectionDefaults;
   },
 ) {
-  if (HOSTED_MODE) {
-    return safeValidateHostedServer(
-      serverId,
-      serverConfig,
-      buildHostedValidationContext(serverId, options),
-    );
-  }
+  return observeDesktopOperation("reconnect", async (setStatus) => {
+    if (HOSTED_MODE) {
+      return safeValidateHostedServer(
+        serverId,
+        serverConfig,
+        buildHostedValidationContext(serverId, options),
+      );
+    }
 
-  if (!options?.projectId) {
-    throw new Error(
-      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
-    );
-  }
+    if (!options?.projectId) {
+      throw new Error(
+        "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+      );
+    }
 
-  const body = buildResolverBody(serverId, {
-    projectId: options.projectId,
-    serverName: options.serverName,
-    connectionDefaults: options.connectionDefaults,
+    const body = buildResolverBody(serverId, {
+      projectId: options.projectId,
+      serverName: options.serverName,
+      connectionDefaults: options.connectionDefaults,
+    });
+
+    const res = await authFetchWithTimeout(
+      "/api/mcp/servers/reconnect",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      20000, // 20 second timeout
+    );
+    setStatus(res.status);
+    return res.json();
   });
-
-  const res = await authFetchWithTimeout(
-    "/api/mcp/servers/reconnect",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    20000, // 20 second timeout
-  );
-  return res.json();
 }
 
 export async function getInitializationInfo(serverId: string) {
@@ -419,7 +426,7 @@ export async function setServerLoggingLevel(
     void level;
     return {
       success: false,
-      error: "Server logging level is not supported in hosted mode",
+      error: "Changing the server logging level isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     };
   }
 

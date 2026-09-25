@@ -116,6 +116,13 @@ export function ConfiguredSuiteRunReview(
       !environments.some((environment) => environment.environmentId === id),
   );
   const plan = unresolved ? [] : planRunMatrix(suite, environments, selections);
+  // A "client default" cell on a client with no model has nothing to run; the
+  // backend rejects it, so block Start here instead.
+  const missingModel = plan.some(
+    ({ stack }) =>
+      stack.modelId === undefined &&
+      !hosts.find((host) => host.hostId === stack.hostId)?.modelId?.trim(),
+  );
   // Older deployments retain their launch path until they support model overrides.
   if (!capable && !pending) return <SuiteRunReviewContent {...props} />;
   const blocked =
@@ -124,7 +131,7 @@ export function ConfiguredSuiteRunReview(
       ? "Loading clients and models…"
       : plan.length > MAX_SUITE_ENVIRONMENTS
         ? `Choose up to ${MAX_SUITE_ENVIRONMENTS} client/model combinations.`
-        : !plan.length
+        : !plan.length || missingModel
           ? "Choose at least one client and model."
           : null);
   return (

@@ -51,6 +51,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import type {
   BillingInterval,
+  BillingModel,
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
@@ -59,9 +60,12 @@ import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
 import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
 import { consumeUrlFlag } from "@/lib/url-flag";
+import { track } from "@/lib/analytics";
+import { navigateToSupport } from "@/lib/support-navigation";
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
+import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -70,6 +74,22 @@ import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlo
 
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
 const POPULAR_PLAN: OrganizationPlan = "team";
+
+/** Edges of the recommended column, which every cell in it carries. */
+const POPULAR_COLUMN_BORDER = "border-x border-primary/35";
+
+/**
+ * Tint of the recommended column. On a cell that already has a background it
+ * goes on an overlay instead: both are backgrounds, so tailwind-merge keeps
+ * only the later one and the row's own background would be dropped.
+ */
+const POPULAR_COLUMN_TINT = "bg-primary/[0.06]";
+
+const POPULAR_COLUMN_CLASS = `${POPULAR_COLUMN_BORDER} ${POPULAR_COLUMN_TINT}`;
+
+/** The two column widths the table splits under `table-fixed`. */
+const PLAN_COLUMNS_WIDTH_PCT = 74;
+const LABEL_COLUMN_WIDTH_PCT = 100 - PLAN_COLUMNS_WIDTH_PCT;
 
 /** Defines org as the billed scope for plans and limits (vs projects). */
 const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
@@ -82,6 +102,8 @@ function getPlanColumnCta(params: {
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
   currentCatalogPlanId?: string;
+  currentPriceModel?: BillingModel;
+  currentBillingInterval: BillingInterval | null;
   entry: NonNullable<PlanCatalog["plans"][OrganizationPlan]>;
   billingConfigured: boolean;
   canManageBilling: boolean;
@@ -91,10 +113,11 @@ function getPlanColumnCta(params: {
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
   ) => void;
+  /** Opens the confirmation step; checkout starts only once it is confirmed. */
   onStartPlanChange: (
     plan: "pro" | "team",
     billingInterval: BillingInterval,
-  ) => Promise<void>;
+  ) => void;
   billingInterval: BillingInterval;
 }): {
   label: string;
@@ -102,11 +125,14 @@ function getPlanColumnCta(params: {
   variant: "default" | "outline" | "secondary";
   onClick?: () => void;
   tooltip?: string;
+  ariaLabel?: string;
 } {
   const {
     plan,
     currentPlan,
     currentCatalogPlanId,
+    currentPriceModel,
+    currentBillingInterval,
     entry,
     billingConfigured,
     canManageBilling,
@@ -118,8 +144,21 @@ function getPlanColumnCta(params: {
   } = params;
 
   const isDifferentBundle = currentCatalogPlanId !== entry.catalogPlanId;
-  const isCurrentPlan =
+  const isSameBundle =
     currentPlan === plan && (!isDifferentBundle || plan === "free");
+  // The column prices whichever interval the toggle is on, so a Pro monthly org
+  // looking at Pro annual is being offered a real change, not shown its own plan.
+  // A cadence the bundle does not sell is not the org's plan either; that
+  // column falls through to "Unavailable".
+  const isOtherInterval =
+    isSameBundle &&
+    currentBillingInterval != null &&
+    currentBillingInterval !== billingInterval &&
+    entry.checkout != null;
+  const isIntervalChange =
+    isOtherInterval &&
+    entry.checkout?.supportedIntervals.includes(billingInterval) === true;
+  const isCurrentPlan = isSameBundle && !isOtherInterval;
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
@@ -133,9 +172,26 @@ function getPlanColumnCta(params: {
       label: "Contact us",
       disabled: false,
       variant: "outline",
-      onClick: () => {
-        window.location.href = "https://www.mcpjam.com/contact";
-      },
+      onClick: navigateToSupport,
+    };
+  }
+
+  // Stripe's update-confirm flow swaps the price but refuses a quantity change,
+  // and per-seat -> flat means N seats -> 1. The server turns these away with
+  // `billing_plan_change_requires_support`, so offering the button only buys a
+  // refusal. Legacy per-seat Team orgs see every v2 column through this branch.
+  if (
+    isDifferentBundle &&
+    currentPriceModel != null &&
+    currentPriceModel !== entry.billingModel
+  ) {
+    return {
+      label: "Contact us",
+      disabled: false,
+      variant: "outline",
+      tooltip:
+        "Moving between a per-seat plan and a flat plan is handled by support. Contact us and we will switch you over.",
+      onClick: navigateToSupport,
     };
   }
 
@@ -149,9 +205,14 @@ function getPlanColumnCta(params: {
     }
     if (scheduledCancellationDate !== null) {
       return {
-        label: "Downgrade scheduled",
+        label: "Scheduled",
         disabled: true,
         variant: "outline",
+        // The visible label is shortened to fit the column; the date stays in
+        // the accessible name rather than only in the hover tooltip.
+        ariaLabel: scheduledCancellationDate
+          ? `Downgrade scheduled for ${scheduledCancellationDate}`
+          : "Downgrade scheduled",
         tooltip: scheduledCancellationDate
           ? `Your plan is already scheduled to return to Free on ${scheduledCancellationDate}.`
           : "Your plan is already scheduled to return to Free at the end of the current billing period.",
@@ -167,7 +228,8 @@ function getPlanColumnCta(params: {
   }
 
   if (
-    (isHigherTier || (currentPlan === plan && isDifferentBundle)) &&
+    (isHigherTier ||
+      (currentPlan === plan && (isDifferentBundle || isIntervalChange))) &&
     entry.isSelfServe
   ) {
     if (
@@ -410,6 +472,50 @@ const V2_ROW_EXPLANATIONS: Record<string, string> = {
     "Choose the level of assistance your organization needs, from community to dedicated support.",
 };
 
+/**
+ * Cells for a row whose content spans the whole table (section headers, expanded
+ * detail). A single colSpan would cut the highlighted column, so the popular
+ * plan keeps a cell of its own.
+ */
+function FullWidthRowCells({
+  plans,
+  className,
+  children,
+}: {
+  plans: OrganizationPlan[];
+  className?: string;
+  children?: ReactNode;
+}) {
+  const popularIndex = plans.indexOf(POPULAR_PLAN);
+  if (popularIndex < 0) {
+    return (
+      <TableCell colSpan={plans.length + 1} className={className}>
+        {children}
+      </TableCell>
+    );
+  }
+  const trailing = plans.length - 1 - popularIndex;
+  return (
+    <>
+      <TableCell colSpan={popularIndex + 1} className={className}>
+        {children}
+      </TableCell>
+      <TableCell className={cn(className, "relative", POPULAR_COLUMN_BORDER)}>
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-0",
+            POPULAR_COLUMN_TINT,
+          )}
+        />
+      </TableCell>
+      {trailing > 0 ? (
+        <TableCell colSpan={trailing} className={className} />
+      ) : null}
+    </>
+  );
+}
+
 function V2ComparisonRow({
   row,
   plans,
@@ -422,7 +528,7 @@ function V2ComparisonRow({
   return (
     <>
       <TableRow className="border-b hover:bg-transparent">
-        <TableCell className="sticky left-0 z-10 bg-card p-0 text-base font-normal">
+        <TableCell className="sticky left-0 z-10 whitespace-normal bg-card p-0 text-base font-normal">
           <button
             type="button"
             className="flex min-h-[62px] w-full items-center gap-3 rounded-sm px-3 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -441,20 +547,29 @@ function V2ComparisonRow({
           </button>
         </TableCell>
         {plans.map((plan) => (
-          <TableCell key={plan} className="px-3 py-4 text-center align-middle">
+          <TableCell
+            key={plan}
+            className={cn(
+              "whitespace-normal px-3 py-4 text-center align-middle",
+              plan === POPULAR_PLAN && POPULAR_COLUMN_CLASS,
+            )}
+          >
             <ComparePlanMatrixCell v2 cell={row[plan] ?? { kind: "x" }} />
           </TableCell>
         ))}
       </TableRow>
       <TableRow hidden={!expanded} className="border-b hover:bg-transparent">
-        <TableCell colSpan={plans.length + 1} className="px-10 py-4">
+        <FullWidthRowCells
+          plans={plans}
+          className="whitespace-normal px-10 py-4"
+        >
           <p
             id={detailId}
             className="max-w-2xl text-sm leading-relaxed text-muted-foreground"
           >
             {V2_ROW_EXPLANATIONS[row.label]}
           </p>
-        </TableCell>
+        </FullWidthRowCells>
       </TableRow>
     </>
   );
@@ -528,45 +643,42 @@ function ComparePlanMatrixCell({
 function BillingIntervalToggle({
   billingInterval,
   onBillingIntervalChange,
-  annualDiscountPct,
 }: {
   billingInterval: BillingInterval;
   onBillingIntervalChange: (interval: BillingInterval) => void;
-  annualDiscountPct: number | null;
 }) {
   return (
     <div
       role="group"
       aria-label="Billing interval"
-      className="inline-flex max-w-full flex-nowrap items-center gap-1 rounded-lg border border-border/70 bg-muted/40 p-1 whitespace-nowrap"
+      className="relative inline-grid max-w-full grid-cols-2 items-center gap-1 rounded-lg border border-border/70 bg-muted/40 p-1 whitespace-nowrap"
     >
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-0.375rem)] rounded-md bg-secondary ring-1 ring-border shadow-sm transition-transform duration-150 ease-out motion-reduce:transition-none",
+          billingInterval === "monthly" && "translate-x-[calc(100%+0.25rem)]",
+        )}
+      />
       <button
         type="button"
         className={cn(
-          "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:gap-2 sm:px-3",
+          "relative inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:gap-2 sm:px-3",
           billingInterval === "annual"
-            ? "bg-secondary text-secondary-foreground ring-1 ring-border shadow-sm"
+            ? "text-secondary-foreground"
             : "text-muted-foreground",
         )}
         aria-pressed={billingInterval === "annual"}
         onClick={() => onBillingIntervalChange("annual")}
       >
         Annual
-        {annualDiscountPct != null && annualDiscountPct > 0 ? (
-          <span
-            className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
-            title="Savings vs paying monthly for 12 months."
-          >
-            -{annualDiscountPct}%
-          </span>
-        ) : null}
       </button>
       <button
         type="button"
         className={cn(
-          "shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
+          "relative shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
           billingInterval === "monthly"
-            ? "bg-secondary text-secondary-foreground ring-1 ring-border shadow-sm"
+            ? "text-secondary-foreground"
             : "text-muted-foreground",
         )}
         aria-pressed={billingInterval === "monthly"}
@@ -608,7 +720,7 @@ function FreePlanTeamUpsell({
   onStartPlanChange: (
     plan: "pro" | "team",
     billingInterval: BillingInterval,
-  ) => Promise<void>;
+  ) => void;
 }) {
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("annual");
@@ -626,6 +738,7 @@ function FreePlanTeamUpsell({
   const cta = getPlanColumnCta({
     plan: "team",
     currentPlan,
+    currentBillingInterval: null,
     entry,
     billingConfigured,
     canManageBilling,
@@ -709,9 +822,10 @@ function FreePlanTeamUpsell({
               className="w-full shrink-0 rounded-lg"
               size="sm"
               variant={cta.variant}
-              aria-disabled={true}
+              aria-disabled={cta.disabled}
+              aria-label={cta.ariaLabel}
               tabIndex={0}
-              onClick={undefined}
+              onClick={cta.disabled ? undefined : cta.onClick}
             >
               <PlanCtaContent showSpinner={showCtaSpinner} label={cta.label} />
             </Button>
@@ -788,7 +902,10 @@ export function OrganizationBillingSection({
   onCheckoutIntentConsumed,
   currentPlanPanel,
 }: OrganizationBillingSectionProps) {
-  useCreditTopupReturnFlowBilling({ enabled: showCredits });
+  useCreditTopupReturnFlowBilling({
+    enabled: showCredits,
+    organizationId,
+  });
 
   // Plans sit below credits and payment history, so a deep link that lands at
   // the top of the page hides the one thing the user clicked for.
@@ -801,6 +918,12 @@ export function OrganizationBillingSection({
     reason: "already_on" | "already_higher";
     currentDisplayName: string;
     requestedDisplayName: string;
+  } | null>(null);
+  // Set by the plan-card CTAs. Checkout only starts once this is confirmed,
+  // so the interval chosen here is the one that reaches Stripe.
+  const [pendingPlanChange, setPendingPlanChange] = useState<{
+    plan: "pro" | "team";
+    interval: BillingInterval;
   } | null>(null);
 
   // One-shot: consume the flag so a reload doesn't scroll the page again.
@@ -955,12 +1078,6 @@ export function OrganizationBillingSection({
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
-  const teamDiscount = getAnnualDiscountPercent(planCatalog);
-  const annualDiscountPct =
-    planCatalog?.plans.pro &&
-    getAnnualDiscountPercent(planCatalog, "pro") !== teamDiscount
-      ? null
-      : teamDiscount;
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
@@ -974,6 +1091,44 @@ export function OrganizationBillingSection({
     planCatalog != null &&
     planCatalog.plans.team != null &&
     !planCatalog.plans.pro;
+
+  const pendingPlanEntry = pendingPlanChange
+    ? planCatalog?.plans[pendingPlanChange.plan]
+    : undefined;
+
+  const requestPlanChange = (
+    plan: "pro" | "team",
+    targetBillingInterval: BillingInterval,
+  ) => {
+    setPendingPlanChange({ plan, interval: targetBillingInterval });
+    track("plans_upgrade_confirm_shown", {
+      location: "org_plans",
+      organization_id: organizationId,
+      target_plan: plan,
+      billing_interval: targetBillingInterval,
+      current_plan: currentPlan,
+    });
+  };
+
+  const handleConfirmPlanChange = async () => {
+    if (!pendingPlanChange) return;
+    const { plan, interval } = pendingPlanChange;
+    track("plans_upgrade_confirm_submitted", {
+      location: "org_plans",
+      organization_id: organizationId,
+      target_plan: plan,
+      billing_interval: interval,
+      price_cents: planCatalog?.plans[plan]?.prices[interval] ?? null,
+      current_plan: currentPlan,
+    });
+    try {
+      await onStartPlanChange(plan, interval);
+    } finally {
+      // The checkout redirect leaves this page, but a failure or an in-place
+      // plan update does not: either way the confirmation is spent.
+      setPendingPlanChange(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -1054,6 +1209,55 @@ export function OrganizationBillingSection({
         ) : null}
       </Dialog>
 
+      {pendingPlanChange && pendingPlanEntry && planCatalog ? (
+        <PlanChangeConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (open || isStartingPlanChange) return;
+            track("plans_upgrade_confirm_dismissed", {
+              location: "org_plans",
+              organization_id: organizationId,
+              target_plan: pendingPlanChange.plan,
+              billing_interval: pendingPlanChange.interval,
+              current_plan: currentPlan,
+            });
+            setPendingPlanChange(null);
+          }}
+          plan={pendingPlanChange.plan}
+          entry={pendingPlanEntry}
+          currency={planCatalog.currency}
+          interval={pendingPlanChange.interval}
+          onIntervalChange={(nextInterval) => {
+            setPendingPlanChange({
+              plan: pendingPlanChange.plan,
+              interval: nextInterval,
+            });
+            // Keep the comparison table showing the interval that is about to
+            // be bought, so the page still matches after the dialog closes.
+            setBillingInterval(nextInterval);
+            track("plans_upgrade_confirm_interval_selected", {
+              location: "org_plans",
+              organization_id: organizationId,
+              target_plan: pendingPlanChange.plan,
+              billing_interval: nextInterval,
+              price_cents: pendingPlanEntry.prices[nextInterval] ?? null,
+              current_plan: currentPlan,
+            });
+          }}
+          annualDiscountPct={getAnnualDiscountPercent(
+            planCatalog,
+            pendingPlanChange.plan,
+          )}
+          currentPlanName={
+            planCatalog.plans[currentPlan]?.displayName ?? currentPlan
+          }
+          seatQuantity={billingStatus?.stripeSeatQuantity ?? null}
+          isNewSubscription={currentPlan === "free"}
+          isStarting={isStartingPlanChange}
+          onConfirm={() => void handleConfirmPlanChange()}
+        />
+      ) : null}
+
       {showCredits ? (
         <ErrorBoundary
           name="org_billing_credit_balance"
@@ -1062,6 +1266,7 @@ export function OrganizationBillingSection({
           )}
         >
           <CreditBalanceCard
+            organizationName={organizationName}
             pricingVersion={billingStatus?.pricingVersion}
             organizationId={organizationId}
             canManageCredits={canManageCredits}
@@ -1083,7 +1288,7 @@ export function OrganizationBillingSection({
             onDowngradePlan={(plan, interval) =>
               void onDowngradePlan(plan, interval)
             }
-            onStartPlanChange={onStartPlanChange}
+            onStartPlanChange={requestPlanChange}
           />
         </div>
       ) : (
@@ -1140,8 +1345,7 @@ export function OrganizationBillingSection({
             <>
               {!billingConfigured ? (
                 <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                  Billing is not configured in this environment. Plans are
-                  visible, but purchase actions are unavailable.
+                  Purchases are unavailable here. You can still view the plans.
                 </div>
               ) : null}
               {!canManageBilling ? (
@@ -1174,7 +1378,6 @@ export function OrganizationBillingSection({
                     <BillingIntervalToggle
                       billingInterval={billingInterval}
                       onBillingIntervalChange={setBillingInterval}
-                      annualDiscountPct={annualDiscountPct}
                     />
                   </div>
                   <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
@@ -1184,10 +1387,13 @@ export function OrganizationBillingSection({
               ) : (
                 <div className="relative w-full overflow-x-auto overscroll-x-contain">
                   <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
-                    <Table>
+                    <Table className="table-fixed">
                       <TableHeader>
                         <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
-                          <TableHead className="sticky left-0 z-20 h-full min-h-0 w-[26%] min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top">
+                          <TableHead
+                            style={{ width: `${LABEL_COLUMN_WIDTH_PCT}%` }}
+                            className="sticky left-0 z-20 h-full min-h-0 whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
+                          >
                             <div className="flex h-full min-h-[11rem] flex-col">
                               <div className="flex min-h-0 flex-1 flex-col">
                                 <div className="space-y-1 pr-1">
@@ -1209,7 +1415,6 @@ export function OrganizationBillingSection({
                                 <BillingIntervalToggle
                                   billingInterval={billingInterval}
                                   onBillingIntervalChange={setBillingInterval}
-                                  annualDiscountPct={annualDiscountPct}
                                 />
                               </div>
                             </div>
@@ -1254,6 +1459,9 @@ export function OrganizationBillingSection({
                               currentPlan,
                               currentCatalogPlanId:
                                 billingStatus?.catalogPlanId,
+                              currentPriceModel: billingStatus?.priceModel,
+                              currentBillingInterval:
+                                billingStatus?.billingInterval ?? null,
                               entry,
                               billingConfigured,
                               canManageBilling,
@@ -1267,7 +1475,7 @@ export function OrganizationBillingSection({
                                   targetPlan,
                                   targetBillingInterval,
                                 ),
-                              onStartPlanChange,
+                              onStartPlanChange: requestPlanChange,
                               billingInterval,
                             });
                             const showPlanChangeSpinner =
@@ -1287,10 +1495,15 @@ export function OrganizationBillingSection({
                             return (
                               <TableHead
                                 key={plan}
+                                style={{
+                                  width: `${
+                                    PLAN_COLUMNS_WIDTH_PCT /
+                                    offeredPlans(planCatalog).length
+                                  }%`,
+                                }}
                                 className={cn(
                                   "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
-                                  isPopular &&
-                                    "border-x border-primary/35 bg-primary/[0.06]",
+                                  isPopular && POPULAR_COLUMN_CLASS,
                                 )}
                               >
                                 <div
@@ -1349,9 +1562,14 @@ export function OrganizationBillingSection({
                                           className="w-full shrink-0 rounded-lg"
                                           size="sm"
                                           variant={cta.variant}
-                                          aria-disabled={true}
+                                          aria-disabled={cta.disabled}
+                                          aria-label={cta.ariaLabel}
                                           tabIndex={0}
-                                          onClick={undefined}
+                                          onClick={
+                                            cta.disabled
+                                              ? undefined
+                                              : cta.onClick
+                                          }
                                         >
                                           <PlanCtaContent
                                             showSpinner={showCtaSpinner}
@@ -1391,14 +1609,14 @@ export function OrganizationBillingSection({
                           <Fragment key={section.title}>
                             {!section.hideTitle ? (
                               <TableRow className="border-b hover:bg-transparent">
-                                <TableCell
+                                <FullWidthRowCells
+                                  plans={offeredPlans(planCatalog)}
                                   className="bg-muted/40 py-2.5 pl-4"
-                                  colSpan={offeredPlans(planCatalog).length + 1}
                                 >
                                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                     {section.title}
                                   </div>
-                                </TableCell>
+                                </FullWidthRowCells>
                               </TableRow>
                             ) : null}
                             {section.rows.map((row, rowIndex) => {
@@ -1416,7 +1634,7 @@ export function OrganizationBillingSection({
                                   key={`${section.title}-${rowIndex}-${row.label}`}
                                   className="border-b"
                                 >
-                                  <TableCell className="sticky left-0 z-10 max-w-[14rem] bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
+                                  <TableCell className="sticky left-0 z-10 max-w-[14rem] whitespace-normal bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
                                     <ComparePlanRowLabel
                                       label={row.label}
                                       tooltipKey={row.tooltipKey}
@@ -1429,8 +1647,7 @@ export function OrganizationBillingSection({
                                         key={plan}
                                         className={cn(
                                           "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
-                                          isPopular &&
-                                            "border-x border-primary/35 bg-primary/[0.06]",
+                                          isPopular && POPULAR_COLUMN_CLASS,
                                         )}
                                       >
                                         <ComparePlanMatrixCell

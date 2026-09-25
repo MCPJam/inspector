@@ -13,6 +13,7 @@ import {
   describeTokenRequestFailure,
 } from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
+import { describeResourceMetadataRequestFailure } from "./shared/resource-metadata-error.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
@@ -68,6 +69,8 @@ import {
 import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
+  REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
 } from "./shared/dynamic-client-registration.js";
 import { validateClientIdMetadataUrl } from "./shared/client-id-metadata.js";
 import {
@@ -762,7 +765,7 @@ export const createDebugOAuthStateMachine = (
               });
 
               throw new Error(
-                `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`
+                describeResourceMetadataRequestFailure(error)
               );
             }
             break;
@@ -1117,8 +1120,7 @@ export const createDebugOAuthStateMachine = (
             } else {
               if (strictConformance) {
                 updateState({
-                  error:
-                    "Authorization server metadata does not include a registration_endpoint required for DCR conformance.",
+                  error: REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
                   isInitiatingAuth: false,
                 });
                 return;
@@ -1131,8 +1133,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!fallbackClient) {
                 updateState({
-                  error:
-                    "Authorization server metadata does not include a registration_endpoint. Configure a pre-registered client or use a different registration strategy.",
+                  error: REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
                   isInitiatingAuth: false,
                 });
                 return;

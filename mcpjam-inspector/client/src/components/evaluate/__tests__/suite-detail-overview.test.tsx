@@ -1,4 +1,5 @@
-import { within } from "@testing-library/react";
+import { useState } from "react";
+import { fireEvent, within } from "@testing-library/react";
 import {
   SuiteRunReviewContent,
   type SuiteRunReviewProps,
@@ -7,11 +8,14 @@ import {
   useEvalGeneration,
   evalSuiteKey,
   registerEvalSuite,
+  followAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
+import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
   EvalIteration,
@@ -32,6 +36,30 @@ vi.mock("@/lib/mcpjam-agent/eval-scope", async (original) => ({
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
+}));
+
+// Only the network poll is doubled; the store it writes into is real.
+// An imported draft opens in the step editor, which renders the model picker.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
+vi.mock("@/lib/mcpjam-agent/eval-workspace", async (original) => ({
+  ...(await original<object>()),
+  followAuthoringJob: vi.fn(async () => undefined),
+}));
+// Generation runs the shared authoring job, so starting one is a request, not
+// a call into the suite bridge.
+vi.mock("@/lib/apis/eval-authoring-api", async (original) => ({
+  ...(await original<object>()),
+  authoringRequest: vi.fn(async () => ({ jobId: "job-1" })),
+  readAuthoringJob: vi.fn(async () => ({
+    jobId: "job-1",
+    status: "pending",
+    phase: "draft",
+    error: null,
+    warnings: [],
+    drafts: [],
+  })),
 }));
 
 function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
@@ -160,7 +188,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={runs}
         runsLoading={false}
-        allIterations={iterations}
+        metricsByRun={metricsByRunFromIterations(iterations)}
         hostNamesById={
           new Map([
             ["host-1", "Claude"],
@@ -263,7 +291,7 @@ describe("SuiteDetailOverview", () => {
           }),
         ]}
         runsLoading={false}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           makeIteration({
             _id: "i1",
             suiteRunId: "run-1",
@@ -278,7 +306,7 @@ describe("SuiteDetailOverview", () => {
             startedAt: 1_600_000_000_000,
             updatedAt: 1_600_000_004_000,
           }),
-        ]}
+        ])}
         hostNamesById={hostNamesById}
         onRerun={onRerun}
         onEditSuite={onEditSuite}
@@ -354,7 +382,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -394,14 +422,15 @@ describe("SuiteDetailOverview", () => {
   it("starts generation directly without opening a chat", async () => {
     const user = userEvent.setup();
     const onGenerateTestCases = vi.fn().mockResolvedValue(undefined);
-    const generate = vi.fn(() => new Promise<void>(() => {}));
+    const started = vi.mocked(authoringRequest);
+    started.mockClear();
     const unregister = registerEvalSuite(
       {
         projectId: "project-1",
         suiteId: "suite-1",
         suiteName: "Checkout reliability",
       },
-      { read: () => ({}), generate, save: vi.fn() },
+      { read: () => ({}), save: vi.fn() },
     );
 
     renderWithProviders(
@@ -411,7 +440,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -425,14 +454,18 @@ describe("SuiteDetailOverview", () => {
     );
 
     await user.click(screen.getByTestId("suite-empty-action-generate"));
-    expect(generate).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Generate cases" }));
 
     expect(
       screen.getByTestId("suite-case-generation-workspace"),
     ).toBeInTheDocument();
     expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(5);
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started.mock.calls[0][0]).toMatchObject({
+      operation: "start",
+      input: { source: "generation" },
+    });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
     unregister();
     expect(onGenerateTestCases).not.toHaveBeenCalled();
@@ -446,7 +479,9 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[makeRun({ _id: "run-1" })]}
         runsLoading={false}
-        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        metricsByRun={metricsByRunFromIterations([
+          makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+        ])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -472,7 +507,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1", namedHostId: undefined })]}
         runsLoading={false}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           makeIteration({
             _id: "i1",
             suiteRunId: "run-1",
@@ -484,7 +519,7 @@ describe("SuiteDetailOverview", () => {
               expectedToolCalls: [],
             },
           }),
-        ]}
+        ])}
         hostNamesById={new Map()}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -516,11 +551,13 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
         runsLoading={false}
-        allIterations={runs.map((run, index) =>
-          makeIteration({
-            _id: `i-${index}`,
-            suiteRunId: run._id,
-          }),
+        metricsByRun={metricsByRunFromIterations(
+          runs.map((run, index) =>
+            makeIteration({
+              _id: `i-${index}`,
+              suiteRunId: run._id,
+            }),
+          ),
         )}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
@@ -545,7 +582,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -574,7 +611,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -610,7 +647,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -642,7 +679,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -668,7 +705,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -704,7 +741,7 @@ describe("SuiteDetailOverview", () => {
         cases={[]}
         runs={[]}
         runsLoading
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -741,7 +778,7 @@ describe("SuiteDetailOverview", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
         runsLoading={false}
-        allIterations={iterations}
+        metricsByRun={metricsByRunFromIterations(iterations)}
         hostNamesById={twoClientHosts}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -809,7 +846,7 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
       cases={[]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={hostNamesById}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -829,10 +866,11 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
   expect(
     screen.queryByRole("button", { name: "Review Draft Cases" }),
   ).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Generate", exact: true }),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Import cases" })).toBeVisible();
+  // A suite with nothing but drafts is still an empty suite, so it keeps the
+  // same empty-state hero rather than a shrunken second version of it.
+  expect(screen.getByTestId("suite-detail-empty-cases")).toBeTruthy();
+  expect(screen.getByTestId("suite-empty-action-generate")).toBeVisible();
+  expect(screen.getByTestId("suite-empty-action-import")).toBeVisible();
   // The run button still says drafts are waiting — that is the pointer back to
   // the generate tab, and the only place the suite page mentions them.
   await userEvent
@@ -846,17 +884,177 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
   );
 });
 
+it("follows a linked authoring job instead of trusting this browser's memory", async () => {
+  // An API import hands its unfinished cases back as a link. Whoever opens it
+  // usually did not run the import, so their store holds nothing — the drafts
+  // have to be read from the job named in the URL.
+  useEvalGeneration.setState({ suites: {} });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      importJobId="job_77"
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  // `takeOver`, because the link IS the request to review that job: a failed
+  // job keeps its id on the suite, and without this the link stood down to it
+  // and showed the reader their own dead import instead.
+  expect(followAuthoringJob).toHaveBeenCalledWith(
+    { projectId: "project-1", suiteId: "suite-1" },
+    "job_77",
+    { takeOver: true, source: "import" },
+  );
+});
+
 it("gives imported drafts their own surface with a way back to the suite", async () => {
   const onGeneratingChange = vi.fn();
   useEvalGeneration.setState({
     suites: {
       [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
         status: "ready",
+        // Staged, then dismissed: the reader has already been shown them.
+        reviewRequestId: "review-1",
+        reviewSeenId: "review-1",
         drafts: [
           {
             id: "draft-1",
             revision: "r1",
-            markdownImport: { source: { fileName: "cases.md" } },
+            // Document provenance is what makes a draft an IMPORT; the
+            // authoring job cites the file it read.
+            authoring: {
+              draftId: "d1",
+              source: { fileName: "cases.md" },
+              issues: [],
+              additions: [],
+            },
+            input: {
+              suiteId: "suite-1",
+              title: "Imported grocery case",
+              query: "Browse the Grocery category.",
+              expectedOutput: "The grocery list renders.",
+              steps: [],
+            },
+          },
+        ],
+      } as never,
+    },
+  });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      metricsByRun={metricsByRunFromIterations([])}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      onGeneratingChange={onGeneratingChange}
+      rerunningSuiteId={null}
+    />,
+  );
+  // Drafts left over from an earlier import must not replace the suite: the
+  // cases it already HAS are what the reader opened it for. They wait behind
+  // a button that says how many there are.
+  expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+  expect(screen.queryByTestId("suite-import-review")).toBeNull();
+  const resume = screen.getByTestId("suite-resume-import-review");
+  expect(resume).toHaveTextContent("Review 1 draft case");
+
+  fireEvent.click(resume);
+  // Reviewing is still its own surface — drafts are not listed beside real
+  // cases, which read as though the import had already landed.
+  expect(screen.getByTestId("suite-import-review")).toBeVisible();
+  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+  // The breadcrumb is the way back, and it must not say "Generate".
+  expect(onGeneratingChange).toHaveBeenCalledWith(
+    expect.objectContaining({ label: "Import test cases" }),
+  );
+});
+
+it("survives a parent that keeps the breadcrumb in state and passes inline callbacks", () => {
+  // The real page stores what `onGeneratingChange` reports in its own state
+  // and passes `onClearImportJob` as an inline arrow. With that callback in
+  // the exit's dependencies, every parent render re-ran the effect, which set
+  // the parent's state again: React stopped it with "Maximum update depth
+  // exceeded" and the page showed "Could not load Testing" as soon as an
+  // import started. A `vi.fn()` parent never re-renders, so it cannot see it.
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "running",
+        authoringSource: "import",
+        drafts: [],
+      } as never,
+    },
+  });
+  const seen: Array<{ label: string } | null> = [];
+  function Page() {
+    const [breadcrumb, setBreadcrumb] = useState<{
+      exit: () => void;
+      label: string;
+    } | null>(null);
+    seen.push(breadcrumb);
+    return (
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[]}
+        runs={[]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations([])}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        onGeneratingChange={setBreadcrumb}
+        onClearImportJob={() => {}}
+        rerunningSuiteId={null}
+      />
+    );
+  }
+  renderWithProviders(<Page />);
+  expect(screen.getByTestId("suite-import-review")).toBeVisible();
+  expect(seen.at(-1)).toEqual(
+    expect.objectContaining({ label: "Import test cases" }),
+  );
+  // A handful of renders, not React's 50-update ceiling.
+  expect(seen.length).toBeLessThan(10);
+});
+
+it("lands on the drafts an import just staged", () => {
+  // The page unmounts on navigation and on reload, so "has the reader seen
+  // these?" cannot live in component state. Drafts nobody has been shown yet
+  // are what an import is FOR, and they open on their own.
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "ready",
+        reviewRequestId: "review-2",
+        drafts: [
+          {
+            id: "draft-1",
+            revision: "r1",
+            authoring: {
+              draftId: "d1",
+              source: { fileName: "cases.md" },
+              issues: [],
+              additions: [],
+            },
             input: {
               suiteId: "suite-1",
               title: "Imported grocery case",
@@ -882,18 +1080,10 @@ it("gives imported drafts their own surface with a way back to the suite", async
       onEditSuite={vi.fn()}
       onRunClick={vi.fn()}
       onTestCaseClick={vi.fn()}
-      onGeneratingChange={onGeneratingChange}
       rerunningSuiteId={null}
     />,
   );
-  // The import surface replaces the suite page, so real cases are not beside
-  // drafts that are not in the suite yet.
   expect(screen.getByTestId("suite-import-review")).toBeVisible();
-  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
-  // The breadcrumb is the way back, and it must not say "Generate".
-  expect(onGeneratingChange).toHaveBeenCalledWith(
-    expect.objectContaining({ label: "Import test cases" }),
-  );
 });
 
 /**
@@ -915,7 +1105,9 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1" })]}
         runsLoading={false}
-        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        metricsByRun={metricsByRunFromIterations([
+          makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+        ])}
         hostNamesById={hostNamesById}
         onRerun={onRerun}
         onEditSuite={onEditSuite}
@@ -977,7 +1169,9 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1" })]}
         runsLoading={false}
-        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        metricsByRun={metricsByRunFromIterations([
+          makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+        ])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -1004,7 +1198,7 @@ it("offers Markdown import in populated editable suites", async () => {
       cases={[makeCase({ _id: "case-import" })]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1030,7 +1224,7 @@ it("opens SDK setup from the suite header", async () => {
       cases={[]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1061,7 +1255,7 @@ it("deletes a test case from its row after confirming", async () => {
       ]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1091,7 +1285,7 @@ it("hides the row delete button when the suite config is locked", () => {
       cases={[makeCase({ _id: "case-1" })]}
       runs={[]}
       runsLoading={false}
-      allIterations={[]}
+      metricsByRun={metricsByRunFromIterations([])}
       hostNamesById={new Map()}
       onRerun={vi.fn()}
       onEditSuite={vi.fn()}
@@ -1126,7 +1320,7 @@ describe("SuiteDetailOverview cancel", () => {
         cases={[]}
         runs={[]}
         runsLoading={false}
-        allIterations={[]}
+        metricsByRun={metricsByRunFromIterations([])}
         hostNamesById={hostNamesById}
         onRerun={vi.fn()}
         onEditSuite={vi.fn()}
@@ -1163,35 +1357,19 @@ describe("SuiteDetailOverview cancel", () => {
     expect(screen.queryByTestId("suite-detail-cancel")).toBeNull();
   });
 
-  it("cancels a launch from its history row without opening the run", async () => {
-    const user = userEvent.setup();
-    const onCancelRun = vi.fn();
-    const onRunClick = vi.fn();
+  it("offers no cancel on a running history row", () => {
     renderSuite({
-      runs: [
-        runningRun({
-          _id: "run-1",
-          runNumber: 1,
-          runGroupId: "together",
-          namedHostId: "host-1",
-        }),
-        runningRun({
-          _id: "run-2",
-          runNumber: 1,
-          runGroupId: "together",
-          namedHostId: "host-2",
-        }),
-      ],
-      onCancelRun,
-      onRunClick,
+      runs: [runningRun({ _id: "run-1", runNumber: 1 })],
+      onCancelRun: vi.fn(),
     });
 
-    await user.click(screen.getByTestId("suite-run-row-cancel"));
-    expect(onCancelRun).toHaveBeenCalledWith(["run-1", "run-2"]);
-    expect(onRunClick).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Open run #1" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel run #1" })).toBeNull();
   });
 
-  it("disables both cancels while one is in flight", () => {
+  it("disables the header cancel while one is in flight", () => {
     renderSuite({
       runs: [runningRun({ _id: "run-1", runNumber: 1 })],
       onCancelRun: vi.fn(),
@@ -1199,6 +1377,5 @@ describe("SuiteDetailOverview cancel", () => {
     });
 
     expect(screen.getByTestId("suite-detail-cancel")).toBeDisabled();
-    expect(screen.getByTestId("suite-run-row-cancel")).toBeDisabled();
   });
 });

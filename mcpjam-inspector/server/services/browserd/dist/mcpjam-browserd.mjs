@@ -9725,6 +9725,7 @@ var MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
 var MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
 var MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
 var MCPJAM_HOSTED_ORIGIN = process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") || "https://app.mcpjam.com";
+var MCPJAM_PUBLIC_ORIGIN = process.env.MCPJAM_PUBLIC_ORIGIN?.replace(/\/+$/, "") || null;
 function parseAllowedHosts(raw) {
   return raw ? raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0) : [];
 }

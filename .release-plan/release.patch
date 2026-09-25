@@ -1,91 +1,72 @@
-diff --git a/.changeset/findings-every-row-reaches-its-sessions.md b/.changeset/findings-every-row-reaches-its-sessions.md
+diff --git a/.changeset/clear-connection-failure-messages.md b/.changeset/clear-connection-failure-messages.md
 deleted file mode 100644
-index f0625105b..000000000
---- a/.changeset/findings-every-row-reaches-its-sessions.md
+index 144baa99b..000000000
+--- a/.changeset/clear-connection-failure-messages.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/inspector": patch
+-"@mcpjam/sdk": patch
 ----
 -
--Every finding on a stage can now reach the sessions it is about, in Findings on a Swarm run and in Findings on a User Testing scenario.
--
--A stage that failed two rubric checks over the same session showed the first one with its session list underneath and the second as plain text with nothing to click. That is what "none of the sessions link to anything" looked like on the report that opened this: `Rubric check "Final message non-empty" failed` had a session under it, and `Rubric check "Calls create_view" failed`, directly below, had none.
--
--The cause was a rule written for the empty-stage footer — one session is a link rather than something to expand — reused for the evidence rows, where it collapses to "only row 0 renders the list". With several findings over one session, every row after the first lost its only way in.
--
--Several findings now earn the toggle even over a single session. A lone finding over a lone session still shows its session directly, with no toggle, and the empty-stage footer is untouched: it only renders when a stage has no evidence at all.
--
--One visible change where the list used to be permanent. With several findings over one session, the first row's session list was rendered with no control to collapse it. It is now a toggle that starts open, so the first paint is unchanged, and because the panel opens one finding at a time, opening the second finding closes the first.
-diff --git a/.changeset/hide-trace-citation-ids.md b/.changeset/hide-trace-citation-ids.md
+-Explain connection-refused and HTTP 404 failures with the MCP endpoint and a suggested next step. Preserve authentication handling and underlying transport errors, and omit credentials and query values from the displayed endpoint.
+diff --git a/.changeset/insights-empty-state-reasons.md b/.changeset/insights-empty-state-reasons.md
 deleted file mode 100644
-index 787883709..000000000
---- a/.changeset/hide-trace-citation-ids.md
+index 579108a7a..000000000
+--- a/.changeset/insights-empty-state-reasons.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Drop the "AI explanation · cited trace evidence" disclosure from evaluation scorecards. It only showed raw internal ids like `m:0 · tc:toolu_…`, which mean nothing to a reader.
-diff --git a/.changeset/imported-draft-review-surface.md b/.changeset/imported-draft-review-surface.md
+-Say why a User Testing insights view is empty, and let a reader analyze a session now. The Session flow and Findings tab used to read "This can take a few minutes" whatever the reason, and draw a flow of placeholder bars before any theme existed. They now name the reason from the analysis summary: no sessions yet, waiting for a session to go quiet (with the time analysis starts), analyzing N sessions, the daily limit (with when it resumes), a guest study, a failure, outcomes still to come (with when they fill in), or themes still being grouped. Where waiting, pending outcomes, a guest study or a retryable failure is the reason, members get an **Analyze now** button that treats the study's sessions as finished. A session's detail view has the same button while that session is waiting or its outcome is still pending. Early themes, proposed from fewer than eight sessions, are labelled as such under the Session flow title. Needs the matching backend release; older backends keep the previous copy.
+diff --git a/.changeset/recover-desktop-updates.md b/.changeset/recover-desktop-updates.md
 deleted file mode 100644
-index e4d52413e..000000000
---- a/.changeset/imported-draft-review-surface.md
+index 9313a7c75..000000000
+--- a/.changeset/recover-desktop-updates.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Recover failed desktop updates with one full restart and retry instead of opening GitHub. Keep slow downloads running, show an in-app error when recovery fails, verify the installed version after restart, and report update failures through the existing team alerts.
+diff --git a/.changeset/release-inspector-cli-sdk-2026-09-23.md b/.changeset/release-inspector-cli-sdk-2026-09-23.md
+deleted file mode 100644
+index 57f99cf5d..000000000
+--- a/.changeset/release-inspector-cli-sdk-2026-09-23.md
++++ /dev/null
+@@ -1,9 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 -"@mcpjam/cli": patch
 -"@mcpjam/sdk": patch
 ----
 -
--Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.
-diff --git a/.changeset/reused-persona-iterations.md b/.changeset/reused-persona-iterations.md
+-Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+-
+-This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+diff --git a/.changeset/rubric-checks-judge.md b/.changeset/rubric-checks-judge.md
 deleted file mode 100644
-index 7a1e4c64e..000000000
---- a/.changeset/reused-persona-iterations.md
+index a0ea430de..000000000
+--- a/.changeset/rubric-checks-judge.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
--"@mcpjam/inspector": patch
-----
--
--A reused persona's iterations can be set for the run you are about to launch.
--
--Confirm showed reused goals as read-only text — "5 goals at the iterations already saved = 25 conversations" — so bringing a persona in meant taking whatever its owner had saved. One in the recording arrives at 25 conversations with no way to bring it down, which is the opposite of what someone reusing a persona for a quick run wants, and it spends model quota that is already rate-limited.
--
--Reused cards now carry the same iterations stepper the authored ones do. The control starts at what the persona's goals already hold, so leaving it alone launches the size it always did; goals that disagree, or carry nothing saved, start at the default instead, because there is no single saved value to show and picking one would misreport the others.
--
--The number is sent as a per-run override and the shared journey is not rewritten, which was the reason the control was withheld in the first place. A persona reused across swarms keeps its own saved size for everyone else.
--
--The launch quote follows the same number, so what Confirm promises and what the run fans out to cannot disagree.
-diff --git a/.changeset/widget-snapshot-offload.md b/.changeset/widget-snapshot-offload.md
-deleted file mode 100644
-index fa0e69724..000000000
---- a/.changeset/widget-snapshot-offload.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": patch
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
 ----
 -
--Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.
--
--Reporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with "Request body exceeds 1MB limit". Chunking could not save it: it splits between results, never inside one.
--
--Small widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.
--
--The upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.
+-Add rubric checks, an advisory second judge for eval suites. Each grading criterion is asked on its own as a yes or no question with a probability, and a suite can add up to ten choice or score questions with a pass line each. Answers show on the trial scorecard under User value, and a criterion near even odds reads Uncertain. They never gate a run. Settings are edited in the app; the public API refuses `settings.judge.rubricChecks`. The SDK's run-disclosure types gain the `rubricChecks` touchpoint and the `typed_decision` rail routing, and `EVALUATOR_STAGE` gains `judge:rubricChecks`.
 diff --git a/cli/package.json b/cli/package.json
-index c70fd0bc2..19f14eee0 100644
+index 3f738f310..7a5efef3a 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.10.0",
-+  "version": "5.10.1",
+-  "version": "5.11.0",
++  "version": "5.11.1",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -93,21 +74,21 @@ index c70fd0bc2..19f14eee0 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.10.0",
-+    "@mcpjam/sdk": "^8.10.1",
+-    "@mcpjam/sdk": "^8.14.0",
++    "@mcpjam/sdk": "^8.15.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 79268506a..6ef091abc 100644
+index 8e68166e9..f68042462 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.7.1",
-+  "version": "3.7.2",
+-  "version": "3.10.0",
++  "version": "3.11.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -115,24 +96,24 @@ index 79268506a..6ef091abc 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.10.0",
-+    "@mcpjam/sdk": "^8.10.1",
+-    "@mcpjam/sdk": "^8.14.0",
++    "@mcpjam/sdk": "^8.15.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 3b72a3528..07dd02646 100644
+index d6a99e937..46d47cea3 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -64,9 +64,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.10.0",
-+      "version": "5.10.1",
+-      "version": "5.11.0",
++      "version": "5.11.1",
        "dependencies": {
--        "@mcpjam/sdk": "^8.10.0",
-+        "@mcpjam/sdk": "^8.10.1",
+-        "@mcpjam/sdk": "^8.14.0",
++        "@mcpjam/sdk": "^8.15.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -140,8 +121,8 @@ index 3b72a3528..07dd02646 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.7.1",
-+      "version": "3.7.2",
+-      "version": "3.10.0",
++      "version": "3.11.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -149,53 +130,53 @@ index 3b72a3528..07dd02646 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.10.0",
-+        "@mcpjam/sdk": "^8.10.1",
+-        "@mcpjam/sdk": "^8.14.0",
++        "@mcpjam/sdk": "^8.15.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@novnc/novnc": "^1.7.0",
-@@ -39229,7 +39229,7 @@
+@@ -39236,7 +39236,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.10.0",
-+      "version": "8.10.1",
+-      "version": "8.14.0",
++      "version": "8.15.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
-index 12c91ccef..d5acbf326 100644
+index d18804f9a..fd86dccde 100644
 --- a/sdk/CHANGELOG.md
 +++ b/sdk/CHANGELOG.md
 @@ -1,5 +1,19 @@
  # `@mcpjam/sdk` changelog
  
-+## 8.10.1
++## 8.15.0
++
++### Minor Changes
++
++- [#5468](https://github.com/MCPJam/inspector/pull/5468) [`3860e31`](https://github.com/MCPJam/inspector/commit/3860e31683fcd1a940586d6433744afff0c861f7) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add rubric checks, an advisory second judge for eval suites. Each grading criterion is asked on its own as a yes or no question with a probability, and a suite can add up to ten choice or score questions with a pass line each. Answers show on the trial scorecard under User value, and a criterion near even odds reads Uncertain. They never gate a run. Settings are edited in the app; the public API refuses `settings.judge.rubricChecks`. The SDK's run-disclosure types gain the `rubricChecks` touchpoint and the `typed_decision` rail routing, and `EVALUATOR_STAGE` gains `judge:rubricChecks`.
 +
 +### Patch Changes
 +
-+- [#5290](https://github.com/MCPJam/inspector/pull/5290) [`dc212eb`](https://github.com/MCPJam/inspector/commit/dc212eb1b040c44e488203e2ef1a2bc8174e2876) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.
++- [#5487](https://github.com/MCPJam/inspector/pull/5487) [`9f75d30`](https://github.com/MCPJam/inspector/commit/9f75d307d9e87eba261d962ee25dde6bfa110ea2) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Explain connection-refused and HTTP 404 failures with the MCP endpoint and a suggested next step. Preserve authentication handling and underlying transport errors, and omit credentials and query values from the displayed endpoint.
 +
-+- [#5298](https://github.com/MCPJam/inspector/pull/5298) [`7032855`](https://github.com/MCPJam/inspector/commit/703285536746b2e05bc49e45dacabb3582e374e8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.
++- [#5484](https://github.com/MCPJam/inspector/pull/5484) [`f5f03e1`](https://github.com/MCPJam/inspector/commit/f5f03e1f06c2b4f4b51ddeaa05fe77bdd36782cf) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
 +
-+  Reporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with "Request body exceeds 1MB limit". Chunking could not save it: it splits between results, never inside one.
++  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
 +
-+  Small widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.
-+
-+  The upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.
-+
- ## 8.10.0
+ ## 8.14.0
  
  ### Minor Changes
 diff --git a/sdk/package.json b/sdk/package.json
-index dac8b2190..e01972603 100644
+index d1742dfed..c0e3f7058 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.10.0",
-+  "version": "8.10.1",
+-  "version": "8.14.0",
++  "version": "8.15.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

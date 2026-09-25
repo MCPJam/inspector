@@ -112,6 +112,8 @@ export interface RunAssistantTurnOptions {
 
   /** See `PrepareChatV2Options.approvalMode`. Default `"prompt"`. */
   approvalMode?: "prompt" | "auto-deny";
+  /** See `MCPJamHandlerOptions.clientSuppliedHistory`. Default false. */
+  clientSuppliedHistory?: boolean;
   /**
    * Required-tool-approval policy on the underlying engine. Forwarded
    * verbatim to `handleMCPJamFreeChatModel` so the dispatch-time
@@ -567,6 +569,7 @@ function buildHandlerOptions(
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }
       : {}),
+    ...(opts.clientSuppliedHistory ? { clientSuppliedHistory: true } : {}),
     onConversationComplete: wrappedOnConversationComplete,
     // HOW THE TURN ENDED. Chained rather than replaced: a caller that wants the
     // record directly still gets it, and the result object gets it either way.

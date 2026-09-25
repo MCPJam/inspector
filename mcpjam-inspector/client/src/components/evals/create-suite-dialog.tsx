@@ -337,6 +337,9 @@ export function CreateSuiteDialog({
                 </p>
               </div>
               <EnvironmentComposer
+                // Evals take servers from the group alone, so the empty slot
+                // cannot claim the client's own servers here.
+                emptyServerLabel="Servers · none"
                 projectId={projectId}
                 environments={composerEnvironments ?? []}
                 value={target}

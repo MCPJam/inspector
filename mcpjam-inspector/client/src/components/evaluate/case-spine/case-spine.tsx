@@ -721,10 +721,7 @@ export function CaseSpine({
 }
 
 function cnBorder(extra: string | undefined): string {
-  return [
-    "resize-none bg-background font-mono text-sm leading-relaxed",
-    extra ?? "",
-  ]
+  return ["resize-none bg-background text-foreground", extra ?? ""]
     .filter(Boolean)
     .join(" ");
 }

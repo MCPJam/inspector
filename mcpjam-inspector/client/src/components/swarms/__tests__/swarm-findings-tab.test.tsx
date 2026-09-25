@@ -2,12 +2,12 @@ import { neverStartedReport } from "./swarm-report-fixtures";
 import {
   brokenWire,
   WIRE_FIX_PHRASE,
+  WIRE_MECHANISM_PHRASE,
   WIRE_GOAL,
   WIRE_PERSONA,
 } from "./swarm-findings-wire-fixtures";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
 import type {
   SwarmOverview,
@@ -130,27 +130,25 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-// The Insights/Sessions surfaces are heavy and not under test — stub them,
-// keeping the run-insights helpers the derivation module reuses.
+// The Insights/Sessions surfaces are heavy and not under test — stub them.
+// (`run-insights` is gone since #5271; `signalSentence` lives beside the
+// derivation module now and needs no stub.)
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: () => <div data-testid="stub-insights-workbench" />,
 }));
-vi.mock("@/components/shared/usage-insights/run-insights", async (orig) => {
-  const actual =
-    await orig<
-      typeof import("@/components/shared/usage-insights/run-insights")
-    >();
-  return {
-    ...actual,
-    RunInsightsProvider: ({ children }: { children?: ReactNode }) => (
-      <>{children}</>
-    ),
-    RunInsightsRecommendations: () => null,
-  };
-});
 vi.mock("@/components/shared/actionable-insights/actionable-findings", () => ({
-  ActionableFindings: ({ surface }: { surface: { runId: string } }) => (
-    <div data-testid="actionable-findings-mount" data-run-id={surface.runId} />
+  ActionableFindings: ({
+    surface,
+    hideEmpty,
+  }: {
+    surface: { runId: string };
+    hideEmpty?: boolean;
+  }) => (
+    <div
+      data-testid="actionable-findings-mount"
+      data-run-id={surface.runId}
+      data-hide-empty={hideEmpty}
+    />
   ),
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
@@ -515,9 +513,6 @@ describe("SwarmFindingsTab", () => {
     );
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
     expect(screen.getByTestId("findings-summary-card")).toBeInTheDocument();
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "Evaluator findings only",
-    );
   });
 
   it("renders the finding summary above the persona picker", () => {
@@ -580,9 +575,6 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("findings-headline").textContent).not.toContain(
       "broke at discovery",
     );
-    expect(
-      screen.queryByTestId("findings-footnotes")?.textContent ?? "",
-    ).not.toContain("model-written");
   });
 
   it("ellipsizes a narration the backend cut inside its first sentence", () => {
@@ -613,9 +605,6 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("findings-headline").textContent).toContain(
       '"Export the board" broke at discovery',
     );
-    expect(
-      screen.queryByTestId("findings-footnotes")?.textContent ?? "",
-    ).not.toContain("model-written");
   });
 
   it("refuses a narration of a wave that never launched", () => {
@@ -686,7 +675,9 @@ describe("SwarmRunDetail findings wiring", () => {
 });
 
 describe("SwarmFindingsTab on shared findings", () => {
-  it("renders backend findings and mounts remediation for this wave", () => {
+  // PLB-29: the tab ends at the persona cards. The actionable-findings list
+  // ("Fix in your MCP server" and the rest) must not render below them.
+  it("renders backend findings without the actionable-findings list", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -699,13 +690,12 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(
       screen.getByRole("tab", { name: new RegExp(WIRE_PERSONA.name) }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
-      "data-run-id",
-      wave().anchor.runId,
-    );
+    expect(
+      screen.queryByTestId("actionable-findings-mount"),
+    ).not.toBeInTheDocument();
   });
 
-  it("leads with the top verified mechanism's fix", () => {
+  it("names the cause and shows its fix on its own line", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -715,9 +705,17 @@ describe("SwarmFindingsTab on shared findings", () => {
         generatedSummary="Lane A prose that must not win."
       />,
     );
-    expect(screen.getByTestId("findings-headline").textContent).toBe(
-      WIRE_FIX_PHRASE,
+    // The cause leads; the fix is beside it, not instead of it. Lane A's prose
+    // still loses to the shared pipeline on this path.
+    const headline = screen.getByTestId("findings-headline").textContent;
+    expect(headline).toContain(WIRE_MECHANISM_PHRASE.replace(/\.$/, ""));
+    expect(headline).not.toContain("Lane A prose");
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
     );
+    const fix = screen.getByTestId("findings-suggested-fix").textContent;
+    expect(fix).toContain(WIRE_FIX_PHRASE);
+    expect(fix).toContain("Suggested fix");
   });
 
   it("names the goal, stage and persona when there is no fix to promote", () => {
@@ -732,10 +730,14 @@ describe("SwarmFindingsTab on shared findings", () => {
       />,
     );
     const headline = screen.getByTestId("findings-headline").textContent;
-    expect(headline).toContain(
-      `"${WIRE_GOAL.title}" broke at tool response for ${WIRE_PERSONA.name}.`,
-    );
+    expect(headline).toContain(WIRE_MECHANISM_PHRASE.replace(/\.$/, ""));
+    expect(headline).toContain(WIRE_GOAL.title);
+    expect(headline).toContain(WIRE_PERSONA.name);
     expect(headline).not.toContain("Some goals were blocked.");
+    // No fix on the cause means no fix shown — never another cause's.
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
+    );
   });
 
   it.each([
@@ -767,24 +769,6 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(
       screen.queryByText("Reading session evidence…"),
     ).not.toBeInTheDocument();
-  });
-
-  it("footnotes a wave whose analysis ran without a model", () => {
-    render(
-      <SwarmFindingsTab
-        wave={wave()}
-        waveSignals={waveSignals}
-        personas={personas}
-        narration={{
-          modelRan: false,
-          sessionCount: 8,
-          unanalyzedSessionCount: 3,
-        }}
-      />,
-    );
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "No model narration, 5 of 8 sessions covered by deterministic checks only",
-    );
   });
 
   it("keeps the empty state when there is no persona and no wire payload", () => {

@@ -1,3 +1,5 @@
+import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
+import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
 import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
@@ -336,6 +338,12 @@ function buildLocalScopeStepUpResume(input: {
         claimed.toolName
       ];
       if (
+        (claimed.connectionId &&
+          toolConnectionAttribution(
+            originalTool,
+            claimed.input,
+            claimed.toolCallId,
+          )?.connectionId !== claimed.connectionId) ||
         !originalTool ||
         typeof originalTool.execute !== "function" ||
         (typeof originalTool._serverId === "string" &&
@@ -1912,6 +1920,17 @@ chatV2.post("/", async (c) => {
         : undefined;
     };
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
+    if (
+      (body.messages?.length ?? 0) <= 1 &&
+      builtInAuthHeader &&
+      typeof body.projectId === "string"
+    )
+      void refreshConnectionProfiles(
+        mcpClientManager,
+        builtInAuthHeader.replace(/^Bearer\s+/i, ""),
+        body.projectId,
+      );
+
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
       body.projectId ?? "",
@@ -1940,6 +1959,11 @@ chatV2.post("/", async (c) => {
       );
       const event = createLocalScopeStepUpContinuation({
         bindingKey: scopeStepUpBindingKey,
+        connectionId: toolConnectionAttribution(
+          preparedTools[toolName],
+          toolInput,
+          info.toolCallId,
+        )?.connectionId,
         serverId: info.serverId,
         ...(resourceUrl ? { resourceUrl } : {}),
         toolCallId: info.toolCallId,
@@ -2195,7 +2219,12 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace: withPageToolsAtTurn(turnTrace),
+                turnTrace: withPageToolsAtTurn({
+                  ...turnTrace,
+                  ...(prepared.connectionsAtTurn
+                    ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                    : {}),
+                }),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -2300,7 +2329,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace: withPageToolsAtTurn(turnTrace),
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -2529,7 +2563,12 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace: withPageToolsAtTurn(turnTrace),
+              turnTrace: withPageToolsAtTurn({
+                ...turnTrace,
+                ...(prepared.connectionsAtTurn
+                  ? { connectionsAtTurn: prepared.connectionsAtTurn }
+                  : {}),
+              }),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

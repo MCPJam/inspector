@@ -29,6 +29,12 @@ import {
 } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  hasUnknownVocabularyValue,
+  parseVocabularyValue,
+  unknownVocabularyMessage,
+  vocabularyForHeader,
+} from "./vocabulary-header.js";
 
 export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
 
@@ -40,21 +46,14 @@ export type EvalVocabulary = 1 | 2;
  * caller turns that into a `VALIDATION_ERROR`, rather than guessing a
  * vocabulary for a client that asked for one we do not have.
  *
- * Only an ABSENT header defaults to 1. An explicitly empty one is refused
- * along with every other unrecognised value: accepting it would make blank a
- * third, undocumented spelling of "1", so a client whose header value came out
- * empty by accident would silently receive the legacy projection instead of
- * the validation error this negotiation promises. The refusal is the whole
- * point of the header — a vocabulary mismatch has to be loud.
+ * The mechanics live in `./vocabulary-header.ts`, shared with the API-noun
+ * header: what the two negotiate differs entirely, how they negotiate must
+ * not.
  */
 export function parseEvalVocabulary(
   raw: string | undefined,
 ): EvalVocabulary | null {
-  if (raw === undefined) return 1;
-  const value = raw.trim();
-  if (value === "1") return 1;
-  if (value === "2") return 2;
-  return null;
+  return parseVocabularyValue(raw);
 }
 
 /**
@@ -66,34 +65,18 @@ export function parseEvalVocabulary(
  * property a cache can see.
  */
 export function vocabularyOf(c: Context): EvalVocabulary {
-  const parsed = parseEvalVocabulary(c.req.header(EVAL_VOCABULARY_HEADER));
-  appendVary(c);
-  return parsed ?? 1;
+  return vocabularyForHeader(c, EVAL_VOCABULARY_HEADER);
 }
 
 /** True when the request named a vocabulary this deployment does not speak. */
 export function hasUnknownVocabulary(c: Context): boolean {
-  return parseEvalVocabulary(c.req.header(EVAL_VOCABULARY_HEADER)) === null;
+  return hasUnknownVocabularyValue(c, EVAL_VOCABULARY_HEADER);
 }
 
 /** The message a refused header gets, naming both valid values. */
-export const UNKNOWN_VOCABULARY_MESSAGE =
-  `Unknown ${EVAL_VOCABULARY_HEADER}: send "1" (today's contract, the default ` +
-  `when the header is absent) or "2".`;
-
-function appendVary(c: Context): void {
-  const existing = c.res?.headers?.get("Vary");
-  if (!existing) {
-    c.header?.("Vary", EVAL_VOCABULARY_HEADER);
-    return;
-  }
-  const names = existing
-    .split(",")
-    .map((name) => name.trim().toLowerCase())
-    .filter(Boolean);
-  if (names.includes(EVAL_VOCABULARY_HEADER)) return;
-  c.header?.("Vary", `${existing}, ${EVAL_VOCABULARY_HEADER}`);
-}
+export const UNKNOWN_VOCABULARY_MESSAGE = unknownVocabularyMessage(
+  EVAL_VOCABULARY_HEADER,
+);
 
 /**
  * Project one role value into the spelling the caller negotiated.

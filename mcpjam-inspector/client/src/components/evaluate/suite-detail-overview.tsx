@@ -21,12 +21,17 @@ import {
 import {
   useEvalGeneration,
   evalSuiteKey,
+  followAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
+import {
+  markImportReviewSeen,
+  reopenImportReview,
+} from "@/lib/mcpjam-agent/eval-workspace";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Code2,
@@ -72,17 +77,14 @@ import { cancellableRunIds, getEffectiveSuiteServers } from "../evals/helpers";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../evals/constants";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
-  buildSuiteRunHistoryRows,
+  buildSuiteRunHistoryRowsFromMetrics,
   buildSuiteTestCaseRows,
   suiteRunBlockedReason,
   runTimestamp,
 } from "./suite-detail-model";
-import type {
-  EvalCase,
-  EvalIteration,
-  EvalSuite,
-  EvalSuiteRun,
-} from "../evals/types";
+import type { EvalCase, EvalSuite, EvalSuiteRun } from "../evals/types";
+import type { RunMetricsByRun } from "../evals/run-metrics";
+import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 
@@ -108,7 +110,7 @@ const EMPTY_CASE_ACTIONS = [
   {
     id: "import",
     title: "Import",
-    description: "Markdown → draft cases",
+    description: "Document → draft cases",
     Icon: FileUp,
   },
 ] as const;
@@ -120,7 +122,7 @@ export function SuiteDetailOverview({
   cases,
   runs,
   runsLoading,
-  allIterations,
+  metricsByRun,
   hostNamesById,
   environments,
   onRerun,
@@ -146,6 +148,8 @@ export function SuiteDetailOverview({
   readOnlyConfig = false,
   configLocked = false,
   projectId = null,
+  importJobId = null,
+  onClearImportJob,
   onGeneratingChange,
 }: {
   suite: EvalSuite;
@@ -154,7 +158,8 @@ export function SuiteDetailOverview({
   cases: EvalCase[];
   runs: EvalSuiteRun[];
   runsLoading: boolean;
-  allIterations: EvalIteration[];
+  /** One metrics object per run — see `evals/run-metrics.ts`. */
+  metricsByRun: RunMetricsByRun;
   hostNamesById: Map<string, string | null>;
   environments?: SuiteRunReviewProps["environments"];
   onRerun: SuiteRunReviewProps["onStart"];
@@ -199,6 +204,23 @@ export function SuiteDetailOverview({
   configLocked?: boolean;
   /** Threaded from `EvaluateTab`; never resolved in the browser. */
   projectId?: string | null;
+  /**
+   * An authoring job whose drafts this page should open on (`?importJob=`).
+   *
+   * An API import hands its unfinished cases back as a link, which a person
+   * may open in a browser that never ran the import — so the drafts are read
+   * from the job itself rather than from this tab's memory.
+   */
+  importJobId?: string | null;
+  /**
+   * Drop `?importJob=` from the URL.
+   *
+   * Leaving the review has to clear the param as well as mark the drafts seen:
+   * the surface opens on `importJobId` alone, so marking them seen left the
+   * reader on the review with the breadcrumb doing nothing, and the only way
+   * out was to edit the address bar.
+   */
+  onClearImportJob?: () => void;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
   /**
@@ -240,14 +262,14 @@ export function SuiteDetailOverview({
 
   const historyRows = useMemo(
     () =>
-      buildSuiteRunHistoryRows(
+      buildSuiteRunHistoryRowsFromMetrics(
         runs,
-        allIterations,
+        metricsByRun,
         suite,
         hostNamesById,
         projectEnvironmentsEnabled,
       ),
-    [runs, allIterations, suite, hostNamesById, projectEnvironmentsEnabled],
+    [runs, metricsByRun, suite, hostNamesById, projectEnvironmentsEnabled],
   );
   const filterOptions = useMemo(() => {
     const options = dependentFilterOptions(historyRows, {
@@ -276,14 +298,13 @@ export function SuiteDetailOverview({
     hiddenRunCount,
     filteredRunIds,
   } = useMemo(() => {
-    const details = new Map(
+    const details = new Map<string, ProjectRunHistoryDetail>(
       runs.map((run) => [
         run._id,
         {
           run,
-          iterations: allIterations.filter(
-            (item) => item.suiteRunId === run._id,
-          ),
+          iterations: [],
+          metrics: metricsByRun.get(run._id) ?? null,
         },
       ]),
     );
@@ -347,7 +368,7 @@ export function SuiteDetailOverview({
     };
   }, [
     runs,
-    allIterations,
+    metricsByRun,
     suite,
     historyRows,
     filterOptions,
@@ -393,30 +414,101 @@ export function SuiteDetailOverview({
    */
   const showRunHistory = runs.length > 0 || runsLoading;
   const hasRuns = runs.length > 0;
-  const hasGeneratedContent =
-    Boolean(generation?.drafts.length) || generation?.status === "running";
-  const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
+  // Waiting drafts are not cases: until one is added the suite is still empty,
+  // and the way out of empty is the same three choices either way.
+
 
   /**
    * Imported drafts get their OWN surface, the way generation does. They are
    * not in the suite and cannot run, so listing them beside real cases invited
    * exactly one reading: that the import had already landed.
+   *
+   * What marks a draft as imported is document provenance: the authoring job
+   * cites the file it read. Generation invents cases from the suite's tools and
+   * has nothing to cite, so it never reaches this surface.
    */
   const importedDrafts =
-    generation?.drafts.filter((draft) => draft.markdownImport) ?? [];
-  const [importReviewClosed, setImportReviewClosed] = useState(false);
-  const hadImportedDrafts = useRef(importedDrafts.length > 0);
+    generation?.drafts.filter((draft) => draft.authoring?.source) ?? [];
   useEffect(() => {
-    // A fresh import reopens the review; leaving it closed would strand the
-    // drafts with no way back to them.
-    if (importedDrafts.length && !hadImportedDrafts.current)
-      setImportReviewClosed(false);
-    hadImportedDrafts.current = importedDrafts.length > 0;
-  }, [importedDrafts.length]);
+    // Linked-to jobs are followed, not assumed: the poll stages whatever the
+    // job still holds, and committed drafts are already excluded from it, so
+    // the surface opens on exactly the cases that still need a person.
+    if (!projectId || !importJobId) return;
+    // `takeOver`, because opening a review link IS the request to review that
+    // job. Without it the link stood down to whatever id the suite still
+    // held, and a failed job keeps its id: a colleague's link then showed the
+    // reader their own dead import instead of the job they were sent.
+    void followAuthoringJob({ projectId, suiteId: suite._id }, importJobId, {
+      takeOver: true,
+      // `?importJob=` is only ever handed out by an import.
+      source: "import",
+    });
+  }, [projectId, importJobId, suite._id]);
+  /**
+   * An import lands on its drafts; a later visit lands on the suite.
+   *
+   * The difference is whether the reader has been shown THESE drafts, which is
+   * a fact about the import and not about this component — the page unmounts
+   * on navigation and on reload, so component state made a dismissal look like
+   * a fresh import and a fresh import look like one already dismissed. The
+   * store answers it instead. A review link is always the request to review.
+   */
+  // A running import belongs here from the moment it starts, before it has
+  // produced a draft: otherwise the wait happens behind "No cases yet", which
+  // is a page about a suite that has nothing in it rather than one about the
+  // document being read.
+  const importRunning =
+    generation?.status === "running" &&
+    (generation?.authoringSource === "import" ||
+      generation?.authoringSource === "markdown");
   const reviewingImport = Boolean(
-    projectId && importedDrafts.length && !importReviewClosed,
+    projectId &&
+      (importedDrafts.length || importRunning) &&
+      (Boolean(importJobId) ||
+        importRunning ||
+        generation?.reviewRequestId !== generation?.reviewSeenId),
   );
-  const exitImportReview = useCallback(() => setImportReviewClosed(true), []);
+  // Declared here, not beside `hasCases`, because it depends on the import
+  // surface below.
+  const showEmptyCasesHero = !hasCases && !reviewingImport;
+  /**
+   * Reveal imported drafts one at a time.
+   *
+   * The worker authors five cases per model call, so a six-case document lands
+   * as five at once and then one — which reads as a stall and then a dump. The
+   * drafts are already written by then; this only paces how they appear, so
+   * the reader sees the list being built rather than replaced.
+   */
+  const [visibleDraftIds, setVisibleDraftIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const nextDraftId = importedDrafts.find(
+    (draft) => !visibleDraftIds.has(draft.id),
+  )?.id;
+  useEffect(() => {
+    if (!nextDraftId) return;
+    const timer = window.setTimeout(
+      () => setVisibleDraftIds((shown) => new Set([...shown, nextDraftId])),
+      220,
+    );
+    return () => window.clearTimeout(timer);
+  }, [nextDraftId]);
+  // Read through a ref, never listed as a dependency. The parent passes an
+  // inline arrow, so its identity changes every render; as a dependency it
+  // re-created `exitImportReview`, which re-ran the effect below, which sets
+  // the parent's state, which re-rendered the parent: an update loop that
+  // React stops with "Maximum update depth exceeded", shown as "Could not
+  // load Testing" the moment an import started.
+  const onClearImportJobRef = useRef(onClearImportJob);
+  useEffect(() => {
+    onClearImportJobRef.current = onClearImportJob;
+  }, [onClearImportJob]);
+  const exitImportReview = useCallback(() => {
+    if (projectId) markImportReviewSeen({ projectId, suiteId: suite._id });
+    // Both, or the reader does not leave: `reviewingImport` is true whenever
+    // the param is set, whatever the store says about drafts being seen.
+    onClearImportJobRef.current?.();
+  }, [projectId, suite._id]);
   useEffect(() => {
     if (!reviewingImport) return;
     onGeneratingChange?.({
@@ -516,6 +608,7 @@ export function SuiteDetailOverview({
       >
         <div className="mx-auto w-full max-w-5xl">
           <EvalGeneratedDrafts
+            visibleDraftIds={visibleDraftIds}
             key={`${projectId}:${suite._id}:import`}
             projectId={projectId}
             suiteId={suite._id}
@@ -573,6 +666,25 @@ export function SuiteDetailOverview({
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {importedDrafts.length && !reviewingImport ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              data-testid="suite-resume-import-review"
+              // Clearing the marker is what reopens the review: the reader is
+              // asking to be shown these drafts again.
+              onClick={() =>
+                projectId &&
+                reopenImportReview({ projectId, suiteId: suite._id })
+              }
+            >
+              {importedDrafts.length === 1
+                ? "Review 1 draft case"
+                : `Review ${importedDrafts.length} draft cases`}
+            </Button>
+          ) : null}
           {onSetupSdk && (
             <Button
               type="button"
@@ -668,7 +780,7 @@ export function SuiteDetailOverview({
 
           <SuiteRunHistorySnapshot
             runs={runs.filter((run) => filteredRunIds.has(run._id))}
-            allIterations={allIterations}
+            metricsByRun={metricsByRun}
           />
 
           {filteredRows.length === 0 ? (
@@ -679,8 +791,8 @@ export function SuiteDetailOverview({
               {runsLoading
                 ? "Loading runs…"
                 : hasRuns
-                  ? "No runs match these filters."
-                  : "No runs yet."}
+                ? "No runs match these filters."
+                : "No runs yet."}
             </div>
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
@@ -701,8 +813,6 @@ export function SuiteDetailOverview({
                         historyRows={rowMap}
                         hostNamesById={hostNamesById}
                         onOpen={() => onRunClick(representative._id)}
-                        onCancelRun={onCancelRun}
-                        cancellingRunId={cancellingRunId}
                       />
                     );
                   })}
@@ -732,7 +842,9 @@ export function SuiteDetailOverview({
           onGenerate={() => void handleGenerateCases()}
           canGenerate={canGenerate}
           generateDisabledReason={generateTestCasesDisabledReason}
-          isGenerating={isGeneratingTestCases}
+          isGenerating={
+            isGeneratingTestCases || generation?.status === "running"
+          }
           onImport={onImportCases}
           fillRemaining={!showRunHistory}
         />
@@ -835,31 +947,6 @@ export function SuiteDetailOverview({
             ))}
           </ul>
         </section>
-      ) : !readOnlyConfig ? (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onDescribeCases ?? onEditCases}
-          >
-            Describe another case
-          </Button>
-          {onGenerateTestCases && (
-            <GenerateCasesButton
-              onGenerate={handleGenerateCases}
-              canGenerate={canGenerate}
-              disabledReason={generateTestCasesDisabledReason}
-              isGenerating={
-                isGeneratingTestCases || generation?.status === "running"
-              }
-            />
-          )}
-          {onImportCases && (
-            <Button variant="outline" size="sm" onClick={onImportCases}>
-              Import cases
-            </Button>
-          )}
-        </div>
       ) : null}
 
       <Dialog
@@ -899,57 +986,6 @@ export function SuiteDetailOverview({
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function GenerateCasesButton({
-  onGenerate,
-  canGenerate,
-  disabledReason,
-  isGenerating,
-}: {
-  onGenerate: () => void;
-  canGenerate: boolean;
-  disabledReason?: string;
-  isGenerating: boolean;
-}) {
-  const blocked = isGenerating
-    ? "Generating test cases…"
-    : !canGenerate
-      ? (disabledReason ?? "Configure suite servers before generating cases.")
-      : null;
-
-  const button = (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      className="h-8 gap-1.5"
-      data-testid="suite-detail-generate-cases"
-      disabled={Boolean(blocked)}
-      aria-busy={isGenerating}
-      onClick={onGenerate}
-    >
-      {isGenerating ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-      ) : (
-        <Sparkles className="size-3.5 shrink-0" aria-hidden />
-      )}
-      Generate
-    </Button>
-  );
-
-  if (!blocked) return button;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">{button}</span>
-      </TooltipTrigger>
-      <TooltipContent variant="muted" side="bottom" className="max-w-[16rem]">
-        {blocked}
-      </TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -1012,16 +1048,16 @@ export function SuiteEmptyCasesHero({
               action.id === "describe"
                 ? !onDescribe
                 : action.id === "generate"
-                  ? !onGenerate || !canGenerate || isGenerating
-                  : !onImport;
+                ? !onGenerate || !canGenerate || isGenerating
+                : !onImport;
             const generateTooltip =
               action.id === "generate"
                 ? isGenerating
                   ? "Generating test cases…"
                   : !canGenerate
-                    ? (generateDisabledReason ??
-                      "Configure suite servers before generating cases.")
-                    : null
+                  ? generateDisabledReason ??
+                    "Configure suite servers before generating cases."
+                  : null
                 : null;
             const button = (
               <button

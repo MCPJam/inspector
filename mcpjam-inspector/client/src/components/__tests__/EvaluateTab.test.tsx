@@ -1146,15 +1146,15 @@ describe("EvaluateTab", () => {
     /*
      * AN AGENT COMMAND IS A SECOND DOOR INTO THE SAME MUTATIONS.
      *
-     * The CI-owned lock lives in the rendered controls — withheld callbacks, a
-     * disabled fieldset, a withdrawn Delete. An agent command passes none of
-     * them: it resolves a suite by name and calls the handler directly. So a
-     * lock that only hides affordances leaves `case.create` and `suite.delete`
-     * — both in the platform's locked set — reachable, and the agent gets a
-     * `409` it can do nothing with.
+     * The CI-owned lock lives in the rendered controls — withheld callbacks and
+     * a disabled fieldset. An agent command passes none of them: it resolves a
+     * suite by name and calls the handler directly. So a lock that only hides
+     * affordances leaves `case.create` — in the platform's locked set —
+     * reachable, and the agent gets a `409` it can do nothing with.
      *
-     * `resolveSuiteEntry` now takes a REQUIRED intent, so a command added later
-     * cannot compile without deciding which of these two groups it is in.
+     * `resolveSuiteEntry` takes a REQUIRED intent, so a command added later
+     * cannot compile without deciding which of the two groups it is in:
+     * `"edit_config"` writes what CI owns, `"lifecycle"` does not.
      */
     it("generateEvalTests refuses a CI-owned suite instead of earning a 409", async () => {
       mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
@@ -1173,7 +1173,10 @@ describe("EvaluateTab", () => {
       expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
     });
 
-    it("deleteEvalSuite refuses a CI-owned suite instead of earning a 409", async () => {
+    it("deleteEvalSuite deletes a CI-owned suite — removing a row is not editing it", async () => {
+      // The other side of the same rule. Generation above writes cases the
+      // next sync owns; deleting writes nothing CI owns, and it is the only
+      // cleanup a suite minted by `createEvalRunReporter()` has (issue #5381).
       withCiOwnedSuiteA();
       render(<EvaluateTab projectId="ws-1" />);
 
@@ -1182,12 +1185,11 @@ describe("EvaluateTab", () => {
         payload: { suite: "Suite suite-a" },
       });
 
-      expect(response).toMatchObject({
-        status: "error",
-        error: { code: "invalid_request" },
-      });
-      expect(mocks.setSuiteToDelete).not.toHaveBeenCalled();
-      expect(mocks.confirmDelete).not.toHaveBeenCalled();
+      expect(response).toMatchObject({ status: "success" });
+      expect(mocks.setSuiteToDelete).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-a" }),
+      );
+      expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
     });
 
     it("still runs a CI-owned suite — the lock is on edits, not on the suite", async () => {
@@ -1200,8 +1202,9 @@ describe("EvaluateTab", () => {
         payload: { suite: "Suite suite-a" },
       });
 
-      // The guard against over-refusing, and the reason the two above mean
-      // something: `"read"` is not a weaker check, it is a different question.
+      // The guard against over-refusing, and the reason the refusal above
+      // means something: `"lifecycle"` is not a weaker check, it is a
+      // different question.
       expect(response).toMatchObject({ status: "success" });
     });
 

@@ -78,6 +78,10 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));
 vi.mock("@/components/project-environments/environment-picker", () => ({
   MAX_SUITE_ENVIRONMENTS: 10,
   EnvironmentPicker: ({ triggerTestId }: { triggerTestId?: string }) => (
@@ -484,4 +488,44 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Claude")).toBeInTheDocument();
   });
+});
+
+describe("eval zero-server notice", () => {
+  it.each(["named", "adhoc"])(
+    "shows for a %s environment without a group",
+    (origin) => {
+      environmentsRef.current = [
+        {
+          environmentId: "env-1",
+          projectId: "proj-1",
+          hostId: "host-1",
+          name: origin === "named" ? "Saved" : undefined,
+          origin,
+          revision: 1,
+        },
+      ];
+      renderBar({ environmentIds: ["env-1"] });
+      expect(screen.getByTestId("suite-env-no-servers-hint")).toHaveTextContent(
+        "No server group picked. Runs will have no tools.",
+      );
+    },
+  );
+  it.each([{ serverAttachmentId: "group-1" }, { pluginVersionIds: ["pin-1"] }])(
+    "does not claim no tools for explicit picks %j",
+    (pick) => {
+      environmentsRef.current = [
+        {
+          environmentId: "env-1",
+          projectId: "proj-1",
+          hostId: "host-1",
+          name: "Saved",
+          origin: "named",
+          revision: 1,
+          ...pick,
+        },
+      ];
+      renderBar({ environmentIds: ["env-1"] });
+      expect(screen.queryByTestId("suite-env-no-servers-hint")).toBeNull();
+    },
+  );
 });
