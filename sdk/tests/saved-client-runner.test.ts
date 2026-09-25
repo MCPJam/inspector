@@ -677,7 +677,24 @@ describe("saved client model selection", () => {
     vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
       withSelection({ modelId, source: "org" })
     );
-    await expect(run()).rejects.toThrow(/client modelSelection/);
+    await expect(run()).rejects.toThrow(/hostConfigV2: modelSelection/);
+  });
+
+  it("refuses a hosted selection that names a different model than modelId", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const selected = input();
+    await expect(
+      createSavedClientRunner(selected, new AbortController().signal)
+    ).rejects.toThrow(
+      `hostConfigV2: modelSelection.modelId ("openai/gpt-5") must equal modelId ("${modelId}")`
+    );
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
   });
 
   it("runs a hosted selection exactly like no selection", async () => {
