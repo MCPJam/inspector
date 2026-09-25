@@ -742,11 +742,14 @@ function projectLogArray(
       ? [...records.slice(0, half), ...records.slice(-half)]
       : records;
   let omitted = records.length - candidates.length;
-  let bytes = 0;
+  // The array's brackets, then each event and the comma before it.
+  let bytes = 2;
   const kept: Record<string, unknown>[] = [];
   for (const record of candidates) {
     const projected = project(record);
-    const size = Buffer.byteLength(JSON.stringify(projected), "utf8");
+    const size =
+      Buffer.byteLength(JSON.stringify(projected), "utf8") +
+      (kept.length > 0 ? 1 : 0);
     if (bytes + size > MAX_LOG_ARRAY_BYTES) {
       omitted += 1;
       continue;

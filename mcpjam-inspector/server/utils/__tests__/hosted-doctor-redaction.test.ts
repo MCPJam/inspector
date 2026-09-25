@@ -1581,6 +1581,48 @@ describe("hosted connection failure logs", () => {
     expect(projected._httpLogsOmitted).toBeGreaterThan(0);
   });
 
+  it("counts the array's own delimiters against its size bound", async () => {
+    const { projectHostedConnectFailureLogs } =
+      await import("../hosted-connect-failure.js");
+    const { MAX_LOG_ARRAY_BYTES } =
+      await import("../hosted-upstream-projection.js");
+    const event = (serverName: string) => ({
+      eventId: "event",
+      serverId: "srv_1",
+      serverName,
+      timestamp: "2026-09-25T00:00:00.000Z",
+      direction: "receive",
+      message: { jsonrpc: "2.0", method: "notifications/message" },
+    });
+    const encodedSize = (serverName: string) =>
+      Buffer.byteLength(
+        JSON.stringify(
+          (
+            projectHostedConnectFailureLogs({
+              _rpcLogs: [event(serverName)],
+            }) as any
+          )._rpcLogs[0],
+        ),
+        "utf8",
+      );
+    const sized = (bytes: number) => event("n".repeat(bytes - encodedSize("")));
+
+    for (const events of [
+      [sized(MAX_LOG_ARRAY_BYTES)],
+      [sized(MAX_LOG_ARRAY_BYTES / 2), sized(MAX_LOG_ARRAY_BYTES / 2)],
+    ]) {
+      const projected = projectHostedConnectFailureLogs({
+        _rpcLogs: events,
+      }) as any;
+      expect(
+        Buffer.byteLength(JSON.stringify(projected._rpcLogs), "utf8"),
+      ).toBeLessThanOrEqual(MAX_LOG_ARRAY_BYTES);
+      expect(projected._rpcLogs.length + projected._rpcLogsOmitted).toBe(
+        events.length,
+      );
+    }
+  });
+
   it("keeps a failure's flags and scope challenge within their projection", async () => {
     const { projectHostedConnectFailureDetails } =
       await import("../hosted-connect-failure.js");
