@@ -7,7 +7,7 @@ export const serverCheckScope = new AsyncLocalStorage<AbortSignal>();
 export function withServerCheckSignal(baseFetch: typeof fetch): typeof fetch {
   const scope = serverCheckScope.getStore();
   if (!scope) return baseFetch;
-  return (input, init) => {
+  return async (input, init) => {
     scope.throwIfAborted();
     const original =
       init?.signal ?? (input instanceof Request ? input.signal : undefined);

@@ -1,3 +1,4 @@
+import { serverCheckQueue } from "@/lib/server-check-queue";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -3713,6 +3714,37 @@ describe("useServerState auth mode regressions", () => {
     });
     initiateOAuthMock.mockResolvedValue({ success: true });
     mockConvexQuery.mockResolvedValue(null);
+  });
+
+  it.each(["disconnect", "first-connect"])("clears stale reconnect restoration on %s", async (action) => {
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(deleteServer).mockResolvedValue({ success: true } as any);
+    reconnectServerMock.mockResolvedValue({ success: true, initInfo: null });
+    const appState = createAppState();
+    appState.servers["demo-server"].connectionStatus = "connected";
+    appState.projects.default.servers["demo-server"].connectionStatus = "connected";
+    const dispatch = vi.fn();
+    const { result, unmount } = renderUseServerState(dispatch, appState);
+    const cancelProbe = async () => {
+      const check = serverCheckQueue.run(
+        { projectId: "project_default", serverName: "demo-server", identity: "test" },
+        async () => "unused",
+      );
+      const cancelled = expect(check).rejects.toMatchObject({ name: "AbortError" });
+      serverCheckQueue.cancelServer("project_default", "demo-server");
+      await cancelled;
+    };
+    await act(async () => { await result.current.handleReconnect("demo-server"); });
+    await act(cancelProbe);
+    expect(dispatch).toHaveBeenCalledWith({ type: "CONNECT_CANCELLED", name: "demo-server", wasConnected: true });
+    dispatch.mockClear();
+    await act(async () => {
+      if (action === "disconnect") await result.current.handleDisconnect("demo-server");
+      else await result.current.handleConnect({ name: "demo-server", type: "http", url: "https://example.com/mcp", useOAuth: false });
+    });
+    await act(cancelProbe);
+    expect(dispatch).toHaveBeenCalledWith({ type: "CONNECT_CANCELLED", name: "demo-server", wasConnected: false });
+    unmount();
   });
 
   it("dispatches explicit non-OAuth success when updating an OAuth server to direct auth", async () => {

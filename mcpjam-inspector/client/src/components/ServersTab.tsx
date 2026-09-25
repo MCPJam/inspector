@@ -758,6 +758,7 @@ export function ServersTab({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
+    catalogLoaded: viewProjectServersList !== undefined,
     suspendAutoConnect,
   });
 

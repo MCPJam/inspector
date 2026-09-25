@@ -3505,6 +3505,7 @@ export function useServerState({
       }
 
       const mcpConfig = toMCPConfig(formData);
+      checkWasConnectedRef.current.set(formData.name, false);
       dispatch({
         type: "CONNECT_REQUEST",
         name: formData.name,
@@ -4843,6 +4844,7 @@ export function useServerState({
 
   const handleDisconnect = useCallback(
     async (serverName: string) => {
+      checkWasConnectedRef.current.delete(serverName);
       const queuedScope = tryResolveProjectServer(serverName);
       if (HOSTED_MODE && queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);

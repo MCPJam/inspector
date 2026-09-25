@@ -173,7 +173,9 @@ describe("shared server check admission", () => {
     );
     await wrapped("https://server.example");
     controller.abort();
-    expect(() => wrapped("https://server.example")).toThrow();
+    await expect(wrapped("https://server.example")).rejects.toMatchObject({
+      name: "AbortError",
+    });
     expect(base).toHaveBeenCalledOnce();
   });
 });

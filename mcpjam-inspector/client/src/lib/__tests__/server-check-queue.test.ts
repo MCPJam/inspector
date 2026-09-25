@@ -138,6 +138,18 @@ describe("server check scheduler", () => {
     );
   });
 
+  it("clears undispatched automatic markers only for the disabled project", async () => {
+    const queue = new ServerCheckQueue();
+    queue.markAutomatic("project", ["manual"]);
+    queue.markAutomatic("other", ["auto"]);
+    queue.setAutomaticEnabled("project", false);
+    await expect(queue.run(options("manual"), async () => "ok")).resolves.toBe("ok");
+    const other = queue.run({ ...options("auto"), projectId: "other" }, async () => "unused");
+    const cancelled = expect(other).rejects.toMatchObject({ name: "AbortError" });
+    queue.cancelAutomatic("other");
+    await cancelled;
+  });
+
   it("cancels automatic waiting work without cancelling a manual check", async () => {
     const queue = new ServerCheckQueue();
     queue.markAutomatic("project", ["auto"]);

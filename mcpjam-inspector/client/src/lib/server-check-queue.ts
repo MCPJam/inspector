@@ -48,6 +48,9 @@ export class ServerCheckQueue {
     if (enabled) this.automaticDisabled.delete(projectId);
     else {
       this.automaticDisabled.add(projectId);
+      for (const key of this.automatic) {
+        if (JSON.parse(key)[0] === projectId) this.automatic.delete(key);
+      }
       this.cancelAutomatic(projectId);
     }
   }

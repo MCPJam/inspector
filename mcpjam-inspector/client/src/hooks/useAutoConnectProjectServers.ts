@@ -156,6 +156,7 @@ export function useAutoConnectProjectServers({
   hostScopeKey,
   serverNames,
   suspendAutoConnect = false,
+  catalogLoaded = true,
 }: {
   projectId: string | null;
   /**
@@ -168,6 +169,8 @@ export function useAutoConnectProjectServers({
   hostScopeKey: string | null;
   /** Every server in the project catalog, by runtime name. */
   serverNames: ReadonlyArray<string>;
+  /** True only after the project catalog query has returned, including an empty result. */
+  catalogLoaded?: boolean;
   /**
    * Ignore host transitions while a blocking flow, such as first-run
    * onboarding, owns the screen. Those transitions come from hydration and
@@ -187,9 +190,9 @@ export function useAutoConnectProjectServers({
     if (!suspendAutoConnect && hostScopeKey != null) serverCheckQueue.setScope(projectId, hostScopeKey);
     const order = loadServerOrder(sharedAppState.activeProjectId) ?? serverNames;
     serverCheckQueue.setOrder(projectId, [...order]);
-    serverCheckQueue.keepServers(projectId, [...serverNames]);
+    if (catalogLoaded) serverCheckQueue.keepServers(projectId, [...serverNames]);
     serverCheckQueue.setAutomaticEnabled(projectId, enabled);
-  }, [projectId, enabled, serverNames, sharedAppState.activeProjectId, hostScopeKey, suspendAutoConnect]);
+  }, [projectId, enabled, serverNames, sharedAppState.activeProjectId, hostScopeKey, suspendAutoConnect, catalogLoaded]);
   // Stable key for the catalog, so reordering never looks like a change.
   const catalogNamesKey = useMemo(
     () => serverNames.slice().sort().join("\0"),
