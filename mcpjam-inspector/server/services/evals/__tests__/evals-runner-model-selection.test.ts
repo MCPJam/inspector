@@ -226,6 +226,7 @@ describe("eval runner reads saved model selections", () => {
       model: string;
       provider: string;
       selection?: ModelSelection;
+      advancedConfig?: Record<string, unknown>;
     },
     options: Record<string, unknown> = {},
   ) {
@@ -643,6 +644,237 @@ describe("eval runner reads saved model selections", () => {
       const body = requestTo("/stream");
       expect(body).toMatchObject({ evalIterationId: "iter-1" });
       expect(body).not.toHaveProperty("evalRunId");
+    });
+  });
+
+  describe("saved selection settings reach the provider call", () => {
+    /** A suite host config whose default temperature must NOT win. */
+    const HOST_DEFAULT = { suiteHostConfig: { temperature: 0.7 } };
+    const LOCAL_GPT4O: ModelSelection = {
+      modelId: "openai/gpt-4o",
+      source: "local",
+      connectionRef: { kind: "localProvider", providerKey: "openai" },
+      nativeModelId: "gpt-4o",
+      settings: { temperature: 0.2 },
+      fallback: { provider: "none", model: "none" },
+    };
+    const LOCAL_GPT5_EFFORT: ModelSelection = {
+      modelId: "openai/gpt-5",
+      source: "local",
+      connectionRef: { kind: "localProvider", providerKey: "openai" },
+      nativeModelId: "gpt-5",
+      settings: { reasoningEffort: "high" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const localOptions = {
+      modelApiKeys: { openai: "sk-local" },
+      orgModelConfigTarget: { projectId: "project-1" },
+      ...HOST_DEFAULT,
+    };
+    const streamTextCall = () =>
+      streamTextMock.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+
+    it("local: the saved temperature (0.2) reaches streamText, over the host default", async () => {
+      await run(
+        { model: "openai/gpt-4o", provider: "openai", selection: LOCAL_GPT4O },
+        localOptions,
+      );
+      expect(streamTextMock).toHaveBeenCalledTimes(1);
+      expect(streamTextCall()?.temperature).toBe(0.2);
+    });
+
+    it("precedence: a per-run override beats the saved selection", async () => {
+      await run(
+        {
+          model: "openai/gpt-4o",
+          provider: "openai",
+          selection: LOCAL_GPT4O,
+          advancedConfig: { temperature: 0.5 },
+        },
+        localOptions,
+      );
+      expect(streamTextCall()?.temperature).toBe(0.5);
+    });
+
+    it("precedence: the host default applies when the selection sets none", async () => {
+      const { settings: _settings, ...noSettings } = LOCAL_GPT4O;
+      await run(
+        { model: "openai/gpt-4o", provider: "openai", selection: noSettings },
+        localOptions,
+      );
+      expect(streamTextCall()?.temperature).toBe(0.7);
+    });
+
+    it("local: a saved reasoning effort becomes provider options, with no temperature", async () => {
+      await run(
+        {
+          model: "openai/gpt-5",
+          provider: "openai",
+          selection: LOCAL_GPT5_EFFORT,
+        },
+        localOptions,
+      );
+      expect(streamTextMock).toHaveBeenCalledTimes(1);
+      expect(streamTextCall()?.providerOptions).toEqual({
+        openai: { reasoningEffort: "high" },
+      });
+      expect(streamTextCall()).not.toHaveProperty("temperature");
+    });
+
+    it("local: an effort the model has no control for fails the case, it does not run without it", async () => {
+      await expectRefused(
+        run(
+          {
+            model: "openai/gpt-4o",
+            provider: "openai",
+            selection: {
+              ...LOCAL_GPT4O,
+              settings: { reasoningEffort: "high" },
+            },
+          },
+          localOptions,
+        ),
+        "capability_missing",
+      );
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
+    it("hosted: the top-level temperature is the saved one, not the host default", async () => {
+      const hostedWithTemperature: ModelSelection = {
+        ...HOSTED,
+        settings: { temperature: 0.2 },
+      };
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: hostedWithTemperature,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" }, ...HOST_DEFAULT },
+      );
+      const body = requestTo("/stream");
+      expect(body.temperature).toBe(0.2);
+      expect(body.modelSelection).toEqual(hostedWithTemperature);
+    });
+
+    it("org cloud: the top-level temperature is the saved one too", async () => {
+      const orgWithTemperature: ModelSelection = {
+        ...ORG_OPENROUTER,
+        settings: { temperature: 0.2 },
+      };
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: orgWithTemperature,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" }, ...HOST_DEFAULT },
+      );
+      const body = requestTo("/stream/org");
+      expect(body.temperature).toBe(0.2);
+      expect(body.modelSelection).toEqual(orgWithTemperature);
+    });
+
+    it("org cloud: a saved reasoning effort is refused (the route cannot apply it)", async () => {
+      await expectRefused(
+        run(
+          {
+            model: SAME_ID,
+            provider: "openrouter",
+            selection: {
+              ...ORG_OPENROUTER,
+              settings: { reasoningEffort: "low" },
+            },
+          },
+          { orgModelConfigTarget: { projectId: "project-1" } },
+        ),
+        "capability_missing",
+      );
+      expect(requestTo("/stream/org")).toBeNull();
+    });
+  });
+
+  describe("local-runtime org connection: usage and execution record writeback", () => {
+    const ORG_OLLAMA_LOCAL: ModelSelection = {
+      modelId: "ollama/llama3",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_ollama_local_1" },
+      nativeModelId: "llama3",
+      settings: { temperature: 0.2 },
+      fallback: { provider: "none", model: "none" },
+    };
+
+    it("posts /stream/org/local-usage naming the iteration, with the selection and its record", async () => {
+      fetchMock.mockImplementation(async (url: string) =>
+        url === "https://example.convex.site/stream/org/resolve"
+          ? {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                ok: true,
+                runtimeLocation: "local",
+                provider: {
+                  providerKey: "ollama",
+                  baseUrl: "http://localhost:11434",
+                  modelIds: ["llama3"],
+                },
+              }),
+              text: async () => "",
+            }
+          : { ok: true, status: 200, text: async () => "" },
+      );
+      await run(
+        { model: "llama3", provider: "ollama", selection: ORG_OLLAMA_LOCAL },
+        {
+          orgModelConfigTarget: { projectId: "project-local-usage" },
+          suiteHostConfig: { temperature: 0.7 },
+        },
+      );
+      // The model ran here, with the saved temperature.
+      expect(streamTextMock).toHaveBeenCalledTimes(1);
+      expect(
+        (streamTextMock.mock.calls[0]?.[0] as Record<string, unknown>)
+          .temperature,
+      ).toBe(0.2);
+      await vi.waitFor(() =>
+        expect(requestTo("/stream/org/local-usage")).not.toBeNull(),
+      );
+      const body = requestTo("/stream/org/local-usage");
+      expect(body).toMatchObject({
+        projectId: "project-local-usage",
+        providerKey: "ollama",
+        model: "llama3",
+        sourceType: "eval",
+        evalIterationId: expect.any(String),
+        modelSelection: ORG_OLLAMA_LOCAL,
+      });
+      expect(body.execution).toEqual({
+        requested: ORG_OLLAMA_LOCAL,
+        resolved: {
+          rail: "local",
+          wireModelId: "llama3",
+          connectionRef: {
+            kind: "orgProvider",
+            id: "orgprov_ollama_local_1",
+          },
+          nativeModelId: "llama3",
+          offering: {
+            rail: "local",
+            providerKey: "ollama",
+            nativeModelId: "llama3",
+          },
+        },
+        effectiveSettings: { temperature: 0.2, maxOutputTokens: 0 },
+        attempts: [
+          {
+            rail: "local",
+            wireModelId: "llama3",
+            outcome: "ok",
+            at: expect.any(Number),
+          },
+        ],
+        upstreamModel: "gpt-4o",
+      });
     });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   swarmTargetBackendSelection,
   swarmTargetModelDefinition,
+  swarmTargetSettings,
 } from "../swarm-runner";
 
 const none = { provider: "none", model: "none" } as const;
@@ -144,5 +145,48 @@ describe("swarmTargetBackendSelection", () => {
         },
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("swarmTargetSettings", () => {
+  const hosted = (settings?: Record<string, unknown>) => ({
+    modelId: "anthropic/claude-haiku-4.5",
+    temperature: 0.7,
+    resolvedSelection: {
+      modelId: "anthropic/claude-haiku-4.5",
+      source: "hosted",
+      ...(settings ? { settings } : {}),
+      fallback: none,
+    },
+  });
+  const definitionOf = (target: Parameters<typeof swarmTargetSettings>[0]) =>
+    swarmTargetModelDefinition({ ...target, hosted: undefined });
+
+  it("legacy snapshot: the host's temperature, as before", () => {
+    const target = { modelId: "anthropic/claude-haiku-4.5", temperature: 0.7 };
+    expect(swarmTargetSettings(target, definitionOf(target))).toEqual({
+      temperature: 0.7,
+    });
+  });
+
+  it("the saved temperature wins over the host default (no conflicting top-level value)", () => {
+    const target = hosted({ temperature: 0.2 });
+    expect(swarmTargetSettings(target, definitionOf(target))).toEqual({
+      temperature: 0.2,
+    });
+  });
+
+  it("a saved effort is carried to the rail; the host default temperature yields", () => {
+    const target = hosted({ reasoningEffort: "high" });
+    expect(swarmTargetSettings(target, definitionOf(target))).toEqual({
+      reasoningEffort: "high",
+    });
+  });
+
+  it("a saved temperature AND effort cannot both be honoured: refused", () => {
+    const target = hosted({ reasoningEffort: "high", temperature: 0.2 });
+    expect(() => swarmTargetSettings(target, definitionOf(target))).toThrow(
+      /capability_missing/,
+    );
   });
 });
