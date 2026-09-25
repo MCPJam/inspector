@@ -2463,8 +2463,12 @@ function canonicalizeComputer(
  * temperature all throw) and rebuilt with a fixed key order. `modelId` stays
  * the required canonical id; the selection must agree with it — a mismatch is
  * an error, never resolved by picking one side.
+ *
+ * Exported (module-level only, not from a barrel) so the saved-client runner
+ * applies the identical validation + agreement check to a stored config
+ * before it rewrites `modelId`.
  */
-function canonicalizeModelSelection(
+export function canonicalizeModelSelection(
   modelId: string,
   value: HostConfigInputV2["modelSelection"]
 ): ModelSelection | undefined {

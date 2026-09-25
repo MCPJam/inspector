@@ -1,13 +1,13 @@
 import { PlatformApiClient } from "./platform/client.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import { HostRunner } from "./HostRunner.js";
-import { canonicalizeHostConfigV2 } from "./host-config/canonicalize.js";
+import {
+  canonicalizeHostConfigV2,
+  canonicalizeModelSelection,
+} from "./host-config/canonicalize.js";
 import { canonicalToPublic } from "./host-config/host.js";
 import type { HostConfigInputV2 } from "./host-config/types.js";
-import {
-  assertModelSelection,
-  type ModelSelectionSource,
-} from "./host-config/model-selection.js";
+import type { ModelSelectionSource } from "./host-config/model-selection.js";
 import type { SelectedEvalClient } from "./eval-reporting-types.js";
 
 export interface EvalSuiteClientOptions {
@@ -120,20 +120,22 @@ export async function createSavedClientRunner(
       "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, progressive discovery, or interactive approval). Use a client configured for code-connected MCP servers."
     );
   }
-  // The saved selection says whose credentials serve the model. This runner
-  // only has the hosted MCPJam rail, so anything else is refused here — never
+  // The saved selection says whose credentials serve the model. It gets the
+  // canonicalizer's own check first — valid shape, and `modelSelection.modelId`
+  // equal to the stored `modelId` — so a selection naming a different model
+  // than the one about to run is an error, not silently ignored. This runner
+  // only has the hosted MCPJam rail, so any other source is refused — never
   // downgraded to the bare id (which would run on MCPJam's key). A hosted
-  // selection runs exactly as a bare id did. The selection is then dropped:
-  // the id below is rewritten to its `mcpjam/` form, which a selection would
-  // (correctly) refuse to agree with.
+  // selection runs exactly as a bare id did. Only after those checks is the
+  // selection dropped: the id below is rewritten to its `mcpjam/` form, which
+  // the canonicalizer would (correctly) refuse to agree with.
   const savedSelection = (config as { modelSelection?: unknown })
     .modelSelection;
-  delete (config as { modelSelection?: unknown }).modelSelection;
   if (savedSelection !== undefined) {
-    const selection = assertModelSelection(
-      savedSelection,
-      "client modelSelection"
-    );
+    const selection = canonicalizeModelSelection(
+      config.modelId as string,
+      savedSelection as HostConfigInputV2["modelSelection"]
+    )!;
     if (selection.source !== "hosted") {
       throw new UnsupportedModelSelectionError(
         selection.source,
@@ -141,6 +143,7 @@ export async function createSavedClientRunner(
       );
     }
   }
+  delete (config as { modelSelection?: unknown }).modelSelection;
   let model = String(config.modelId ?? "").replace(/^mcpjam\//, "");
   if (!model.includes("/")) {
     if (model.startsWith("claude-")) model = `anthropic/${model}`;
