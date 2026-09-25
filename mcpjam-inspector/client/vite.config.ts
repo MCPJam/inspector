@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
+import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
@@ -165,16 +166,19 @@ export default defineConfig(({ mode }) => {
       // Rollup finishes this upload before Sentry's parallel `writeBundle`
       // (which deletes the maps) starts. It deletes nothing itself, so Sentry
       // still sees every map and remains the only thing that removes them.
-      posthogSourcemaps({
-        personalApiKey: env.POSTHOG_PERSONAL_API_KEY,
-        projectId: "212744",
-        sourcemaps: {
-          enabled: Boolean(env.POSTHOG_PERSONAL_API_KEY),
-          releaseName: "inspector-client",
-          releaseVersion: `${appVersion}+${buildSurface}`,
-          deleteAfterUpload: false,
-        },
-      }),
+      // A failed PostHog call warns instead of failing the build, like Sentry.
+      warnOnPosthogFailure(
+        posthogSourcemaps({
+          personalApiKey: env.POSTHOG_PERSONAL_API_KEY,
+          projectId: "212744",
+          sourcemaps: {
+            enabled: Boolean(env.POSTHOG_PERSONAL_API_KEY),
+            releaseName: "inspector-client",
+            releaseVersion: `${appVersion}+${buildSurface}`,
+            deleteAfterUpload: false,
+          },
+        }),
+      ),
       sentryVitePlugin({
         org: "mcpjam-gh",
         project: "inspector-client",

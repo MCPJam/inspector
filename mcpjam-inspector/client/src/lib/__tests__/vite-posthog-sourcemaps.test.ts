@@ -28,6 +28,12 @@ describe("vite config: PostHog source map upload", () => {
     expect(sentryAt).toBeGreaterThan(posthogAt);
   });
 
+  it("warns instead of failing the build when PostHog fails", () => {
+    expect(VITE_CONFIG).toMatch(
+      /warnOnPosthogFailure\(\s*posthogSourcemaps\(\{/,
+    );
+  });
+
   it("leaves deleting the maps to Sentry", () => {
     expect(VITE_CONFIG).toMatch(/deleteAfterUpload: false/);
     expect(VITE_CONFIG).toMatch(/filesToDeleteAfterUpload: \[/);
