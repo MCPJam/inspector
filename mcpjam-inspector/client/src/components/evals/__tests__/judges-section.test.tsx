@@ -251,7 +251,11 @@ describe("JudgesSection judge model picker (purpose: judge)", () => {
     expect(screen.queryByText("GPT-4o (own key)")).not.toBeInTheDocument();
     // The managed default is always offered.
     expect(
-      option(new RegExp(MANAGED_DEFAULT_JUDGE_MODEL.replace(/[./]/g, "\\$&"))),
+      option(
+        new RegExp(
+          MANAGED_DEFAULT_JUDGE_MODEL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"),
+        ),
+      ),
     ).toBeInTheDocument();
 
     await user.click(option(/Claude Haiku 4\.5/));
