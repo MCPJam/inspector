@@ -680,7 +680,7 @@ describe("OrganizationsTab billing", () => {
       }),
     ).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+    fireEvent.click(screen.getAllByRole("radio", { name: /^Annual/ })[0]);
 
     // Pro annual is a different price than the one this org is on, so the
     // column has to offer it rather than claim the org is already there.
@@ -718,7 +718,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
-    fireEvent.click(screen.getByRole("button", { name: /^Annual$/ }));
+    fireEvent.click(screen.getAllByRole("radio", { name: /^Annual/ })[0]);
 
     const proColumn = within(getPlanColumn("Pro"));
     expect(
@@ -2383,13 +2383,13 @@ describe("OrganizationsTab billing", () => {
     const upsell = within(screen.getByTestId("free-plan-team-upsell"));
     // Default interval is annual — Team lists $30/seat/mo billed annually
     expect(upsell.getByText(/\$30/)).toBeInTheDocument();
-    fireEvent.click(upsell.getByRole("button", { name: /^Monthly$/ }));
+    fireEvent.click(upsell.getByRole("radio", { name: /^Monthly$/ }));
     expect(upsell.getByText(/\$38/)).toBeInTheDocument();
-    fireEvent.click(upsell.getByRole("button", { name: /^Annual$/ }));
+    fireEvent.click(upsell.getByRole("radio", { name: /^Annual/ }));
     expect(upsell.getByText(/\$30/)).toBeInTheDocument();
   });
 
-  it("marks the selected interval in the compare-table toggle without a discount badge", () => {
+  it("marks the selected interval in the compare-table toggle and advertises the annual discount", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture(),
@@ -2403,16 +2403,18 @@ describe("OrganizationsTab billing", () => {
         name: "Billing interval",
       }),
     );
-    const annual = toggle.getByRole("button", { name: /^Annual/ });
-    const monthly = toggle.getByRole("button", { name: "Monthly" });
-    expect(annual).toHaveAttribute("aria-pressed", "true");
-    expect(monthly).toHaveAttribute("aria-pressed", "false");
-    // The legacy Team prices imply a 21% annual discount; the toggle no longer
-    // advertises it.
-    expect(toggle.queryByText(/-\d+%/)).not.toBeInTheDocument();
+    const annual = toggle.getByRole("radio", { name: /^Annual/ });
+    const monthly = toggle.getByRole("radio", { name: "Monthly" });
+    expect(annual).toBeChecked();
+    expect(monthly).not.toBeChecked();
+    // The legacy Team prices imply a 21% annual discount.
+    expect(toggle.getByText("Save 21%")).toBeInTheDocument();
     fireEvent.click(monthly);
-    expect(annual).toHaveAttribute("aria-pressed", "false");
-    expect(monthly).toHaveAttribute("aria-pressed", "true");
+    expect(annual).not.toBeChecked();
+    expect(monthly).toBeChecked();
+    // Clicking the already-selected interval flips to the other one.
+    fireEvent.click(monthly);
+    expect(annual).toBeChecked();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {

@@ -27,6 +27,7 @@ import {
 import { toast } from "@/lib/toast";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
+import { BentoTile } from "@mcpjam/design-system/bento-tile";
 import { Card, CardContent, CardTitle } from "@mcpjam/design-system/card";
 import {
   Dialog,
@@ -66,6 +67,7 @@ import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
+import { BillingIntervalToggle } from "@/components/organization/BillingIntervalToggle";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -92,7 +94,8 @@ const PLAN_COLUMNS_WIDTH_PCT = 74;
 const LABEL_COLUMN_WIDTH_PCT = 100 - PLAN_COLUMNS_WIDTH_PCT;
 
 /** Defines org as the billed scope for plans and limits (vs projects). */
-const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
+const ORG_COMPARE_PLANS_NOTE =
+  "Credits are allocated at the organization level; every member's usage is billed to the org.";
 
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
@@ -645,56 +648,6 @@ function ComparePlanMatrixCell({
   );
 }
 
-function BillingIntervalToggle({
-  billingInterval,
-  onBillingIntervalChange,
-}: {
-  billingInterval: BillingInterval;
-  onBillingIntervalChange: (interval: BillingInterval) => void;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="Billing interval"
-      className="relative inline-grid max-w-full grid-cols-2 items-center gap-1 rounded-lg border border-border/70 bg-muted/40 p-1 whitespace-nowrap"
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-0.375rem)] rounded-md bg-secondary ring-1 ring-border shadow-sm transition-transform duration-150 ease-out motion-reduce:transition-none",
-          billingInterval === "monthly" && "translate-x-[calc(100%+0.25rem)]",
-        )}
-      />
-      <button
-        type="button"
-        className={cn(
-          "relative inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:gap-2 sm:px-3",
-          billingInterval === "annual"
-            ? "text-secondary-foreground"
-            : "text-muted-foreground",
-        )}
-        aria-pressed={billingInterval === "annual"}
-        onClick={() => onBillingIntervalChange("annual")}
-      >
-        Annual
-      </button>
-      <button
-        type="button"
-        className={cn(
-          "relative shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
-          billingInterval === "monthly"
-            ? "text-secondary-foreground"
-            : "text-muted-foreground",
-        )}
-        aria-pressed={billingInterval === "monthly"}
-        onClick={() => onBillingIntervalChange("monthly")}
-      >
-        Monthly
-      </button>
-    </div>
-  );
-}
-
 /**
  * Compact Team upsell shown beside the current-plan card while on Free, so that
  * panel doesn't sit alone. Mirrors the Team column of the comparison table
@@ -774,36 +727,13 @@ function FreePlanTeamUpsell({
           </Badge>
         </div>
         <div className="w-full space-y-1">
-          <div
-            role="group"
-            aria-label="Billing interval"
-            className="mb-2 inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs"
-          >
-            <button
-              type="button"
-              className={cn(
-                "rounded px-2 py-1 font-medium transition-colors",
-                billingInterval === "annual"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground",
-              )}
-              onClick={() => setBillingInterval("annual")}
-            >
-              Annual
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "rounded px-2 py-1 font-medium transition-colors",
-                billingInterval === "monthly"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground",
-              )}
-              onClick={() => setBillingInterval("monthly")}
-            >
-              Monthly
-            </button>
-          </div>
+          <BillingIntervalToggle
+            className="mb-2"
+            size="sm"
+            billingInterval={billingInterval}
+            onChange={setBillingInterval}
+            annualDiscount={getAnnualDiscountPercent(planCatalog, "team")}
+          />
           <PlanPriceDisplay label={priceLabel} />
           <p className="text-xs leading-snug text-muted-foreground">
             {priceSubtext}
@@ -914,6 +844,13 @@ export function OrganizationBillingSection({
   const deepLinkHandledForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("annual");
+  const annualDiscounts = (["pro", "team"] as const)
+    .filter((plan) => planCatalog?.plans[plan])
+    .map((plan) => getAnnualDiscountPercent(planCatalog, plan))
+    .filter((pct) => pct > 0);
+  const compareAnnualDiscount = Math.max(0, ...annualDiscounts);
+  const compareDiscountPrefix =
+    new Set(annualDiscounts).size > 1 ? "Up to" : "Save";
   const [checkoutPlanNotice, setCheckoutPlanNotice] = useState<{
     reason: "already_on" | "already_higher";
     currentDisplayName: string;
@@ -1339,322 +1276,332 @@ export function OrganizationBillingSection({
             </>
           ) : null}
 
-          <Card className="border-border/60 py-6 shadow-sm">
-            <CardContent className="px-0 pb-0 pt-0">
-              {isLoadingPlanCatalog || !planCatalog ? (
-                <div className="px-4 py-6 sm:px-6">
-                  <div className="mb-4 space-y-1">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                      Compare plans
-                    </p>
-                    <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                      {planCatalog?.plans.pro
-                        ? "Compare plans"
-                        : "Compare Free vs Team"}
-                    </CardTitle>
-                    <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                      {ORG_COMPARE_PLANS_NOTE}
-                    </p>
+          <BentoTile viewportClassName="p-3 sm:p-4">
+            <Card className="rounded-lg border-border/60 py-6 shadow-sm">
+              <CardContent className="px-0 pb-0 pt-0">
+                {isLoadingPlanCatalog || !planCatalog ? (
+                  <div className="px-4 py-6 sm:px-6">
+                    <div className="mb-4 space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                        Compare plans
+                      </p>
+                      <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                        {planCatalog?.plans.pro
+                          ? "Compare plans"
+                          : "Compare Free vs Team"}
+                      </CardTitle>
+                      <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                        {ORG_COMPARE_PLANS_NOTE}
+                      </p>
+                    </div>
+                    <div className="mb-4">
+                      <BillingIntervalToggle
+                        size="sm"
+                        billingInterval={billingInterval}
+                        onChange={setBillingInterval}
+                        annualDiscount={compareAnnualDiscount}
+                        discountPrefix={compareDiscountPrefix}
+                      />
+                    </div>
+                    <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                      Loading plan catalog...
+                    </div>
                   </div>
-                  <div className="mb-4">
-                    <BillingIntervalToggle
-                      billingInterval={billingInterval}
-                      onBillingIntervalChange={setBillingInterval}
-                    />
-                  </div>
-                  <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                    Loading plan catalog...
-                  </div>
-                </div>
-              ) : (
-                <div className="relative w-full overflow-x-auto overscroll-x-contain">
-                  <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
-                    <Table className="table-fixed">
-                      <TableHeader>
-                        <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
-                          <TableHead
-                            style={{ width: `${LABEL_COLUMN_WIDTH_PCT}%` }}
-                            className="sticky left-0 z-20 h-full min-h-0 whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
-                          >
-                            <div className="flex h-full min-h-[11rem] flex-col">
-                              <div className="flex min-h-0 flex-1 flex-col">
-                                <div className="space-y-1 pr-1">
-                                  <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                                    Compare plans
-                                  </p>
-                                  <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                                    {planCatalog?.plans.pro
-                                      ? "Compare plans"
-                                      : "Compare Free vs Team"}
-                                  </CardTitle>
-                                  <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                                    {ORG_COMPARE_PLANS_NOTE}
-                                  </p>
+                ) : (
+                  <div className="relative w-full overflow-x-auto overscroll-x-contain">
+                    <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
+                      <Table className="table-fixed">
+                        <TableHeader>
+                          <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
+                            <TableHead
+                              style={{ width: `${LABEL_COLUMN_WIDTH_PCT}%` }}
+                              className="sticky left-0 z-20 h-full min-h-0 whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
+                            >
+                              <div className="flex h-full min-h-[11rem] flex-col">
+                                <div className="flex min-h-0 flex-1 flex-col">
+                                  <div className="space-y-1 pr-1">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                                      Compare plans
+                                    </p>
+                                    <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                                      {planCatalog?.plans.pro
+                                        ? "Compare plans"
+                                        : "Compare Free vs Team"}
+                                    </CardTitle>
+                                    <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                                      {ORG_COMPARE_PLANS_NOTE}
+                                    </p>
+                                  </div>
+                                  <div className="min-h-0 flex-1" aria-hidden />
                                 </div>
-                                <div className="min-h-0 flex-1" aria-hidden />
+                                <div className="shrink-0">
+                                  <BillingIntervalToggle
+                                    size="sm"
+                                    billingInterval={billingInterval}
+                                    onChange={setBillingInterval}
+                                    annualDiscount={compareAnnualDiscount}
+                                    discountPrefix={compareDiscountPrefix}
+                                  />
+                                </div>
                               </div>
-                              <div className="shrink-0">
-                                <BillingIntervalToggle
-                                  billingInterval={billingInterval}
-                                  onBillingIntervalChange={setBillingInterval}
-                                />
-                              </div>
-                            </div>
-                          </TableHead>
-                          {offeredPlans(planCatalog).map((plan) => {
-                            const entry = planCatalog.plans[plan]!;
-                            const isEnterprisePlan = plan === "enterprise";
-                            const priceLabel = isEnterprisePlan
-                              ? "Custom"
-                              : plan === "free"
-                              ? "$0"
-                              : formatCatalogPrice(
-                                  entry,
-                                  billingInterval,
-                                  planCatalog.currency,
-                                );
-                            const priceSubtext = isEnterprisePlan
-                              ? formatPerSeatCadence(
-                                  plan,
-                                  entry,
-                                  billingInterval,
-                                )
-                              : plan === "free"
-                              ? "No credit card required"
-                              : formatPerSeatCadence(
-                                  plan,
-                                  entry,
-                                  billingInterval,
-                                );
-                            const cancellationDateMs =
-                              billingStatus?.stripeCancelAt ??
-                              billingStatus?.stripeCurrentPeriodEnd ??
-                              null;
-                            const scheduledCancellationDate =
-                              billingStatus?.stripeCancelAtPeriodEnd
-                                ? cancellationDateMs != null
-                                  ? formatBillingDate(cancellationDateMs)
-                                  : ""
-                                : null;
-                            const cta = getPlanColumnCta({
-                              plan,
-                              currentPlan,
-                              currentCatalogPlanId:
-                                billingStatus?.catalogPlanId,
-                              currentPriceModel: billingStatus?.priceModel,
-                              currentBillingInterval:
-                                billingStatus?.billingInterval ?? null,
-                              entry,
-                              billingConfigured,
-                              canManageBilling,
-                              isBillingActionPending,
-                              scheduledCancellationDate,
-                              onDowngradePlan: (
-                                targetPlan,
-                                targetBillingInterval,
-                              ) =>
-                                void onDowngradePlan(
+                            </TableHead>
+                            {offeredPlans(planCatalog).map((plan) => {
+                              const entry = planCatalog.plans[plan]!;
+                              const isEnterprisePlan = plan === "enterprise";
+                              const priceLabel = isEnterprisePlan
+                                ? "Custom"
+                                : plan === "free"
+                                ? "$0"
+                                : formatCatalogPrice(
+                                    entry,
+                                    billingInterval,
+                                    planCatalog.currency,
+                                  );
+                              const priceSubtext = isEnterprisePlan
+                                ? formatPerSeatCadence(
+                                    plan,
+                                    entry,
+                                    billingInterval,
+                                  )
+                                : plan === "free"
+                                ? "No credit card required"
+                                : formatPerSeatCadence(
+                                    plan,
+                                    entry,
+                                    billingInterval,
+                                  );
+                              const cancellationDateMs =
+                                billingStatus?.stripeCancelAt ??
+                                billingStatus?.stripeCurrentPeriodEnd ??
+                                null;
+                              const scheduledCancellationDate =
+                                billingStatus?.stripeCancelAtPeriodEnd
+                                  ? cancellationDateMs != null
+                                    ? formatBillingDate(cancellationDateMs)
+                                    : ""
+                                  : null;
+                              const cta = getPlanColumnCta({
+                                plan,
+                                currentPlan,
+                                currentCatalogPlanId:
+                                  billingStatus?.catalogPlanId,
+                                currentPriceModel: billingStatus?.priceModel,
+                                currentBillingInterval:
+                                  billingStatus?.billingInterval ?? null,
+                                entry,
+                                billingConfigured,
+                                canManageBilling,
+                                isBillingActionPending,
+                                scheduledCancellationDate,
+                                onDowngradePlan: (
                                   targetPlan,
                                   targetBillingInterval,
-                                ),
-                              onStartPlanChange: requestPlanChange,
-                              billingInterval,
-                            });
-                            const showPlanChangeSpinner =
-                              pendingPlanChangeTarget === plan &&
-                              (cta.label === "Upgrade" ||
-                                cta.label === "Downgrade" ||
-                                cta.label === "Change plan") &&
-                              (plan === "team" || plan === "pro");
-                            const showCtaSpinner = showPlanChangeSpinner;
-                            const isPopular = plan === POPULAR_PLAN;
-                            const showDeferredTrialBillingCopy =
-                              deferredTrialBillingCopy != null &&
-                              cta.label === "Upgrade" &&
-                              !cta.disabled &&
-                              !cta.tooltip &&
-                              plan === "team";
-                            return (
-                              <TableHead
-                                key={plan}
-                                style={{
-                                  width: `${
-                                    PLAN_COLUMNS_WIDTH_PCT /
-                                    offeredPlans(planCatalog).length
-                                  }%`,
-                                }}
-                                className={cn(
-                                  "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
-                                  isPopular && POPULAR_COLUMN_CLASS,
-                                )}
-                              >
-                                <div
-                                  className={cn(
-                                    "mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col",
-                                    isV2PlanCatalog(planCatalog) &&
-                                      "h-[11rem] gap-3",
-                                  )}
-                                >
-                                  <div className="flex min-h-0 flex-1 flex-col items-center gap-3">
-                                    <div
-                                      className={cn(
-                                        "flex flex-wrap items-center justify-center gap-2",
-                                        isV2PlanCatalog(planCatalog) &&
-                                          "min-h-10",
-                                      )}
-                                    >
-                                      <span className="text-base font-semibold">
-                                        {entry.displayName}
-                                      </span>
-                                      {isLegacyTeamEntry(entry) ? (
-                                        <Badge variant="outline">Legacy</Badge>
-                                      ) : null}
-                                      {isPopular ? (
-                                        <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
-                                          Popular
-                                        </Badge>
-                                      ) : null}
-                                    </div>
-                                    <div className="w-full space-y-1 text-center">
-                                      <PlanPriceDisplay label={priceLabel} />
-                                      <p className="text-xs leading-snug text-muted-foreground">
-                                        {isV2PlanCatalog(planCatalog) &&
-                                        entry.billingModel === "flat"
-                                          ? billingInterval === "annual"
-                                            ? "Billed annually"
-                                            : "Billed monthly"
-                                          : priceSubtext}
-                                      </p>
-                                      {entry.seatMinimum ? (
-                                        <p className="text-xs leading-snug text-muted-foreground">
-                                          {entry.seatMinimum} seat minimum
-                                        </p>
-                                      ) : null}
-                                      {showDeferredTrialBillingCopy ? (
-                                        <p className="text-[11px] font-medium leading-tight text-muted-foreground">
-                                          {deferredTrialBillingCopy}
-                                        </p>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                  {cta.tooltip ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          className="w-full shrink-0 rounded-lg"
-                                          size="sm"
-                                          variant={cta.variant}
-                                          aria-disabled={cta.disabled}
-                                          aria-label={cta.ariaLabel}
-                                          tabIndex={0}
-                                          onClick={
-                                            cta.disabled
-                                              ? undefined
-                                              : cta.onClick
-                                          }
-                                        >
-                                          <PlanCtaContent
-                                            showSpinner={showCtaSpinner}
-                                            label={cta.label}
-                                          />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent
-                                        side="top"
-                                        className="max-w-[14rem] text-center"
-                                      >
-                                        {cta.tooltip}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ) : (
-                                    <Button
-                                      className="w-full shrink-0 rounded-lg"
-                                      size="sm"
-                                      variant={cta.variant}
-                                      disabled={cta.disabled}
-                                      onClick={cta.onClick}
-                                    >
-                                      <PlanCtaContent
-                                        showSpinner={showCtaSpinner}
-                                        label={cta.label}
-                                      />
-                                    </Button>
-                                  )}
-                                </div>
-                              </TableHead>
-                            );
-                          })}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(compareSections ?? []).map((section) => (
-                          <Fragment key={section.title}>
-                            {!section.hideTitle ? (
-                              <TableRow className="border-b hover:bg-transparent">
-                                <FullWidthRowCells
-                                  plans={offeredPlans(planCatalog)}
-                                  className="bg-muted/40 py-2.5 pl-4"
-                                >
-                                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                    {section.title}
-                                  </div>
-                                </FullWidthRowCells>
-                              </TableRow>
-                            ) : null}
-                            {section.rows.map((row, rowIndex) => {
-                              if (isV2PlanCatalog(planCatalog)) {
-                                return (
-                                  <V2ComparisonRow
-                                    key={row.label}
-                                    row={row}
-                                    plans={offeredPlans(planCatalog)}
-                                  />
-                                );
-                              }
+                                ) =>
+                                  void onDowngradePlan(
+                                    targetPlan,
+                                    targetBillingInterval,
+                                  ),
+                                onStartPlanChange: requestPlanChange,
+                                billingInterval,
+                              });
+                              const showPlanChangeSpinner =
+                                pendingPlanChangeTarget === plan &&
+                                (cta.label === "Upgrade" ||
+                                  cta.label === "Downgrade" ||
+                                  cta.label === "Change plan") &&
+                                (plan === "team" || plan === "pro");
+                              const showCtaSpinner = showPlanChangeSpinner;
+                              const isPopular = plan === POPULAR_PLAN;
+                              const showDeferredTrialBillingCopy =
+                                deferredTrialBillingCopy != null &&
+                                cta.label === "Upgrade" &&
+                                !cta.disabled &&
+                                !cta.tooltip &&
+                                plan === "team";
                               return (
-                                <TableRow
-                                  key={`${section.title}-${rowIndex}-${row.label}`}
-                                  className="border-b"
+                                <TableHead
+                                  key={plan}
+                                  style={{
+                                    width: `${
+                                      PLAN_COLUMNS_WIDTH_PCT /
+                                      offeredPlans(planCatalog).length
+                                    }%`,
+                                  }}
+                                  className={cn(
+                                    "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
+                                    isPopular && POPULAR_COLUMN_CLASS,
+                                  )}
                                 >
-                                  <TableCell className="sticky left-0 z-10 max-w-[14rem] whitespace-normal bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
-                                    <ComparePlanRowLabel
-                                      label={row.label}
-                                      tooltipKey={row.tooltipKey}
-                                    />
-                                  </TableCell>
-                                  {offeredPlans(planCatalog).map((plan) => {
-                                    const isPopular = plan === POPULAR_PLAN;
-                                    return (
-                                      <TableCell
-                                        key={plan}
+                                  <div
+                                    className={cn(
+                                      "mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col",
+                                      isV2PlanCatalog(planCatalog) &&
+                                        "h-[11rem] gap-3",
+                                    )}
+                                  >
+                                    <div className="flex min-h-0 flex-1 flex-col items-center gap-3">
+                                      <div
                                         className={cn(
-                                          "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
-                                          isPopular && POPULAR_COLUMN_CLASS,
+                                          "flex flex-wrap items-center justify-center gap-2",
+                                          isV2PlanCatalog(planCatalog) &&
+                                            "min-h-10",
                                         )}
                                       >
-                                        <ComparePlanMatrixCell
-                                          cell={
-                                            row[plan] ?? {
-                                              kind: "text",
-                                              text: "—",
+                                        <span className="text-base font-semibold">
+                                          {entry.displayName}
+                                        </span>
+                                        {isLegacyTeamEntry(entry) ? (
+                                          <Badge variant="outline">
+                                            Legacy
+                                          </Badge>
+                                        ) : null}
+                                        {isPopular ? (
+                                          <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+                                            Popular
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+                                      <div className="w-full space-y-1 text-center">
+                                        <PlanPriceDisplay label={priceLabel} />
+                                        <p className="text-xs leading-snug text-muted-foreground">
+                                          {isV2PlanCatalog(planCatalog) &&
+                                          entry.billingModel === "flat"
+                                            ? billingInterval === "annual"
+                                              ? "Billed annually"
+                                              : "Billed monthly"
+                                            : priceSubtext}
+                                        </p>
+                                        {entry.seatMinimum ? (
+                                          <p className="text-xs leading-snug text-muted-foreground">
+                                            {entry.seatMinimum} seat minimum
+                                          </p>
+                                        ) : null}
+                                        {showDeferredTrialBillingCopy ? (
+                                          <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+                                            {deferredTrialBillingCopy}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    {cta.tooltip ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            className="w-full shrink-0 rounded-lg"
+                                            size="sm"
+                                            variant={cta.variant}
+                                            aria-disabled={cta.disabled}
+                                            aria-label={cta.ariaLabel}
+                                            tabIndex={0}
+                                            onClick={
+                                              cta.disabled
+                                                ? undefined
+                                                : cta.onClick
                                             }
-                                          }
+                                          >
+                                            <PlanCtaContent
+                                              showSpinner={showCtaSpinner}
+                                              label={cta.label}
+                                            />
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent
+                                          side="top"
+                                          className="max-w-[14rem] text-center"
+                                        >
+                                          {cta.tooltip}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      <Button
+                                        className="w-full shrink-0 rounded-lg"
+                                        size="sm"
+                                        variant={cta.variant}
+                                        disabled={cta.disabled}
+                                        onClick={cta.onClick}
+                                      >
+                                        <PlanCtaContent
+                                          showSpinner={showCtaSpinner}
+                                          label={cta.label}
                                         />
-                                      </TableCell>
-                                    );
-                                  })}
-                                </TableRow>
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TableHead>
                               );
                             })}
-                          </Fragment>
-                        ))}
-                      </TableBody>
-                    </Table>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(compareSections ?? []).map((section) => (
+                            <Fragment key={section.title}>
+                              {!section.hideTitle ? (
+                                <TableRow className="border-b hover:bg-transparent">
+                                  <FullWidthRowCells
+                                    plans={offeredPlans(planCatalog)}
+                                    className="bg-muted/40 py-2.5 pl-4"
+                                  >
+                                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                      {section.title}
+                                    </div>
+                                  </FullWidthRowCells>
+                                </TableRow>
+                              ) : null}
+                              {section.rows.map((row, rowIndex) => {
+                                if (isV2PlanCatalog(planCatalog)) {
+                                  return (
+                                    <V2ComparisonRow
+                                      key={row.label}
+                                      row={row}
+                                      plans={offeredPlans(planCatalog)}
+                                    />
+                                  );
+                                }
+                                return (
+                                  <TableRow
+                                    key={`${section.title}-${rowIndex}-${row.label}`}
+                                    className="border-b"
+                                  >
+                                    <TableCell className="sticky left-0 z-10 max-w-[14rem] whitespace-normal bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
+                                      <ComparePlanRowLabel
+                                        label={row.label}
+                                        tooltipKey={row.tooltipKey}
+                                      />
+                                    </TableCell>
+                                    {offeredPlans(planCatalog).map((plan) => {
+                                      const isPopular = plan === POPULAR_PLAN;
+                                      return (
+                                        <TableCell
+                                          key={plan}
+                                          className={cn(
+                                            "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
+                                            isPopular && POPULAR_COLUMN_CLASS,
+                                          )}
+                                        >
+                                          <ComparePlanMatrixCell
+                                            cell={
+                                              row[plan] ?? {
+                                                kind: "text",
+                                                text: "—",
+                                              }
+                                            }
+                                          />
+                                        </TableCell>
+                                      );
+                                    })}
+                                  </TableRow>
+                                );
+                              })}
+                            </Fragment>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                )}
+              </CardContent>
+            </Card>
+          </BentoTile>
         </>
       ) : null}
     </div>
