@@ -396,6 +396,9 @@ describe("checkSessionRevocation", () => {
     expect(checkSessionRevocation("any", { requireFresh: true })).toEqual({
       ok: true,
     });
+    expect(checkSessionRevocation(undefined, { requireFresh: true })).toEqual({
+      ok: true,
+    });
     // Marking is a no-op there too.
     markSessionRevokedLocally("any");
     expect(checkSessionRevocation("any", { requireFresh: false })).toEqual({
@@ -437,10 +440,74 @@ describe("checkSessionRevocation", () => {
     });
   });
 
-  it("passes a token that carries no session id", () => {
-    setRevokedSessionCacheForTests(cacheOn(createRevokedSessionFeed()));
-    expect(checkSessionRevocation(undefined, { requireFresh: true })).toEqual({
+  it("refuses a token without a session id only where the list alone decides", async () => {
+    const cache = cacheOn(createRevokedSessionFeed());
+    setRevokedSessionCacheForTests(cache);
+    await cache.scan();
+
+    for (const sid of [undefined, null, ""]) {
+      expect(checkSessionRevocation(sid, { requireFresh: true })).toEqual({
+        ok: false,
+        reason: "no_session",
+      });
+      expect(checkSessionRevocation(sid, { requireFresh: false })).toEqual({
+        ok: true,
+      });
+    }
+  });
+});
+
+describe("startRevokedSessionCache without a feed", () => {
+  /** A fresh copy of the module, as a process started with `hosted` would load it. */
+  async function processStartedWithoutFeed(hosted: boolean) {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", hosted ? "true" : "false");
+    vi.stubEnv("CONVEX_HTTP_URL", "");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    vi.resetModules();
+    const module = await import("../revoked-session-cache.js");
+    module.startRevokedSessionCache();
+    return module;
+  }
+
+  it("refuses on the routes that rely on the list in a hosted process", async () => {
+    const hosted = await processStartedWithoutFeed(true);
+
+    expect(hosted.activeRevokedSessionCache()?.state()).toMatchObject({
+      initialLoadComplete: false,
+      stale: true,
+      running: false,
+    });
+    expect(hosted.checkSessionRevocation("s", { requireFresh: true })).toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+    expect(hosted.checkSessionRevocation("s", { requireFresh: false })).toEqual(
+      { ok: true },
+    );
+
+    // A sign-out on this process is still refused everywhere.
+    hosted.markSessionRevokedLocally("gone");
+    expect(
+      hosted.checkSessionRevocation("gone", { requireFresh: false }),
+    ).toEqual({ ok: false, reason: "revoked" });
+
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("Revoked-session list cannot load"),
+      expect.any(Error),
+      { event: "auth.revoked_sessions.disabled" },
+    );
+  });
+
+  it("changes nothing in a local process", async () => {
+    const local = await processStartedWithoutFeed(false);
+
+    expect(local.activeRevokedSessionCache()).toBeNull();
+    expect(local.checkSessionRevocation("s", { requireFresh: true })).toEqual({
       ok: true,
     });
+    expect(
+      local.checkSessionRevocation(undefined, { requireFresh: true }),
+    ).toEqual({ ok: true });
+    expect(loggerMock.error).not.toHaveBeenCalled();
   });
 });

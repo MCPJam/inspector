@@ -27,10 +27,10 @@
  * SESSION REVOCATION (MJ-011). These routes answer without a Convex call, so
  * the session behind a verified token is checked here, against the in-process
  * revoked-session list (`services/revoked-session-cache.ts`): a session known
- * to be revoked is a 401 `SESSION_REVOKED`, and while the list is still
- * loading or has gone stale, a session it cannot vouch for is a 503 the caller
- * may retry. Where the list does not run (no service token: local and
- * desktop), nothing changes.
+ * to be revoked is a 401 `SESSION_REVOKED`, a token that names no session is a
+ * 401, and while the list is still loading or has gone stale, a session it
+ * cannot vouch for is a 503 the caller may retry. Where the list does not run
+ * (no service token: local and desktop), nothing changes.
  *
  * What passes:
  *  - anything `bearerAuthMiddleware` genuinely established — a validated `sk_`

@@ -189,10 +189,10 @@ describe("requireVerifiedAuth — session revocation", () => {
   }
 
   const gatewayVerified =
-    (sid: string) => (c: { set: (k: string, v: unknown) => void }) => {
+    (sid?: string) => (c: { set: (k: string, v: unknown) => void }) => {
       c.set("authMethod", "authkit_jwt");
       c.set("workosUserId", "workos|alice");
-      c.set("workosSessionId", sid);
+      if (sid) c.set("workosSessionId", sid);
     };
 
   it("refuses a revoked session the gateway verified, with SESSION_REVOKED", async () => {
@@ -279,6 +279,22 @@ describe("requireVerifiedAuth — session revocation", () => {
     expect(res.status).toBe(200);
   });
 
+  it("refuses a verified token that names no session", async () => {
+    const list = listWith();
+    await list.scan();
+    const verify = vi.fn().mockResolvedValue({ sub: "workos|alice" });
+
+    const viaGateway = await get(appWith(vi.fn(), gatewayVerified()));
+    const verifiedHere = await get(
+      appWith(verify, (c) => c.set("authMethod", "unverified_passthrough")),
+    );
+
+    for (const res of [viaGateway, verifiedHere]) {
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    }
+  });
+
   it("does not hold other established credentials to the list", async () => {
     listWith(() => new Promise(() => {}));
 
@@ -293,7 +309,9 @@ describe("requireVerifiedAuth — session revocation", () => {
     setRevokedSessionCacheForTests(null);
 
     const res = await get(appWith(vi.fn(), gatewayVerified("session_6")));
+    const noSession = await get(appWith(vi.fn(), gatewayVerified()));
 
     expect(res.status).toBe(200);
+    expect(noSession.status).toBe(200);
   });
 });

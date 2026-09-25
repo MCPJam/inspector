@@ -133,9 +133,9 @@ interface SessionContext {
  * binding-endpoint side effect.
  *
  * The same holds for the session behind the token (MJ-011): a revoked session
- * is a 401 `SESSION_REVOKED`, and while the revoked-session list is loading or
- * stale these routes answer 503 rather than act on a session they cannot
- * check.
+ * is a 401 `SESSION_REVOKED`, a token that names no session is a 401, and
+ * while the revoked-session list is loading or stale these routes answer 503
+ * rather than act on a session they cannot check.
  */
 async function resolveSessionContext(c: any): Promise<SessionContext> {
   const bearer = assertBearerToken(c);

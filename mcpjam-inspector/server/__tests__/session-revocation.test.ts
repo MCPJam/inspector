@@ -21,9 +21,10 @@ import { Hono } from "hono";
 
 /** The bearers this test verifies, and the session each belongs to. */
 const SESSIONS = vi.hoisted(
-  (): Record<string, { sub: string; sid: string }> => ({
+  (): Record<string, { sub: string; sid?: string }> => ({
     "token-alice": { sub: "user_alice", sid: "session_alice" },
     "token-bob": { sub: "user_bob", sid: "session_bob" },
+    "token-carol": { sub: "user_carol" },
   }),
 );
 
@@ -203,10 +204,10 @@ beforeEach(() => {
   backend.revokeCurrentSession = async (token) => {
     if (backend.mode === "hang") return new Promise(() => {});
     if (backend.mode === "fail") throw new Error("backend unavailable");
-    const session = token ? SESSIONS[token] : undefined;
-    if (!session) return { revoked: false, reason: "no_identity" };
-    if (!feed.rows.some((row) => row.sid === session.sid)) {
-      feed.record(session.sid);
+    const sid = token ? SESSIONS[token]?.sid : undefined;
+    if (!sid) return { revoked: false, reason: "no_identity" };
+    if (!feed.rows.some((row) => row.sid === sid)) {
+      feed.record(sid);
     }
     return { revoked: true };
   };
@@ -371,6 +372,20 @@ describe("session revocation across route families (MJ-011)", () => {
     await expectRetryable503(await agentOps("token-bob"));
     expect((await me("token-bob")).status).toBe(200);
     await expectRevokedEverywhere("token-alice");
+  });
+
+  it("refuses a verified token that names no session on routes that rely on the list alone", async () => {
+    serveAs(await bootedReplica());
+
+    for (const res of [
+      await mintKey("token-carol"),
+      await agentOps("token-carol"),
+    ]) {
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    }
+    // A route that forwards the bearer leaves the decision to Convex.
+    expect((await me("token-carol")).status).toBe(200);
   });
 
   it("keeps sign-out idempotent for a session this replica already refuses", async () => {

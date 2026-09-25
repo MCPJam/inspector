@@ -49,6 +49,11 @@
  * behavior. That costs nothing that works there today, because the routes
  * that act on a caller's behalf over the service channel (API-key management,
  * identity lookups, key bindings) cannot run without the same service token.
+ *
+ * A HOSTED process started without them is misconfigured, not local: it
+ * reports `auth.revoked_sessions.disabled` at startup, and its checks consult
+ * a list that never loads, so the routes that rely on it refuse to serve
+ * rather than serve unchecked (see `startRevokedSessionCache`).
  */
 import { HOSTED_MODE } from "../config.js";
 import { getInternalBackendConfig } from "./internal-backend.js";
@@ -498,6 +503,12 @@ export function isRevokedSessionFeedConfigured(
 let processCache: RevokedSessionCache | null = null;
 let testCache: RevokedSessionCache | null | undefined;
 
+/**
+ * Set at startup by a hosted process that has no feed to read. Its checks then
+ * consult a list that never loads, exactly as while a real one is loading.
+ */
+let hostedWithoutFeed = false;
+
 function getProcessCache(): RevokedSessionCache {
   processCache ??= new RevokedSessionCache({
     fetchPage: fetchRevokedSessionFeedPage,
@@ -511,19 +522,28 @@ function getProcessCache(): RevokedSessionCache {
  */
 export function activeRevokedSessionCache(): RevokedSessionCache | null {
   if (testCache !== undefined) return testCache;
-  return isRevokedSessionFeedConfigured() ? getProcessCache() : null;
+  return hostedWithoutFeed || isRevokedSessionFeedConfigured()
+    ? getProcessCache()
+    : null;
 }
 
 /**
  * Start the initial load and polling. Called once at server startup; returns
  * immediately (the load runs in the background) and is idempotent. The routes
  * that depend on the list refuse to serve until the load completes.
+ *
+ * In a hosted process without the feed's configuration, the load can never
+ * complete: this reports it once, and those routes keep refusing (503) until
+ * the process is restarted with it. A known revocation — a sign-out on this
+ * process — is still refused everywhere.
  */
 export function startRevokedSessionCache(): void {
   if (!isRevokedSessionFeedConfigured()) {
-    if (HOSTED_MODE) {
-      logger.warn(
-        "Revoked-session list disabled: CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing",
+    if (HOSTED_MODE && !hostedWithoutFeed) {
+      hostedWithoutFeed = true;
+      logger.error(
+        "Revoked-session list cannot load: CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; session-dependent routes are refusing requests",
+        new RevokedSessionFeedError("Revoked-session feed is not configured"),
         { event: "auth.revoked_sessions.disabled" },
       );
     }
@@ -550,6 +570,7 @@ export function setRevokedSessionCacheForTests(
 export type SessionRevocationCheck =
   | { ok: true }
   | { ok: false; reason: "revoked" }
+  | { ok: false; reason: "no_session" }
   | { ok: false; reason: "unavailable" };
 
 const SESSION_OK: SessionRevocationCheck = { ok: true };
@@ -564,16 +585,22 @@ const SESSION_OK: SessionRevocationCheck = { ok: true };
  *   authorization rests on this gateway alone; routes that forward the
  *   caller's bearer to Convex, which checks the durable record itself, pass
  *   `requireFresh: false`.
- * - A token without a session id is not a revocable session and passes.
+ * - With `requireFresh`, a token without a session id is refused as
+ *   `no_session`: the list cannot vouch for a session it cannot name. Without
+ *   it, such a token passes to Convex, which decides.
  * - With no feed configured (local / desktop), everything passes.
  */
 export function checkSessionRevocation(
   sid: string | undefined | null,
   options: { requireFresh: boolean },
 ): SessionRevocationCheck {
-  if (!sid) return SESSION_OK;
   const cache = activeRevokedSessionCache();
   if (!cache) return SESSION_OK;
+  if (!sid) {
+    return options.requireFresh
+      ? { ok: false, reason: "no_session" }
+      : SESSION_OK;
+  }
   if (cache.isRevoked(sid)) return { ok: false, reason: "revoked" };
   if (options.requireFresh && !cache.isFresh()) {
     return { ok: false, reason: "unavailable" };
@@ -582,8 +609,8 @@ export function checkSessionRevocation(
 }
 
 /**
- * Record, in this process, that `sid` was just revoked. A no-op where there is
- * no feed (the checks there never consult the list).
+ * Record, in this process, that `sid` was just revoked. A no-op where the
+ * checks never consult a list (local / desktop).
  */
 export function markSessionRevokedLocally(
   sid: string | undefined | null,

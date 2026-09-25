@@ -9,6 +9,8 @@
  *   `{ code: "SESSION_REVOKED" }`. `/api/v1` stays inside its public error-code
  *   union: `{ code: "UNAUTHORIZED", details: { reason: "SESSION_REVOKED" } }`,
  *   the same shape as its other specific 401s.
+ * - No session → 401 `UNAUTHORIZED`, in both envelopes: the token names no
+ *   session the list could vouch for. Signing in again is the remedy.
  * - Unavailable → 503 `SERVER_UNREACHABLE` with `Retry-After`: the revoked-
  *   session list is not current, and the route cannot serve a session it has
  *   not been able to check. Retrying shortly is the remedy, not signing in.
@@ -26,6 +28,9 @@ export const SESSION_REVOKED_MESSAGE =
 
 export const SESSION_CHECK_UNAVAILABLE_MESSAGE =
   "Your session can't be confirmed right now. Try again in a moment.";
+
+export const SESSION_REQUIRED_MESSAGE =
+  "Your sign-in can't be confirmed. Sign in again to continue.";
 
 /** Detail reason carried by the 503 below. */
 export const SESSION_CHECK_UNAVAILABLE_REASON = "SESSION_CHECK_UNAVAILABLE";
@@ -51,6 +56,13 @@ export function sessionRevokedResponse(c: Context): Response {
   }
   return c.json(
     { code: ErrorCode.SESSION_REVOKED, message: SESSION_REVOKED_MESSAGE },
+    401,
+  );
+}
+
+export function sessionRequiredResponse(c: Context): Response {
+  return c.json(
+    { code: ErrorCode.UNAUTHORIZED, message: SESSION_REQUIRED_MESSAGE },
     401,
   );
 }
@@ -93,9 +105,9 @@ export function refuseUnservableSession(
   const verdict = checkSessionRevocation(sid, options);
   if (verdict.ok) return null;
   logRefusal(c.req.path, verdict);
-  return verdict.reason === "revoked"
-    ? sessionRevokedResponse(c)
-    : sessionCheckUnavailableResponse(c);
+  if (verdict.reason === "revoked") return sessionRevokedResponse(c);
+  if (verdict.reason === "no_session") return sessionRequiredResponse(c);
+  return sessionCheckUnavailableResponse(c);
 }
 
 /**
@@ -114,6 +126,13 @@ export function assertSessionServable(
       401,
       ErrorCode.SESSION_REVOKED,
       SESSION_REVOKED_MESSAGE,
+    );
+  }
+  if (verdict.reason === "no_session") {
+    throw new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      SESSION_REQUIRED_MESSAGE,
     );
   }
   throw new WebRouteError(
