@@ -417,7 +417,8 @@ export type RequestEventMap = {
    */
   "apikey.inventory.truncated": { listed: number };
   /**
-   * An owner or admin revoked a key from the organization inventory.
+   * An owner or admin revoked a key bound to their organization, from the
+   * organization inventory or by key id (`DELETE /api/web/api-keys/:id`).
    * `alreadyRevoked`: WorkOS no longer had the key. `bindingCleanupFailed`:
    * the key is gone at WorkOS but its org binding was not removed — inert,
    * and revoking it again from the inventory clears it.

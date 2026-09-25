@@ -23,6 +23,8 @@ import {
   authorizeOrganizationKeyRevoke,
   removeOrganizationKeyBinding,
   WorkosKeyBindingError,
+  type OrganizationKeyArgs,
+  type WorkosKeyBinding,
 } from "../../services/workos-key-bindings.js";
 import {
   verifyAuthKitToken,
@@ -50,18 +52,24 @@ import {
  *   caller picks 1–365) and records the same instant on the org binding,
  *   which the bearer middleware enforces too — so expiry holds even if
  *   WorkOS does not. There is no "never expires" option.
- * - An organization can restrict minting to owners and admins. The backend
- *   enforces it at the binding write; the readiness check reports it first,
- *   so a refused member is turned away before a WorkOS key exists.
- * - DELETE `/:id` (a user revoking their OWN key) verifies the key id
- *   appears in the session user's own key list before issuing the WorkOS
- *   delete, so passing another user's key id fails before WorkOS sees the
- *   request. (WorkOS exposes no single-key GET for user keys — both
- *   `/api_keys/{id}` and the user-scoped variant 404 even for existing ids —
- *   so list membership is the ownership check.)
+ * - Who may mint is the organization's call: owners and admins, unless it
+ *   lets members create keys too (MJ-010). The backend enforces it at the
+ *   binding write; the readiness check reports it first, so a refused member
+ *   is turned away before a WorkOS key exists, and GET `/mint-eligibility`
+ *   lets the create dialog say so before anything is filled in.
+ * - DELETE `/:id` revokes the caller's OWN key once the key id appears in the
+ *   session user's own key list. (WorkOS exposes no single-key GET for user
+ *   keys — both `/api_keys/{id}` and the user-scoped variant 404 even for
+ *   existing ids — so list membership is the ownership check.) Any other id
+ *   is revoked only for an owner or admin of the organization the key is
+ *   bound to, through the same steps as the organization revoke below
+ *   (MJ-010); everyone else gets the 404 an unknown id gets.
  * - DELETE `/organization/:organizationId/:keyId` (an owner or admin
  *   revoking ANY key bound to their org) asks the backend to authorize
  *   BEFORE the WorkOS delete, because that delete cannot be undone.
+ * - GET `/` lists the caller's own keys. With `?organizationId=` it is the
+ *   organization inventory of GET `/organization/:organizationId` instead,
+ *   for that organization's owners and admins only (MJ-010).
  * - `sk_…` keys cannot manage other `sk_…` keys (privilege isolation).
  */
 
@@ -308,6 +316,14 @@ class OrganizationNotReadyError extends Error {
   }
 }
 
+/**
+ * The mint refusal for a member of an organization that keeps key creation
+ * to its owners and admins, which is the default (MJ-010). A member cannot
+ * change that setting, so it says who can help.
+ */
+const ADMINS_ONLY_MINT_MESSAGE =
+  "Only organization owners and admins can create API keys in this organization. Ask an owner or admin to create one for you, or to allow members to create keys.";
+
 async function resolveWorkosOrgId(
   mcpjamOrganizationId: string,
   mcpjamUserId: string,
@@ -325,7 +341,7 @@ async function resolveWorkosOrgId(
       403,
       ErrorCode.FORBIDDEN,
       readiness.mintMinimumRole === "admin"
-        ? "Only organization owners and admins can create API keys in this organization."
+        ? ADMINS_ONLY_MINT_MESSAGE
         : "Your role in this organization can't create API keys.",
     );
   }
@@ -546,7 +562,11 @@ apiKeys.post("/", async (c) =>
           throw new WebRouteError(
             403,
             ErrorCode.FORBIDDEN,
-            `${message} (API key not created)`,
+            // The organization's own setting refused it (the policy changed
+            // after the readiness check): the same answer that check gives.
+            bindingError.code === "ADMINS_ONLY"
+              ? ADMINS_ONLY_MINT_MESSAGE
+              : `${message} (API key not created)`,
           );
         }
         // The key id is already bound to a different org. The backend refuses
@@ -597,14 +617,16 @@ const keyIdParamSchema = z.string().trim().min(1);
  * second, independent check through a different backend code path, so a
  * regression in one cannot silently widen who sees or revokes what: a
  * non-member is refused here before the org-scoped call is even made.
+ *
+ * Returns the readiness it read, which also says whether the caller may mint.
  */
 async function assertOrganizationMember(
   organizationId: string,
   actorUserId: string,
   unavailableMessage: string,
-): Promise<void> {
+): ReturnType<typeof resolveApiKeyReadiness> {
   try {
-    await resolveApiKeyReadiness(organizationId, actorUserId);
+    return await resolveApiKeyReadiness(organizationId, actorUserId);
   } catch (error) {
     if (error instanceof ApiKeyReadinessError) {
       const code =
@@ -622,6 +644,35 @@ async function assertOrganizationMember(
     );
   }
 }
+
+// Whether the caller may create a key in one organization, so the create
+// dialog can say so before anything is filled in (MJ-010). It reads the same
+// readiness check the mint runs first, and the mint still enforces the rule,
+// so this informs the dialog without deciding anything. Only the two policy
+// fields are returned.
+apiKeys.get("/mint-eligibility", async (c) =>
+  handleRoute(c, async () => {
+    const session = await resolveSessionContext(c);
+    const actor = await resolveUserByExternalId(session.userId);
+    if (!actor)
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
+    const organizationId = parseWithSchema(
+      organizationIdParamSchema,
+      c.req.query("organizationId"),
+    );
+    const readiness = await assertOrganizationMember(
+      organizationId,
+      actor._id,
+      "Could not check whether you can create API keys here. Please try again later.",
+    );
+    // Null from a backend that does not report the policy: the mint then
+    // decides on its own, so the dialog lets the attempt go ahead.
+    return {
+      mintAllowed: readiness.mintAllowed ?? null,
+      mintMinimumRole: readiness.mintMinimumRole ?? null,
+    };
+  }),
+);
 
 type OrganizationKeyBinding = {
   workosApiKeyId: string;
@@ -655,6 +706,8 @@ type OrganizationKeyItem = {
 };
 
 // Session-only, admin-authorized organization inventory; returns no key secrets.
+// Served at GET /organization/:organizationId and, with the same answer to the
+// same callers, at GET /?organizationId= (MJ-010).
 //
 // Trust boundary: the owner/admin decision lives in the backend
 // (`workosApiKeyBindings.listForOrganization` refuses anyone below admin, and
@@ -671,15 +724,15 @@ type OrganizationKeyItem = {
 // identity) cannot be looked up at WorkOS, so it is listed from the binding
 // alone — an inventory that exists to answer "which keys can act in this
 // organization" must not hide the keys nobody can vouch for.
-apiKeys.get("/organization/:organizationId", async (c) =>
-  handleRoute(c, async () => {
+function organizationInventory(c: any, rawOrganizationId: string | undefined) {
+  return handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
     const actor = await resolveUserByExternalId(session.userId);
     if (!actor)
       throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
     const organizationId = parseWithSchema(
       organizationIdParamSchema,
-      c.req.param("organizationId"),
+      rawOrganizationId,
     );
     await assertOrganizationMember(
       organizationId,
@@ -854,17 +907,132 @@ apiKeys.get("/organization/:organizationId", async (c) =>
       );
     }
     return { items: scoped, truncated: truncated === true };
-  }),
+  });
+}
+
+apiKeys.get("/organization/:organizationId", async (c) =>
+  organizationInventory(c, c.req.param("organizationId")),
 );
 
-// An owner or admin revokes ANY key bound to their organization.
-//
-// Ordering is the whole design. The WorkOS delete cannot be undone, so the
-// backend decides FIRST (`authorizeOrganizationKeyRevoke`: admin rank, and the
-// key bound to THIS org), the key is deleted at WorkOS only on a yes, and the
-// binding is removed last, which is where the backend writes the audit row
-// naming both the admin and the minter. A key WorkOS no longer has is already
-// revoked: that is a success, and the binding is still cleaned up.
+const ORGANIZATION_REVOKE_UNAVAILABLE =
+  "Revoking organization API keys is unavailable. Please try again later.";
+
+/**
+ * An owner or admin revokes ANY key bound to their organization. Both
+ * DELETE `/organization/:organizationId/:keyId` and DELETE `/:id` on a key the
+ * caller did not mint come through here (MJ-010), so the two share one order
+ * of checks.
+ *
+ * Ordering is the whole design. The WorkOS delete cannot be undone, so the
+ * backend decides FIRST (`authorizeOrganizationKeyRevoke`: admin rank, and the
+ * key bound to THIS org), the key is deleted at WorkOS only on a yes, and the
+ * binding is removed last, which is where the backend writes the audit row
+ * naming both the admin and the minter. A key WorkOS no longer has is already
+ * revoked: that is a success, and the binding is still cleaned up.
+ *
+ * `refusalAsNotFound` answers every refusal with the 404 an unknown key id
+ * gets, for a caller who named only a key id: to them, a key they may not
+ * manage reads like one that does not exist.
+ */
+async function revokeOrganizationKey(
+  c: any,
+  target: OrganizationKeyArgs,
+  { refusalAsNotFound = false }: { refusalAsNotFound?: boolean } = {},
+): Promise<{ ok: true; alreadyRevoked: boolean }> {
+  const keyId = target.workosApiKeyId;
+  const notFound = () =>
+    new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+
+  try {
+    await assertOrganizationMember(
+      target.organizationId,
+      target.actorUserId,
+      ORGANIZATION_REVOKE_UNAVAILABLE,
+    );
+  } catch (error) {
+    if (
+      refusalAsNotFound &&
+      error instanceof WebRouteError &&
+      error.status !== 502
+    )
+      throw notFound();
+    throw error;
+  }
+
+  try {
+    await authorizeOrganizationKeyRevoke(target);
+  } catch (error) {
+    if (error instanceof WorkosKeyBindingError) {
+      if (refusalAsNotFound && [400, 403, 404].includes(error.status))
+        throw notFound();
+      if (error.status === 403)
+        throw new WebRouteError(
+          403,
+          ErrorCode.FORBIDDEN,
+          "Only organization owners and admins can revoke API keys.",
+        );
+      if (error.status === 404) throw notFound();
+      if (error.status === 400)
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Invalid organization or API key id",
+        );
+    }
+    // No decision (backend unreachable, or one that predates this route):
+    // refuse rather than revoke unauthorized.
+    getRequestLogger(c, "routes.web.api-keys").event(
+      "apikey.admin_revoke.unavailable",
+      {
+        workosKeyId: keyId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    );
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      ORGANIZATION_REVOKE_UNAVAILABLE,
+    );
+  }
+
+  const { status, body } = await callWorkOS(
+    "DELETE",
+    `/api_keys/${encodeURIComponent(keyId)}`,
+  );
+  const alreadyRevoked = status === 404;
+  if (!alreadyRevoked && (status < 200 || status >= 300)) {
+    mapWorkOSError(status, body, "Failed to revoke API key");
+  }
+
+  // Best-effort, like the personal revoke: the WorkOS key is gone either
+  // way, and failing the response would tell the admin a revoke did not
+  // happen when it did. A binding left behind is inert — the bearer
+  // middleware validates with WorkOS first — and revoking it again from
+  // the inventory cleans it up.
+  let bindingCleanupFailed = false;
+  let bindingStatus: number | undefined;
+  try {
+    await removeOrganizationKeyBinding(target);
+  } catch (error) {
+    bindingCleanupFailed = true;
+    if (error instanceof WorkosKeyBindingError) bindingStatus = error.status;
+  }
+
+  // The durable record is the backend's `apikey.revoked` audit row, which
+  // names both the admin and the minter; this is the operational one.
+  getRequestLogger(c, "routes.web.api-keys").event(
+    "apikey.admin_revoke.completed",
+    {
+      workosKeyId: keyId,
+      alreadyRevoked,
+      bindingCleanupFailed,
+      ...(bindingStatus !== undefined ? { bindingStatus } : {}),
+    },
+  );
+
+  return { ok: true, alreadyRevoked };
+}
+
 apiKeys.delete("/organization/:organizationId/:keyId", async (c) =>
   handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
@@ -876,91 +1044,67 @@ apiKeys.delete("/organization/:organizationId/:keyId", async (c) =>
       c.req.param("organizationId"),
     );
     const keyId = parseWithSchema(keyIdParamSchema, c.req.param("keyId"));
-    const unavailable =
-      "Revoking organization API keys is unavailable. Please try again later.";
-    await assertOrganizationMember(organizationId, actor._id, unavailable);
-
-    const target = {
+    return revokeOrganizationKey(c, {
       organizationId,
       actorUserId: actor._id,
       workosApiKeyId: keyId,
-    };
-    try {
-      await authorizeOrganizationKeyRevoke(target);
-    } catch (error) {
-      if (error instanceof WorkosKeyBindingError) {
-        if (error.status === 403)
-          throw new WebRouteError(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Only organization owners and admins can revoke API keys.",
-          );
-        if (error.status === 404)
-          throw new WebRouteError(
-            404,
-            ErrorCode.NOT_FOUND,
-            "API key not found",
-          );
-        if (error.status === 400)
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            "Invalid organization or API key id",
-          );
-      }
-      // No decision (backend unreachable, or one that predates this route):
-      // refuse rather than revoke unauthorized.
-      getRequestLogger(c, "routes.web.api-keys").event(
-        "apikey.admin_revoke.unavailable",
-        {
-          workosKeyId: keyId,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        },
-      );
-      throw new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, unavailable);
-    }
-
-    const { status, body } = await callWorkOS(
-      "DELETE",
-      `/api_keys/${encodeURIComponent(keyId)}`,
-    );
-    const alreadyRevoked = status === 404;
-    if (!alreadyRevoked && (status < 200 || status >= 300)) {
-      mapWorkOSError(status, body, "Failed to revoke API key");
-    }
-
-    // Best-effort, like the personal revoke: the WorkOS key is gone either
-    // way, and failing the response would tell the admin a revoke did not
-    // happen when it did. A binding left behind is inert — the bearer
-    // middleware validates with WorkOS first — and revoking it again from
-    // the inventory cleans it up.
-    let bindingCleanupFailed = false;
-    let bindingStatus: number | undefined;
-    try {
-      await removeOrganizationKeyBinding(target);
-    } catch (error) {
-      bindingCleanupFailed = true;
-      if (error instanceof WorkosKeyBindingError) bindingStatus = error.status;
-    }
-
-    // The durable record is the backend's `apikey.revoked` audit row, which
-    // names both the admin and the minter; this is the operational one.
-    getRequestLogger(c, "routes.web.api-keys").event(
-      "apikey.admin_revoke.completed",
-      {
-        workosKeyId: keyId,
-        alreadyRevoked,
-        bindingCleanupFailed,
-        ...(bindingStatus !== undefined ? { bindingStatus } : {}),
-      },
-    );
-
-    return { ok: true, alreadyRevoked };
+    });
   }),
 );
 
-apiKeys.get("/", async (c) =>
-  handleRoute(c, async () => {
+/**
+ * DELETE `/:id` for a key the caller did not mint (MJ-010): an owner or admin
+ * of the organization the key is bound to revokes it exactly as the
+ * inventory's revoke would. Anyone else gets the 404 an unknown id gets.
+ */
+async function revokeBoundKeyForAdmin(
+  c: any,
+  sessionUserId: string,
+  keyId: string,
+): Promise<{ ok: true; alreadyRevoked: boolean }> {
+  let binding: WorkosKeyBinding | null;
+  try {
+    binding = await lookupWorkosKeyBinding(keyId);
+  } catch (error) {
+    // No way to tell which organization could authorize it: refuse, as the
+    // shared path does when it gets no decision.
+    getRequestLogger(c, "routes.web.api-keys").event(
+      "apikey.admin_revoke.unavailable",
+      {
+        workosKeyId: keyId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    );
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Revoking API keys is unavailable. Please try again later.",
+    );
+  }
+  const actor = binding ? await resolveUserByExternalId(sessionUserId) : null;
+  if (!binding || !actor) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+  }
+  return revokeOrganizationKey(
+    c,
+    {
+      organizationId: binding.mcpjamOrganizationId,
+      actorUserId: actor._id,
+      workosApiKeyId: keyId,
+    },
+    { refusalAsNotFound: true },
+  );
+}
+
+apiKeys.get("/", async (c) => {
+  // `?organizationId=` asks for that organization's inventory: the same list,
+  // for the same owners and admins only, as GET /organization/:organizationId
+  // (MJ-010). Without it, this is the caller's own keys.
+  const organizationId = c.req.query("organizationId");
+  if (organizationId !== undefined) {
+    return organizationInventory(c, organizationId);
+  }
+  return handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
     // Deliberately NOT filtered by `session.organizationId`: a key is now
     // minted into whichever MCPJam org the caller selected in the dialog
@@ -1049,8 +1193,8 @@ apiKeys.get("/", async (c) =>
         organizationId: bindings[index]?.mcpjamOrganizationId ?? null,
       })),
     };
-  }),
-);
+  });
+});
 
 apiKeys.delete("/:id", async (c) =>
   handleRoute(c, async () => {
@@ -1068,9 +1212,11 @@ apiKeys.delete("/:id", async (c) =>
     // ownership for the org-level admin key, and it exposes no single-key
     // GET for user keys (404s even for existing ids). The key must appear
     // in the session user's OWN key list — enumeration under the user is
-    // the ownership proof. An unknown or foreign id reads as not-found.
+    // the ownership proof. Any other id is left to the organization the key
+    // is bound to: its owners and admins may revoke it (MJ-010), and for
+    // everyone else an unknown or foreign id reads as not-found.
     if (!(await userOwnsApiKey(session.userId, id))) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "API key not found");
+      return revokeBoundKeyForAdmin(c, session.userId, id);
     }
 
     const { status, body } = await callWorkOS(

@@ -58,6 +58,8 @@ vi.mock("../../../services/organizations.js", async (importOriginal) => {
 
 const OWNED_KEY_ID = "api_key_owned_1";
 const USER_KEYS_PATH = "/user_management/users/user_session_1/api_keys";
+const ADMINS_ONLY_MESSAGE =
+  "Only organization owners and admins can create API keys in this organization. Ask an owner or admin to create one for you, or to allow members to create keys.";
 
 function workosJson(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -148,18 +150,21 @@ describe("web routes — API key revoke ownership", () => {
     expect(deleted).toEqual([OWNED_KEY_ID]);
   });
 
-  it("404s for a foreign or unknown key id without calling DELETE", async () => {
+  it("404s for an unknown key id without calling DELETE", async () => {
+    // Not in the caller's list, and bound to no organization.
+    vi.mocked(lookupWorkosKeyBinding).mockResolvedValueOnce(null);
     const { deleted, fetchMock } = stubWorkOS([
       { data: [keyRecord("api_key_other")] },
     ]);
 
     const { status, data } = await expectJson(
-      await deleteKey(app, "api_key_someone_elses"),
+      await deleteKey(app, "api_key_unknown"),
     );
 
     expect(status).toBe(404);
     expect(data).toMatchObject({ code: "NOT_FOUND" });
     expect(deleted).toEqual([]);
+    expect(lookupWorkosKeyBinding).toHaveBeenCalledWith("api_key_unknown");
     // Only the ownership list walk ran.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -897,7 +902,9 @@ describe("web routes — admin-only minting policy", () => {
     vi.unstubAllGlobals();
   });
 
-  it("403s a member of an admin-only org before any WorkOS key exists", async () => {
+  it("403s a member under the default owners-and-admins setting before any WorkOS key exists", async () => {
+    // What the readiness check reports for a member of an organization that
+    // has not changed who may create keys (MJ-010).
     mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
       ready: true,
       workosOrganizationId: "org_workos_1",
@@ -916,7 +923,11 @@ describe("web routes — admin-only minting policy", () => {
 
     expect(status).toBe(403);
     expect(data.code).toBe("FORBIDDEN");
-    expect(data.message).toMatch(/owners and admins/);
+    expect(data.message).toBe(ADMINS_ONLY_MESSAGE);
+    expect(mockResolveApiKeyReadiness).toHaveBeenCalledWith(
+      "org_convex_1",
+      "mcpjam_user_1",
+    );
     expect(fetchMock).not.toHaveBeenCalled();
     expect(createWorkosKeyBinding).not.toHaveBeenCalled();
   });
@@ -991,6 +1002,45 @@ describe("web routes — admin-only minting policy", () => {
 
     expect(status).toBe(403);
     expect(data.code).toBe("FORBIDDEN");
+    expect(deleted).toEqual(["/api_keys/api_key_new"]);
+  });
+
+  it("gives the readiness check's answer when the binding write names the organization's setting", async () => {
+    mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+      mintAllowed: true,
+    });
+    vi.mocked(createWorkosKeyBinding).mockRejectedValueOnce(
+      new WorkosKeyBindingError(
+        403,
+        "Only organization owners and admins can create API keys in this organization",
+        "ADMINS_ONLY",
+      ),
+    );
+    const deleted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (init?.method === "DELETE") {
+          deleted.push(url.pathname);
+          return new Response(null, { status: 204 });
+        }
+        return workosJson({ ...keyRecord("api_key_new"), value: "v" });
+      }),
+    );
+
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(await mintWith(app, {}));
+
+    expect(status).toBe(403);
+    expect(data).toMatchObject({
+      code: "FORBIDDEN",
+      message: ADMINS_ONLY_MESSAGE,
+    });
     expect(deleted).toEqual(["/api_keys/api_key_new"]);
   });
 });
@@ -1474,5 +1524,448 @@ describe("organization API key revoke (owners and admins)", () => {
 
     expect(response.status).toBe(403);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("API key revoke by id for organization owners and admins", () => {
+  const { app } = createWebTestApp();
+  const MEMBER_KEY_ID = "api_key_member_1";
+  const LIST_WALK = `GET api.workos.com${USER_KEYS_PATH}`;
+
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
+    mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+    });
+    vi.mocked(resolveUserByExternalId).mockResolvedValue({
+      _id: "mcpjam_user_1",
+    } as Awaited<ReturnType<typeof resolveUserByExternalId>>);
+    vi.mocked(lookupWorkosKeyBinding)
+      .mockReset()
+      .mockResolvedValue({ mcpjamOrganizationId: "org-1" });
+    vi.mocked(removeWorkosKeyBinding).mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.mocked(lookupWorkosKeyBinding)
+      .mockReset()
+      .mockResolvedValue({ mcpjamOrganizationId: "org-1" });
+  });
+
+  /**
+   * The caller's own WorkOS key list (holding only OWNED_KEY_ID), the
+   * backend's organization key routes, and the WorkOS delete. `calls` records
+   * every request in order as "<METHOD> <host><path>".
+   */
+  function stubRevokeById(opts: { authorize?: Response } = {}) {
+    const calls: string[] = [];
+    const urls: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const method = init?.method ?? "GET";
+        calls.push(`${method} ${url.host}${url.pathname}`);
+        urls.push(url);
+        if (method === "GET" && url.pathname === USER_KEYS_PATH) {
+          return workosJson({
+            object: "list",
+            data: [keyRecord(OWNED_KEY_ID)],
+            list_metadata: { before: null, after: null },
+          });
+        }
+        if (url.pathname.endsWith("/revoke-authorization")) {
+          return (
+            opts.authorize ??
+            workosJson({ ok: true, mintedByUserId: "member_1" })
+          );
+        }
+        if (url.pathname === "/internal/v1/organization-api-keys") {
+          return workosJson({ ok: true, deleted: true });
+        }
+        if (method === "DELETE" && url.pathname.startsWith("/api_keys/")) {
+          return new Response(null, { status: 204 });
+        }
+        return workosJson({ message: "unexpected call" }, 500);
+      }),
+    );
+    return { calls, urls };
+  }
+
+  it("lets an organization owner revoke a member's key: authorize, then WorkOS, then the binding", async () => {
+    const { calls, urls } = stubRevokeById();
+
+    const { status, data } = await expectJson(
+      await deleteKey(app, MEMBER_KEY_ID),
+    );
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ ok: true, alreadyRevoked: false });
+    expect(lookupWorkosKeyBinding).toHaveBeenCalledWith(MEMBER_KEY_ID);
+    expect(mockResolveApiKeyReadiness).toHaveBeenCalledWith(
+      "org-1",
+      "mcpjam_user_1",
+    );
+    expect(calls).toEqual([
+      LIST_WALK,
+      "GET backend.test/internal/v1/organization-api-keys/revoke-authorization",
+      `DELETE api.workos.com/api_keys/${MEMBER_KEY_ID}`,
+      "DELETE backend.test/internal/v1/organization-api-keys",
+    ]);
+    // The organization is the one the key is bound to; the actor is the
+    // caller's MCPJam id, on both backend hops.
+    for (const url of [urls[1], urls[3]]) {
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        organizationId: "org-1",
+        actorUserId: "mcpjam_user_1",
+        workosApiKeyId: MEMBER_KEY_ID,
+      });
+    }
+    // The minter's own binding removal belongs to the personal revoke.
+    expect(removeWorkosKeyBinding).not.toHaveBeenCalled();
+  });
+
+  it("answers a member who is not an admin with the unknown-id 404, and leaves the key alone", async () => {
+    const { calls } = stubRevokeById({
+      authorize: workosJson(
+        {
+          ok: false,
+          error: "Not allowed to manage API keys for this organization",
+        },
+        403,
+      ),
+    });
+
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(await deleteKey(app, MEMBER_KEY_ID));
+
+    expect(status).toBe(404);
+    expect(data).toMatchObject({
+      code: "NOT_FOUND",
+      message: "API key not found",
+    });
+    expect(calls).toEqual([
+      LIST_WALK,
+      "GET backend.test/internal/v1/organization-api-keys/revoke-authorization",
+    ]);
+    expect(removeWorkosKeyBinding).not.toHaveBeenCalled();
+  });
+
+  it("answers someone outside the key's organization with 404 before asking to authorize", async () => {
+    const { ApiKeyReadinessError } =
+      await import("../../../services/organizations.js");
+    mockResolveApiKeyReadiness.mockRejectedValue(
+      new ApiKeyReadinessError(403, "Not a member of this organization"),
+    );
+    const { calls } = stubRevokeById();
+
+    const { status, data } = await expectJson<{ code: string }>(
+      await deleteKey(app, MEMBER_KEY_ID),
+    );
+
+    expect(status).toBe(404);
+    expect(data.code).toBe("NOT_FOUND");
+    expect(calls).toEqual([LIST_WALK]);
+  });
+
+  it("refuses with 502, and leaves the key alone, when the key's organization cannot be read", async () => {
+    vi.mocked(lookupWorkosKeyBinding).mockRejectedValueOnce(
+      new Error("Binding lookup failed (500)"),
+    );
+    const { calls } = stubRevokeById();
+
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(await deleteKey(app, MEMBER_KEY_ID));
+
+    expect(status).toBe(502);
+    expect(data.code).toBe("SERVER_UNREACHABLE");
+    expect(data.message).not.toContain("Binding lookup");
+    expect(calls).toEqual([LIST_WALK]);
+  });
+
+  it("refuses with 502 rather than revoking when the backend gives no decision", async () => {
+    // A routing-level 404 (no entity body) is no decision at all.
+    const { calls } = stubRevokeById({
+      authorize: new Response("Not found", { status: 404 }),
+    });
+
+    const { status } = await expectJson(await deleteKey(app, MEMBER_KEY_ID));
+
+    expect(status).toBe(502);
+    expect(calls).not.toContain(
+      `DELETE api.workos.com/api_keys/${MEMBER_KEY_ID}`,
+    );
+  });
+
+  it("keeps the caller's own key on the personal revoke", async () => {
+    const { calls } = stubRevokeById();
+
+    const { status, data } = await expectJson(
+      await deleteKey(app, OWNED_KEY_ID),
+    );
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ ok: true });
+    expect(calls).toEqual([
+      LIST_WALK,
+      `DELETE api.workos.com/api_keys/${OWNED_KEY_ID}`,
+    ]);
+    expect(lookupWorkosKeyBinding).not.toHaveBeenCalled();
+    expect(removeWorkosKeyBinding).toHaveBeenCalledWith(
+      OWNED_KEY_ID,
+      "mcpjam_user_1",
+    );
+  });
+});
+
+describe("API key list for one organization", () => {
+  const { app } = createWebTestApp();
+
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
+    mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+    });
+    vi.mocked(resolveUserByExternalId).mockResolvedValue({
+      _id: "mcpjam_user_1",
+    } as Awaited<ReturnType<typeof resolveUserByExternalId>>);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.mocked(lookupWorkosKeyBinding)
+      .mockReset()
+      .mockResolvedValue({ mcpjamOrganizationId: "org-1" });
+  });
+
+  function listKeys(path: string) {
+    return app.request(path, {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+  }
+
+  /** The backend inventory answers `inventory`; WorkOS lists a member's key. */
+  function stubInventory(inventory: Response) {
+    const requested: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = new URL(String(input));
+        requested.push(`${url.host}${url.pathname}`);
+        if (url.pathname === "/internal/v1/organization-api-keys")
+          return inventory.clone();
+        return workosJson({
+          data: [
+            {
+              id: "api_key_member_1",
+              name: "CI",
+              obfuscated_value: "sk_…abc",
+            },
+          ],
+        });
+      }),
+    );
+    return { requested };
+  }
+
+  const MEMBER_KEY_INVENTORY = {
+    items: [
+      {
+        workosApiKeyId: "api_key_member_1",
+        owner: {
+          id: "member_1",
+          name: "Morgan",
+          email: "morgan@test.local",
+          externalId: "workos-member-1",
+        },
+      },
+    ],
+  };
+
+  it("gives an organization owner every key bound to the organization, a member's included", async () => {
+    const { requested } = stubInventory(workosJson(MEMBER_KEY_INVENTORY));
+
+    const { status, data } = await expectJson<{
+      items: Array<Record<string, unknown>>;
+      truncated: boolean;
+    }>(await listKeys("/api/web/api-keys?organizationId=org-1"));
+
+    expect(status).toBe(200);
+    expect(data.truncated).toBe(false);
+    expect(data.items).toHaveLength(1);
+    expect(data.items[0]).toMatchObject({
+      id: "api_key_member_1",
+      name: "CI",
+      organizationId: "org-1",
+      owner: { id: "member_1", name: "Morgan", email: "morgan@test.local" },
+    });
+    // The member's WorkOS list was read, not the caller's own.
+    expect(requested).toEqual([
+      "backend.test/internal/v1/organization-api-keys",
+      "api.workos.com/user_management/users/workos-member-1/api_keys",
+    ]);
+  });
+
+  it("gives a member who is not an admin the organization route's 403, without reading WorkOS", async () => {
+    const { requested } = stubInventory(
+      workosJson(
+        {
+          ok: false,
+          error: "Not allowed to view API keys for this organization",
+        },
+        403,
+      ),
+    );
+
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(await listKeys("/api/web/api-keys?organizationId=org-1"));
+
+    expect(status).toBe(403);
+    expect(data).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Only organization owners and admins can view API keys.",
+    });
+    expect(requested).toEqual([
+      "backend.test/internal/v1/organization-api-keys",
+    ]);
+  });
+
+  it.each([
+    ["an owner", 200, MEMBER_KEY_INVENTORY],
+    [
+      "a member",
+      403,
+      {
+        ok: false,
+        error: "Not allowed to view API keys for this organization",
+      },
+    ],
+  ])(
+    "answers %s exactly as GET /organization/:organizationId does",
+    async (_caller, backendStatus, backendBody) => {
+      stubInventory(workosJson(backendBody, backendStatus));
+      const viaQuery = await listKeys("/api/web/api-keys?organizationId=org-1");
+      const viaPath = await listKeys("/api/web/api-keys/organization/org-1");
+
+      expect(viaQuery.status).toBe(viaPath.status);
+      expect(await viaQuery.json()).toEqual(await viaPath.json());
+    },
+  );
+
+  it("400s a blank organizationId before touching the backend", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await listKeys("/api/web/api-keys?organizationId=%20");
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("API key creation eligibility", () => {
+  const { app } = createWebTestApp();
+
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    mockResolveApiKeyReadiness.mockReset();
+    vi.mocked(resolveUserByExternalId).mockResolvedValue({
+      _id: "mcpjam_user_1",
+    } as Awaited<ReturnType<typeof resolveUserByExternalId>>);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  function eligibility(query = "?organizationId=org_convex_1") {
+    return app.request(`/api/web/api-keys/mint-eligibility${query}`, {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+  }
+
+  it("tells a member that only owners and admins create keys, and returns nothing more", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+      mintAllowed: false,
+      mintMinimumRole: "admin",
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { status, data } = await expectJson(await eligibility());
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ mintAllowed: false, mintMinimumRole: "admin" });
+    expect(mockResolveApiKeyReadiness).toHaveBeenCalledWith(
+      "org_convex_1",
+      "mcpjam_user_1",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tells an owner or admin they may create keys", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+      mintAllowed: true,
+      mintMinimumRole: "admin",
+    });
+
+    const { status, data } = await expectJson(await eligibility());
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ mintAllowed: true, mintMinimumRole: "admin" });
+  });
+
+  it("reports no answer when the backend does not give one", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+    });
+
+    const { status, data } = await expectJson(await eligibility());
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ mintAllowed: null, mintMinimumRole: null });
+  });
+
+  it("403s someone who is not a member of the organization", async () => {
+    const { ApiKeyReadinessError } =
+      await import("../../../services/organizations.js");
+    mockResolveApiKeyReadiness.mockRejectedValue(
+      new ApiKeyReadinessError(403, "Not a member of this organization"),
+    );
+
+    const { status, data } = await expectJson<{ code: string }>(
+      await eligibility(),
+    );
+
+    expect(status).toBe(403);
+    expect(data.code).toBe("FORBIDDEN");
+  });
+
+  it("400s a request that names no organization", async () => {
+    const response = await eligibility("");
+
+    expect(response.status).toBe(400);
+    expect(mockResolveApiKeyReadiness).not.toHaveBeenCalled();
   });
 });
