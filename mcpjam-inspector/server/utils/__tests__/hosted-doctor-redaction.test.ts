@@ -1077,6 +1077,39 @@ describe("hosted doctor answer projection", () => {
     expect(JSON.stringify(redacted)).not.toMatch(MARKER);
   });
 
+  it.each([
+    [
+      "2 of 5 sampled skills failed verification: skill://UNEXPECTED_MARKER_40/a (UNEXPECTED_MARKER_41), skill://b (hash mismatch)",
+      "2 of 5 sampled skills failed verification.",
+    ],
+    [
+      "1 listed entry rejected as malformed: UNEXPECTED_MARKER_42",
+      "1 listed entry rejected as malformed.",
+    ],
+  ])(
+    "reports the skills check's findings by their counts only",
+    async (detail, counts) => {
+      const redact = await hostedRedactor();
+      const result = doctorResult({
+        attempts: [
+          answeredAttempt(
+            "https://mcp.example.test/mcp",
+            { status: 200, statusText: "OK", headers: {} },
+            8,
+          ),
+        ],
+        checks: { skills: { status: "error", detail } },
+      });
+
+      const redacted = redact(result) as any;
+
+      expect(redacted.checks.skills.detail).toBe(
+        `${counts} Hosted diagnostics omit upstream error text; run the doctor locally for the full message.`,
+      );
+      expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+    },
+  );
+
   it("projects each MCP list item field by field", async () => {
     const redact = await hostedRedactor();
     const unloadableMessage =

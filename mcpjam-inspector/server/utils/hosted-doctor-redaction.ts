@@ -288,10 +288,12 @@ const OAUTH_GUARD_REFUSAL = new RegExp(
 const OAUTH_CHALLENGE_SUMMARY =
   /^(?:Server requires OAuth before it can be connected\.|Unauthenticated probe requires OAuth; continuing with provided credentials\.)(?: The challenge arrived on HTTP \d{3}; MCP requires 401 Unauthorized here, so clients that decide to authenticate from the status code alone will not start OAuth against this server\.)?$/;
 
-/** The skills check's own findings, which name skill URIs from the listing. */
+/**
+ * The skills check's own findings. The skill URIs and reasons after the colon
+ * come from the listing, so a hosted response keeps only the counts.
+ */
 const SKILLS_FINDINGS =
-  /^\d+ (?:of \d+ sampled skills failed verification|listed (?:entry|entries) rejected as malformed): /;
-const MAX_SKILLS_FINDINGS_LENGTH = 1024;
+  /^(\d{1,6}) (of \d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): /;
 
 type TextTemplate = (text: string) => string | undefined;
 
@@ -323,10 +325,10 @@ const DOCTOR_TEXT_TEMPLATES: readonly TextTemplate[] = [
   (text) => (OAUTH_CHALLENGE_SUMMARY.test(text) ? text : undefined),
   (text) => (OAUTH_GUARD_REFUSAL.test(text) ? text : undefined),
   (text) => (/^Request timed out after \d+ms$/.test(text) ? text : undefined),
-  (text) =>
-    SKILLS_FINDINGS.test(text)
-      ? boundText(text, MAX_SKILLS_FINDINGS_LENGTH)
-      : undefined,
+  (text) => {
+    const match = SKILLS_FINDINGS.exec(text);
+    return match ? `${match[1]} ${match[2]}. ${OMITTED_TEXT_NOTE}` : undefined;
+  },
   (text) => {
     const match = /^HTTP probe failed: (.*)$/s.exec(text);
     const inner = match ? allowedDoctorText(match[1]) : undefined;
