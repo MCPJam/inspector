@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-24 (3.12.1)
+
+#### Fixed
+
+- **OAuth debugger names every authorization-server metadata URL it tried** — when every candidate metadata URL returns a 4xx, the debugger now lists each URL it attempted and what each one returned, instead of showing "Last error: null". This makes it clear which discovery paths were tried and why each failed.
+
+#### Added
+
+- **Run disclosure shows analysis provider retention policy** — the run-disclosure tooltip and `mcpjam eval run` output now include an **Analysis providers:** line when the backend reports provider retention facts. The line describes the zero-data-retention and no-training policy sent with every platform-key analysis call, and what it does not cover. Backends that predate this field omit the line entirely.
+
 ### 2026-09-25
 
 #### Fixed
