@@ -222,6 +222,12 @@ export interface JourneyRunAttempt {
   /** Human string; historical rows may still hold a raw provider payload, so
    * render through `humanizeSwarmAttemptError`. */
   errorMessage: string | null;
+  /**
+   * The session's execution record — what the target model actually ran on
+   * (backend `lib/executionRecord.ts`). Absent on sessions recorded before
+   * it existed. Read through `readExecutionRecord`, never trusted raw.
+   */
+  execution?: unknown;
 }
 
 export interface JourneyRun {

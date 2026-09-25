@@ -343,7 +343,9 @@ export function describeExecutionRoute(record: ExecutionRecord): string {
       return `${executionRailLabel(rail)} (MCPJam key)`;
     case "orgCloud":
       return offering.connectionLabel
-        ? `org connection "${offering.connectionLabel}" (${providerName(record)})`
+        ? `org connection "${offering.connectionLabel}" (${providerName(
+            record
+          )})`
         : `org ${providerName(record)} connection`;
     case "local":
       return offering.connectionLabel
@@ -365,9 +367,7 @@ export function describeMaxOutputTokens(maxOutputTokens: number): string {
 export function describeExecutionSettings(record: ExecutionRecord): string[] {
   const settings = record.effectiveSettings;
   return [
-    ...(settings.reasoningEffort
-      ? [`effort ${settings.reasoningEffort}`]
-      : []),
+    ...(settings.reasoningEffort ? [`effort ${settings.reasoningEffort}`] : []),
     ...(settings.temperature !== undefined
       ? [`temperature ${settings.temperature}`]
       : []),
@@ -398,7 +398,9 @@ export function describeExecutionModel(record: ExecutionRecord): string {
  */
 export function formatExecutionProvenanceLine(record: ExecutionRecord): string {
   const parts = [
-    `Ran on ${describeExecutionModel(record)} via ${describeExecutionRoute(record)}`,
+    `Ran on ${describeExecutionModel(record)} via ${describeExecutionRoute(
+      record
+    )}`,
     ...(record.harness
       ? [`${record.harness.id} v${record.harness.runtimeVersion}`]
       : []),
@@ -437,9 +439,11 @@ export function describeExecutionAttempts(record: ExecutionRecord): string[] {
       attempt.outcome === "ok"
         ? "ok"
         : attempt.outcome === "error"
-          ? `failed${attempt.code ? ` (${attempt.code})` : ""}`
-          : `${attempt.outcome}${attempt.code ? ` (${attempt.code})` : ""}`;
-    return `Attempt ${index + 1}: ${executionRailLabel(attempt.rail)} · ${attempt.wireModelId} · ${outcome}`;
+        ? `failed${attempt.code ? ` (${attempt.code})` : ""}`
+        : `${attempt.outcome}${attempt.code ? ` (${attempt.code})` : ""}`;
+    return `Attempt ${index + 1}: ${executionRailLabel(attempt.rail)} · ${
+      attempt.wireModelId
+    } · ${outcome}`;
   });
 }
 

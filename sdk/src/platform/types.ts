@@ -1294,6 +1294,33 @@ export interface PlatformDisclosedModel {
   tenantEgress: PlatformDisclosureTenantEgress;
   byok?: PlatformByokDisclosure;
   rail: PlatformRailDisclosure;
+  /**
+   * Where this model's BYOK / provider facts came from: the run's own
+   * execution records, or the organization's provider configuration AS IT IS
+   * NOW (a pre-run disclosure, or a run recorded before records existed —
+   * which may not be what ran). Absent on older backends.
+   */
+  provenance?: PlatformDisclosureProvenance;
+  /** Present exactly when `provenance === "execution-record"`. */
+  recorded?: PlatformRecordedExecutionDisclosure;
+}
+
+export type PlatformDisclosureProvenance =
+  | "execution-record"
+  | "inferred-from-current-config";
+
+/** What one model's execution records say, aggregated. */
+export interface PlatformRecordedExecutionDisclosure {
+  /** How many records (iterations / sessions / calls) were read. */
+  records: number;
+  /** Each record's resolved rail, first-seen order, deduplicated. */
+  resolvedRails: readonly string[];
+  /** Every rail any recorded attempt used (fallbacks included). */
+  attemptedRails: readonly string[];
+  /** Offering provider keys (`gateway`, `openrouter`, `azure`, `custom:x`). */
+  providerKeys: readonly string[];
+  /** Deviation kinds any record carries (`provider_fallback`, …). */
+  deviations: readonly string[];
 }
 
 /**

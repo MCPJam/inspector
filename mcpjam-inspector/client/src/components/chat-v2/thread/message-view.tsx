@@ -32,9 +32,18 @@ import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assist
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { CopilotMessageHeader } from "./copilot-message-header";
+import { ExecutionProvenance } from "@/components/evals/execution-provenance";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
+
+/** `message.metadata.execution`, raw — `ExecutionProvenance` validates it. */
+function readMessageExecution(message: UIMessage): unknown {
+  const metadata = message.metadata;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as { execution?: unknown }).execution
+    : undefined;
+}
 type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
@@ -134,6 +143,10 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
     (prevMessage.id === nextMessage.id &&
       prevMessage.role === nextMessage.role &&
       prevMessage.parts === nextMessage.parts &&
+      // The finish chunk delivers the turn's metadata (usage, execution
+      // record) after the last part, so an unchanged `parts` array is not
+      // enough to skip a render.
+      prevMessage.metadata === nextMessage.metadata &&
       getMessageTimestampMs(prevMessage) === getMessageTimestampMs(nextMessage))
   );
 }
@@ -699,6 +712,16 @@ function MessageViewImpl({
             ) : null}
             <MessageTimestamp message={message} />
           </div>
+        ) : null}
+        {/* What this turn ran on, from the execution record MCPJam's /stream
+            puts on the finish message. Nothing for a turn without one (local
+            keys, older backends, turns still streaming). */}
+        {!minimalMode ? (
+          <ExecutionProvenance
+            execution={readMessageExecution(message)}
+            className="pt-2"
+            testIdPrefix="chat-turn-execution"
+          />
         ) : null}
         {renderAssistantTurnFooter?.(message)}
       </div>

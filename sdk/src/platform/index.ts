@@ -200,6 +200,8 @@ export type {
   PlatformManagedRailDisclosure,
   PlatformNotApplicableRailDisclosure,
   PlatformRailDisclosure,
+  PlatformDisclosureProvenance,
+  PlatformRecordedExecutionDisclosure,
   PlatformDisclosureTenantEgress,
   PlatformByokDisclosure,
   PlatformDisclosedModel,
