@@ -33,6 +33,10 @@ When the server's Protected Resource Metadata (PRM) advertises a `resource` iden
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
+### Authorization-server metadata discovery errors
+
+When every candidate authorization-server metadata URL returns a 4xx, the debugger lists each URL it tried and the HTTP status each one returned. This replaces the previous "Last error: null" message and makes it clear which discovery paths were attempted and why each failed.
+
 ### Path-scoped authorization servers
 
 Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path — for example `https://<env>.example.com/resources/res_x` — while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
