@@ -9,6 +9,26 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-25
+
+#### Changed
+
+- **Create study: taken names are flagged while typing** — the name field in the create-study flow now checks the typed name against the project's existing studies as you type (trimmed, case-insensitive). **Continue** will not advance with a name that is already taken. The backend's `CONFLICT` response remains the fallback for a name taken in the window between Continue and Create.
+
+- **Create study: suggested name is "Study N"** — the name field is now pre-filled with "Study N", one past the highest N already in the project, rather than the client's name. A name derived from the client was already taken from the second study on that client onward.
+
+- **Findings empty state matches Insights** — a study with no sessions now shows the same share/preview panel on the Findings tab as on Insights, titled "Findings start with the first session." Sessions still waiting on analysis keep their status notice.
+
+- **Study Settings header** — the Edit / Open preview / Share row is no longer shown on the Settings page. The header reads "← {study name} | Settings" instead of showing the study name twice. The study name is now edited in a new **Study name** card above Description; it saves on blur or Enter, Escape reverts, and a taken name is shown on the field. The Description card now notes that testers don't see it.
+
+- **Sessions: rating filter follows the study's rating style** — thumbs studies now show **All ratings / Thumbs up / Thumbs down / No feedback** instead of star-count labels. These map to the same buckets the backend scores thumbs into (down = 1, up = 5). Star studies are unchanged. If a thumbs study has sessions rated before the switch, a **Neutral (3 stars)** option appears so those sessions remain filterable.
+
+- **Sessions: new Personas filter** — a **Personas** filter pill appears alongside the Ratings filter. It filters by session sentiment using the same five categories and order as the Findings persona tabs (Gave up, Frustrated users, Neutral users, Satisfied users, Uncategorized users). Sessions without a sentiment match no persona and appear only under **All personas**.
+
+- **Preview: "Back to study" moved to the left** — the **Back to study** control on the scenario preview surface is now an arrow pill on the left of the header, before the client name, matching the study detail's own back control. Share-link testers still do not see it.
+
+- **Promote to test case from User Testing lands on the suite** — promoting a session to a test case from the User Testing Sessions tab now opens the suite's case list rather than the new case's editor. The Playground, Swarms, chat history, and the per-turn action keep the previous destination (the case editor).
+
 ### 2026-09-24
 
 #### Changed
