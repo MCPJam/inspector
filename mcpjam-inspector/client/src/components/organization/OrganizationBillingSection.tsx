@@ -1296,32 +1296,38 @@ export function OrganizationBillingSection({
           ) : null}
 
           <BentoTile viewportClassName="p-3 sm:p-4">
-            <Card className="rounded-lg border-border/60 py-6 shadow-sm">
+            <Card
+              data-testid="compare-plans-card"
+              className="rounded-lg border-border/60 py-6 shadow-sm"
+            >
               <CardContent className="px-0 pb-0 pt-0">
-                {isLoadingPlanCatalog || !planCatalog ? (
-                  <div className="px-4 py-6 sm:px-6">
-                    <div className="mb-4 space-y-1">
+                <div className="px-4 pb-5 sm:px-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
                       <p className="text-xs font-semibold uppercase tracking-wider text-primary">
                         Compare plans
                       </p>
-                      <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                      <CardTitle className="text-base font-semibold leading-snug sm:text-lg">
                         {planCatalog?.plans.pro
                           ? "Compare plans"
                           : "Compare Free vs Team"}
                       </CardTitle>
-                      <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                        {ORG_COMPARE_PLANS_NOTE}
-                      </p>
                     </div>
-                    <div className="mb-4">
-                      <BillingIntervalToggle
-                        size="sm"
-                        billingInterval={billingInterval}
-                        onChange={setBillingInterval}
-                        annualDiscount={compareAnnualDiscount}
-                        discountPrefix={compareDiscountPrefix}
-                      />
-                    </div>
+                    <BillingIntervalToggle
+                      size="sm"
+                      className="shrink-0 self-start sm:self-center"
+                      billingInterval={billingInterval}
+                      onChange={setBillingInterval}
+                      annualDiscount={compareAnnualDiscount}
+                      discountPrefix={compareDiscountPrefix}
+                    />
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {ORG_COMPARE_PLANS_NOTE}
+                  </p>
+                </div>
+                {isLoadingPlanCatalog || !planCatalog ? (
+                  <div className="px-4 pb-6 sm:px-6">
                     <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
                       Loading plan catalog...
                     </div>
@@ -1336,33 +1342,7 @@ export function OrganizationBillingSection({
                               style={{ width: `${LABEL_COLUMN_WIDTH_PCT}%` }}
                               className="sticky left-0 z-20 h-full min-h-0 whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
                             >
-                              <div className="flex h-full min-h-[11rem] flex-col">
-                                <div className="flex min-h-0 flex-1 flex-col">
-                                  <div className="space-y-1 pr-1">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                                      Compare plans
-                                    </p>
-                                    <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                                      {planCatalog?.plans.pro
-                                        ? "Compare plans"
-                                        : "Compare Free vs Team"}
-                                    </CardTitle>
-                                    <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                                      {ORG_COMPARE_PLANS_NOTE}
-                                    </p>
-                                  </div>
-                                  <div className="min-h-0 flex-1" aria-hidden />
-                                </div>
-                                <div className="shrink-0">
-                                  <BillingIntervalToggle
-                                    size="sm"
-                                    billingInterval={billingInterval}
-                                    onChange={setBillingInterval}
-                                    annualDiscount={compareAnnualDiscount}
-                                    discountPrefix={compareDiscountPrefix}
-                                  />
-                                </div>
-                              </div>
+                              <span className="sr-only">Feature</span>
                             </TableHead>
                             {offeredPlans(planCatalog).map((plan) => {
                               const entry = planCatalog.plans[plan]!;

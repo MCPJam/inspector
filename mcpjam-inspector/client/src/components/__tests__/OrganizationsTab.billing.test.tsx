@@ -2403,7 +2403,7 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     const toggle = within(
-      within(screen.getByRole("table")).getByRole("group", {
+      within(screen.getByTestId("compare-plans-card")).getByRole("group", {
         name: "Billing interval",
       }),
     );
