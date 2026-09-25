@@ -13,8 +13,10 @@ import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 import {
   mintToolApprovalId,
+  TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
   toolApprovalBindingFor,
 } from "../tool-approval-token";
+import { logger } from "../logger";
 
 /**
  * An approval id the engine itself would have minted for this call (MJ-008).
@@ -126,6 +128,8 @@ vi.mock("../logger", () => ({
     // would TypeError inside the catch instead of reaching the assertions.
     systemEvent: vi.fn(),
     event: vi.fn(),
+    // An approval that comes back after its lifetime is logged at info.
+    info: vi.fn(),
   },
   // `error-origin-capture` routes its Sentry capture through the logger
   // module, so this mock has to carry it or the backend-failure paths below
@@ -4630,14 +4634,104 @@ describe("mcpjam-stream-handler", () => {
 
           const second = await resume(approvedHistory(approvalId));
           expect(second.ran).toBe(false);
-          expect(
-            writtenChunks.some(
-              (chunk) =>
-                chunk?.type === "tool-output-denied" &&
-                chunk.toolCallId === "call-gated-1",
-            ),
-          ).toBe(true);
+          // Shown on the card with its reason, not as a bare denial.
+          const shown = writtenChunks.find(
+            (chunk) =>
+              chunk?.type === "tool-output-error" &&
+              chunk.toolCallId === "call-gated-1",
+          );
+          expect(shown?.errorText).toMatch(/already used/);
           expect(second.answer?.output?.value).toMatch(/already used/);
+        });
+
+        describe("an approval's lifetime", () => {
+          /** An approval the engine would have minted `ageMs` ago. */
+          function approvalIssuedAgo(ageMs: number) {
+            const id = mintToolApprovalId({
+              call: {
+                toolCallId: "call-gated-1",
+                toolName: "run_eval_suite",
+                input: CALL_INPUT,
+              },
+              binding: toolApprovalBindingFor({}),
+              nowMs: Date.now() - ageMs,
+            });
+            if (!id) {
+              throw new Error("test process has no approval signing key");
+            }
+            return id;
+          }
+
+          it("runs nothing for an approval older than its lifetime, and says it expired", async () => {
+            const expired = await resume(
+              approvedHistory(
+                approvalIssuedAgo(TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 60_000),
+              ),
+            );
+
+            expect(expired.ran).toBe(false);
+            // The user approved this call: the card carries the reason.
+            const shown = writtenChunks.find(
+              (chunk) =>
+                chunk?.type === "tool-output-error" &&
+                chunk.toolCallId === "call-gated-1",
+            );
+            expect(shown?.errorText).toMatch(/expired/);
+            expect(shown?.errorText).toMatch(/nothing was run/);
+            expect(
+              writtenChunks.some(
+                (chunk) => chunk?.type === "tool-output-denied",
+              ),
+            ).toBe(false);
+            // And so does the model's history.
+            expect(expired.answer?.output?.value).toMatch(/expired/);
+          });
+
+          it("runs, once, an approval just inside its lifetime", async () => {
+            const history = approvedHistory(
+              approvalIssuedAgo(TOOL_APPROVAL_TOKEN_MAX_AGE_MS - 60_000),
+            );
+
+            expect((await resume(history)).ran).toBe(true);
+            expect((await resume(history)).ran).toBe(false);
+          });
+
+          it("does not re-check an approval whose call the history already answers", async () => {
+            const answered = [
+              ...approvedHistory(
+                approvalIssuedAgo(TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 60_000),
+              ),
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-gated-1",
+                    toolName: "run_eval_suite",
+                    output: { type: "json", value: { ok: true } },
+                  },
+                ],
+              },
+            ];
+
+            const later = await resume(answered);
+            expect(later.ran).toBe(false);
+            expect(
+              writtenChunks.some(
+                (chunk) =>
+                  chunk?.type === "tool-output-error" ||
+                  chunk?.type === "tool-output-denied",
+              ),
+            ).toBe(false);
+            // Nothing was checked, so nothing was refused or logged.
+            const logged = [
+              ...vi.mocked(logger.info).mock.calls,
+              ...vi.mocked(logger.warn).mock.calls,
+            ].map(([message]) => String(message));
+            expect(
+              logged.filter((message) => /approval/.test(message)),
+            ).toEqual([]);
+          });
         });
 
         it("does not use up an approval whose call the history already answers", async () => {

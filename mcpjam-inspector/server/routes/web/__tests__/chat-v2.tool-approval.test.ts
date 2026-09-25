@@ -107,10 +107,17 @@ import {
   MCPJAM_TOOL_IDS,
 } from "../../../utils/built-in-tools/mcpjam.js";
 import { registerSelfFetch } from "../../../utils/self-app.js";
+import {
+  mintToolApprovalId,
+  TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
+  toolApprovalBindingFor,
+} from "../../../utils/tool-approval-token.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
 const CONVEX_URL = "https://example.convex.site";
 const PROJECT_ID = "project-1";
+/** The caller's bearer; approvals are bound to it. */
+const BEARER = "test-token-123";
 const MODEL = {
   id: "anthropic/claude-haiku-4.5",
   provider: "anthropic",
@@ -290,7 +297,7 @@ function resumeTurn(
 }
 
 async function send(body: Record<string, unknown>): Promise<StreamEvent[]> {
-  const { app, token } = createWebTestApp();
+  const { app, token } = createWebTestApp({ bearerToken: BEARER });
   const response = await postJson(app, "/api/web/chat-v2", body, token);
   const text = await response.text();
   expect(response.status, text.slice(0, 500)).toBe(200);
@@ -654,7 +661,77 @@ describe("web chat tool approval (MJ-008)", () => {
 
       modelSteps = [REPLY];
       const again = await send(answer);
-      expect(outputFor(again, "call-create")?.type).toBe("tool-output-denied");
+      const shown = outputFor(again, "call-create") as
+        { type?: string; errorText?: string } | undefined;
+      expect(shown?.type).toBe("tool-output-error");
+      expect(shown?.errorText).toMatch(/already used/);
+      expect(v1Writes()).toHaveLength(1);
+    });
+
+    /** An approval this server would have issued for the call `ageMs` ago. */
+    function approvalIssuedAgo(chatSessionId: string, ageMs: number) {
+      const id = mintToolApprovalId({
+        call: {
+          toolCallId: "call-create",
+          toolName: "create_project_server",
+          input: SERVER_INPUT,
+        },
+        binding: toolApprovalBindingFor({
+          authHeader: `Bearer ${BEARER}`,
+          projectId: PROJECT_ID,
+          chatSessionId,
+        }),
+        nowMs: Date.now() - ageMs,
+      });
+      if (!id) throw new Error("test process has no approval signing key");
+      return id;
+    }
+
+    it("creates nothing for an approval past its lifetime, and says it expired", async () => {
+      const chatId = newChatId();
+      modelSteps = [REPLY];
+
+      const chunks = await send(
+        resumeTurn(chatId, {
+          toolName: "create_project_server",
+          toolCallId: "call-create",
+          input: SERVER_INPUT,
+          approvalId: approvalIssuedAgo(
+            chatId,
+            TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 60_000,
+          ),
+        }),
+      );
+
+      const shown = outputFor(chunks, "call-create") as
+        { type?: string; errorText?: string } | undefined;
+      expect(shown?.type).toBe("tool-output-error");
+      expect(shown?.errorText).toMatch(/expired/);
+      expect(shown?.errorText).toMatch(/nothing was run/);
+      expect(v1Calls).toEqual([]);
+    });
+
+    it("creates the server once for an approval just inside its lifetime", async () => {
+      const chatId = newChatId();
+      const answer = resumeTurn(chatId, {
+        toolName: "create_project_server",
+        toolCallId: "call-create",
+        input: SERVER_INPUT,
+        approvalId: approvalIssuedAgo(
+          chatId,
+          TOOL_APPROVAL_TOKEN_MAX_AGE_MS - 60_000,
+        ),
+      });
+
+      modelSteps = [REPLY];
+      const first = await send(answer);
+      expect(outputFor(first, "call-create")?.type).toBe(
+        "tool-output-available",
+      );
+      expect(v1Writes()).toHaveLength(1);
+
+      modelSteps = [REPLY];
+      await send(answer);
       expect(v1Writes()).toHaveLength(1);
     });
 

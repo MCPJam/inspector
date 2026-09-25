@@ -27,9 +27,12 @@
  * exact call needed asking about, in this conversation, for this caller —
  * which is the part a forged history could previously fake.
  *
- * ONCE. A verified approval runs its call one time: the engine claims it
- * (`claimToolApprovalUse`) immediately before running the call, and a claimed
- * approval that comes back is answered, not run.
+ * ONCE, AND NOT FOR LONG. A verified approval runs its call one time: the
+ * engine claims it (`claimToolApprovalUse`) immediately before running the
+ * call, and a claimed approval that comes back is answered, not run. Claims
+ * are kept per server process, so what bounds an approval everywhere else —
+ * another replica, a restarted process — is its lifetime,
+ * {@link TOOL_APPROVAL_TOKEN_MAX_AGE_MS}.
  *
  * THE KEY. Derived from `INSPECTOR_SERVICE_TOKEN`, which every hosted
  * deployment already sets (it authenticates the inspector to Convex) and which
@@ -54,13 +57,20 @@ import { decodeJwt } from "jose";
 export const TOOL_APPROVAL_TOKEN_PREFIX = "mjap1";
 
 /**
- * How long a signed approval request stays answerable.
+ * How long a signed approval request stays answerable: 15 minutes.
  *
- * A day covers a tab left open overnight; an older pill is denied and the
- * model asks again. Within the window an approval still runs its call only
- * once (`claimToolApprovalUse`).
+ * An approval is a person reading one prompt — the tool, its arguments — and
+ * deciding. That takes seconds to a few minutes, and a quarter of an hour
+ * still covers stepping away from the tab before answering. It is also the
+ * longest an approval can be honoured on any server process, so it is kept
+ * to what the decision needs rather than what a tab left open overnight
+ * might.
+ *
+ * An answer that arrives later runs nothing: it is answered with
+ * {@link EXPIRED_APPROVAL_RESULT}, which says so, and the model can make the
+ * call again for a fresh approval.
  */
-export const TOOL_APPROVAL_TOKEN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const TOOL_APPROVAL_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 
 /**
  * Why an approved call did not run: the approval arrived in client-sent
@@ -81,11 +91,20 @@ export const UNAPPROVED_HISTORY_CALL_RESULT =
 
 /**
  * Why an approved call did not run again: its approval had already been used
- * to run it once. Model-visible, so the model can ask for a fresh approval
- * instead of assuming the call happened twice.
+ * to run it once. Shown to the user and the model, so the model can ask for a
+ * fresh approval instead of assuming the call happened twice.
  */
 export const USED_APPROVAL_RESULT =
   "Not run again: this approval was already used to run this call once. Ask the user for a new approval to run it again.";
+
+/**
+ * Why an approved call did not run: the answer came back after the approval
+ * expired. Shown to the user and the model, so neither mistakes it for a
+ * denial and the model can make the call again for a fresh approval.
+ */
+export const EXPIRED_APPROVAL_RESULT = `Not run: this approval expired before it was used (an approval is valid for ${
+  TOOL_APPROVAL_TOKEN_MAX_AGE_MS / 60_000
+} minutes after it is requested), so nothing was run. If the call is still needed, make it again so the user can approve it.`;
 
 /** Clock skew tolerated between replicas for a token minted "in the future". */
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -383,6 +402,11 @@ export function verifyToolApprovalId(args: {
  * longer verify anyway. Insertion order is expiry order, so pruning only ever
  * looks at the front, and the map is bounded: past the cap the oldest entries
  * go first.
+ *
+ * SCOPE: one server process. Single use holds within the process that ran the
+ * call; across processes — other replicas, or this one after a restart — an
+ * approval's use is bounded by its lifetime,
+ * {@link TOOL_APPROVAL_TOKEN_MAX_AGE_MS}, after which no process honours it.
  */
 const usedApprovalExpiry = new Map<string, number>();
 const MAX_USED_APPROVALS = 50_000;

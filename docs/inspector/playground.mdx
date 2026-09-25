@@ -353,7 +353,7 @@ Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other comm
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
 
 **Tool Approval**
-When on, pauses the model before tool calls so you can approve or deny each one.
+When on, pauses the model before tool calls so you can approve or deny each one. Each approval answers one call and is valid for 15 minutes; answered later, the call does not run, the tool card says the approval expired, and the model can ask again.
 
 The switch **raises** the bar and never lowers it, so it is not the whole story in either direction.
 
