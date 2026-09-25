@@ -1713,6 +1713,10 @@ non-gateable (exit `3`) rather than a silent pass or a misread regression;
 the deterministic per-case regression gate is exempt and can still fail
 (exit `1`) on a matching case.
 
+<Note>
+**SDK 8.16.0 requires a new baseline.** The `toolCalls:arguments` scorer introduced in SDK 8.16.0 changes the set of score definitions and therefore the `evaluationConfigHash`. The first run after upgrading exits `3` (not gateable) when gated against a baseline recorded on an earlier version. Record a new baseline from a run on SDK 8.16.0 or later before re-enabling the gate.
+</Note>
+
 The two are **mutually exclusive** — passing both is a usage error (exit `2`).
 There is deliberately no single flag that guesses which kind you meant: a
 Convex run ID is an opaque string with no documented format, and an
