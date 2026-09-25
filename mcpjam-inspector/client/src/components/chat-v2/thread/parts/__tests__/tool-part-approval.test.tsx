@@ -153,6 +153,32 @@ describe("ToolPart approval expansion", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows why an approved call did not run, instead of a bare denial", async () => {
+    // An approval the server refuses after the user approved — it expired, or
+    // it was already used — arrives as an error with the reason (MJ-008).
+    const user = userEvent.setup();
+    const reason =
+      "Not run: this approval expired before it was used, so nothing was run.";
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            state: "output-error",
+            output: undefined,
+            errorText: reason,
+            approval: { id: "approval-1", approved: true },
+          } as any
+        }
+        uiType="mcp-apps"
+      />,
+    );
+
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    await user.click(getHeaderButton()!);
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+  });
+
   it("shows an Edit control when inline edit is allowed", () => {
     render(<ToolPart part={basePart as any} uiType="mcp-apps" allowInlineEdit />);
 

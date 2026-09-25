@@ -2845,6 +2845,28 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Rewrites a mapped failure, and the log envelope sent with it, before the
+     * response is built. The hosted validate route uses it to report a status
+     * line in place of the server's own answer (MJ-001).
+     */
+    redactFailure?: (
+      routeError: WebRouteError,
+      error: unknown,
+      logs: Record<string, unknown> | undefined,
+    ) => {
+      routeError: WebRouteError;
+      logs: Record<string, unknown> | undefined;
+    };
+    /**
+     * Rewrites the log envelope attached to a SUCCESSFUL response. The hosted
+     * validate route projects received frames and header values the same way
+     * its failure path does, so a successful connect does not reflect what
+     * the target answered (MJ-001).
+     */
+    redactSuccessLogs?: (
+      logs: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2871,7 +2893,26 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
     );
 
-    return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
+    let response = attachHostedRpcLogs(result, rpcCollector);
+    if (
+      options?.redactSuccessLogs &&
+      response !== result &&
+      response &&
+      typeof response === "object"
+    ) {
+      const { _rpcLogs, _httpLogs, ...rest } = response as Record<
+        string,
+        unknown
+      >;
+      response = {
+        ...rest,
+        ...options.redactSuccessLogs({
+          ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
+          ...(_httpLogs !== undefined ? { _httpLogs } : {}),
+        }),
+      } as typeof response;
+    }
+    return c.json(response, 200);
   } catch (error) {
     // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
     // helper dials the caller's OWN MCP server, and a connection-class failure
@@ -2883,10 +2924,13 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
     // Convex deployment — keeps its 5xx and keeps paging us.
     const routeError = mapTargetServerError(error);
+    const logs = rpcCollector?.buildEnvelope() as
+      Record<string, unknown> | undefined;
+    const redacted = options?.redactFailure?.(routeError, error, logs);
     return webErrorFromRoute(
       c,
-      routeError,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      redacted?.routeError ?? routeError,
+      redacted ? redacted.logs : logs,
     );
   }
 }
