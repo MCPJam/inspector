@@ -255,6 +255,8 @@ A run override shows an **override** badge; click **Reset** in the popover to cl
 
 **Data sent for grading:** the hosted v4 judge sends the complete recorded conversation, trace, available tool definitions, runtime context and supported inline media through OpenRouter to the selected model provider. Existing credential redaction applies. This includes more data than the previous clipped-text judge. Automatic grading sends this evidence without a separate Run judge click; turn grading off or use manual mode if that is not appropriate for your data.
 
+**Analysis provider retention:** platform-key analysis calls require zero data retention and no training on every call. The pre-run disclosure (shown in the run tooltip in the app and in `mcpjam eval run` CLI output) includes an **Analysis providers** line that states this policy and names what it does not cover — for example, customer Playground chat. The line is absent on older backends that do not send the fact.
+
 For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
 
 - **Automatic grading** grades each completed iteration with the effective policy shown in suite settings. Untouched suites inherit the deployment default; explicit manual and off settings are preserved. Automatic grading remains advisory unless release gating is separately authorized.
