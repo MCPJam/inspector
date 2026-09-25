@@ -233,10 +233,8 @@ export function boundOriginsFromReveal(body: {
  * The binding for stored headers an authorize response carried INLINE (a row
  * whose headers were never moved behind the reveal). No reveal ran, so no
  * backend answer names their origins: they are held to the origin the
- * authorize response recorded for them (an empty record binds them nowhere),
- * or, when it recorded none, to the server's own origin — the one connection
- * the backend just authorized. `null` when there
- * are no header values to bind.
+ * authorize response recorded for them; with no record (or an empty one) they
+ * are attached nowhere. `null` when there are no header values to bind.
  */
 export function bindingForAuthorizedHeaders(serverConfig: {
   url?: string | null;
@@ -249,15 +247,9 @@ export function bindingForAuthorizedHeaders(serverConfig: {
     (name) => typeof headers[name] === "string" && headers[name] !== "",
   );
   if (headerNames.length === 0) return null;
-  // Anything the backend said, even an empty list ("attach nowhere"), is
-  // the answer. Only a response that names no origin at all falls back to the
-  // server's own.
-  if (
-    serverConfig.boundOrigins !== undefined ||
-    serverConfig.secretsBoundOrigin !== undefined
-  ) {
-    return { headerNames, boundOrigins: boundOriginsFromReveal(serverConfig) };
-  }
-  const own = credentialOrigin(serverConfig.url);
-  return { headerNames, boundOrigins: own ? [own] : [] };
+  // Only what the backend recorded counts, and an empty record means attach
+  // nowhere. A response that records no origin at all binds them nowhere too:
+  // the server's CURRENT url is exactly what a repoint changes, so it can
+  // never stand in for the origin the headers were saved for.
+  return { headerNames, boundOrigins: boundOriginsFromReveal(serverConfig) };
 }

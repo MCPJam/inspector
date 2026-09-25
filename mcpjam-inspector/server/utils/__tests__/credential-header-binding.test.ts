@@ -328,16 +328,15 @@ describe("boundOriginsFromReveal", () => {
 });
 
 describe("bindingForAuthorizedHeaders", () => {
-  it("holds inline headers to the server's own origin", () => {
+  it("binds inline headers nowhere when no origin was recorded", () => {
+    // The server's current url is what a repoint changes; it is never taken
+    // as the origin the headers were saved for.
     expect(
       bindingForAuthorizedHeaders({
-        url: "https://owner.example.com/mcp",
+        url: "https://moved.example.com/mcp",
         headers: { "x-api-key": "k", empty: "" },
       }),
-    ).toEqual({
-      headerNames: ["x-api-key"],
-      boundOrigins: ["https://owner.example.com"],
-    });
+    ).toEqual({ headerNames: ["x-api-key"], boundOrigins: [] });
   });
 
   it("prefers the origin the authorize response recorded", () => {

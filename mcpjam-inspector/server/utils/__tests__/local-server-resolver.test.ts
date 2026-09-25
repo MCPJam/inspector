@@ -665,6 +665,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
             hasHeaders: true,
+            secretsBoundOrigin: "https://header.example.com",
           },
           oauthAccessToken: null,
         });
@@ -686,7 +687,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Inline headers are held to the server's origin on the wire too: a
+    // Inline headers are held to their recorded origin on the wire too: a
     // redirect elsewhere is followed without them.
     expect(config.baseFetch).toEqual(expect.any(Function));
     const hops: Array<{ url: string; auth: string | null }> = [];
@@ -713,6 +714,50 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       { url: "https://header.example.com/mcp", auth: "Bearer static-token" },
       { url: "https://elsewhere.example/mcp", auth: null },
     ]);
+  });
+
+  it("attaches inline headers nowhere when authorize recorded no origin for them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) => {
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return authorizeBatchLocalResponse({
+            serverId: "srv-unbound-headers",
+            serverConfig: {
+              transportType: "http",
+              url: "https://repointed.example.com/mcp",
+              useOAuth: false,
+              headers: { "x-api-key": "k" },
+              hasHeaders: true,
+            },
+            oauthAccessToken: null,
+          });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      })
+    );
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-unbound-headers",
+      { serverDisplayName: "Unbound Server" }
+    );
+
+    const sent: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: any, init?: RequestInit) => {
+        sent.push(new Headers(init?.headers).get("x-api-key"));
+        return new Response("ok");
+      })
+    );
+    await config.baseFetch("https://repointed.example.com/mcp", {
+      headers: config.requestInit.headers,
+    });
+    expect(sent).toEqual([null]);
   });
 
   it("reveals runtime headers only when authorize-batch-local omits them", async () => {
