@@ -228,6 +228,22 @@ function ShareActions({
 }
 
 /**
+ * What the panel's heading and lede say on each tab it stands in for. The
+ * actions below them are the same everywhere — only the promise of what the
+ * page will show differs, and naming the wrong tab reads as a routing bug.
+ */
+const EMPTY_COPY = {
+  insights: {
+    title: "Insights start with the first session.",
+    body: "Once someone runs this study, this page maps where they reached their goal, where they stalled, and the themes that repeat across sessions.",
+  },
+  findings: {
+    title: "Findings start with the first session.",
+    body: "Once someone runs this study, this page summarizes how testers did on their goals, and where each kind of tester got stuck.",
+  },
+} as const;
+
+/**
  * Insights empty state — the two ways to get a first session, in the order
  * they cost the reader: run it yourself, or send it to a tester.
  *
@@ -243,9 +259,13 @@ function ShareActions({
  */
 export function ScenarioShareEmptyPanel({
   scenario,
+  surface = "insights",
 }: {
   scenario: ScenarioSettings;
+  /** Which tab this stands in for — Findings reuses it for an unrun study. */
+  surface?: keyof typeof EMPTY_COPY;
 }) {
+  const copy = EMPTY_COPY[surface];
   const { isAuthenticated } = useConvexAuth();
   const share = useScenarioShareInvite(scenario);
   // Same gate as the header Open preview: a broken environment won't open
@@ -261,12 +281,10 @@ export function ScenarioShareEmptyPanel({
           scroll container has its overflow clipped off the TOP, unreachable. */}
       <div className="mx-auto my-auto w-full max-w-lg animate-in fade-in duration-500">
         <h2 className="text-lg font-semibold tracking-tight text-foreground">
-          Insights start with the first session.
+          {copy.title}
         </h2>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          Once someone runs this study, this page maps where they reached
-          their goal, where they stalled, and the themes that repeat across
-          sessions.
+          {copy.body}
         </p>
 
         {canOpenPreview ? (

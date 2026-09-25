@@ -885,6 +885,14 @@ export function UserTestingScenarioDetail({
             >
               <ScenarioFindingsTab
                 scenarioId={scenario.scenarioId}
+                // Insights' empty panel, so an unrun study reads the same on
+                // either tab instead of Findings being a blank frame.
+                emptyState={
+                  <ScenarioShareEmptyPanel
+                    scenario={scenario}
+                    surface="findings"
+                  />
+                }
                 onOpenSession={(threadId) =>
                   navigate(
                     buildUserTestingScenarioPath(scenario.scenarioId, {
