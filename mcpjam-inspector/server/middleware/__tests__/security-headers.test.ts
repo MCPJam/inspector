@@ -91,6 +91,29 @@ describe("securityHeadersMiddleware document policies", () => {
     expect(res.headers.get("Permissions-Policy")).toBeNull();
   });
 
+  it.each(["https", "http"])(
+    "preserves document policies with conditional HSTS over %s",
+    async (scheme) => {
+      mockConfig.hosted = true;
+      const res = await createApp().request("/", {
+        headers: { "x-forwarded-proto": scheme },
+      });
+
+      expect(res.headers.get("Strict-Transport-Security")).toBe(
+        scheme === "https" ? "max-age=31536000" : null,
+      );
+      expect(res.headers.get("Content-Security-Policy")).toBe(
+        DOCUMENT_CONTENT_SECURITY_POLICY,
+      );
+      expect(res.headers.get("Permissions-Policy")).toBe(
+        DOCUMENT_PERMISSIONS_POLICY,
+      );
+      expect(res.headers.get("Content-Security-Policy-Report-Only")).toBe(
+        buildReportOnlyContentSecurityPolicy(),
+      );
+    },
+  );
+
   it("denies unused hardware features and leaves SEP-1865 grants unlisted", async () => {
     const res = await createApp().request("/");
     const policy = res.headers.get("Permissions-Policy");
@@ -142,7 +165,11 @@ describe("securityHeadersMiddleware document policies", () => {
         },
       }),
     });
-    const ctx = { header: vi.fn(), res: upstream } as unknown as Context;
+    const ctx = {
+      header: vi.fn(),
+      req: { header: () => undefined, url: "http://localhost/" },
+      res: upstream,
+    } as unknown as Context;
 
     await securityHeadersMiddleware(ctx, async () => {});
 
