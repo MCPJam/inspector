@@ -111,7 +111,11 @@ vi.mock("@/hooks/useClients", () => ({
   }),
 }));
 
+// Creating clients is project-admin only; admin unless a case opts out.
+const clientsRole = { canManage: true, isLoading: false };
 vi.mock("@/hooks/useProjects", () => ({
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE: "Only project admins can create clients.",
+  useCanManageProjectClients: () => clientsRole,
   useProjectServers: () => ({
     servers: projectServers,
     serversRecord: {},
@@ -230,6 +234,7 @@ function renderHosts(props?: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clientsRole.canManage = true;
   createHostMock.mockResolvedValue({
     hostId: "host-new",
     hostConfigId: "cfg-new",
@@ -265,6 +270,23 @@ describe("HostsTab — agent bridge handlers", () => {
     expect(arg.input.hostStyle).toBe("claude");
     expect(onSelectHost).toHaveBeenCalledWith("host-new");
     expect(setPreviewedHostIdMock).toHaveBeenCalledWith("host-new");
+  });
+
+  it("createHost refuses a member without calling the backend", async () => {
+    clientsRole.canManage = false;
+    renderHosts();
+    const response = await dispatch({
+      type: "createHost",
+      payload: { name: "My Claude", template: "claude" },
+    });
+    expect(response).toMatchObject({
+      status: "error",
+      error: {
+        code: "unsupported_in_mode",
+        message: "Only project admins can create clients.",
+      },
+    });
+    expect(createHostMock).not.toHaveBeenCalled();
   });
 
   it("createHost rejects an unknown template without creating", async () => {
