@@ -103,6 +103,21 @@ The model picker in the chat input lets you choose which LLM to use. Models are 
 
 The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
 
+Within each provider, models are listed newest first. Models without a known release date appear after dated ones, in their original catalog order.
+
+### Row tags
+
+The picker annotates rows with small tags when the catalog has relevant information:
+
+- **Retiring \<date\>** — The provider has announced a retirement date for this model. The model remains selectable until it is removed from the catalog.
+- **Not verified** — The catalog has not confirmed that this model supports tool calling. In chat with MCP servers attached, the model is selectable but a tooltip warns that tool calls may fail. In eval and persona runs the model is disabled, because a run that cannot call tools produces an invalid result.
+
+### Capability locks
+
+When MCP servers are attached to the chat, the picker uses the `mcpChat` workload policy. A model the catalog has confirmed does **not** support tool calling is disabled with a tooltip explaining why. A model whose tool support is unverified is allowed but tagged **Not verified**.
+
+When no servers are attached, the picker uses the `chat` policy and no capability locks apply.
+
 ### Out-of-credits state
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
@@ -113,6 +128,10 @@ If the out-of-credits dialog appears, the actions available depend on your plan 
 - **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
 - **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+
+### Free daily allowance
+
+On the free daily allowance with no purchased credits to fall back on, some hosted models are locked in the picker. Only models the catalog marks as eligible for the free tier remain selectable. Upgrade your plan, add credits, or use your own API key to access locked models. Models you access with your own API key (BYOK) are never locked by this rule.
 
 ### Frontier models and sign-in
 
