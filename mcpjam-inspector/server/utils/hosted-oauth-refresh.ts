@@ -257,6 +257,35 @@ export async function forceRefreshHostedOAuthAccessToken(
         { serverId, serverName: options?.serverName ?? null }
       );
     }
+    // The backend's 403 for a credential it will not release to this caller:
+    // the organization's export policy, or a server that moved away from the
+    // origin its tokens were minted for. Carried with the same details the
+    // reveal routes use, so the client names the policy (or opens the moved
+    // server) instead of offering a reconnect that cannot help.
+    if (body?.exportDenied === true || body?.secretOriginMismatch === true) {
+      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, message, {
+        ...(body.exportDenied === true
+          ? {
+              exportDenied: true,
+              policy:
+                typeof body.policy === "string"
+                  ? body.policy
+                  : "credentialExportPolicy",
+            }
+          : {
+              secretOriginMismatch: true,
+              boundOrigin:
+                typeof body.boundOrigin === "string" ? body.boundOrigin : null,
+              targetOrigin:
+                typeof body.targetOrigin === "string"
+                  ? body.targetOrigin
+                  : null,
+            }),
+        credentialRefusal: code,
+        serverId,
+        serverName: options?.serverName ?? null,
+      });
+    }
     const isReconnectRequired = code === "refresh_token_invalid";
     // The backend's 503: the credential is fine, the authorization server
     // never answered usably. Its `detail` is what that server actually
