@@ -90,7 +90,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
           client_secret: "secret-1",
           assertion: "signed-id-jag",
         }),
-      })
+      }),
     );
   });
 
@@ -109,7 +109,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
     });
 
     expect(resolveServerSecret).toHaveBeenCalledWith(
-      expect.objectContaining({ targetUrl: baseArgs.resource })
+      expect.objectContaining({ targetUrl: baseArgs.resource }),
     );
   });
 
@@ -125,8 +125,8 @@ describe("mintXaaAccessToken Connect client identity", () => {
           secretOriginMismatch: true,
           boundOrigin: "https://owner.example.com",
           targetOrigin: "https://mcp.example.com",
-        }
-      )
+        },
+      ),
     );
 
     await expect(
@@ -134,11 +134,45 @@ describe("mintXaaAccessToken Connect client identity", () => {
         ...baseArgs,
         registrationMode: "preregistered",
         resolveServerSecret,
-      })
+      }),
     ).rejects.toMatchObject({
       status: 403,
       details: expect.objectContaining({ secretOriginMismatch: true }),
     });
+    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+  });
+
+  it("does not spend a secret approved for one origin at another", async () => {
+    // The reveal was requested for the connection's snapshot URL and the
+    // backend approved it, but the row had been repointed: the response
+    // carries the NEW serverUrl, which discovery and the token endpoint would
+    // be derived from. The secret must not follow it there.
+    const resolveServerSecret = vi.fn().mockResolvedValue({
+      serverUrl: "https://changed.example.com/mcp",
+      xaaAuthzIssuer: "https://changed.example.com",
+      clientId: "client-1",
+      clientSecret: "secret-1",
+    });
+
+    await expect(
+      mintXaaAccessToken({
+        ...baseArgs,
+        registrationMode: "preregistered",
+        resolveServerSecret,
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({
+        secretOriginMismatch: true,
+        targetOrigin: "https://changed.example.com",
+      }),
+    });
+    expect(resolveServerSecret).toHaveBeenCalledWith(
+      expect.objectContaining({ targetUrl: baseArgs.resource }),
+    );
+    // Refused before discovery: nothing is dialled at the new origin, and no
+    // token request carries the secret.
+    expect(fetchOAuthMetadataMock).not.toHaveBeenCalled();
     expect(executeOAuthProxyMock).not.toHaveBeenCalled();
   });
 
@@ -206,13 +240,13 @@ describe("mintXaaAccessToken Connect client identity", () => {
           client_assertion_type:
             "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
         }),
-      })
+      }),
     );
   });
 
   it("emits a confidential client assertion verifiable by the reflected public key", async () => {
     const provider = createDerivedConfidentialCimdProviderFactory(
-      Buffer.alloc(32, 7)
+      Buffer.alloc(32, 7),
     )("org-1");
 
     await mintXaaAccessToken({
@@ -238,8 +272,8 @@ describe("mintXaaAccessToken Connect client identity", () => {
           key: createPublicKey({ key: publicJwk!, format: "jwk" }),
           dsaEncoding: "ieee-p1363",
         },
-        Buffer.from(signature, "base64url")
-      )
+        Buffer.from(signature, "base64url"),
+      ),
     ).toBe(true);
   });
 
@@ -252,7 +286,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         resolveServerSecret,
-      })
+      }),
     ).rejects.toMatchObject({ status: 409 });
 
     expect(resolveServerSecret).not.toHaveBeenCalled();
@@ -274,7 +308,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         confidentialCimdProvider: provider,
-      })
+      }),
     ).rejects.toMatchObject({
       status: 500,
       message: "Could not prepare the confidential CIMD client identity",
@@ -289,7 +323,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         serverId: "server-1",
         projectId: "project-1",
         resource: "https://mcp.example.com/mcp",
-      })
+      }),
     );
   });
 
@@ -308,7 +342,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         confidentialCimdProvider: provider,
-      })
+      }),
     ).rejects.toMatchObject({
       status: 500,
       message: "Could not sign the confidential CIMD token request",
@@ -323,7 +357,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         serverId: "server-1",
         projectId: "project-1",
         clientId: "https://app.mcpjam.com/cimd/key-1",
-      })
+      }),
     );
   });
 
@@ -335,7 +369,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         ...baseArgs,
         registrationMode: "cimd",
         xaaClientAuth: "none",
-      })
+      }),
     ).rejects.toMatchObject({ status: 409 });
 
     expect(executeOAuthProxyMock).not.toHaveBeenCalled();

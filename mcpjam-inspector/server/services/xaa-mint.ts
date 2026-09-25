@@ -23,6 +23,7 @@ import {
   fetchXaaDcrAuthorizedTarget,
   type XaaDcrRegistration,
 } from "./xaa-dcr.js";
+import { credentialOrigin } from "../utils/credential-header-binding.js";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -361,6 +362,30 @@ export async function resolveServerTarget(deps: {
     clientIp: deps.clientIp,
     ...(deps.targetUrl ? { targetUrl: deps.targetUrl } : {}),
   });
+
+  // The backend approved the secret for `targetUrl`; everything below —
+  // discovery, the token endpoint, the grant — is derived from the
+  // `serverUrl` it returned. Those must be the same origin, or the secret
+  // would be spent somewhere other than where it was approved (a row
+  // repointed between this connection's snapshot and the reveal). Checked
+  // BEFORE discovery, so nothing is dialled at the other origin either.
+  if (
+    deps.targetUrl &&
+    resolved.clientSecret &&
+    credentialOrigin(resolved.serverUrl) !== credentialOrigin(deps.targetUrl)
+  ) {
+    const targetOrigin = credentialOrigin(resolved.serverUrl);
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "This server's address changed after this connection was set up, so its saved client secret was not used. Reload and connect again.",
+      {
+        secretOriginMismatch: true,
+        boundOrigin: null,
+        targetOrigin,
+      }
+    );
+  }
 
   const target = await resolveAuthorizedServerTarget({
     resource: resolved.serverUrl ?? undefined,
