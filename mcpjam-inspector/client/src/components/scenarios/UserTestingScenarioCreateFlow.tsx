@@ -30,7 +30,6 @@ import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEna
 import { useProjectMembers } from "@/hooks/useProjects";
 import { convexErrMessage } from "@/lib/convex-error";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
-import { environmentLabel } from "@/lib/environment-label";
 import { useEffectiveSharePolicy } from "@/hooks/useOrgSharePolicy";
 import {
   applyShareCeilingToScenarioOptions,
@@ -44,7 +43,11 @@ import {
   scenarioTasksFromDrafts,
   type ScenarioTaskDraft,
 } from "@/lib/scenario-tasks";
-import type { ScenarioMode } from "@/hooks/useScenarios";
+import {
+  useScenarioList,
+  type ScenarioListItem,
+  type ScenarioMode,
+} from "@/hooks/useScenarios";
 import type {
   ScenarioPerTurnFeedbackStyle,
   ScenarioTaskItem,
@@ -69,8 +72,58 @@ const CREATE_STEPS = [
 
 type CreateStep = (typeof CREATE_STEPS)[number]["id"];
 
-/** Last-resort study name, for a creator who cleared the suggestion. */
-const FALLBACK_STUDY_NAME = "User test";
+/**
+ * How the backend compares study names: trimmed, case-insensitive. Mirrors
+ * `findScenarioByName` in mcpjam-backend `convex/scenarios.ts` — a check here
+ * that is stricter or looser than that one either nags about a name the
+ * backend would take or waves through one it will refuse.
+ */
+function normalizeStudyName(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
+/**
+ * The names a new study cannot take, normalized.
+ *
+ * Only environment-backed rows, because that is what the backend's uniqueness
+ * check reads: a legacy host-backed scenario does not reserve its name.
+ */
+export function takenStudyNames(
+  scenarios: ReadonlyArray<Pick<ScenarioListItem, "name" | "environmentId">>,
+): Set<string> {
+  const taken = new Set<string>();
+  for (const row of scenarios) {
+    if (!row.environmentId) continue;
+    taken.add(normalizeStudyName(row.name));
+  }
+  return taken;
+}
+
+const STUDY_N_PATTERN = /^study\s+(\d+)$/i;
+
+/**
+ * The name a new study is suggested: "Study N", one past the highest N the
+ * project already uses.
+ *
+ * Not the client's name. Names are unique per project, so suggesting the
+ * client meant the SECOND study on a client arrived pre-refused — the creator
+ * learned it only after writing the task list and pressing Create. Counting
+ * past the highest N (rather than filling the lowest gap) keeps the numbers
+ * reading as "the next one", even after an old study is deleted.
+ */
+export function nextStudyName(
+  scenarios: ReadonlyArray<Pick<ScenarioListItem, "name" | "environmentId">>,
+): string {
+  const taken = takenStudyNames(scenarios);
+  let highest = 0;
+  for (const row of scenarios) {
+    const match = STUDY_N_PATTERN.exec(row.name.trim());
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  let n = highest + 1;
+  while (taken.has(normalizeStudyName(`Study ${n}`))) n += 1;
+  return `Study ${n}`;
+}
 
 /**
  * The client a project gets by default, when nobody has picked one.
@@ -170,8 +223,15 @@ export function isStudyNameTakenError(error: unknown): boolean {
  * on naming a study and again on an empty client picker — "People block when
  * you're making them name things", "Here you don't have a default client
  * picked", "Don't put that in my way". So a client is preselected, the name is
- * suggested off it, and Continue carries the screen the moment it settles.
- * A cleared name is not a wall either: Save falls back to the suggestion.
+ * suggested as the project's next free "Study N", and Continue carries the
+ * screen the moment it settles. A cleared name is not a wall either: Save
+ * falls back to the suggestion.
+ *
+ * **A taken name is said while typing, not at Create.** Names are unique per
+ * project, and the backend's refusal only arrives after step 2 — so the
+ * project's study list is checked as the creator types, and Continue will not
+ * carry a name it already knows is taken. The backend's refusal stays the
+ * backstop for a name taken in the meantime.
  *
  * **Step 2 is a LIST, not a wizard.** It authors the "what to try" checklist a
  * tester sees in their own header. Empty is fine and common — a study whose
@@ -307,6 +367,10 @@ export function UserTestingScenarioCreateFlow({
    */
   const { canManageMembers: canPublish, isLoading: roleLoading } =
     useProjectMembers({ isAuthenticated, projectId });
+  // The same subscription the User Testing list holds, so this costs no extra
+  // round trip. What the suggested name counts past and what a typed name is
+  // checked against.
+  const { scenarios } = useScenarioList({ isAuthenticated, projectId });
   const [step, setStep] = useState<CreateStep>("study");
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
@@ -348,8 +412,8 @@ export function UserTestingScenarioCreateFlow({
   // Synchronous guard: a double-click must not publish twice before React
   // commits `isSaving`.
   const savingRef = useRef(false);
-  // Once the user types a name, stop tracking the environment — but a name
-  // they never touched should keep following their pick.
+  // Once the user types a name, stop tracking the suggestion — but a name they
+  // never touched should keep following it as the study list loads.
   const userEditedNameRef = useRef(false);
   // The suggested name is real text, not a placeholder, so the first focus
   // selects it: typing then REPLACES the suggestion instead of appending to
@@ -371,16 +435,24 @@ export function UserTestingScenarioCreateFlow({
   /**
    * What the name field is prefilled with, and what Save falls back to.
    *
-   * Tracks the pick — a saved environment's label, or the composed client's
-   * name — because that is the only thing on this screen that describes what
-   * is being published.
+   * The project's next "Study N" rather than the pick's name: names are unique
+   * per project, so a name derived from the client was taken from the second
+   * study on that client onward. Reads the list as "none yet" while it loads,
+   * and the effect below moves an untouched field once it arrives.
    */
-  const suggestedName = useMemo(() => {
-    if (selected) return environmentLabel(selected);
-    const hostId = target.stack.hostIds[0];
-    const client = hostId ? hosts.find((h) => h.hostId === hostId) : undefined;
-    return client?.name ?? "";
-  }, [hosts, selected, target.stack.hostIds]);
+  const takenNames = useMemo(
+    () => takenStudyNames(scenarios ?? []),
+    [scenarios],
+  );
+  const suggestedName = useMemo(
+    () => nextStudyName(scenarios ?? []),
+    [scenarios],
+  );
+
+  useEffect(() => {
+    if (userEditedNameRef.current) return;
+    setName(suggestedName);
+  }, [suggestedName]);
 
   /**
    * Preselect a client so step 1 is answered on arrival.
@@ -408,7 +480,6 @@ export function UserTestingScenarioCreateFlow({
       stack: { ...emptyEnvironmentStack(), hostIds: [client.hostId] },
       customized: false,
     });
-    if (!userEditedNameRef.current) setName(client.name);
   }, [hosts, hostsLoading, target.environmentIds.length, target.stack.hostIds]);
 
   // A composed setup has no row yet — the client pick IS the target.
@@ -471,6 +542,29 @@ export function UserTestingScenarioCreateFlow({
     !isSaving;
 
   /**
+   * The name the backend refused as already taken.
+   *
+   * Held rather than only toasted: the fix is one field away, and a message
+   * that names the problem should sit next to the input that carries it.
+   * Cleared by typing, so it cannot outlive the name it was about.
+   */
+  const [nameTaken, setNameTaken] = useState<string | null>(null);
+  /**
+   * The name Save would publish under: the typed one, or the suggestion when
+   * the field was emptied. What the live taken-name check reads, so an empty
+   * field is judged by the name it will actually send.
+   */
+  const effectiveName = name.trim() || suggestedName;
+  /**
+   * The name to report as taken, if any: the backend's refusal, or — ahead of
+   * it — a match against the project's study list, so the creator hears it
+   * while typing instead of after writing the task list.
+   */
+  const takenName =
+    nameTaken ??
+    (takenNames.has(normalizeStudyName(effectiveName)) ? effectiveName : null);
+
+  /**
    * What Continue would refuse over, or `null` when it would carry.
    *
    * Read live rather than frozen at press time, so fixing the problem clears
@@ -478,7 +572,7 @@ export function UserTestingScenarioCreateFlow({
    * over a form that no longer has one.
    */
   const continueBlocker:
-    "loading" | "permission" | "client" | "servers" | null =
+    "loading" | "permission" | "client" | "servers" | "name" | null =
     !environmentsSettled || hostsLoading || roleLoading
       ? "loading"
       : // Ranked above the two choices, because it is not one: telling an
@@ -490,7 +584,11 @@ export function UserTestingScenarioCreateFlow({
           ? "client"
           : setupHasServers === false
             ? "servers"
-            : null;
+            : // Already on screen under the field — the press just refuses to
+              // carry a name Create would bounce straight back here.
+              takenName
+              ? "name"
+              : null;
   /**
    * Whether to say, on sight, that this account cannot publish here.
    *
@@ -509,14 +607,6 @@ export function UserTestingScenarioCreateFlow({
    * missing beats scanning a form for whatever keeps a grey button grey.
    */
   const [continueAttempted, setContinueAttempted] = useState(false);
-  /**
-   * The name the backend refused as already taken.
-   *
-   * Held rather than only toasted: the fix is one field away, and a message
-   * that names the problem should sit next to the input that carries it.
-   * Cleared by typing, so it cannot outlive the name it was about.
-   */
-  const [nameTaken, setNameTaken] = useState<string | null>(null);
   const showClientError = continueAttempted && continueBlocker === "client";
   const showServersError = continueAttempted && continueBlocker === "servers";
 
@@ -533,24 +623,8 @@ export function UserTestingScenarioCreateFlow({
   const handleTargetChange = (next: EnvironmentComposerState) => {
     // A pick of their own settles the question the default was answering.
     defaultClientAppliedRef.current = true;
+    // The name no longer follows the pick: "Study N" does not depend on it.
     setTarget(next);
-    if (userEditedNameRef.current) return;
-    // Follow the pick while the name is untouched: a saved environment's label,
-    // or — composing, which is the ONLY mode a flag-off project has — the
-    // client's name. Naming it after the client is what the flow this replaces
-    // did, and without it a flag-off user picks a client and then meets a
-    // required field with nothing in it.
-    const pickedId = next.environmentIds[0] ?? null;
-    const picked = isComposeMode(next)
-      ? undefined
-      : liveEnvironments.find((env) => env.environmentId === pickedId);
-    if (picked) {
-      setName(environmentLabel(picked));
-      return;
-    }
-    const hostId = next.stack.hostIds[0];
-    const client = hostId ? hosts.find((h) => h.hostId === hostId) : undefined;
-    setName(client?.name ?? "");
   };
 
   const handleCreateEnvironment = () => {
@@ -571,9 +645,7 @@ export function UserTestingScenarioCreateFlow({
   const handleSave = async () => {
     if (!hasTarget || savingRef.current) return;
     // Never an empty name in the database: the field is allowed to be empty,
-    // the study is not.
-    const effectiveName =
-      name.trim() || suggestedName.trim() || FALLBACK_STUDY_NAME;
+    // the study is not — `effectiveName` falls back to the suggestion.
     savingRef.current = true;
     setIsSaving(true);
     try {
@@ -760,7 +832,11 @@ export function UserTestingScenarioCreateFlow({
                   data-testid="user-testing-create-name"
                   value={name}
                   disabled={isSaving}
-                  placeholder={suggestedName || "Checkout flow"}
+                  placeholder={suggestedName}
+                  aria-invalid={takenName ? true : undefined}
+                  aria-describedby={
+                    takenName ? "user-testing-create-name-taken" : undefined
+                  }
                   onFocus={(e) => {
                     // Only the FIRST focus, and only a name they have not
                     // touched: selecting text under someone who came back to
@@ -777,13 +853,14 @@ export function UserTestingScenarioCreateFlow({
                     setName(e.target.value);
                   }}
                 />
-                {nameTaken ? (
+                {takenName ? (
                   <p
                     className="text-xs text-destructive"
+                    id="user-testing-create-name-taken"
                     role="alert"
                     data-testid="user-testing-create-name-taken"
                   >
-                    A study named &ldquo;{nameTaken}&rdquo; already exists in
+                    A study named &ldquo;{takenName}&rdquo; already exists in
                     this project. Give this one a different name.
                   </p>
                 ) : null}

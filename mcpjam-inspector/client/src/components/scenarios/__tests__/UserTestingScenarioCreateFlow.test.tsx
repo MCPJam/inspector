@@ -6,10 +6,11 @@
  *    and the publish is ONE call carrying the name and the access mode (so a
  *    scenario is never briefly live in a mode nobody asked for);
  *  - step 1 arrives ANSWERED: a client is preselected and the name is
- *    suggested off it, so Continue is pressable without typing, and an empty
- *    name is not a wall;
+ *    suggested as the project's next "Study N", so Continue is pressable
+ *    without typing, and an empty name is not a wall;
+ *  - a name the project already uses is flagged while typing, and Continue
+ *    will not carry it;
  *  - the access default is the least-exposed option;
- *  - the name follows the picked environment until the user types, then stops;
  *  - step 2 authors the tester's task list, and Create study carries it — with
  *    ratings — in a single second write;
  *  - an already-published environment is reported as such rather than as a
@@ -32,6 +33,7 @@ const {
   toastSuccess,
   toastError,
   ensureAdhocMock,
+  scenarioListState,
 } = vi.hoisted(() => ({
   environmentsState: {
     value: undefined as ProjectEnvironmentView[] | undefined,
@@ -49,6 +51,11 @@ const {
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   ensureAdhocMock: vi.fn(),
+  // The project's existing studies — what the suggested name counts past and
+  // a typed name is checked against. Empty by default: a first study.
+  scenarioListState: {
+    scenarios: [] as Array<{ name: string; environmentId?: string | null }>,
+  },
 }));
 
 vi.mock("@/hooks/useProjectEnvironments", () => ({
@@ -68,6 +75,13 @@ vi.mock("@/hooks/useSkillsEnabled", () => ({
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => false,
+}));
+vi.mock("@/hooks/useScenarios", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useScenarios")>()),
+  useScenarioList: () => ({
+    scenarios: scenarioListState.scenarios,
+    isLoading: false,
+  }),
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
@@ -149,7 +163,9 @@ import {
   UserTestingScenarioCreateFlow,
   composedSetupHasServers,
   isStudyNameTakenError,
+  nextStudyName,
   pickDefaultCreateClient,
+  takenStudyNames,
 } from "@/components/scenarios/UserTestingScenarioCreateFlow";
 
 const env = (over: Partial<ProjectEnvironmentView>): ProjectEnvironmentView =>
@@ -211,6 +227,7 @@ beforeEach(() => {
     { hostId: "host-2", name: "Cursor", serverCount: 1 },
   ];
   hostListState.isLoading = false;
+  scenarioListState.scenarios = [];
   projectRoleState.canManageMembers = true;
   projectRoleState.isLoading = false;
   ensureAdhocMock.mockImplementation(
@@ -285,7 +302,7 @@ describe("UserTestingScenarioCreateFlow", () => {
     });
     expect(onCreateScenario).toHaveBeenCalledWith({
       environmentId: "env-1",
-      name: "Checkout flow",
+      name: "Study 1",
       // Least-exposed default, carried in the same call as the publish.
       mode: "invited_only",
     });
@@ -362,19 +379,20 @@ describe("UserTestingScenarioCreateFlow", () => {
     ).toBeInTheDocument();
   });
 
-  it("names the scenario after the environment until the user types", () => {
+  it("keeps the suggested name when the environment changes", () => {
+    // Names are unique per project, so a name taken from the pick arrived
+    // already refused from the second study on that pick onward.
     renderFlow();
     const picker = screen.getByTestId("user-testing-create-environment");
 
     fireEvent.change(picker, { target: { value: "env-1" } });
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Checkout flow",
+      "Study 1",
     );
 
-    // Switching before typing keeps tracking...
     fireEvent.change(picker, { target: { value: "env-2" } });
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Onboarding",
+      "Study 1",
     );
 
     // ...and a typed name is never overwritten.
@@ -679,9 +697,9 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     ];
     renderFlow();
 
-    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Loaded",
-    );
+    expect(
+      screen.getByTestId("user-testing-create-clients-picker"),
+    ).toHaveTextContent("Loaded");
     goToTasks();
 
     expect(onTasksStep()).toBe(true);
@@ -716,7 +734,7 @@ describe("UserTestingScenarioCreateFlow — defaults", () => {
     renderFlow();
 
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Claude",
+      "Study 1",
     );
     expect(
       screen.queryByTestId("user-testing-create-environment-required"),
@@ -746,8 +764,8 @@ describe("UserTestingScenarioCreateFlow — defaults", () => {
       target: { value: "env-2" },
     });
 
-    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Onboarding",
+    expect(screen.getByTestId("user-testing-create-environment")).toHaveValue(
+      "env-2",
     );
   });
 
@@ -783,7 +801,7 @@ describe("UserTestingScenarioCreateFlow — defaults", () => {
     await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
     // Never an empty name in the database: the field may be empty, the study
     // may not.
-    expect(onCreateScenario.mock.calls[0][0].name).toBe("Claude");
+    expect(onCreateScenario.mock.calls[0][0].name).toBe("Study 1");
   });
 });
 
@@ -805,7 +823,7 @@ describe("UserTestingScenarioCreateFlow — tasks step", () => {
 
     fireEvent.click(screen.getByTestId("user-testing-create-back-step"));
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Claude",
+      "Study 1",
     );
   });
 
@@ -962,18 +980,16 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
   });
 
   /**
-   * The client is what a composed setup HAS to be named after. Leaving the
-   * field empty was survivable while composing was the exotic path; it is the
-   * only path a flag-off project has, and it met that project with a required
-   * field nothing fills.
+   * A flag-off project composes, and still arrives with a name filled in —
+   * the suggestion, which does not move with the client pick.
    */
-  it("names the scenario after the picked client until the user types", () => {
+  it("keeps the suggested name when the client changes, and a typed one too", () => {
     renderFlow();
 
     fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Cursor",
+      "Study 1",
     );
 
     fireEvent.change(screen.getByTestId("user-testing-create-name"), {
@@ -1081,9 +1097,9 @@ describe("UserTestingScenarioCreateFlow — without Project Environments", () =>
     fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
 
-    // Named after the client, so Continue is reachable without typing.
+    // Suggested, so Continue is reachable without typing.
     expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
-      "Cursor",
+      "Study 1",
     );
     createStudy();
 
@@ -1094,7 +1110,7 @@ describe("UserTestingScenarioCreateFlow — without Project Environments", () =>
     });
     expect(onCreateScenario).toHaveBeenCalledWith({
       environmentId: "adhoc-host-2",
-      name: "Cursor",
+      name: "Study 1",
       mode: "invited_only",
     });
   });
@@ -1354,7 +1370,7 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
     await waitFor(() => {
       expect(onCreateScenario).toHaveBeenCalledWith({
         environmentId: "env-1",
-        name: "Checkout flow",
+        name: "Study 1",
         mode: "project_members",
       });
     });
@@ -1436,9 +1452,12 @@ describe("UserTestingScenarioCreateFlow — a setup that already has a study", (
 describe("UserTestingScenarioCreateFlow — a name the project already uses", () => {
   const nameTaken = () =>
     vi.fn().mockRejectedValue(
-      Object.assign(new Error("A study named \"Checkout flow\" already exists."), {
-        data: { code: "CONFLICT", field: "name" },
-      }),
+      Object.assign(
+        new Error('A study named "Checkout flow" already exists.'),
+        {
+          data: { code: "CONFLICT", field: "name" },
+        },
+      ),
     );
 
   it("puts the refusal on the name field and keeps the draft", async () => {
@@ -1546,25 +1565,25 @@ describe("isStudyNameTakenError", () => {
 
   it("is not fooled by another conflict", () => {
     expect(
-      isStudyNameTakenError({ data: { code: "CONFLICT", field: "scenarioId" } }),
+      isStudyNameTakenError({
+        data: { code: "CONFLICT", field: "scenarioId" },
+      }),
     ).toBe(false);
-    expect(isStudyNameTakenError(new Error("A study named X already exists"))).toBe(
-      false,
-    );
+    expect(
+      isStudyNameTakenError(new Error("A study named X already exists")),
+    ).toBe(false);
     expect(isStudyNameTakenError(null)).toBe(false);
   });
 });
 
 describe("guest publishing", () => {
   it("prompts for signup and leaves the creation draft available to retry", async () => {
-    const onCreateScenario = vi
-      .fn()
-      .mockRejectedValue({
-        data: {
-          code: "guest_sharing_requires_sign_in",
-          message: "Sign up to share",
-        },
-      });
+    const onCreateScenario = vi.fn().mockRejectedValue({
+      data: {
+        code: "guest_sharing_requires_sign_in",
+        message: "Sign up to share",
+      },
+    });
     const onApplyStudySurfaces = vi.fn();
     renderFlow(onCreateScenario, vi.fn(), onApplyStudySurfaces);
     createStudy();
@@ -1580,5 +1599,108 @@ describe("guest publishing", () => {
     expect(onCreateScenario.mock.calls[1]).toEqual(
       onCreateScenario.mock.calls[0],
     );
+  });
+});
+
+describe("nextStudyName", () => {
+  it("starts at Study 1 in a project with no studies", () => {
+    expect(nextStudyName([])).toBe("Study 1");
+  });
+
+  it("counts past the highest N, not into a gap", () => {
+    expect(
+      nextStudyName([
+        { name: "Study 1", environmentId: "env-1" },
+        { name: "study 4", environmentId: "env-1" },
+        { name: "Checkout flow", environmentId: "env-2" },
+      ]),
+    ).toBe("Study 5");
+  });
+
+  it("never suggests a name the project already holds", () => {
+    // "Study 2" is taken, but by a name the counter does not parse as N.
+    expect(
+      nextStudyName([
+        { name: "Study 1", environmentId: "env-1" },
+        { name: "  STUDY 2  ", environmentId: "env-1" },
+      ]),
+    ).toBe("Study 3");
+  });
+});
+
+describe("takenStudyNames", () => {
+  it("reserves only environment-backed names, compared the backend's way", () => {
+    const taken = takenStudyNames([
+      { name: "  MCPJam ", environmentId: "env-1" },
+      { name: "Legacy", environmentId: null },
+    ]);
+    expect(taken.has("mcpjam")).toBe(true);
+    // Host-backed rows are not in the backend's uniqueness check.
+    expect(taken.has("legacy")).toBe(false);
+  });
+});
+
+/**
+ * The backend refuses a taken name only at Create — after the creator has
+ * pressed Continue and written the task list. The project's study list is
+ * already on the client, so the same answer is given while they type.
+ */
+describe("UserTestingScenarioCreateFlow — a taken name, said while typing", () => {
+  beforeEach(() => {
+    scenarioListState.scenarios = [
+      { name: "MCPJam", environmentId: "env-1" },
+      { name: "Study 1", environmentId: "env-1" },
+    ];
+  });
+
+  it("suggests a name the project does not use yet", () => {
+    renderFlow();
+
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
+      "Study 2",
+    );
+    expect(
+      screen.queryByTestId("user-testing-create-name-taken"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("flags a taken name as soon as it is typed, ignoring case and spaces", () => {
+    renderFlow();
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "  mcpjam " },
+    });
+
+    expect(
+      screen.getByTestId("user-testing-create-name-taken"),
+    ).toHaveTextContent(/already exists in this project/i);
+    expect(screen.getByTestId("user-testing-create-name")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
+  it("clears the flag once the name is free again", () => {
+    renderFlow();
+    const field = screen.getByTestId("user-testing-create-name");
+
+    fireEvent.change(field, { target: { value: "MCPJam" } });
+    fireEvent.change(field, { target: { value: "MCPJam round 2" } });
+
+    expect(
+      screen.queryByTestId("user-testing-create-name-taken"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("will not carry a taken name past Continue", () => {
+    const { onCreateScenario } = renderFlow();
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "MCPJam" },
+    });
+    goToTasks();
+
+    expect(onTasksStep()).toBe(false);
+    expect(onCreateScenario).not.toHaveBeenCalled();
   });
 });
