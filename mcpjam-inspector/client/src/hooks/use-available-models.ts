@@ -8,7 +8,7 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
-import { useOutOfCredits } from "@/hooks/useCreditBalance";
+import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 
@@ -67,6 +67,7 @@ export function useAvailableModels(options?: {
   const { isOllamaRunning, ollamaModels } =
     useDetectedOllamaModels(getOllamaBaseUrl);
   const outOfCredits = useOutOfCredits(organizationId);
+  const freeTierOnly = useFreeTierOnly(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
   const modelSelectionsSupported = useModelSelectionsSupported(convexProjectId);
 
@@ -82,6 +83,7 @@ export function useAvailableModels(options?: {
         getAzureBaseUrl,
         customProviders,
         outOfCredits,
+        freeTierOnly,
         hostedCatalog,
       }),
     [
@@ -94,6 +96,7 @@ export function useAvailableModels(options?: {
       getAzureBaseUrl,
       customProviders,
       outOfCredits,
+      freeTierOnly,
       hostedCatalog,
     ]
   );

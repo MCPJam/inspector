@@ -444,6 +444,7 @@ export function EvalModelChoices({
             availableModels={availableModels}
             disabled={disabled}
             analyticsLocation="eval_suite"
+            workload="evalTarget"
             onModelChange={(next) => changeChoice(key, inherited, next)}
             trigger={
               <Button
@@ -496,6 +497,7 @@ export function EvalModelChoices({
         )}
         disabled={disabled}
         analyticsLocation="eval_suite"
+        workload="evalTarget"
         onModelChange={(model) =>
           onChange(
             syncExplicitModelSelections(

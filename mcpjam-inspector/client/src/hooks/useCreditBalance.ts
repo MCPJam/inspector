@@ -227,3 +227,35 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
 
   return balanceOutOfCredits || locallyLimited;
 }
+
+/**
+ * True when MCPJam-provided usage would be paid from the FREE daily bucket with
+ * no purchased credits to fall back on: the population the backend's
+ * free-allowance model gate applies to (`free_tier_model_restricted`). Kept
+ * conservative so it never locks a model the backend would serve: only the
+ * daily billing model counts (monthly teams are billed differently), and an
+ * unknown balance is not free-tier-only.
+ */
+export function isFreeTierOnly(
+  balance: CreditBalanceState | undefined,
+): boolean {
+  if (!balance) return false;
+  if (balance.billingModel !== "daily") return false;
+  if (balance.platformPaidFallback) return false;
+  return balance.paidCreditsRemaining <= 0;
+}
+
+/**
+ * {@link isFreeTierOnly} for the active organization (or guest), resolved the
+ * same way as {@link useOutOfCredits}. Feeds `applyFreeTierLocks`.
+ */
+export function useFreeTierOnly(organizationId?: string | null): boolean {
+  const { user } = useAuth();
+  const resolvedOrganizationId =
+    organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null);
+  const { balance } = useCreditBalance({
+    organizationId: resolvedOrganizationId,
+    includeGuests: true,
+  });
+  return isFreeTierOnly(balance);
+}

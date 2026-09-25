@@ -34,6 +34,13 @@ import {
   isMCPJamProvidedModelMenuItem,
   pickOwnProviderModel,
 } from "@/components/chat-v2/shared/model-helpers";
+import {
+  applyWorkloadCapabilityLocks,
+  NOT_VERIFIED_TAG,
+  retiringTag,
+  sortModelsNewestFirst,
+  type ModelWorkload,
+} from "@/components/chat-v2/shared/available-models";
 import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -88,6 +95,14 @@ interface ModelSelectorProps {
    */
   onManageOrgProviders?: () => void;
   platformPaidFallback?: boolean;
+  /**
+   * What this surface runs the model for. Rows whose catalog observed a
+   * capability the workload needs as unsupported are disabled, and ones
+   * observed as unknown are tagged "Not verified" (disabled for eval and
+   * persona runs, warned elsewhere). Omitted, rows render exactly as passed.
+   * See `MODEL_WORKLOAD_POLICIES`.
+   */
+  workload?: ModelWorkload;
 }
 
 type GroupKey = string;
@@ -235,6 +250,7 @@ export function ModelSelector({
   respondToProviderTabIntent = false,
   onManageOrgProviders,
   platformPaidFallback = false,
+  workload,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -354,9 +370,18 @@ export function ModelSelector({
       ? String(currentModel.id)
       : null);
 
+  // Rows as displayed: the surface's capability needs applied, newest first
+  // within each provider (grouping keeps this order).
+  const displayModels = useMemo(
+    () =>
+      sortModelsNewestFirst(
+        applyWorkloadCapabilityLocks(availableModels, workload),
+      ),
+    [availableModels, workload],
+  );
   const groupedModels = useMemo(
-    () => groupModelsByProvider(availableModels),
-    [availableModels],
+    () => groupModelsByProvider(displayModels),
+    [displayModels],
   );
   const sortedProviders = useMemo(
     () => Array.from(groupedModels.keys()).sort(),
@@ -615,6 +640,10 @@ export function ModelSelector({
       const isLockedRowHighlight =
         lockedRowHighlightId === String(model.id) && !!disabledReason;
       const isSelected = selectedIds.has(String(model.id));
+      const rowTags = [
+        model.unverifiedCapabilities?.length ? NOT_VERIFIED_TAG : undefined,
+        retiringTag(model),
+      ].filter((tag): tag is string => !!tag);
 
       const row = (
         <CommandItem
@@ -645,6 +674,20 @@ export function ModelSelector({
           <span className="min-w-0 flex-1 truncate text-sm">
             {compactModelLabel(model.name)}
           </span>
+          {rowTags.map((tag) => (
+            <span
+              key={tag}
+              data-testid="model-row-tag"
+              className={cn(
+                "shrink-0 rounded border px-1 text-[9px] leading-4",
+                tag === NOT_VERIFIED_TAG
+                  ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
+                  : "border-border/60 text-muted-foreground",
+              )}
+            >
+              {tag}
+            </span>
+          ))}
           {multiModelEnabled ? (
             <div
               className={cn(
@@ -683,6 +726,13 @@ export function ModelSelector({
             </div>
           </TooltipTrigger>
           <TooltipContent side="right">{disabledReason}</TooltipContent>
+        </Tooltip>
+      ) : model.warningReason ? (
+        <Tooltip key={String(model.id)}>
+          <TooltipTrigger asChild>
+            <div className="rounded-sm">{row}</div>
+          </TooltipTrigger>
+          <TooltipContent side="right">{model.warningReason}</TooltipContent>
         </Tooltip>
       ) : (
         row
