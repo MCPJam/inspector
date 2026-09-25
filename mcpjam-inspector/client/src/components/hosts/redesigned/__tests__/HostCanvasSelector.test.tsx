@@ -329,8 +329,15 @@ describe("HostCanvasSelector", () => {
     const blocked = await screen.findByTestId("host-canvas-delete-host-a");
     expect(blocked).toBeDisabled();
     expect(blocked).toHaveAttribute("title", "In use by a test suite.");
+    expect(blocked.closest('[role="menuitemradio"]')).toHaveAttribute(
+      "aria-description",
+      "In use by a test suite.",
+    );
     const free = screen.getByTestId("host-canvas-delete-host-b");
     expect(free).not.toBeDisabled();
     expect(free).not.toHaveAttribute("title");
+    expect(free.closest('[role="menuitemradio"]')).not.toHaveAttribute(
+      "aria-description",
+    );
   });
 });

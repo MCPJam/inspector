@@ -12,7 +12,11 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { useHostList, useHostMutations } from "@/hooks/useClients";
+import {
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+} from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
@@ -114,6 +118,12 @@ export function HostCanvasSelector({
   };
 
   const canDelete = sortedHosts.length > 1;
+  const deleteReasonFor = (host: HostListItem) =>
+    !canDelete
+      ? LAST_HOST_DELETE_REASON
+      : host.inUse
+        ? IN_USE_DELETE_REASON
+        : undefined;
 
   const handleDelete = async (hostId: string) => {
     const host = hosts.find((h) => h.hostId === hostId);
@@ -282,6 +292,9 @@ export function HostCanvasSelector({
                   key={host.hostId}
                   value={host.hostId}
                   hideIndicator
+                  // The disabled delete can't take focus, so the row carries
+                  // the reason for keyboard and screen reader users.
+                  aria-description={deleteReasonFor(host)}
                   className="group gap-2.5 py-2 pr-1.5"
                 >
                   <img
@@ -301,13 +314,7 @@ export function HostCanvasSelector({
                       aria-label={`Delete ${clientDisplayName(host)}`}
                       data-testid={`host-canvas-delete-${host.hostId}`}
                       disabled={isDeleting || !canDelete || host.inUse === true}
-                      title={
-                        !canDelete
-                          ? LAST_HOST_DELETE_REASON
-                          : host.inUse
-                            ? IN_USE_DELETE_REASON
-                            : undefined
-                      }
+                      title={deleteReasonFor(host)}
                       className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
