@@ -58,10 +58,15 @@ Four graders file at a link without being checks you write in a list:
 
 | Grader | Link | What it is |
 |--------|------|------------|
-| Tool-call matcher | Selection | The `expectedToolCalls` comparison, configured by [match options](/sdk/reference/validators) rather than authored as a predicate |
+| Tool-call matcher (`toolCalls:match`) | Selection | The `expectedToolCalls` comparison for **tool selection**: every expected tool was called, and no turn made more extra calls than `maxExtraToolCalls` allows. Configured by [match options](/sdk/reference/validators) rather than authored as a predicate. Version 3 and later. |
+| Arguments matcher (`toolCalls:arguments`) | Tool call | Checks that the expected tools were called with the expected arguments. Declared only when the case compares arguments (`argumentMatching` is not `"ignore"`). Its reason names the tool and the argument, never the value. |
 | Goal completion judge | User value | The hosted LLM judge scoring whether the request was satisfied |
 | Groundedness judge | User value | Advisory only, run on demand; it has no score definition and never decides a link |
 | Rubric checks | User value | Advisory only: one row per suite criterion or authored question, graded with the goal completion judge; never decides a link |
+
+<Warning>
+**Re-baseline required after upgrading to SDK 8.16.0.** The `toolCalls:arguments` scorer is new in this release, which changes the set of score definitions and therefore the `evaluationConfigHash`. The first run after upgrading cannot be gated against a `--baseline` from before it: `eval gate --baseline <older run>` exits 3 (not gateable). Record a new baseline from a run on this version.
+</Warning>
 
 A **gating** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
 
