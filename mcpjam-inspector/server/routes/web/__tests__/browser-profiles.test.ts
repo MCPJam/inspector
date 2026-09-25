@@ -20,7 +20,8 @@ import { logger } from "../../../utils/logger.js";
 
 const BACKEND = "https://backend.example";
 const LOOKUP_URL = `${BACKEND}/browser-profiles/download-url`;
-const ARCHIVE_URL = "https://files.example/archive/0f1e2d3c?sig=abc";
+const ARCHIVE_URL =
+  "https://happy-otter-123.convex.cloud/api/storage/0f1e2d3c?sig=abc";
 const SERVICE_TOKEN = "inspector-service-token";
 const ARCHIVE = new Uint8Array([31, 139, 8, 0, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 
@@ -62,7 +63,10 @@ function serve(options: { lookup?: () => Response; archive?: () => Response }) {
         options.lookup ?? (() => lookupAnswers(200, { url: ARCHIVE_URL }))
       )();
     }
-    if (url === ARCHIVE_URL || url.startsWith("http://files.example/")) {
+    if (
+      url === ARCHIVE_URL ||
+      url.startsWith("http://happy-otter-123.convex.cloud/")
+    ) {
       return (
         options.archive ??
         (() =>
@@ -124,7 +128,12 @@ describe("POST /api/web/browser-profiles/download", () => {
     const body = Buffer.from(await res.arrayBuffer()).toString("latin1");
 
     expect(res.status).toBe(200);
-    for (const fragment of [ARCHIVE_URL, "files.example", "sig=abc"]) {
+    for (const fragment of [
+      ARCHIVE_URL,
+      "happy-otter-123",
+      "/api/storage/",
+      "sig=abc",
+    ]) {
       expect(allHeaderValues(res)).not.toContain(fragment);
       expect(body).not.toContain(fragment);
     }
@@ -200,7 +209,7 @@ describe("POST /api/web/browser-profiles/download", () => {
 
     expect(res.status).toBe(502);
     const text = await res.text();
-    expect(text).not.toContain("files.example");
+    expect(text).not.toContain("happy-otter-123");
     expect(logger.event).toHaveBeenCalledWith(
       "browser_profile.download.failed",
       expect.anything(),
@@ -212,14 +221,30 @@ describe("POST /api/web/browser-profiles/download", () => {
   it("refuses an archive location that is not https", async () => {
     serve({
       lookup: () =>
-        lookupAnswers(200, { url: "http://files.example/archive/0f1e2d3c" }),
+        lookupAnswers(200, {
+          url: "http://happy-otter-123.convex.cloud/api/storage/0f1e2d3c",
+        }),
     });
 
     const res = await download(IDS);
 
     expect(res.status).toBe(502);
-    expect(await res.text()).not.toContain("files.example/archive");
+    expect(await res.text()).not.toContain("happy-otter-123");
     // Only the lookup ran; the archive was never requested.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads an archive only from this deployment's file storage", async () => {
+    serve({
+      lookup: () =>
+        lookupAnswers(200, { url: "https://files.example/archive/0f1e2d3c" }),
+    });
+
+    const res = await download(IDS);
+
+    expect(res.status).toBe(502);
+    expect(await res.text()).not.toContain("files.example");
+    // Only the lookup ran; the other location was never requested.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

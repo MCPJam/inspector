@@ -98,7 +98,8 @@ describe("BrowserSessionService", () => {
   });
 
   describe("saved profile archives (MJ-005)", () => {
-    const ARCHIVE_LOCATION = "https://files.example/archive/profile-1";
+    const ARCHIVE_LOCATION =
+      "https://files.convex.example/api/storage/0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e";
     const ARCHIVE = new Uint8Array([31, 139, 8, 0, 1, 2, 3]);
 
     function archiveFetch(location = ARCHIVE_LOCATION) {
@@ -115,6 +116,7 @@ describe("BrowserSessionService", () => {
       const service = new BrowserSessionService({
         baseUrl: "https://convex.example",
         enabled: true,
+        storageOrigin: "https://files.convex.example",
         fetch: requestFetch as unknown as typeof globalThis.fetch,
       });
 
@@ -156,6 +158,7 @@ describe("BrowserSessionService", () => {
       const service = new BrowserSessionService({
         baseUrl: "https://convex.example",
         enabled: true,
+        storageOrigin: "https://files.convex.example",
         fetch: requestFetch as unknown as typeof globalThis.fetch,
       });
 
@@ -174,11 +177,12 @@ describe("BrowserSessionService", () => {
     it("refuses an archive location that is not https", async () => {
       vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
       const requestFetch = archiveFetch(
-        "http://files.example/archive/profile-1",
+        "http://files.convex.example/api/storage/0f1e2d3c",
       );
       const service = new BrowserSessionService({
         baseUrl: "https://convex.example",
         enabled: true,
+        storageOrigin: "https://files.convex.example",
         fetch: requestFetch as unknown as typeof globalThis.fetch,
       });
 
@@ -190,6 +194,58 @@ describe("BrowserSessionService", () => {
         }),
       ).rejects.toThrow(/must use https/);
       expect(requestFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["another host", "https://files.example/api/storage/0f1e2d3c"],
+      ["another path", "https://files.convex.example/archive/profile-1"],
+      [
+        "embedded credentials",
+        "https://user:pass@files.convex.example/api/storage/0f1e2d3c",
+      ],
+    ])(
+      "reads an archive only from this deployment's file storage: refuses %s",
+      async (_case, location) => {
+        vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+        const requestFetch = archiveFetch(location);
+        const service = new BrowserSessionService({
+          baseUrl: "https://convex.example",
+          enabled: true,
+          storageOrigin: "https://files.convex.example",
+          fetch: requestFetch as unknown as typeof globalThis.fetch,
+        });
+
+        await expect(
+          service.downloadProfile({
+            projectId: "project-1",
+            profileId: "profile-1",
+            bearer: "user-token",
+          }),
+        ).rejects.toThrow(/file storage/);
+        // Only the lookup went out; the refused location was never requested.
+        expect(requestFetch).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("accepts a Convex-hosted deployment's storage origin", async () => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+      const location =
+        "https://happy-otter-123.convex.cloud/api/storage/0f1e2d3c-4b5a";
+      const requestFetch = archiveFetch(location);
+      const service = new BrowserSessionService({
+        baseUrl: "https://convex.example",
+        enabled: true,
+        storageOrigin: "https://files.convex.example",
+        fetch: requestFetch as unknown as typeof globalThis.fetch,
+      });
+
+      await expect(
+        service.resolveProfileArchive({
+          projectId: "project-1",
+          profileId: "profile-1",
+          bearer: "user-token",
+        }),
+      ).resolves.toEqual(new URL(location));
     });
   });
 

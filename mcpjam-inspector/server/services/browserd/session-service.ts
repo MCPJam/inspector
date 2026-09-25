@@ -12,6 +12,7 @@ import {
   getConfiguredInspectorServiceToken,
   INSPECTOR_SERVICE_TOKEN_HEADER,
 } from "../../middleware/internal-service-auth.js";
+import { getInspectorClientRuntimeConfig } from "../../env.js";
 
 export type BrowserSessionOwnerKind =
   "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
@@ -50,6 +51,11 @@ export interface BrowserSessionServiceOptions {
   baseUrl?: string;
   /** When absent, the service is disabled and callers may use local JSON. */
   enabled?: boolean;
+  /**
+   * Origin of the deployment's file storage, where saved profile archives
+   * live. Defaults to the configured Convex URL.
+   */
+  storageOrigin?: string;
 }
 
 type RequestArgs = {
@@ -108,6 +114,44 @@ function assertSecureTransport(url: URL, source: string): void {
   if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
     throw new Error(
       `${source} must use https for a non-loopback host (got ${url.origin})`,
+    );
+  }
+}
+
+/** Where Convex serves a stored file: `<deployment origin>/api/storage/<id>`. */
+const STORAGE_PATH_PREFIX = "/api/storage/";
+
+function originOf(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A saved profile archive is read only from this deployment's file storage:
+ * the configured Convex origin, or a Convex-hosted deployment origin, under
+ * `/api/storage/`. A location anywhere else is refused before any request is
+ * made to it.
+ */
+function assertArchiveStorageLocation(
+  url: URL,
+  storageOrigin: string | null,
+): void {
+  const onConfiguredOrigin =
+    storageOrigin !== null && url.origin === storageOrigin;
+  const onConvexCloud =
+    url.protocol === "https:" && url.hostname.endsWith(".convex.cloud");
+  if (
+    (!onConfiguredOrigin && !onConvexCloud) ||
+    !url.pathname.startsWith(STORAGE_PATH_PREFIX) ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(
+      `browser profile download URL is not on this deployment's file storage (got ${url.origin})`,
     );
   }
 }
@@ -195,12 +239,16 @@ function parseSession(value: unknown): BrowserLogicalSessionRecord | null {
 export class BrowserSessionService {
   private readonly requestFetch: typeof globalThis.fetch;
   private readonly baseUrl: string | undefined;
+  private readonly storageOrigin: string | null;
   readonly enabled: boolean;
 
   constructor(options: BrowserSessionServiceOptions = {}) {
     this.requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.baseUrl = options.baseUrl ?? process.env.CONVEX_HTTP_URL?.trim();
     this.enabled = options.enabled ?? Boolean(this.baseUrl);
+    this.storageOrigin = originOf(
+      options.storageOrigin ?? getInspectorClientRuntimeConfig().convexUrl,
+    );
   }
 
   private async post<T>(
@@ -461,6 +509,7 @@ export class BrowserSessionService {
     // thing that should ride cleartext because a signed URL happened to say
     // `http:`.
     assertSecureTransport(location, "browser profile download URL");
+    assertArchiveStorageLocation(location, this.storageOrigin);
     return location;
   }
 
