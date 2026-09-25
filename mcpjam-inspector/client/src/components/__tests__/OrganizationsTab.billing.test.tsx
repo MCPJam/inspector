@@ -812,12 +812,16 @@ describe("OrganizationsTab billing", () => {
     fireEvent.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+      screen.getByText(
+        "Single sign-on connects your workspace to your organization’s identity provider. Availability is shown for each plan.",
+      ),
     ).toBeVisible();
     fireEvent.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+      screen.getByText(
+        "Single sign-on connects your workspace to your organization’s identity provider. Availability is shown for each plan.",
+      ),
     ).not.toBeVisible();
     const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
     expect(within(ssoRow).getAllByRole("cell")[3]).toHaveTextContent(
