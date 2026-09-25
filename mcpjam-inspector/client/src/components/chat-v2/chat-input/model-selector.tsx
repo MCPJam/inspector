@@ -41,6 +41,7 @@ import {
   sortModelsNewestFirst,
   type ModelWorkload,
 } from "@/components/chat-v2/shared/available-models";
+import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -103,6 +104,41 @@ interface ModelSelectorProps {
    * See `MODEL_WORKLOAD_POLICIES`.
    */
   workload?: ModelWorkload;
+  /**
+   * Multi-select only: the selection may be emptied. Without it the last
+   * selected row cannot be removed (chat always runs at least one model).
+   * Surfaces with another way to run (an environment's "Client defaults")
+   * pass it, and then an empty `selectedModels` means nothing is selected.
+   */
+  allowEmptySelection?: boolean;
+  /**
+   * Non-model choices listed above the models (an environment's "Client
+   * defaults"). In multi-select mode they toggle like rows and keep the menu
+   * open; in single mode a pick closes it.
+   */
+  extraOptions?: ModelSelectorExtraOption[];
+  /**
+   * A surface's own reason a row cannot be added right now (for example a
+   * run budget), shown like a lock. Selected rows stay removable.
+   */
+  rowDisabledReason?: (
+    model: ModelDefinition,
+    state: { selected: boolean },
+  ) => string | undefined;
+  /** A surface's own tag for a row ("Not eligible", "Not in catalog"). */
+  rowTag?: (model: ModelDefinition) => string | undefined;
+}
+
+export interface ModelSelectorExtraOption {
+  id: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  /** Shown under the option while it is disabled. */
+  disabledReason?: string;
+  onSelect: () => void;
+  testId?: string;
 }
 
 type GroupKey = string;
@@ -201,6 +237,27 @@ const groupHasMatch = (group: ModelGroup, search: string): boolean =>
     (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
   );
 
+function SelectionCheck({ checked }: { checked: boolean }) {
+  return (
+    <div
+      className={cn(
+        "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+        checked
+          ? "border-primary bg-primary shadow-sm"
+          : "border-border/60 bg-transparent hover:border-border",
+      )}
+      aria-hidden
+    >
+      {checked ? (
+        <Check
+          strokeWidth={3}
+          className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+        />
+      ) : null}
+    </div>
+  );
+}
+
 // The credential source is part of a selection: equal IDs can belong to
 // different providers, and an omitted routing flag has legacy server semantics.
 function sameModelSelection(
@@ -251,6 +308,10 @@ export function ModelSelector({
   onManageOrgProviders,
   platformPaidFallback = false,
   workload,
+  allowEmptySelection = false,
+  extraOptions,
+  rowDisabledReason,
+  rowTag,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -359,15 +420,18 @@ export function ModelSelector({
     onManageOrgProviders?.();
   };
 
-  const selectedModelsData =
-    selectedModels && selectedModels.length > 0
+  const selectedModelsData = allowEmptySelection
+    ? (selectedModels ?? [])
+    : selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
 
+  // Rows are identified by `modelRowKey`, not the raw id: one id can be
+  // listed by the hosted catalog and again under an org connection.
   const lockedRowHighlightId =
     hoveredLockedModelId ??
     (!multiModelEnabled && currentModel.disabled
-      ? String(currentModel.id)
+      ? modelRowKey(currentModel)
       : null);
 
   // Rows as displayed: the surface's capability needs applied, newest first
@@ -430,8 +494,8 @@ export function ModelSelector({
     return groups;
   }, [groupedModels, hideProvidedModels, sortedProviders]);
 
-  const selectedIds = useMemo(
-    () => new Set(selectedModelsData.map((model) => String(model.id))),
+  const selectedKeys = useMemo(
+    () => new Set(selectedModelsData.map((model) => modelRowKey(model))),
     [selectedModelsData],
   );
   const canUseMultiModel =
@@ -586,14 +650,15 @@ export function ModelSelector({
   const handleMultiModelSelect = (model: ModelDefinition) => {
     requestPopoverStayOpen();
 
-    const isSelected = selectedIds.has(String(model.id));
+    const key = modelRowKey(model);
+    const isSelected = selectedKeys.has(key);
     const nextSelectedModels = isSelected
       ? selectedModelsData.filter(
-          (selectedModel) => String(selectedModel.id) !== String(model.id),
+          (selectedModel) => modelRowKey(selectedModel) !== key,
         )
       : [...selectedModelsData, model];
 
-    if (nextSelectedModels.length === 0) {
+    if (nextSelectedModels.length === 0 && !allowEmptySelection) {
       return;
     }
 
@@ -605,7 +670,8 @@ export function ModelSelector({
   };
 
   const handlePromoteLeadModel = (model: ModelDefinition) => {
-    if (!multiModelEnabled || String(model.id) === String(leadModel.id)) {
+    const key = modelRowKey(model);
+    if (!multiModelEnabled || key === modelRowKey(leadModel)) {
       return;
     }
 
@@ -614,7 +680,7 @@ export function ModelSelector({
     const nextSelectedModels = [
       model,
       ...selectedModelsData.filter(
-        (selectedModel) => String(selectedModel.id) !== String(model.id),
+        (selectedModel) => modelRowKey(selectedModel) !== key,
       ),
     ];
 
@@ -625,30 +691,48 @@ export function ModelSelector({
     });
   };
 
+  const handleExtraOption = (option: ModelSelectorExtraOption) => {
+    if (option.disabled) return;
+    if (multiModelEnabled) {
+      requestPopoverStayOpen();
+      option.onSelect();
+      return;
+    }
+    option.onSelect();
+    setIsOpen(false);
+  };
+
   const renderGroupModelItems = (group: ModelGroup) =>
     group.models.map((model) => {
-      const isDisabled =
-        !!model.disabled ||
-        (multiModelEnabled &&
-          !selectedIds.has(String(model.id)) &&
-          selectedLimitReached);
-      const disabledReason =
-        model.disabledReason ??
-        (!selectedIds.has(String(model.id)) && selectedLimitReached
+      const rowKey = modelRowKey(model);
+      const isSelected = selectedKeys.has(rowKey);
+      const limitReason =
+        multiModelEnabled && !isSelected && selectedLimitReached
           ? `You can compare up to ${maxSelectedModels} models at once`
-          : undefined);
+          : undefined;
+      const surfaceReason = rowDisabledReason?.(model, {
+        selected: isSelected,
+      });
+      // A selected row stays removable in multi-select even when it is
+      // locked now: locks only block adding it.
+      const isDisabled =
+        (!!model.disabled || !!limitReason || !!surfaceReason) &&
+        !(multiModelEnabled && isSelected);
+      const disabledReason =
+        model.disabledReason ?? surfaceReason ?? limitReason;
       const isLockedRowHighlight =
-        lockedRowHighlightId === String(model.id) && !!disabledReason;
-      const isSelected = selectedIds.has(String(model.id));
+        lockedRowHighlightId === rowKey && !!disabledReason;
       const rowTags = [
+        rowTag?.(model),
         model.unverifiedCapabilities?.length ? NOT_VERIFIED_TAG : undefined,
         retiringTag(model),
       ].filter((tag): tag is string => !!tag);
 
       const row = (
         <CommandItem
-          key={String(model.id)}
+          key={rowKey}
           value={modelSearchValue(model, group.title)}
+          aria-checked={multiModelEnabled ? isSelected : undefined}
           onSelect={() => {
             if (multiModelEnabled) {
               handleMultiModelSelect(model);
@@ -689,22 +773,7 @@ export function ModelSelector({
             </span>
           ))}
           {multiModelEnabled ? (
-            <div
-              className={cn(
-                "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                isSelected
-                  ? "border-primary bg-primary shadow-sm"
-                  : "border-border/60 bg-transparent hover:border-border",
-              )}
-              aria-hidden
-            >
-              {isSelected ? (
-                <Check
-                  strokeWidth={3}
-                  className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                />
-              ) : null}
-            </div>
+            <SelectionCheck checked={isSelected} />
           ) : sameModelSelection(model, currentModel) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
           ) : null}
@@ -712,14 +781,14 @@ export function ModelSelector({
       );
 
       return disabledReason ? (
-        <Tooltip key={String(model.id)}>
+        <Tooltip key={rowKey}>
           <TooltipTrigger asChild>
             <div
               className={cn(
                 "rounded-sm transition-colors",
                 isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
               )}
-              onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
+              onMouseEnter={() => setHoveredLockedModelId(rowKey)}
               onMouseLeave={() => setHoveredLockedModelId(null)}
             >
               {row}
@@ -728,7 +797,7 @@ export function ModelSelector({
           <TooltipContent side="right">{disabledReason}</TooltipContent>
         </Tooltip>
       ) : model.warningReason ? (
-        <Tooltip key={String(model.id)}>
+        <Tooltip key={rowKey}>
           <TooltipTrigger asChild>
             <div className="rounded-sm">{row}</div>
           </TooltipTrigger>
@@ -762,7 +831,7 @@ export function ModelSelector({
                     <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
                       {selectedModelsData.map((model, index) => (
                         <span
-                          key={String(model.id)}
+                          key={modelRowKey(model)}
                           className={cn(
                             "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
                             index === 0
@@ -847,7 +916,7 @@ export function ModelSelector({
                       const isLead = index === 0;
                       return (
                         <button
-                          key={String(model.id)}
+                          key={modelRowKey(model)}
                           type="button"
                           className={cn(
                             "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
@@ -955,6 +1024,46 @@ export function ModelSelector({
                       <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
                         No provider keys yet.
                       </p>
+                    ) : null}
+
+                    {extraOptions && extraOptions.length > 0 ? (
+                      <CommandGroup>
+                        {extraOptions.map((option) => (
+                          <div key={option.id}>
+                            <CommandItem
+                              value={option.label}
+                              onSelect={() => handleExtraOption(option)}
+                              disabled={option.disabled}
+                              aria-checked={
+                                multiModelEnabled ? option.checked : undefined
+                              }
+                              data-testid={option.testId}
+                              className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm">
+                                  {option.label}
+                                </span>
+                                {option.description ? (
+                                  <span className="block truncate text-[10px] text-muted-foreground">
+                                    {option.description}
+                                  </span>
+                                ) : null}
+                              </span>
+                              {multiModelEnabled ? (
+                                <SelectionCheck checked={option.checked} />
+                              ) : option.checked ? (
+                                <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
+                              ) : null}
+                            </CommandItem>
+                            {option.disabled && option.disabledReason ? (
+                              <p className="px-2 pb-1 text-[10px] text-muted-foreground">
+                                {option.disabledReason}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </CommandGroup>
                     ) : null}
 
                     {showProvided ? (

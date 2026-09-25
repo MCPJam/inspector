@@ -6,6 +6,9 @@ import {
   composeAvailableModels,
   FREE_TIER_MODEL_REASON,
   GUEST_LOCKED_MODEL_REASON,
+  isJudgeEligibleModel,
+  JUDGE_INELIGIBLE_REASON,
+  judgeModelOptions,
   MODEL_WORKLOAD_POLICIES,
   OUT_OF_CREDITS_MODEL_REASON,
   retiringTag,
@@ -213,5 +216,85 @@ describe("retiringTag", () => {
       retiringTag(hosted("a/b", { deprecatedAt: Date.UTC(2027, 2, 3) })),
     ).toBe("Retiring Mar 3, 2027");
     expect(retiringTag(hosted("a/b"))).toBeUndefined();
+  });
+});
+
+describe("judge model rows (purpose: judge)", () => {
+  const row = (
+    id: string,
+    extra: Partial<ModelDefinition> = {}
+  ): ModelDefinition => ({
+    id,
+    name: id,
+    provider: "openai",
+    hosted: true,
+    ...extra,
+  });
+
+  it("admits hosted rows only", () => {
+    expect(isJudgeEligibleModel(row("openai/gpt-5-mini"))).toBe(true);
+    expect(
+      isJudgeEligibleModel(row("gpt-4o", { hosted: false }))
+    ).toBe(false);
+  });
+
+  it("keeps every hosted row while the catalog carries no observations", () => {
+    expect(
+      isJudgeEligibleModel(row("openai/gpt-5-mini", { judgeEligible: false }))
+    ).toBe(true);
+  });
+
+  it("follows judge_eligible, else the ZDR observation, once observed", () => {
+    const observed = { catalogObservedAt: OBSERVED_AT };
+    expect(
+      isJudgeEligibleModel(row("a/1", { ...observed, judgeEligible: true }))
+    ).toBe(true);
+    expect(
+      isJudgeEligibleModel(row("a/2", { ...observed, judgeEligible: false }))
+    ).toBe(false);
+    expect(isJudgeEligibleModel(row("a/3", observed))).toBe(false);
+    expect(
+      isJudgeEligibleModel(
+        row("a/4", {
+          ...observed,
+          observations: {
+            openRouterZdr: { status: "supported", source: "openrouter-zdr" },
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
+  it("adds the managed default and appends an ineligible current value disabled", () => {
+    const { models, currentIneligible } = judgeModelOptions(
+      [
+        row("openai/gpt-5-mini"),
+        row("openai/gpt-5-mini", { provider: "openrouter", hosted: false }),
+        row("gpt-4o", { hosted: false, name: "GPT-4o" }),
+      ],
+      { currentModelId: "gpt-4o", managedDefaultModelId: "openai/gpt-5.4-mini" }
+    );
+    expect(currentIneligible).toBe(true);
+    expect(models.map((model) => String(model.id))).toEqual([
+      "openai/gpt-5-mini",
+      "openai/gpt-5.4-mini",
+      "gpt-4o",
+    ]);
+    expect(models[0]!.hosted).toBe(true);
+    expect(models[1]).toMatchObject({ hosted: true, disabled: false });
+    expect(models[2]).toMatchObject({
+      name: "GPT-4o",
+      disabled: true,
+      disabledReason: JUDGE_INELIGIBLE_REASON,
+    });
+  });
+
+  it("does not mark an eligible current value", () => {
+    expect(
+      judgeModelOptions([row("openai/gpt-5-mini")], {
+        currentModelId: "openai/gpt-5-mini",
+        managedDefaultModelId: "openai/gpt-5-mini",
+      })
+    ).toEqual({ models: [row("openai/gpt-5-mini")], currentIneligible: false });
   });
 });

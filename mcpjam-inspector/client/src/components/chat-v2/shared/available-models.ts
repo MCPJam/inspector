@@ -258,6 +258,95 @@ export function retiringTag(model: ModelDefinition): string | undefined {
   return `Retiring ${RETIRING_DATE_FORMAT.format(date)}`;
 }
 
+export const JUDGE_INELIGIBLE_TAG = "Not eligible";
+
+export const JUDGE_INELIGIBLE_REASON =
+  "Not eligible as a judge. Judges run on MCPJam models with verified zero data retention. Pick another model to change it.";
+
+/**
+ * Whether a picker row can be offered as an eval judge: an MCPJam-hosted row
+ * the catalog admits as a judge (`judge_eligible`, else an OpenRouter zero
+ * data retention observation of `supported`; the backend refuses `unknown`).
+ * Judges never run on BYOK, org or local keys.
+ *
+ * A row with no `catalogObservedAt` comes from a catalog that carries no
+ * observations yet (an older backend, a cached catalog): it stays offered, as
+ * it was before observations existed. Only a catalog that reports
+ * observations can take a hosted row out of the judge list.
+ */
+export function isJudgeEligibleModel(model: ModelDefinition): boolean {
+  if (!isMCPJamProvidedModelMenuItem(model)) return false;
+  if (model.catalogObservedAt === undefined) return true;
+  if (model.judgeEligible !== undefined) return model.judgeEligible;
+  return modelObservationStatus(model, "openRouterZdr") === "supported";
+}
+
+function syntheticModelRow(modelId: string): ModelDefinition {
+  const slash = modelId.indexOf("/");
+  return {
+    id: modelId,
+    name: modelId,
+    provider: (slash > 0
+      ? modelId.slice(0, slash)
+      : "unknown") as ModelDefinition["provider"],
+  };
+}
+
+/**
+ * The rows a judge picker offers (`purpose: "judge"`): judge-eligible hosted
+ * rows, one per id, plus
+ *  - the managed default, always selectable (picking it clears the override),
+ *    even before the catalog loads;
+ *  - the current value when it is not an eligible row (a BYOK id saved before
+ *    judges were hosted-only, a model the catalog no longer admits), appended
+ *    disabled with {@link JUDGE_INELIGIBLE_REASON} so the saved choice stays
+ *    visible without being offered again. `currentIneligible` says so.
+ */
+export function judgeModelOptions(
+  models: readonly ModelDefinition[],
+  args: { currentModelId: string; managedDefaultModelId: string }
+): { models: ModelDefinition[]; currentIneligible: boolean } {
+  const rows: ModelDefinition[] = [];
+  const seen = new Set<string>();
+  for (const model of models) {
+    const id = String(model.id);
+    if (!id || seen.has(id) || !isJudgeEligibleModel(model)) continue;
+    seen.add(id);
+    rows.push(model);
+  }
+  const { currentModelId, managedDefaultModelId } = args;
+  if (!seen.has(managedDefaultModelId)) {
+    const listed = models.find(
+      (model) =>
+        String(model.id) === managedDefaultModelId &&
+        isMCPJamProvidedModelMenuItem(model)
+    );
+    const row = listed ?? syntheticModelRow(managedDefaultModelId);
+    rows.push({
+      ...row,
+      hosted: true,
+      disabled: false,
+      disabledReason: undefined,
+    });
+    seen.add(managedDefaultModelId);
+  }
+  if (!currentModelId || seen.has(currentModelId)) {
+    return { models: rows, currentIneligible: false };
+  }
+  const listed =
+    models.find(
+      (model) =>
+        String(model.id) === currentModelId &&
+        isMCPJamProvidedModelMenuItem(model)
+    ) ?? models.find((model) => String(model.id) === currentModelId);
+  rows.push({
+    ...(listed ?? syntheticModelRow(currentModelId)),
+    disabled: true,
+    disabledReason: JUDGE_INELIGIBLE_REASON,
+  });
+  return { models: rows, currentIneligible: true };
+}
+
 /**
  * Append locally-detected Ollama models that the base list doesn't already
  * contain (e.g. org-managed lists never include the user's local daemon).

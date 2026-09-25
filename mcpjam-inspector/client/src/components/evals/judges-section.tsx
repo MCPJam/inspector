@@ -1,13 +1,5 @@
 import type { GoalJudgePolicy } from "@/shared/judge-defaults";
-import { useMemo } from "react";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -18,6 +10,7 @@ import {
 } from "@/components/shared/session-quality/judge-config";
 import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { JudgeModelPicker } from "./judge-model-picker";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -122,7 +115,8 @@ export function judgeModelPatch(
   if (next === MANAGED_DEFAULT_JUDGE_MODEL) {
     return { judgeModel: undefined, judgeSelection: undefined };
   }
-  // The option list keeps the FIRST row per id; save that same row.
+  // The first row with this id is the one saved: the picker passes the
+  // picked row itself first.
   const row = saveModelSelection
     ? availableModels.find((model) => String(model.id) === next)
     : undefined;
@@ -161,25 +155,6 @@ export function JudgesSection({
   const handleMainToggle = (checked: boolean) => {
     update({ enabled: checked, autoRun: checked });
   };
-
-  const modelOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const model of availableModels) {
-      const id = String(model.id);
-      if (id && !map.has(id)) {
-        map.set(id, model.name ?? id);
-      }
-    }
-    // Always keep the managed default + the current selection selectable,
-    // even before the async model catalog loads.
-    if (!map.has(MANAGED_DEFAULT_JUDGE_MODEL)) {
-      map.set(MANAGED_DEFAULT_JUDGE_MODEL, MANAGED_DEFAULT_JUDGE_MODEL);
-    }
-    if (judgeModel && !map.has(judgeModel)) {
-      map.set(judgeModel, judgeModel);
-    }
-    return Array.from(map, ([id, label]) => ({ id, label }));
-  }, [availableModels, judgeModel]);
 
   const update = (
     patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
@@ -238,26 +213,22 @@ export function JudgesSection({
           >
             Judge model
           </Label>
-          <Select
+          <JudgeModelPicker
+            id="suite-goal-judge-model"
+            className="w-[14rem]"
             value={judgeModel}
-            onValueChange={(next) =>
-              update(judgeModelPatch(next, availableModels, saveSelections))
+            availableModels={availableModels}
+            managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
+            onChange={(row) =>
+              update(
+                judgeModelPatch(
+                  String(row.id),
+                  [row, ...availableModels],
+                  saveSelections,
+                ),
+              )
             }
-          >
-            <SelectTrigger
-              id="suite-goal-judge-model"
-              className="h-8 w-[14rem] text-sm"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {modelOptions.map((opt) => (
-                <SelectItem key={opt.id} value={opt.id}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
         </div>
       ) : null}
     </>

@@ -931,3 +931,113 @@ describe("catalog observations", () => {
     );
   });
 });
+
+describe("multi-select rows are keyed by source and connection", () => {
+  const hosted: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "Hosted GPT-4o",
+    provider: "openai",
+    hosted: true,
+  };
+  const orgTwin: ModelDefinition = {
+    id: "openai/gpt-4o",
+    name: "Org GPT-4o",
+    provider: "openrouter",
+    hosted: false,
+    orgProvider: { providerKey: "openrouter", id: "orgprov_1" },
+  };
+
+  it("checks only the selected row of two with the same id, and adds the other", async () => {
+    const user = userEvent.setup();
+    const onSelectedModelsChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={orgTwin}
+        availableModels={[hosted, orgTwin]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[orgTwin]}
+        onSelectedModelsChange={onSelectedModelsChange}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(
+      screen.getByRole("option", { name: /Org GPT-4o/ })
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByText("Free models"));
+    const hostedRow = screen.getByRole("option", { name: /Hosted GPT-4o/ });
+    expect(hostedRow).toHaveAttribute("aria-checked", "false");
+    await user.click(hostedRow);
+    expect(onSelectedModelsChange).toHaveBeenCalledWith([orgTwin, hosted]);
+  });
+
+  it("empties the selection only when the surface allows it", async () => {
+    const user = userEvent.setup();
+    const onSelectedModelsChange = vi.fn();
+    const { rerender } = render(
+      <ModelSelector
+        currentModel={hosted}
+        availableModels={[hosted]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[hosted]}
+        onSelectedModelsChange={onSelectedModelsChange}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.click(screen.getByRole("option", { name: /Hosted GPT-4o/ }));
+    expect(onSelectedModelsChange).not.toHaveBeenCalled();
+
+    rerender(
+      <ModelSelector
+        currentModel={hosted}
+        availableModels={[hosted]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[hosted]}
+        onSelectedModelsChange={onSelectedModelsChange}
+        allowEmptySelection
+      />
+    );
+    await user.click(screen.getByRole("option", { name: /Hosted GPT-4o/ }));
+    expect(onSelectedModelsChange).toHaveBeenCalledWith([]);
+  });
+
+  it("lists extra options above the models and applies a surface lock and tag", async () => {
+    const user = userEvent.setup();
+    const onDefaults = vi.fn();
+    const onSelectedModelsChange = vi.fn();
+    render(
+      <ModelSelector
+        currentModel={hosted}
+        availableModels={[hosted]}
+        onModelChange={vi.fn()}
+        multiModelEnabled
+        selectedModels={[]}
+        allowEmptySelection
+        onSelectedModelsChange={onSelectedModelsChange}
+        extraOptions={[
+          {
+            id: "defaults",
+            label: "Client defaults",
+            checked: true,
+            onSelect: onDefaults,
+          },
+        ]}
+        rowDisabledReason={() => "Over the run budget"}
+        rowTag={() => "Custom tag"}
+      />
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveTextContent("Client defaults");
+    expect(options[0]).toHaveAttribute("aria-checked", "true");
+    await user.click(options[0]!);
+    expect(onDefaults).toHaveBeenCalledTimes(1);
+    expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
+
+    const row = screen.getByRole("option", { name: /Hosted GPT-4o/ });
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(row).toHaveTextContent("Custom tag");
+  });
+});
