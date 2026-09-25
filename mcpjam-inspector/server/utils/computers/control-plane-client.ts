@@ -17,6 +17,7 @@
  */
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import {
   EVAL_SANDBOX_CAPACITY_POLICY,
   PLAYGROUND_CAPACITY_POLICY,
@@ -80,6 +81,65 @@ export type ControlPlaneResult<T> =
       retryAfterMs?: number;
       limit?: number;
     };
+
+/**
+ * What a caller is told when a computer cannot be reached, reserved or woken
+ * (MJ-020, MJ-021): a fixed sentence chosen by the status and machine code.
+ * The upstream `error` text is logged here and never relayed — it is written
+ * for us, not for whoever is waiting on the computer.
+ */
+export function computerUnavailableError(
+  failure: { status: number; code?: string; error?: string },
+  source: string,
+): string {
+  logger.warn(`[computers] ${source} failed`, {
+    status: failure.status,
+    ...(failure.code ? { code: failure.code } : {}),
+    ...(failure.error ? { detail: redactForLog(failure.error) } : {}),
+  });
+  return `Computer unavailable: ${computerUnavailableReason(failure)}`;
+}
+
+function computerUnavailableReason({
+  status,
+  code,
+}: {
+  status: number;
+  code?: string;
+}): string {
+  if (code === "at_capacity" || status === 503) {
+    return "computers are at capacity right now. Try again in a moment.";
+  }
+  if (
+    code === "billing_feature_not_included" ||
+    code === "FEATURE_UNAVAILABLE"
+  ) {
+    return "computers are not available for this organization.";
+  }
+  if (code === "billing_limit_reached" || status === 429) {
+    return "a usage limit was reached. Try again later.";
+  }
+  switch (status) {
+    case 0:
+      return "the computers service could not be reached.";
+    case 401:
+      return "sign in again and retry.";
+    case 403:
+      return "you do not have access to this computer.";
+    case 404:
+    case 410:
+      return "this computer no longer exists.";
+    case 499:
+      return "the request was cancelled.";
+    case 502:
+      return "the computer failed to start.";
+    case 504:
+      return "the computer did not become ready in time. Try again in a moment.";
+  }
+  return status >= 400 && status < 500
+    ? "the request was not accepted."
+    : "the computers service returned an error.";
+}
 
 export function getConvexHttpUrl(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
