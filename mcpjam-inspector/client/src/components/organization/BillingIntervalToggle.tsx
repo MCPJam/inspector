@@ -27,8 +27,7 @@ export function BillingIntervalToggle({
   return (
     <fieldset
       className={cn(
-        "relative inline-grid grid-cols-2 rounded-xl border border-border bg-secondary/50",
-        compact ? "p-0.5" : "p-1",
+        "relative inline-grid grid-cols-2 rounded-xl border border-border bg-secondary/50 p-1",
         className,
       )}
       onClick={(event) => {
@@ -41,10 +40,7 @@ export function BillingIntervalToggle({
       <span
         aria-hidden
         className={cn(
-          "pointer-events-none absolute rounded-xl bg-foreground transition-transform duration-200 ease-out motion-reduce:transition-none",
-          compact
-            ? "top-0.5 bottom-0.5 left-0.5 w-[calc(50%-0.125rem)]"
-            : "top-1 bottom-1 left-1 w-[calc(50%-0.25rem)]",
+          "pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-foreground transition-transform duration-200 ease-out motion-reduce:transition-none",
           billingInterval === "annual" && "translate-x-full",
         )}
       />
@@ -65,7 +61,7 @@ export function BillingIntervalToggle({
             />
             <span
               className={cn(
-                "flex h-full w-full items-center justify-center rounded-xl font-medium transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring",
+                "flex h-full w-full items-center justify-center rounded-lg font-medium transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring",
                 selected
                   ? "text-background"
                   : "text-muted-foreground hover:text-foreground",
