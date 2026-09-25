@@ -261,6 +261,36 @@ plugin pins whose version no longer exists.
 | `POST .../validate` | Connect, initialize, and capture a capability snapshot |
 | `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
+
+<Note>
+**Hosted-mode response projection.** The hosted API never reflects raw server
+response bodies back to callers. The `doctor` and `validate` endpoints apply
+an allowlist projection to everything the target server answered:
+
+- **`doctor`**: probe attempt responses include only HTTP status, bounded
+  status text, and allowlisted headers (`content-type`, `www-authenticate`,
+  `mcp-session-id`, `mcp-protocol-version`, `allow`, `retry-after`). Response
+  bodies are omitted (`bodyOmitted: true`) and replaced with a `projection`
+  of validated protocol fields (initialize result, JSON-RPC error code, or
+  OAuth discovery fields). `initInfo` and `capabilities` keep only recognized
+  MCP fields. List results (`tools`, `resources`, `resourceTemplates`,
+  `prompts`) are projected field-by-field; `toolsMetadata` is always `{}`.
+  Tool descriptions are capped at 4,096 characters; oversized schemas are
+  omitted with an `inputSchemaOmitted` / `outputSchemaOmitted` flag. Each
+  list is capped at 500 items; when items are dropped a `truncated` object
+  records `{ returned, omitted }` per list. `instructions` is not included
+  in `initInfo`. Request header values are redacted to `<redacted>` except
+  for `content-type`, `accept`, `mcp-protocol-version`, `mcp-session-id`,
+  and `last-event-id`.
+- **`validate`**: on failure, `message` reports the target's HTTP status line
+  (`"The MCP server responded with HTTP {status} {statusText}."`) rather than
+  the server's own error text. On success, `initInfo` contains only recognized
+  MCP fields; `instructions` is included but capped at 8,192 characters.
+  Supplying a server URL that resolves to a private or internal address returns
+  `400 VALIDATION_ERROR` rather than a connection error.
+
+Local (non-hosted) deployments return responses unchanged.
+</Note>
 | `POST .../tools` | List the server's tools |
 | `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` plus additive `durationMs` |
 | `POST .../prompts` | List the server's prompts |
