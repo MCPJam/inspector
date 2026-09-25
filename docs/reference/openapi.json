@@ -20830,6 +20830,188 @@
             "type": "boolean",
             "enum": [true],
             "description": "The server stored a suspected-condition verdict that failed validation. The verdict is withheld rather than partially trusted."
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionRecord"
+          }
+        }
+      },
+      "ExecutionRecord": {
+        "type": "object",
+        "description": "What a run or turn actually ran on: requested vs resolved selection, harness runtime, the settings the request was sent with, every routing attempt, the provider-reported model, and any deviation from what was requested. Names a connection, never a key. ABSENT on rows recorded before the record existed; render that as not recorded.",
+        "required": [
+          "requested",
+          "resolved",
+          "effectiveSettings",
+          "attempts"
+        ],
+        "properties": {
+          "requested": {
+            "type": "object",
+            "description": "The saved model selection the run asked for. `source: \"legacy\"` means the stored choice named only a model id, so its source was inferred at run time.",
+            "required": [
+              "source",
+              "modelId"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "hosted",
+                  "org",
+                  "local",
+                  "legacy"
+                ]
+              },
+              "modelId": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          },
+          "resolved": {
+            "type": "object",
+            "required": [
+              "rail",
+              "wireModelId",
+              "offering"
+            ],
+            "properties": {
+              "rail": {
+                "type": "string",
+                "description": "`gateway` (Vercel AI Gateway, MCPJam key), `openrouter` (OpenRouter, MCPJam key), `orgCloud` (an organization provider connection), `local` (a key on the user's own machine). Read leniently: a newer deployment may add a rail."
+              },
+              "wireModelId": {
+                "type": "string"
+              },
+              "connectionRef": {
+                "type": "object",
+                "description": "Which connection served a non-hosted selection (`orgProvider` by id, or `localProvider` by provider key).",
+                "additionalProperties": true
+              },
+              "nativeModelId": {
+                "type": "string"
+              },
+              "offering": {
+                "type": "object",
+                "description": "The provider offering, snapshotted at run start so a connection deleted or re-keyed since cannot change the answer.",
+                "required": [
+                  "rail",
+                  "providerKey"
+                ],
+                "properties": {
+                  "rail": {
+                    "type": "string",
+                    "description": "`gateway` (Vercel AI Gateway, MCPJam key), `openrouter` (OpenRouter, MCPJam key), `orgCloud` (an organization provider connection), `local` (a key on the user's own machine). Read leniently: a newer deployment may add a rail."
+                  },
+                  "providerKey": {
+                    "type": "string"
+                  },
+                  "connectionLabel": {
+                    "type": "string"
+                  },
+                  "credentialVersion": {
+                    "type": "number",
+                    "description": "Non-secret version of the connection's credential (its last update time)."
+                  },
+                  "nativeModelId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "harness": {
+            "type": "object",
+            "required": [
+              "id",
+              "runtimeVersion"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "runtimeVersion": {
+                "type": "string"
+              }
+            }
+          },
+          "effectiveSettings": {
+            "type": "object",
+            "required": [
+              "maxOutputTokens"
+            ],
+            "properties": {
+              "reasoningEffort": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number"
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "`0` means no ceiling was sent and the provider's default applied."
+              }
+            }
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "rail",
+                "wireModelId",
+                "outcome",
+                "at"
+              ],
+              "properties": {
+                "rail": {
+                  "type": "string",
+                  "description": "`gateway` (Vercel AI Gateway, MCPJam key), `openrouter` (OpenRouter, MCPJam key), `orgCloud` (an organization provider connection), `local` (a key on the user's own machine). Read leniently: a newer deployment may add a rail."
+                },
+                "wireModelId": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "error"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "upstreamModel": {
+            "type": "string",
+            "description": "The model id the provider reported serving, when it reported one."
+          },
+          "deviation": {
+            "type": "object",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "provider_fallback",
+                  "model_substitution",
+                  "harness_substitution"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
           }
         }
       },

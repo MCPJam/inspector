@@ -23,6 +23,7 @@ import type {
   BrowserAgentResult,
 } from "./browser-agent-contract.js";
 import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+import type { ExecutionRecord } from "../host-config/execution-record.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -3393,6 +3394,16 @@ export interface PlatformEvalIteration {
   suspectedConditionVerdict?: SuspectedConditionVerdict;
   /** The server returned a verdict that failed validation. */
   suspectedConditionUnverified?: true;
+  /**
+   * What this iteration actually ran on: the resolved model, rail and
+   * connection, harness runtime, effective settings, every routing attempt and
+   * any deviation from what was requested. Names a connection, never a key.
+   *
+   * ABSENT on iterations recorded before the record existed. Render that as
+   * "not recorded", never reconstruct it from `model`/`provider`. Read it with
+   * `readExecutionRecord` and print it with `formatExecutionProvenanceLine`.
+   */
+  execution?: ExecutionRecord;
 }
 
 /**

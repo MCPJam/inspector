@@ -39,6 +39,7 @@ import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
+import { toExecutionProjection } from "./eval-execution-projection.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -2084,6 +2085,11 @@ function toIterationDto(
     // The SUSPECTED condition behind one of those patterns, when step 2's
     // advisory judge ran. Never a cause, never a verdict input.
     ...toSuspectedConditionProjection(iteration.metadata),
+    // What this iteration actually ran on. Re-read through the SDK's reader,
+    // not passed through: known keys only, so nothing the row carries beyond
+    // the contract crosses this boundary. OMITTED on rows written before the
+    // record existed (and on a malformed one) — "not recorded", never a guess.
+    ...toExecutionProjection(iteration.execution),
   };
 }
 
