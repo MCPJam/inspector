@@ -1770,11 +1770,20 @@ export function resolveGenerationEnvironmentRequest(
   let preferred = savedEnvironmentId;
   if (requested) {
     const needle = requested.toLowerCase();
-    const match =
-      targets.find((target) => target.environmentId === requested) ??
-      targets.find(
-        (target) => environmentTargetLabel(target).toLowerCase() === needle,
-      );
+    const labelMatches = targets.filter(
+      (target) => environmentTargetLabel(target).toLowerCase() === needle,
+    );
+    const byId = targets.find((target) => target.environmentId === requested);
+    // Two environments can share a name. Picking the first would generate
+    // for whichever server set happens to sort first; make the caller say.
+    if (!byId && labelMatches.length > 1) {
+      return {
+        error: `more than one of its environments is named "${requested}". Name one by ID: ${labelMatches
+          .map((target) => target.environmentId)
+          .join(", ")}.`,
+      };
+    }
+    const match = byId ?? labelMatches[0];
     if (!match) {
       return {
         error: `it has no environment "${requested}". Its environments: ${

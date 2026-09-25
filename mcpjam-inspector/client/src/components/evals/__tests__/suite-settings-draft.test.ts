@@ -5,6 +5,7 @@ import {
   describeChange,
   describeDraft,
   dirtyKeys,
+  environmentImageSaveBlock,
   initSuiteSettingsDraft,
   normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
@@ -252,6 +253,52 @@ describe("suiteImageSetting", () => {
         environmentTargets: [{ computerEnvironmentId: "img" }, {}],
       }),
     ).toEqual({ value: undefined, mixed: true });
+  });
+});
+
+describe("environmentImageSaveBlock", () => {
+  const image = new Set(["computerEnvironmentId"] as const);
+
+  test("holds an environment suite's image edit until the backend confirms", () => {
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: undefined,
+      }),
+    ).toMatch(/Still checking/);
+    // A failed probe is not a legacy suite: the legacy pin never applies.
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: null,
+      }),
+    ).toMatch(/cannot set a sandbox image/);
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: { environmentSuiteSettings: true },
+      }),
+    ).toBeNull();
+  });
+
+  test("never holds a legacy suite or a save that leaves the image alone", () => {
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: false,
+        dirtyKeys: image,
+        capabilities: null,
+      }),
+    ).toBeNull();
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: new Set(["name"] as const),
+        capabilities: null,
+      }),
+    ).toBeNull();
   });
 });
 

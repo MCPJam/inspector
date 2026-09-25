@@ -860,6 +860,30 @@ describe("v1 eval-edit routes", () => {
     expect(args.refreshHostConfigFromEnvironment).toBeUndefined();
   });
 
+  it("PATCH on an environment suite refuses per-client servers before writing anything", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({
+          ...SUITE_DOC,
+          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+        });
+      if (name === "projectEnvironments:getCapabilities")
+        return Promise.resolve({ environmentSuiteSettings: true });
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      {
+        name: "Renamed",
+        environment: { servers: ["Other"] },
+        hosts: [{ host: "Claude", servers: ["Other"] }],
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
   it("PATCH on an environment suite keeps the legacy envelope on an older platform", async () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"

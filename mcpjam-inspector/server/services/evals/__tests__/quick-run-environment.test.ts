@@ -212,6 +212,41 @@ describe("commitEnvironmentQuickRun", () => {
     await expect(
       commitEnvironmentQuickRun({ action } as any, args),
     ).rejects.toMatchObject({ status: 502 });
+    // The caller never receives these rows, so the commit settles them.
+    expect(action).toHaveBeenCalledWith(
+      "testSuites:updateTestIteration",
+      expect.objectContaining({ iterationId: "i1", status: "setup_failed" }),
+    );
+  });
+
+  it("settles fresh rows when the execution snapshot is missing", async () => {
+    const action = vi.fn(async (name: string) =>
+      name === "testSuites:startQuickRunIterations"
+        ? { iterationIds: ["i1", "i2"] }
+        : null,
+    );
+    await expect(
+      commitEnvironmentQuickRun({ action } as any, args),
+    ).rejects.toMatchObject({ status: 502 });
+    const settled = action.mock.calls
+      .filter(([name]) => name === "testSuites:updateTestIteration")
+      .map(
+        (call) =>
+          (call as unknown as [string, { iterationId: string }])[1].iterationId,
+      );
+    expect(settled.sort()).toEqual(["i1", "i2"]);
+  });
+
+  it("leaves replayed rows to the request that owns them", async () => {
+    const action = vi.fn(async (name: string) =>
+      name === "testSuites:startQuickRunIterations"
+        ? { iterationIds: ["i1", "i2"], replayed: true }
+        : null,
+    );
+    await expect(
+      commitEnvironmentQuickRun({ action } as any, args),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(action).toHaveBeenCalledTimes(1);
   });
 });
 

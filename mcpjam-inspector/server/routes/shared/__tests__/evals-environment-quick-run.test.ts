@@ -361,6 +361,23 @@ describe("environment quick runs", () => {
     expect(streamTestCaseMock).not.toHaveBeenCalled();
   });
 
+  it("a buffered run whose setup fails finalizes every committed row", async () => {
+    runEvalSuiteMock.mockRejectedValue(
+      new Error("server srv-1 failed to connect"),
+    );
+    await expect(
+      runEvalTestCaseWithManager(clientManager as never, baseRequest()),
+    ).rejects.toThrow(/srv-1 failed to connect/);
+    const failed = actionCalls("testSuites:updateTestIteration").map(
+      (call) => call[1] as { iterationId: string; status: string },
+    );
+    expect(failed.map((row) => row.iterationId).sort()).toEqual([
+      "iter-1",
+      "iter-2",
+    ]);
+    expect(failed.every((row) => row.status === "setup_failed")).toBe(true);
+  });
+
   it("a replayed commit is never executed again", async () => {
     actionMock.mockImplementation(async (name: string) =>
       name === "testSuites:startQuickRunIterations"

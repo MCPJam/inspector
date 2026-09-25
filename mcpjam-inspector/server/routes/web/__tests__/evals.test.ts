@@ -1020,6 +1020,39 @@ describe("web routes — evals", () => {
         }),
       );
     });
+
+    it("quick-runs an environment that connects no servers, as Start run does", async () => {
+      const serverless = {
+        ...resolvedEnvironment,
+        selectedServerIds: [],
+        effectiveServerIds: [],
+        servers: [],
+      };
+      environmentQueryMock.mockResolvedValueOnce(serverless);
+      runEvalTestCaseWithManagerMock.mockResolvedValueOnce({
+        success: true,
+        iteration: { _id: "iter-1" },
+      });
+      const { app, token } = createEvalsTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/evals/run-test-case",
+        {
+          projectId: "project-1",
+          serverIds: [],
+          testCaseId: "test-case-1",
+          environmentId: "env-1",
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(runEvalTestCaseWithManagerMock.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          resolvedEnvironment: serverless,
+          serverIds: [],
+        }),
+      );
+    });
   });
 
   describe("environment-scoped generation", () => {

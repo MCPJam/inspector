@@ -8246,6 +8246,20 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     assertScheduleSurvivesEnvironmentChange(suite!, body.environmentIds ?? []);
   }
 
+  // An environment suite's servers are its environments' group, never a
+  // per-client pick. Refuse before the first write, so a PATCH never saves
+  // half of itself and then fails on the host list.
+  if (
+    (suite!.environmentIds?.length ?? 0) > 0 &&
+    body.hosts?.some((entry) => entry.servers !== undefined)
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "An environment suite's servers come from its environments' server group, not per client. Send `environment.servers` instead of `hosts[].servers`.",
+    );
+  }
+
   const updateArgs: Record<string, unknown> = { suiteId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
@@ -8481,9 +8495,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   // re-read, letting one PATCH atomically add a server (environment.servers)
   // and scope a host to that newly-added server.
   if (body.hosts !== undefined) {
-    const refreshed: SuiteDoc | null = updateArgs.environment
-      ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
-      : suite;
+    const refreshed: SuiteDoc | null =
+      updateArgs.environment || updateArgs.environmentSettings
+        ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
+        : suite;
     try {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         suiteId,

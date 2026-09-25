@@ -727,3 +727,24 @@ export function describeDraft(
     describeChange(key, draft.base, draft.current),
   );
 }
+
+/**
+ * Why an image edit on an ENVIRONMENT suite cannot be saved yet, or null.
+ * Unknown capabilities are not "legacy": the legacy suite pin is one no run
+ * of an environment suite reads, so sending it would save an image that
+ * never applies. The save waits until the backend confirms it carries
+ * settings onto the suite's environments.
+ */
+export function environmentImageSaveBlock(args: {
+  runsEnvironments: boolean;
+  dirtyKeys: ReadonlySet<SuiteSettingsKey>;
+  /** `useEnvironmentCapabilities`: undefined while probing, null on failure. */
+  capabilities: { environmentSuiteSettings?: boolean } | null | undefined;
+}): string | null {
+  if (!args.runsEnvironments) return null;
+  if (!args.dirtyKeys.has("computerEnvironmentId")) return null;
+  if (args.capabilities?.environmentSuiteSettings === true) return null;
+  return args.capabilities === undefined
+    ? "Still checking what this deployment supports. Try saving again in a moment."
+    : "This deployment cannot set a sandbox image on this suite's environments yet. Undo the image change to save your other edits.";
+}

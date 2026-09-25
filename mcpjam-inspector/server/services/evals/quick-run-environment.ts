@@ -295,7 +295,17 @@ export async function commitEnvironmentQuickRun(
     !isQuickRunExecution(response?.execution)
   ) {
     // A backend that accepted the call but froze no environment would run
-    // the case on whatever it resolved itself. Fail closed instead.
+    // the case on whatever it resolved itself. Fail closed instead, and
+    // settle any rows this call just inserted: the caller never gets them
+    // back, so nothing else could. Replayed rows belong to the request that
+    // first committed them and are left alone.
+    if (iterationIds.length > 0 && response?.replayed !== true) {
+      await failCommittedQuickRun(
+        convexClient,
+        iterationIds,
+        "The backend did not return a committed environment for this quick run.",
+      );
+    }
     throw new WebRouteError(
       502,
       ErrorCode.INTERNAL_ERROR,

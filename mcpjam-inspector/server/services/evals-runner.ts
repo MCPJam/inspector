@@ -173,6 +173,7 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
+import { failCommittedQuickRun } from "./evals/quick-run-environment.js";
 import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
   buildIterationFinishParams,
@@ -3346,11 +3347,13 @@ const executeTestCase = async (params: {
 
 /**
  * `executeTestCase` for an ENVIRONMENT quick run's committed rows: every
- * committed row whose attempt never took ownership of it — the run was
- * stopped first, the model setup threw, or the attempt count did not match —
- * is finalized as stopped, so none is left running. An attempt that DID take
- * its row finalizes it itself (outcome, timeout or cancel), and is never
- * touched here, so this cannot race a legitimate finalize.
+ * committed row whose attempt never took ownership of it is finalized, so
+ * none is left running. A run that was stopped first finalizes it as stopped;
+ * a setup failure (the model setup threw, the attempt count did not match)
+ * finalizes it `setup_failed` with the error, never as a user cancel. An
+ * attempt that DID take its row finalizes it itself (outcome, timeout or
+ * cancel), and is never touched here, so this cannot race a legitimate
+ * finalize.
  */
 async function executeCommittedTestCase(
   params: Parameters<typeof executeTestCase>[0],
@@ -3358,19 +3361,33 @@ async function executeCommittedTestCase(
   const committed = params.committedIterationIds;
   if (!committed) return executeTestCase(params);
   const entered = new Set<number>();
+  let failure: { error: unknown } | undefined;
   try {
     return await executeTestCase({
       ...params,
       onCommittedAttemptEntered: (runIndex) => entered.add(runIndex),
     });
+  } catch (error) {
+    failure = { error };
+    throw error;
   } finally {
-    for (let index = 0; index < committed.length; index++) {
-      if (entered.has(index)) continue;
-      await markIterationStopped({
-        convexClient: params.convexClient,
-        iterationId: committed[index],
-        abortSignal: params.abortSignal,
-      });
+    const unentered = committed.filter((_, index) => !entered.has(index));
+    if (failure && !params.abortSignal?.aborted) {
+      await failCommittedQuickRun(
+        params.convexClient,
+        unentered,
+        failure.error instanceof Error
+          ? failure.error.message
+          : String(failure.error),
+      );
+    } else {
+      for (const iterationId of unentered) {
+        await markIterationStopped({
+          convexClient: params.convexClient,
+          iterationId,
+          abortSignal: params.abortSignal,
+        });
+      }
     }
   }
 }

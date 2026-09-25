@@ -138,6 +138,7 @@ import {
   committedSuiteSettingsValues,
   describeDraft,
   dirtyKeys,
+  environmentImageSaveBlock,
   initSuiteSettingsDraft,
   readSuiteSettingsValues,
   suiteImageSetting,
@@ -914,6 +915,16 @@ export function SuiteIterationsView({
 
   const handleCommitSettings = useCallback(async () => {
     if (!draftCanCommit || isCommitting || editingDisabled) return;
+    const runsEnvironments = Boolean(suite.environmentIds?.length);
+    const imageBlock = environmentImageSaveBlock({
+      runsEnvironments,
+      dirtyKeys: dirtySettingKeys,
+      capabilities: environmentCapabilities,
+    });
+    if (imageBlock) {
+      toast.error(imageBlock);
+      return;
+    }
     const outcome = await commit({
       draft,
       suiteId: suite._id,
@@ -926,7 +937,7 @@ export function SuiteIterationsView({
       expectedRevisionNumber: suite.revisionNumber,
       liveEnvironment: suite.environment,
       environmentSuite:
-        Boolean(suite.environmentIds?.length) &&
+        runsEnvironments &&
         environmentCapabilities?.environmentSuiteSettings === true,
     });
     if (outcome.status === "saved") {

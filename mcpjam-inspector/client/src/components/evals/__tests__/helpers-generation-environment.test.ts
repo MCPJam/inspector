@@ -150,6 +150,19 @@ describe("resolveGenerationEnvironmentRequest", () => {
     ).toEqual({ environmentId: "b" });
   });
 
+  it("refuses a name two environments share, but still takes an id", () => {
+    const twins = suite([
+      target("a", { serverAttachmentId: "group-1" }),
+      target("b", { serverAttachmentId: "group-2", serverNames: ["search"] }),
+    ]);
+    expect(
+      resolveGenerationEnvironmentRequest(twins, "Claude · opus", undefined),
+    ).toEqual({ error: expect.stringMatching(/Name one by ID: a, b/) });
+    expect(resolveGenerationEnvironmentRequest(twins, "b", undefined)).toEqual({
+      environmentId: "b",
+    });
+  });
+
   it("uses the saved pick when the request names none", () => {
     expect(resolveGenerationEnvironmentRequest(mixed, undefined, "a")).toEqual({
       environmentId: "a",

@@ -109,7 +109,14 @@ const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
 const hostedRunTestCaseSchema = RunTestCaseRequestSchema.omit({
   serverIds: true,
   convexAuthToken: true,
-}).extend(hostedBatchSchema.shape);
+})
+  .extend(hostedBatchSchema.shape)
+  .extend({
+    // An environment quick run is primed from the resolution, which may
+    // connect no servers (as `/run` allows). Legacy requests still hit the
+    // ≥1-server rule in `prepareSingleCaseExecution`.
+    serverIds: z.array(z.string().min(1)),
+  });
 
 const hostedGenerateTestsSchema = GenerateTestsRequestSchema.omit({
   serverIds: true,

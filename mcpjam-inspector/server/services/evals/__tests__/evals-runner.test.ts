@@ -301,10 +301,14 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           ([name]) => name === "testSuites:startQuickRunIteration",
         ),
       ).toHaveLength(0);
-      const stopped = convexClient.action.mock.calls
+      const failed = convexClient.action.mock.calls
         .filter(([name]) => name === "testSuites:updateTestIteration")
-        .map(([, args]) => args.iterationId);
-      expect(stopped.sort()).toEqual(["committed-1", "committed-2"]);
+        .map(([, args]) => [args.iterationId, args.status, args.metadata]);
+      // A setup failure, not a person stopping the run.
+      expect(failed.sort()).toEqual([
+        ["committed-1", "setup_failed", undefined],
+        ["committed-2", "setup_failed", undefined],
+      ]);
     });
 
     it("a stopped run finalizes the committed rows it never started", async () => {

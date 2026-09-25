@@ -3562,30 +3562,46 @@ export async function runEvalTestCaseWithManager(
     };
   }
 
-  const quickResult = await runEvalSuiteWithAiSdk({
-    suiteId: testCase.evalTestSuiteId,
-    runId: null,
-    config: {
-      tests: [prepared.test],
-      environment: prepared.runtimeEnvironment,
-    },
-    modelApiKeys: prepared.modelApiKeys,
-    orgModelConfig: prepared.orgModelConfig,
-    orgModelConfigTarget: prepared.orgModelConfigTarget,
-    convexClient,
-    convexHttpUrl,
-    convexAuthToken,
-    mcpClientManager: clientManager,
-    recorder: null,
-    testCaseId,
-    compareRunId,
-    suiteInjectOpenAiCompat: prepared.suiteInjectOpenAiCompat,
-    hostExecutionPolicy: prepared.suiteHostPolicy,
-    // PR 4d: see comment on the suite-run wire-up site above.
-    suiteHostConfig: prepared.suiteHostConfig,
-    ...(toolPolicy ? { toolPolicy } : {}),
-    ...environmentExecutionOptions(prepared),
-  });
+  let quickResult: Awaited<ReturnType<typeof runEvalSuiteWithAiSdk>>;
+  try {
+    quickResult = await runEvalSuiteWithAiSdk({
+      suiteId: testCase.evalTestSuiteId,
+      runId: null,
+      config: {
+        tests: [prepared.test],
+        environment: prepared.runtimeEnvironment,
+      },
+      modelApiKeys: prepared.modelApiKeys,
+      orgModelConfig: prepared.orgModelConfig,
+      orgModelConfigTarget: prepared.orgModelConfigTarget,
+      convexClient,
+      convexHttpUrl,
+      convexAuthToken,
+      mcpClientManager: clientManager,
+      recorder: null,
+      testCaseId,
+      compareRunId,
+      suiteInjectOpenAiCompat: prepared.suiteInjectOpenAiCompat,
+      hostExecutionPolicy: prepared.suiteHostPolicy,
+      // PR 4d: see comment on the suite-run wire-up site above.
+      suiteHostConfig: prepared.suiteHostConfig,
+      ...(toolPolicy ? { toolPolicy } : {}),
+      ...environmentExecutionOptions(prepared),
+    });
+  } catch (error) {
+    // The runner's setup (tool loading, tool-policy checks) threw before any
+    // attempt took its row: after an environment commit nothing may be left
+    // running. A row an attempt did take is already terminal, and the
+    // backend ignores a later write to a terminal quick-run row.
+    if (prepared.environment) {
+      await failCommittedQuickRun(
+        convexClient,
+        prepared.environment.committed.iterationIds,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
+  }
 
   // An environment run answers with ITS committed row, never "the latest
   // iteration of this case" — which could be another run's, and would report
@@ -4007,13 +4023,27 @@ export async function streamEvalTestCaseWithManager(
     }
     throw error;
   }
-  const streamToolSignals = suiteHostPolicy
-    ? applyVisibilityPolicyAndCountSignals(
-        tools as Record<string, unknown>,
-        clientManager,
-        suiteHostPolicy,
-      )
-    : undefined;
+  let streamToolSignals:
+    ReturnType<typeof applyVisibilityPolicyAndCountSignals> | undefined;
+  try {
+    streamToolSignals = suiteHostPolicy
+      ? applyVisibilityPolicyAndCountSignals(
+          tools as Record<string, unknown>,
+          clientManager,
+          suiteHostPolicy,
+        )
+      : undefined;
+  } catch (error) {
+    releaseRequestAbortListener();
+    if (prepared.environment) {
+      await failCommittedQuickRun(
+        convexClient,
+        prepared.environment.committed.iterationIds,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
+  }
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
