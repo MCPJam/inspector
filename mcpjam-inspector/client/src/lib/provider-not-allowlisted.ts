@@ -39,15 +39,26 @@ function withoutUpstreamAllowlistSentences(message: string): string {
 }
 
 /**
+ * The catalog one-liner's closing sentence. It is the part of this refusal a
+ * reader most needs, so it follows the backend's sentence too.
+ */
+export const PROVIDER_NOT_ALLOWLISTED_NO_RETRY =
+  "Retrying or changing your API key won't help.";
+
+/**
  * The catalog entry for this refusal. `message` is the backend's sentence,
- * which names the provider; it replaces the catalog's generic one-liner when
- * present.
+ * which names the provider; when present it replaces the catalog's generic
+ * one-liner, followed by the no-retry sentence.
  */
 export function describeProviderNotAllowlisted(
   message?: string | null,
 ): NormalizedError {
   const base = describeAsSlug(PROVIDER_NOT_ALLOWLISTED_SLUG);
-  const oneLine =
-    withoutUpstreamAllowlistSentences(message ?? "") || base.oneLine;
+  const providerSentence = withoutUpstreamAllowlistSentences(message ?? "");
+  const oneLine = !providerSentence
+    ? base.oneLine
+    : providerSentence.includes(PROVIDER_NOT_ALLOWLISTED_NO_RETRY)
+    ? providerSentence
+    : `${providerSentence} ${PROVIDER_NOT_ALLOWLISTED_NO_RETRY}`;
   return { ...base, oneLine, rawMessage: oneLine };
 }

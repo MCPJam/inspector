@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { formatErrorMessage } from "../chat-helpers";
-import { isProviderNotAllowlistedCode } from "@/lib/provider-not-allowlisted";
+import {
+  describeProviderNotAllowlisted,
+  isProviderNotAllowlistedCode,
+  PROVIDER_NOT_ALLOWLISTED_NO_RETRY,
+} from "@/lib/provider-not-allowlisted";
 
 describe("formatErrorMessage — provider_not_allowlisted", () => {
   // `/stream`'s non-OK body for a provider MCPJam's hosted gateway has not
@@ -61,5 +65,34 @@ describe("formatErrorMessage — provider_not_allowlisted", () => {
       statusCode: 403,
       isRetryable: false,
     });
+  });
+});
+
+describe("describeProviderNotAllowlisted", () => {
+  it("keeps the no-retry sentence after the backend's provider sentence", () => {
+    const described = describeProviderNotAllowlisted(
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist.',
+    );
+
+    expect(described.oneLine).toBe(
+      `The "openai" provider is not enabled on MCPJam's AI Gateway provider allowlist. ${PROVIDER_NOT_ALLOWLISTED_NO_RETRY}`,
+    );
+  });
+
+  it("uses the catalog one-liner, which ends with the same sentence, for a blank message", () => {
+    const described = describeProviderNotAllowlisted("");
+
+    expect(described.oneLine.endsWith(PROVIDER_NOT_ALLOWLISTED_NO_RETRY)).toBe(
+      true,
+    );
+    expect(
+      described.oneLine.split(PROVIDER_NOT_ALLOWLISTED_NO_RETRY),
+    ).toHaveLength(2);
+  });
+
+  it("does not repeat the sentence when the message already carries it", () => {
+    const message = `The provider is not enabled. ${PROVIDER_NOT_ALLOWLISTED_NO_RETRY}`;
+
+    expect(describeProviderNotAllowlisted(message).oneLine).toBe(message);
   });
 });

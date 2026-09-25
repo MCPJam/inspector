@@ -113,6 +113,9 @@ describe("ErrorBox provider_not_allowlisted", () => {
     expect(banner).toHaveTextContent("Model provider not enabled on MCPJam");
     expect(banner).toHaveTextContent('The "openai" provider is not enabled');
     expect(banner).toHaveTextContent(
+      "Retrying or changing your API key won't help."
+    );
+    expect(banner).toHaveTextContent(
       "Choose a model from a different provider."
     );
     expect(banner).toHaveTextContent(/BYOK/);
