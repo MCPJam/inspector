@@ -4,14 +4,16 @@
  * the cap). Mount once with `app.use("/api/web/*", webBodyLimit())`.
  *
  * Carve-outs: POST to the computer file-upload route carries multipart blobs
- * and applies its own higher bodyLimit at its mount site; audio transcription
- * carries larger JSON payloads with base64-encoded audio. The computer upload
- * carve-out is POST-only because the route's own cap is mounted on POST.
+ * and applies its own higher bodyLimit at its mount site; POST to the browser
+ * profile upload route streams an archive of up to 256 MB and enforces that
+ * cap itself (`routes/web/browser-profile-upload.ts`); audio transcription
+ * carries larger JSON payloads with base64-encoded audio. The two upload
+ * carve-outs are POST-only because each route's own cap is on POST.
  *
  * Skill supporting files (v2) do NOT need a carve-out here: the blob bytes are
- * POSTed by the browser DIRECTLY to Convex `_storage` (via a minted upload URL),
- * never through `/api/web/*`. Only the small JSON `attach`/`list`/`read` control
- * messages transit this surface, all well under 1MB.
+ * POSTed by the browser to the backend's upload route, never through
+ * `/api/web/*`. Only the small JSON `attach`/`list`/`read` control messages
+ * transit this surface, all well under 1MB.
  */
 import { bodyLimit } from "hono/body-limit";
 import type { Context, Next } from "hono";
@@ -50,12 +52,15 @@ export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 // than a truncated transcript. Resize from this table, not by taste.
 export const AUDIO_WEB_BODY_LIMIT = 10 * 1024 * 1024; // 10MB
 
+/** Routes that carry a large body and enforce their own cap on POST. */
+const SELF_LIMITED_UPLOAD_PATHS = new Set([
+  "/api/web/computers/upload",
+  "/api/web/browser-profiles/upload",
+]);
+
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
-    if (
-      c.req.method === "POST" &&
-      c.req.path === "/api/web/computers/upload"
-    ) {
+    if (c.req.method === "POST" && SELF_LIMITED_UPLOAD_PATHS.has(c.req.path)) {
       return next();
     }
     if (c.req.path.startsWith("/api/web/audio/")) {

@@ -156,6 +156,11 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
+    /**
+     * The Convex bearer the screenshot and replay uploads authenticate with.
+     * Pure pass-through to `finalizeEvalIteration`.
+     */
+    convexAuthToken?: string;
     /** Explicit harness lifecycle status; never infer it from the verdict. */
     status: IterationStatus;
     startedAt?: number;

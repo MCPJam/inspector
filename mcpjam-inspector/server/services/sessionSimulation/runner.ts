@@ -1732,7 +1732,12 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
     snapshots = await captureMcpAppWidgetSnapshots({
       messages,
       mcpClientManager,
-      convexClient,
+      uploadTarget: {
+        convexAuthToken,
+        chatSessionId,
+        ...(scenarioId !== undefined ? { scenarioId } : {}),
+        ...(accessVersion !== undefined ? { accessVersion } : {}),
+      },
       ...(capturedToolCallIds ? { skipToolCallIds: capturedToolCallIds } : {}),
     });
   } catch (err) {

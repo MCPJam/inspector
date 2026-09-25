@@ -3,6 +3,7 @@ import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
+import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -419,24 +420,12 @@ export async function createHonoApp() {
     createComputerUploadHandler(),
   );
 
-  // Hosted public API (v1). Same 1MB JSON cap as /api/web; the canonical
+  // Hosted public API (v1). Same 1MB JSON cap as /api/web (with the eval
+  // artifact upload carved out; see `v1BodyLimit`); the canonical
   // resource-oriented routes wrap the same core helpers and emit the v1
   // envelope. Read-only diagnostics first; mutating ops land behind the
   // X-MCPJam-Approval flow in a follow-up.
-  app.use(
-    "/api/v1/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400,
-        ),
-    }),
-  );
+  app.use("/api/v1/*", v1BodyLimit());
   app.route("/api/v1", v1Routes);
 
   // Fail the deploy, not the user's first sign-in: `WORKOS_API_BASE_URL` is a
