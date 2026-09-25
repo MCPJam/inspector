@@ -83,10 +83,10 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -143,7 +143,7 @@ jobs:
           exit 1
 
       - name: Upsert PR preview comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.wrangler.outputs.deployment-url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -227,10 +227,10 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -252,7 +252,7 @@ jobs:
           command: delete --name mcpjam-mcp-pr-${{ github.event.pull_request.number }} --force
 
       - name: Mark preview comment as deleted
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
