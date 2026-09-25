@@ -36,3 +36,21 @@ it("keeps details read-only for members", () => {
     screen.queryByRole("button", { name: "Save changes" }),
   ).not.toBeInTheDocument();
 });
+it("shows a description containing markup as literal text (MJ-013)", () => {
+  const description = '<img src="x" data-marker="desc"><b>bold</b> -> next';
+  const { container } = render(
+    <ProjectGeneralDetails
+      name='<i data-marker="name">Demo</i>'
+      description={description}
+      canEdit={false}
+      icon={null}
+      onSave={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText("Description")).toHaveValue(description);
+  expect(screen.getByLabelText("Project name")).toHaveValue(
+    '<i data-marker="name">Demo</i>',
+  );
+  expect(container.querySelector("[data-marker]")).toBeNull();
+  expect(container.querySelector("b")).toBeNull();
+});

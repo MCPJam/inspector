@@ -488,6 +488,79 @@ describe("PosthogUtils", () => {
       expect(opts.capture_pageleave).toBe(true);
     });
   });
+
+  describe("server-evaluated feature flags (MJ-015)", () => {
+    const serverFlags = {
+      "computers-enabled": true,
+      "guest-credit-wall-copy": "treatment",
+    };
+
+    it("bootstraps the server flags and turns remote flag loading off", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions(serverFlags) as Record<string, any>;
+
+      expect(opts.bootstrap.featureFlags).toEqual(serverFlags);
+      expect(opts.advanced_disable_feature_flags).toBe(true);
+      expect(opts.advanced_disable_feature_flags_on_first_load).toBe(true);
+      // Remote config (replay, surveys, ...) still loads.
+      expect(opts.advanced_disable_flags).toBeUndefined();
+      expect(opts.advanced_disable_decide).toBeUndefined();
+    });
+
+    it("keeps the guest identity bootstrap and the capture-surface getters", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      vi.doMock("../guest-session", async (importOriginal) => ({
+        ...(await importOriginal<typeof import("../guest-session")>()),
+        getCachedGuestSession: () => ({
+          guestId: "guest_bootstrap_1",
+          token: "guest-token",
+          expiresAt: Date.now() + 60_000,
+        }),
+      }));
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions(serverFlags) as Record<string, any>;
+
+      expect(opts.bootstrap).toEqual({
+        distinctID: "guest_bootstrap_1",
+        isIdentifiedID: false,
+        featureFlags: serverFlags,
+      });
+      expect(
+        Object.getOwnPropertyDescriptor(opts, "capture_exceptions")?.get,
+      ).toBeTypeOf("function");
+      vi.doUnmock("../guest-session");
+    });
+
+    it("leaves flags out of the bootstrap when the server returned none", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      for (const none of [undefined, null, {}]) {
+        const opts = getPostHogOptions(none) as Record<string, any>;
+        expect(opts.bootstrap?.featureFlags).toBeUndefined();
+        expect(opts.advanced_disable_feature_flags).toBe(true);
+      }
+    });
+
+    it("applies the same flag options in the capture-disabled branch", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions(serverFlags) as Record<string, any>;
+
+      expect(opts.opt_out_capturing_by_default).toBe(true);
+      expect(opts.bootstrap.featureFlags).toEqual(serverFlags);
+      expect(opts.advanced_disable_feature_flags).toBe(true);
+      expect(opts.advanced_disable_feature_flags_on_first_load).toBe(true);
+    });
+  });
 });
 
 describe("dropInjectedScriptException", () => {

@@ -100,6 +100,7 @@ import {
   withDeadline,
 } from "../utils/run-supervisor/deadline.js";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
+import { evalSnapshotUploadTarget } from "../utils/snapshot-upload-target";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
   deriveOrgProviderKey,
@@ -2044,6 +2045,8 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
+  /** The bearer `convexClient` writes with; the evidence uploads use it too. */
+  convexAuthToken: string;
   finishParams: Omit<
     EvalIterationFinishParams,
     "videoBytes" | "videoMime" | "videoMeta"
@@ -2077,7 +2080,10 @@ async function finalizeIterationWithBrowserArtifacts(args: {
       kind: "eval",
       recorder: args.recorder,
       convexClient: args.convexClient,
-      finishParams: args.finishParams,
+      finishParams: {
+        ...args.finishParams,
+        convexAuthToken: args.convexAuthToken,
+      },
     },
   });
 }
@@ -5267,7 +5273,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
       mcpClientManager,
-      convexClient,
+      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
     });
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix`
@@ -5393,6 +5399,7 @@ const runLocalIteration = async ({
       browser,
       recorder,
       convexClient,
+      convexAuthToken,
       finishParams,
     });
 
@@ -5515,7 +5522,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
-      convexClient,
+      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
     });
 
     // PR6: SSE failure signal only in streaming mode (batch has no emit).
@@ -5645,6 +5652,7 @@ const runLocalIteration = async ({
       browser,
       recorder,
       convexClient,
+      convexAuthToken,
       finishParams: failParams,
     });
     return {
@@ -6879,7 +6887,7 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
-    convexClient,
+    uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
   });
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
@@ -7015,6 +7023,7 @@ const runHostedIterationWithBrowser = async (
     browser,
     recorder,
     convexClient,
+    convexAuthToken,
     finishParams,
     // Collected by `releaseEvalSandboxIfAny` before the box went away — the
     // file only ever existed there, so it had to come off ahead of the

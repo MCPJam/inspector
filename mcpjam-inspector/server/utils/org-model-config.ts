@@ -20,6 +20,7 @@ import {
 } from "@/shared/local-only-mcp";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
+import { backendFailureText } from "./backend-failure-text.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -205,7 +206,12 @@ export async function resolveOrgModelConfig(
       let message = `Org model config resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore parse failure
       }
@@ -218,7 +224,14 @@ export async function resolveOrgModelConfig(
       providers?: ResolvedProviderConfig[];
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org model config");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org model config",
+        }),
+      );
     }
 
     let providers = data.providers ?? [];
@@ -625,7 +638,12 @@ export async function resolveOrgProviderRuntimeForTarget(
       let message = `Org runtime resolution failed (${response.status})`;
       try {
         const parsed = JSON.parse(body);
-        if (parsed?.error) message = parsed.error;
+        message = backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: parsed?.error,
+          fallback: message,
+        });
       } catch {
         // ignore
       }
@@ -640,7 +658,14 @@ export async function resolveOrgProviderRuntimeForTarget(
       providerKey?: unknown;
     };
     if (!data?.ok) {
-      throw new Error(data?.error ?? "Failed to resolve org provider runtime");
+      throw new Error(
+        backendFailureText({
+          source: "org-model-config",
+          status: response.status,
+          detail: data?.error,
+          fallback: "Failed to resolve org provider runtime",
+        }),
+      );
     }
 
     if (data.runtimeLocation === "local") {

@@ -2236,6 +2236,14 @@ export function SuiteIterationsView({
                   metricsByRun={metricsByRun ?? NO_METRICS}
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
+                  importJobId={
+                    route.type === "suite-overview"
+                      ? (route.importJob ?? null)
+                      : null
+                  }
+                  onClearImportJob={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
