@@ -417,6 +417,77 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
   });
 });
 
+describe("describeRunDisclosureDetail — analysis provider retention", () => {
+  const withRedaction = (redaction: Record<string, unknown>) =>
+    stateOf({
+      disclosure: baseDisclosure({
+        capture: {
+          captureLevel: "full",
+          reportingMode: "standard",
+          tiersImplemented: false,
+          redaction: {
+            kind: "credential-shaped",
+            module: "x",
+            isDlp: false,
+            limitation: "not DLP",
+            appliesTo: [],
+            ...redaction,
+          },
+          exportDefaults: {
+            includeContent: false,
+            ruleLocation: "x",
+            note: "redacted by default",
+          },
+        },
+      }),
+    });
+
+  it("says zero retention and no training are required when both rails require them", () => {
+    const detail = describeRunDisclosureDetail(
+      withRedaction({
+        providerRetention: {
+          openrouter: { data_collection: "deny", zdr: true },
+          gateway: { disallowPromptTraining: true, zeroDataRetention: true },
+          zeroDataRetention: true,
+          appliesTo: ["every analysis call"],
+          notAppliedTo: ["customer Playground chat"],
+          note: "provider, not MCPJam",
+        },
+      }),
+    );
+    expect(detail).toContain(
+      "Analysis providers: zero data retention and no training required on platform-key analysis calls. Not applied to: customer Playground chat",
+    );
+  });
+
+  it("reads the line off the flags, never off the field existing", () => {
+    const detail = describeRunDisclosureDetail(
+      withRedaction({
+        providerRetention: {
+          openrouter: { data_collection: "allow" },
+          gateway: { disallowPromptTraining: false },
+          zeroDataRetention: false,
+          appliesTo: [],
+          notAppliedTo: [],
+          note: "x",
+        },
+      }),
+    );
+    const line = detail.find((entry) =>
+      entry.startsWith("Analysis providers:"),
+    );
+    expect(line).toContain("zero data retention and training not restricted");
+    expect(line).not.toContain("required");
+  });
+
+  it("prints no line for an older backend that omits the fact", () => {
+    const detail = describeRunDisclosureDetail(withRedaction({}));
+    expect(
+      detail.some((line) => line.startsWith("Analysis providers:")),
+    ).toBe(false);
+  });
+});
+
 describe("RunDisclosureHint — read-only, never gates the run", () => {
   function RowWithRunButton({ state }: { state: RunDisclosureState }) {
     return (

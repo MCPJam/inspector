@@ -12,6 +12,7 @@ import { Checkbox } from "./checkbox";
 import { Input } from "./input";
 import { Label } from "./label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 import { cn } from "../cn";
 
 /** Which tab the panel is showing. Structurally identical to the app's own. */
@@ -30,6 +31,11 @@ export type ServerPickerGroupRow = {
   id: string;
   name: string;
   serverNames: string[];
+  /**
+   * Set when the backend would refuse the delete. The control is greyed out
+   * and this shows on hover. Copy, not a flag: the reason is a product rule.
+   */
+  deleteDisabledReason?: string;
 };
 
 export type ServerPickerPanelProps = {
@@ -465,15 +471,36 @@ export function ServerPickerPanel({
                   </button>
                   {selected ? <SelectionDot /> : null}
                   {onDeleteGroup && (canDeleteSelected || !selected) ? (
-                    <button
-                      type="button"
-                      aria-label={`Delete ${group.name}`}
-                      disabled={busy}
-                      onClick={() => onDeleteGroup(group.id)}
-                      className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
+                    group.deleteDisabledReason ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {/* Not a disabled <button>: that gets no hover or
+                              focus, so the tooltip could never open. */}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Delete ${group.name}`}
+                            aria-disabled="true"
+                            className="flex size-6 shrink-0 cursor-not-allowed items-center justify-center rounded text-muted-foreground opacity-30"
+                          >
+                            <Trash2 className="size-3" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent variant="muted">
+                          {group.deleteDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${group.name}`}
+                        disabled={busy}
+                        onClick={() => onDeleteGroup(group.id)}
+                        className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    )
                   ) : null}
                 </div>
               );

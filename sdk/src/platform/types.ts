@@ -1336,6 +1336,7 @@ export interface PlatformExecutionDisclosure {
 export type PlatformEvalLlmTouchpointId =
   | "goalCompletion"
   | "groundedness"
+  | "rubricChecks"
   | "serverQuality"
   | "runInsights"
   | "runGroupQuality"
@@ -1353,7 +1354,12 @@ export interface PlatformAnalysisTouchpointDisclosure {
   rail: {
     fixed: "openrouter" | null;
     because: string;
-    routing?: "gateway_preferred";
+    /**
+     * `gateway_preferred`: Gateway when configured and priced there, else
+     * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
+     * with a fallback model only when the classifier cannot be reached.
+     */
+    routing?: "gateway_preferred" | "typed_decision";
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];
@@ -1370,12 +1376,28 @@ export interface PlatformCaptureDisclosure {
     isDlp: boolean;
     limitation: string;
     appliesTo: readonly string[];
+    /**
+     * What an analysis provider may keep or train on, read off the backend's
+     * per-call provider policy. Absent on older backends.
+     */
+    providerRetention?: PlatformProviderRetentionDisclosure;
   };
   exportDefaults: {
     includeContent: boolean;
     ruleLocation: string;
     note: string;
   };
+}
+
+export interface PlatformProviderRetentionDisclosure {
+  openrouter: { data_collection: "allow" | "deny"; zdr?: boolean };
+  gateway: { disallowPromptTraining: boolean; zeroDataRetention?: boolean };
+  /** True when both rails require zero data retention on every call. */
+  zeroDataRetention: boolean;
+  appliesTo: readonly string[];
+  /** Named, not omitted: what this policy deliberately does not cover. */
+  notAppliedTo: readonly string[];
+  note: string;
 }
 
 export interface PlatformRetentionDisclosure {
@@ -3221,6 +3243,18 @@ export interface PlatformEvalCasesGenerated {
   counts: { normal?: number; negative?: number };
   /** Drafts that were generated but failed to persist (never silently dropped). */
   skipped?: Array<{ title: string; error: string }>;
+}
+
+/**
+ * The reply to an import. Same shape as generation, because both finish the
+ * same authoring job.
+ *
+ * `reviewUrl` appears only when something was skipped: it opens the app's
+ * Import page on exactly those drafts, so a person can finish one case without
+ * the caller re-sending — and paying for — the whole document.
+ */
+export interface PlatformEvalCasesImported extends PlatformEvalCasesGenerated {
+  reviewUrl?: string;
 }
 
 /** What produced a stored cost, or why there is none. */

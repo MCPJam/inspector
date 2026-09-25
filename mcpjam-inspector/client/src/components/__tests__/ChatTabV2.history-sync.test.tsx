@@ -907,6 +907,53 @@ describe("ChatTabV2 history sync", () => {
     });
   });
 
+  // #5472. An OpenRouter id can also be a hosted row, and restoring a thread
+  // looked its model up by id alone — so a thread that ran on the user's
+  // OpenRouter key reopened on the hosted row, and its next turn was billed to
+  // MCPJam. History rows record `modelSource`, which decides it.
+  describe.each([
+    ["local_byok", "openrouter"],
+    ["byok", "openrouter"],
+    ["mcpjam", "anthropic"],
+  ])("reopening a %s thread whose id a hosted row shares", (modelSource, provider) => {
+    it(`restores the ${provider} row`, async () => {
+      const hostedSonnet = {
+        id: "anthropic/claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        provider: "anthropic",
+        hosted: true,
+      };
+      const openRouterSonnet = {
+        id: "anthropic/claude-sonnet-5",
+        name: "anthropic/claude-sonnet-5",
+        provider: "openrouter",
+        hosted: false,
+      };
+      mockUseChatSession.availableModels = [hostedSonnet, openRouterSonnet];
+      mockUseChatSession.setSelectedModel = vi.fn();
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: {
+          ...mockHistorySession,
+          modelId: "anthropic/claude-sonnet-5",
+          modelSource,
+          messagesBlobUrl: "https://storage.test/blob",
+          resumeConfig: { selectedServers: ["server-1"] },
+        },
+        widgetSnapshots: [],
+      });
+
+      render(<ChatTabV2 {...defaultProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+      await flushMicrotasks();
+
+      expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
+        provider === "openrouter" ? openRouterSonnet : hostedSonnet,
+      );
+    });
+  });
+
   it("keeps the active resumed thread selected when servers change", async () => {
     const detailResponse = {
       ok: true,

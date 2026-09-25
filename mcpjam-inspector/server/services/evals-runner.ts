@@ -150,7 +150,7 @@ import {
   isPinnedOnly,
   isPinnedTurn,
   turnsNeedModel,
-  resolvePromptTurns,
+  resolveCasePromptTurns,
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
   type PinnedToolCall,
@@ -159,7 +159,6 @@ import {
 import {
   normalizeSteps,
   promptTurnsToSteps,
-  stepsToPromptTurns,
   type TestStep,
 } from "@/shared/steps";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
@@ -1495,10 +1494,7 @@ function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
   // execution loops still consume `PromptTurn[]`, so bridge steps → turns here
   // (the single resolver every loop reads). Falls back to the legacy
   // promptTurns/probe path when a case carries no steps.
-  const promptTurns =
-    Array.isArray(test.steps) && test.steps.length > 0
-      ? stepsToPromptTurns(normalizeSteps(test.steps))
-      : resolvePromptTurns(test);
+  const promptTurns = resolveCasePromptTurns(test);
   const legacy = deriveLegacyPromptFields(promptTurns);
   return {
     promptTurns,
@@ -4830,11 +4826,6 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
-
     const usageFinal: UsageTotals = {
       inputTokens: acc.accumulatedUsage.inputTokens,
       outputTokens: acc.accumulatedUsage.outputTokens,
@@ -4953,8 +4944,8 @@ const runLocalIteration = async ({
     //
     // At `enforce` the iteration's result is the conjunction of the boolean
     // pipeline and the gating score rows, computed inside
-    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
-    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the
+    // matcher's answer, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
     // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
     // against — so a strictness catch would persist `failed` on the iteration
     // while the run counted it a pass, and the pass rate would be inflated by
@@ -6429,10 +6420,6 @@ const runHostedIterationWithBrowser = async (
     evaluation,
     turnCheckResults,
   );
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,
@@ -6556,8 +6543,8 @@ const runHostedIterationWithBrowser = async (
   //
   // At `enforce` the iteration's result is the conjunction of the boolean
   // pipeline and the gating score rows, computed inside
-  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
-  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the
+  // matcher's answer, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
   // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
   // against — so a strictness catch would persist `failed` on the iteration
   // while the run counted it a pass, and the pass rate would be inflated by

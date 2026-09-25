@@ -1,5 +1,147 @@
 # `@mcpjam/sdk` changelog
 
+## 8.16.0
+
+### Minor Changes
+
+- [#5488](https://github.com/MCPJam/inspector/pull/5488) [`befa526`](https://github.com/MCPJam/inspector/commit/befa5263261db80298b9fed658bb92dfc1fed913) Thanks [@chelojimenez](https://github.com/chelojimenez)! - On a run's scorecard, Connection, Discovery, Tool call and Response each start with a built-in runner check whenever the stage analysis measured that stage. The check reports what the runner itself observed there, in the same Expected / Actual form as the evaluators. It fails only for the runner's own reason: the connection failed, listing tools failed, a call never produced a result, or the server reported a tool error. When one of the stage's evaluators failed it instead (an assertion, the argument matcher, a widget check), the runner check says so and stays undecided rather than repeating the failure. A stage that does not apply to the case shows no runner check. A case's own scorecard lists Tool call and Response only when the case gives the runner a call or response to measure.
+
+  A runner check wears a **Built-in** badge instead of a role and decides nothing on its own. It is not a score row, so gates and the evaluation config are unchanged.
+
+  `STANDARD_CHECKS` gains the two runner checks this needs, `call.completed` ("Tool call completed") and `response.returned` ("Result returned to the model"). The `measuredBy` field of a runner check can now be `"call"` or `"response"` as well as `"connection"` or `"discovery"`.
+
+  The settings tables now label runner checks **Built-in** instead of Required. Response gets its runner check too, and a case's own evaluator table describes its match rows with the case's match options rather than the defaults.
+
+- [#5492](https://github.com/MCPJam/inspector/pull/5492) [`936e037`](https://github.com/MCPJam/inspector/commit/936e0372b89c19b24d34ef16129f79754b886676) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Split the argument check out of the expected-tool-calls score. A hosted case that expects tool calls is now graded by two scorers:
+
+  - `toolCalls:match` (version 3) now covers **selection only**: every expected tool was called, and no turn made more extra calls than `maxExtraToolCalls` allows. A right tool called with a wrong argument no longer fails it.
+  - `toolCalls:arguments` (new, at the Tool call stage) checks that the expected tools were called with the expected arguments. Its reason names the tool and the argument, never the value. It is declared only when the case compares arguments (`argumentMatching` is not `"ignore"`).
+
+  Both scorers are required. Together they pass exactly when the old single score did, so an existing gate on `toolCalls:match` keeps its meaning in aggregate. The scorecard shows an **Arguments match** row under Tool call. Runs graded before this change show no such row and render as before.
+
+  **Re-baseline after upgrading.** The set of score definitions changed, so `evaluationConfigHash` changed with it. The first run after this release cannot be gated against a `--baseline` from before it: `eval gate --baseline <older run>` exits 3 (not gateable). Record a new baseline from a run on this version.
+
+  `EVALUATOR_STAGE` (and `GRADER_STAGE`) in `@mcpjam/sdk/contract` now files `toolCalls:arguments` at `call`.
+
+### Patch Changes
+
+- [#5459](https://github.com/MCPJam/inspector/pull/5459) [`048493a`](https://github.com/MCPJam/inspector/commit/048493af764d446457935e4e6ec498eaf7495e6f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Keep persisted conformance runs behind the hosted egress guard.
+
+  `runConformance`'s protocol suite now dials through the fetch attached to the server config — `fetchFn`, then `baseFetch` — which is what the apps and tasks suites of the same run already did. It rebuilt its config from the URL, token and headers alone, so a caller's fetch never reached it and the suite, raw probes and MCP client both, fell back to the global `fetch`. An explicit `protocol.fetchFn` still wins.
+
+  In the hosted inspector, every persisted conformance run — the public `/v1` start route, the GitHub checks worker and the benchmark worker — now dials through the DNS-pinned, hop-by-hop egress guard whoever starts it:
+
+  - the executor defaults the MCP and OAuth transports to the hosted conformance guard when a caller passes none, and both workers now pass it explicitly instead of a bare `{ url }`;
+  - a target the guard refuses outright is never handed to a suite. The run records the refusal as each suite's could-not-run reason. This also covers the protocol suite's localhost host-header checks, which open raw sockets that no fetch can guard;
+  - a refused or failed dial reaches the stored report as the guard's verdict or one uniform message, never as the address a hostname resolved to or the socket, TLS or DNS error text;
+  - the GitHub-check health probe dials the pull request's server through the hosted MCP transport rather than the global `fetch`.
+
+  The CI guard (`check-hosted-manager-base-fetch.mjs`) now also scans `server/routes/shared` and fails when a hosted file imports an `@mcpjam/sdk` entry point that opens its own connection (`runConformance`, the conformance suites, `withEphemeralClient`, `probeMcpServer`, `runServerDoctor` and the like) without being listed with the guard it dials through.
+
+  Local and desktop behaviour is unchanged: every guard, the up-front refusal and the redaction are no-ops outside hosted mode.
+
+- [#5545](https://github.com/MCPJam/inspector/pull/5545) [`6c21ff2`](https://github.com/MCPJam/inspector/commit/6c21ff26bdc639bb1fedc4f49d67615393f5a008) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5464](https://github.com/MCPJam/inspector/pull/5464) [`6e2f260`](https://github.com/MCPJam/inspector/commit/6e2f2609e45927f7c27bba6542ef8d234372e12a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Profile pictures and organization logos now upload through the MCPJam backend, which accepts PNG, JPEG, GIF and WebP only and checks the file's own bytes rather than its declared type. The file picker offers only those formats, and a refused file says which formats are accepted.
+
+  Widget snapshots captured by the inspector and uploaded by `reportEvalResults` are now stored as plain text instead of `text/html`, so a stored snapshot is never served as a web page. Replays read the same bytes and render as before.
+
+## 8.15.0
+
+### Minor Changes
+
+- [#5468](https://github.com/MCPJam/inspector/pull/5468) [`3860e31`](https://github.com/MCPJam/inspector/commit/3860e31683fcd1a940586d6433744afff0c861f7) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add rubric checks, an advisory second judge for eval suites. Each grading criterion is asked on its own as a yes or no question with a probability, and a suite can add up to ten choice or score questions with a pass line each. Answers show on the trial scorecard under User value, and a criterion near even odds reads Uncertain. They never gate a run. Settings are edited in the app; the public API refuses `settings.judge.rubricChecks`. The SDK's run-disclosure types gain the `rubricChecks` touchpoint and the `typed_decision` rail routing, and `EVALUATOR_STAGE` gains `judge:rubricChecks`.
+
+### Patch Changes
+
+- [#5487](https://github.com/MCPJam/inspector/pull/5487) [`9f75d30`](https://github.com/MCPJam/inspector/commit/9f75d307d9e87eba261d962ee25dde6bfa110ea2) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Explain connection-refused and HTTP 404 failures with the MCP endpoint and a suggested next step. Preserve authentication handling and underlying transport errors, and omit credentials and query values from the displayed endpoint.
+
+- [#5484](https://github.com/MCPJam/inspector/pull/5484) [`f5f03e1`](https://github.com/MCPJam/inspector/commit/f5f03e1f06c2b4f4b51ddeaa05fe77bdd36782cf) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+## 8.14.0
+
+### Minor Changes
+
+- [#5429](https://github.com/MCPJam/inspector/pull/5429) [`afd161a`](https://github.com/MCPJam/inspector/commit/afd161a67a0f3226f016a078dec68e5af6b93a80) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Negotiate the public API's resource-noun **values** behind `x-mcpjam-api-vocabulary`.
+
+  Three nouns were renamed at the API boundary: scenario → study, journey → goal, wave → swarm run. Operation names, routes, type names and field names could all move behind a deprecated alias, because a caller reaches them by a name it chose. A value cannot: `sourceType` is one field with one string in it, and a client switching on `"scenario"` has no second name to fall back to.
+
+  So the values negotiate. `x-mcpjam-api-vocabulary: 2` asks for the canonical spellings; an absent header means vocabulary 1, byte-for-byte today's contract; anything else is a 400. A response that varies by vocabulary sends `Vary`.
+
+  **What moves under vocabulary 2.** A session's `sourceType` reads `study`; its `parentRef.kind` reads `study` or `goalRun`, with `studyId` / `goalRunId` / `goalRefId` in place of `scenarioId` / `journeyRunId` / `journeyRefId`. A share's `resourceType` reads `study` — and because that value is also a path segment, `/shares/study/{id}` addresses the same rows `/shares/scenario/{id}` does. A trace destination's `sourceTypes` reads `study`.
+
+  **What it accepts.** On the way in, a vocabulary-2 request may name a filter or a path segment by either spelling; a vocabulary-1 request may use only the legacy one. Widening vocabulary 1 to meet vocabulary 2 half way is exactly what makes a negotiation boundary undecidable. A trace destination's stored `sourceTypes` is the one place both are accepted at all times — it is stored configuration, so the vocabulary of the request that wrote it is a fact about that request, not about the row.
+
+  **SDK.** `new PlatformApiClient({ apiVocabulary: 2 })`, or `client.withApiVocabulary(2)` on one you already hold. Separate from `evalVocabulary`, because the two negotiations are separate and a deployment may advertise one without the other — read `getProjectCapabilities()`, which now carries an `apiVocabulary` block beside `vocabulary`.
+
+  **Permalinks** are the exception that proves the rule: `study` and `goal_run` are the canonical resource-type keys, `user_testing_scenario` and `journey_run` still resolve to the same routes, and which one a response carries follows the operation rather than the header. Both spellings stay in the table until general availability, because consumers outside this repo branch on them.
+
+  Storage does not move. The stored literals are still `scenario`; every rename here is a projection at the boundary.
+
+- [#5429](https://github.com/MCPJam/inspector/pull/5429) [`afd161a`](https://github.com/MCPJam/inspector/commit/afd161a67a0f3226f016a078dec68e5af6b93a80) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Rename the public `journey` surface to **goal**, and `sessionsPerTarget` to `iterations`.
+
+  Swarms has called the thing a goal, and its per-target count Iterations, since the authoring flow was rebuilt; the API still said journey and `sessionsPerTarget`. It does not now. Storage is untouched — the Convex tables are still `journeys` and `journeyRuns`, and the stored config field is still `sessionsPerTarget`, exactly as the `scenarios` table stayed put when the public noun became study.
+
+  **Operations.** The 12 journey operations become goal operations: `list_journeys` → `list_goals`, `launch_journey_run` → `launch_goal_run`, `generate_journeys` → `generate_goals`, and so on through the set. The selector is `goalId`, not `goal` — a goal's own task text is what `create_goal` writes, and one name cannot be both.
+
+  **Routes.** `/projects/{id}/journeys` and `/journey-runs` become `/goals` and `/goal-runs`; `/journeys-overview` and `/journey-findings` follow the noun to `/goals-overview` and `/goal-findings`. Renamed responses say `goalId`, `iterations` and `swarmRunId` where they said `journeyId`, `sessionsPerTarget` and `waveId`.
+
+  **SDK.** New `PlatformGoal*` types and `listGoals`…`generateGoals` client methods. `capabilities.can` gains `launchGoalRun` and `cancelGoalRun`.
+
+  **CLI.** `cloud journeys` becomes `cloud goals`, which still answers to the old name. `--goal-id` takes the id, `--journey` still works, and passing both is refused rather than resolved by precedence. `--iterations` replaces `--sessions-per-target` on the same terms.
+
+  **The operations that kept their names.** `get_swarms_overview`, `list_swarm_findings`, `create_swarm` and `update_swarm` did not rename, so they have no deprecated twin to hold the old field spellings. They emit both until general availability — `goalId`/`goalName`/`goalArchived`/`swarmRunId` beside `journeyId`/`journeyName`/`journeyArchived`/`waveId`, and `iterations` beside `sessionsPerTarget` — and accept either on input, never both in one request.
+
+  Nothing is removed. Every old operation is still exported and still executable under its old name with its old input and its old DTO, calling its own old route — they are simply absent from the advertised catalog. Every old route still answers, with its original field spellings and a `Deprecation: true` header naming the successor. A body that mixes the two vocabularies is refused rather than guessed at. Both the operations and the routes go at general availability.
+
+- [#5452](https://github.com/MCPJam/inspector/pull/5452) [`1094e68`](https://github.com/MCPJam/inspector/commit/1094e68843f600c8af5cb17fa7091be30630bf84) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Export `REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT` and `REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE` from `@mcpjam/sdk/browser`, the messages every OAuth state machine writes when an authorization server has no `registration_endpoint` (with no pre-registered client configured, or under strict conformance).
+
+  The inspector's OAuth debugger now keeps those failures out of its error reporting. It is the server under test not offering dynamic client registration, not an MCPJam fault; the toast still shows it.
+
+- [#5429](https://github.com/MCPJam/inspector/pull/5429) [`afd161a`](https://github.com/MCPJam/inspector/commit/afd161a67a0f3226f016a078dec68e5af6b93a80) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Rename the public `scenario` surface to **study**, and merge its two detail reads into one.
+
+  The product has called this object a study since the create flow was rewritten; the API never followed. It does now, while the preview still makes a rename free. Storage is untouched — the Convex table is still `scenarios` and always will be, the way the `hosts` table stayed put when the public noun became `client`.
+
+  **Operations.** 22 become 21. `list_scenarios` → `list_studies`, `publish_scenario` / `unpublish_scenario` → `publish_study` / `unpublish_study`, and every `*_user_testing_*` operation drops the prefix for `*_study*`. `get_scenario` and `get_user_testing_scenario` were two generations of one read and collapse into `get_study`, which returns the union: the execution settings the first served, plus the environment id and insights envelope the second added. Those last two depend on the caller, not the study, so a share-link visitor gets the settings without them — absent, never null.
+
+  **Routes.** `/projects/{id}/scenarios` and `/projects/{id}/user-testing/scenarios/{scenarioId}` collapse into `/projects/{id}/studies` and `/projects/{id}/studies/{studyId}`; publishing moves to `/environments/{envId}/study`. Responses that named the owning id now say `studyId`.
+
+  **SDK.** New `PlatformStudy*` types and `listStudies`…`rebindStudy` client methods.
+
+  **CLI.** `cloud scenarios` and `cloud user-testing` merge into `cloud studies`, which answers to both old names. `--study` takes the id; `--scenario` still works and passing both is refused rather than resolved by precedence.
+
+  Nothing is removed. Every old operation is still exported and still executable under its old name with its old input and its old DTO, calling its own old route — they are simply absent from the advertised catalog, so no surface can offer one. Every old route still answers, with its original body and a `Deprecation: true` header naming the successor. Both go at general availability.
+
+  One behavior change worth calling out: `get_study` is no longer offered to the in-app assistant. `get_scenario` was, because it carried settings and no visitor content; the merged read carries an envelope that quotes real visitors, and the stricter half decides. `list_studies` is unaffected.
+
+- [#5429](https://github.com/MCPJam/inspector/pull/5429) [`afd161a`](https://github.com/MCPJam/inspector/commit/afd161a67a0f3226f016a078dec68e5af6b93a80) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Rename the public `wave` noun to **swarm run**.
+
+  The last of the three nouns the API never carried over from the product. A swarm run is the batch of sibling goal runs launched together — what the Swarms surface has called it since it shipped, and what its own `/swarms/:id` route already addresses. The API called it a wave.
+
+  Storage does not move. The column is `swarmRunGroupId` and stays that; so does `swarmWaveInsights:*` upstream. Only the public name changes.
+
+  **Operations.** `get_wave_insights`, `request_wave_insights` and `cancel_wave_insights` become `get_swarm_run_insights`, `request_swarm_run_insights` and `cancel_swarm_run_insights`. The selector is `swarmRun`, and `wave` is still accepted as its deprecated alias — passing both is refused rather than resolved by precedence.
+
+  **Routes.** `/projects/{id}/waves/{waveId}/insights` becomes `/projects/{id}/swarm-runs/{swarmRunId}/insights` on all three methods. Responses say `swarmRunId`.
+
+  **SDK.** New `PlatformSwarmRunInsights*` types and `getSwarmRunInsights` / `requestSwarmRunInsights` / `cancelSwarmRunInsights` client methods.
+
+  **CLI.** `--swarm-run` replaces `--wave` on `cloud goals insights`, `request-insights` and `cancel-insights`; `--wave` still works, and passing both is refused.
+
+  Nothing is removed. The old operations are still exported and still executable, calling their own old routes; the old routes still answer with `waveId` and a `Deprecation: true` header. Both go at general availability.
+
+### Patch Changes
+
+- [#5456](https://github.com/MCPJam/inspector/pull/5456) [`09814ca`](https://github.com/MCPJam/inspector/commit/09814cab7c0fd5c1b3ade2606499698214fb4f48) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the inspector and SDK work that has been waiting on main since the last release, and bumps @mcpjam/cli in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5429](https://github.com/MCPJam/inspector/pull/5429) [`afd161a`](https://github.com/MCPJam/inspector/commit/afd161a67a0f3226f016a078dec68e5af6b93a80) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Rename the User Testing permalink's label from "Open scenario" to "Open study", matching what the product has called the object since the create flow was rewritten. The resource type key, the route it builds and every id stay exactly as they were, so a permalink minted before this change still resolves and any caller switching on the type is unaffected.
+
 ## 8.13.0
 
 ### Minor Changes

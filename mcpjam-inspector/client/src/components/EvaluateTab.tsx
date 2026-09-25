@@ -1,12 +1,10 @@
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
-import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
 import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
-import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Public Evaluate experience. Reuses the shared eval data and mutation layer;
  * legacy Evaluate remains available separately behind evaluate-enabled.
@@ -51,11 +49,7 @@ import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
-import {
-  aggregateSuite,
-  formatRunId,
-  getEffectiveSuiteServers,
-} from "./evals/helpers";
+import { formatRunId, getEffectiveSuiteServers } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
 import {
@@ -359,22 +353,13 @@ function EvaluateTabContent({
     projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
+    perRunMetrics: true,
   });
 
   const selectedSuite = queries.selectedSuite;
   const suiteDetails = queries.suiteDetails;
-  const activeIterations = queries.activeIterations;
-  const sortedIterations = queries.sortedIterations;
   const runsForSelectedSuite = queries.runsForSelectedSuite;
-
-  const suiteAggregate = useMemo(() => {
-    if (!selectedSuite || !suiteDetails) return null;
-    return aggregateSuite(
-      selectedSuite,
-      suiteDetails.testCases,
-      activeIterations,
-    );
-  }, [selectedSuite, suiteDetails, activeIterations]);
+  const metricsByRun = queries.metricsByRun;
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
     [],
@@ -395,11 +380,29 @@ function EvaluateTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
+    // Missing from the overview is not yet proof the suite is gone — not
+    // until the suite's OWN query has answered. "Promote to test case" into a
+    // NEW suite creates it in an action, whose result can reach this client
+    // before the overview subscription's update does; and the promote dialog
+    // holds that same subscription (same args), so this page can mount on a
+    // cached overview older than the suite it was just sent to. Bouncing on
+    // that landed the promoter on the list instead of their case.
+    //
+    // The per-suite query is a fresh subscription for a suite nobody has
+    // opened yet, and Convex applies every subscription's update in one
+    // consistent transition — so once it answers, the overview has caught up
+    // too. (A one-shot `convex.query` would not do: it returns the cached
+    // overview when there is one, which is exactly the stale answer.) For a
+    // suite that really is gone it answers `[]`, and the bounce proceeds.
+    if (queries.isSuiteDetailsLoading) {
+      return;
+    }
     if (!selectedSuiteEntry) {
       navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
     }
   }, [
     overviewQueries.isOverviewLoading,
+    queries.isSuiteDetailsLoading,
     route,
     selectedSuiteEntry,
     selectedSuiteId,
@@ -614,15 +617,10 @@ function EvaluateTabContent({
     async (
       suite: EvalSuite,
       refinement?: string,
-      stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
       options?: GenerationOptions,
     ) => {
       const suiteServers = getEffectiveSuiteServers(suite);
-      if (suiteServers.length === 0) {
-        if (stageCase)
-          throw new Error("Attach servers before generating cases.");
-        return;
-      }
+      if (suiteServers.length === 0) return;
       // Scope generation by the suite's saved server attachment when present.
       // Backend uses this to (a) require per-server cases AND at least one
       // cross-server case when the attachment spans ≥2 servers, and (b) put
@@ -650,14 +648,6 @@ function EvaluateTabContent({
             ? { refinement: refinement.trim() }
             : undefined);
       await handlers.handleGenerateTests(suite._id, suiteServers, {
-        ...(stageCase
-          ? {
-              stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(
-                  normalizeGeneratedDraft(input, suite.defaultPredicates),
-                ),
-            }
-          : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
@@ -681,7 +671,16 @@ function EvaluateTabContent({
             selectedSuite,
             suiteDetails?.testCases ?? [],
             runsForSelectedSuite,
-            suiteDetails?.iterations ?? [],
+            // Iterations are not loaded suite-wide here; count the listed
+            // runs' from their metrics (or summaries, while those load).
+            runsForSelectedSuite.reduce(
+              (sum, run) =>
+                sum +
+                (metricsByRun.get(run._id)?.iterationCount ??
+                  run.summary?.total ??
+                  0),
+              0,
+            ),
           ),
         run: async () => {
           if (evalRunsDisabledReason) throw new Error(evalRunsDisabledReason);
@@ -700,8 +699,6 @@ function EvaluateTabContent({
             );
           return result;
         },
-        generate: (instructions, stage, options) =>
-          generateTestsForSuite(selectedSuite, instructions, stage, options),
         save: (input) => mutations.createTestCaseMutation(input as any),
       },
     );
@@ -709,12 +706,12 @@ function EvaluateTabContent({
     projectId,
     selectedSuite,
     suiteDetails,
-    generateTestsForSuite,
     mutations.createTestCaseMutation,
     isLoading,
     isAuthenticated,
     isDirectGuest,
     runsForSelectedSuite,
+    metricsByRun,
     evalRunsDisabledReason,
     handleRerunWithQuota,
   ]);
@@ -1445,11 +1442,13 @@ function EvaluateTabContent({
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
-          iterations={activeIterations}
-          allIterations={sortedIterations}
+          metricsByRun={metricsByRun}
+          metricsLoading={queries.isRunMetricsLoading}
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
-          aggregate={suiteAggregate}
+          // A suite-wide aggregate needs every iteration; Evaluate reads
+          // per-run metrics instead, and nothing it mounts reads this.
+          aggregate={null}
           /*
            * The suite's configuration lives in a repository (a committed suite
            * file, or SDK ingest), so this surface offers no edits for it.

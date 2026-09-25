@@ -36,7 +36,10 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
-import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  hasRubricChecksCapability,
+  type SuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
@@ -55,9 +58,11 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
+import { BUILT_IN_BADGE } from "./runner-checks";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
-import type { EvalJudgeConfig } from "./types";
+import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
+import { withRubricChecks } from "./rubric-checks-model";
 import {
   addCaseRule,
   listEffectiveRules,
@@ -108,6 +113,7 @@ export function SuiteScorerTable({
   passOrFailHint,
   judgeHint,
   groundednessEvidence,
+  judgeRubric,
   headerContent,
   headerDescription,
   headerActions,
@@ -129,6 +135,8 @@ export function SuiteScorerTable({
   passOrFailHint: string;
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
+  /** The suite's rubric, whose criteria the rubric-checks card lists. */
+  judgeRubric?: EvalJudgeRubric;
   headerContent?: React.ReactNode;
   headerDescription?: React.ReactNode;
   headerActions?: React.ReactNode;
@@ -149,9 +157,22 @@ export function SuiteScorerTable({
       rules.filter((rule) => !rule.suppressed).map((rule) => rule.predicate),
     [rules],
   );
+  // Only a deployment that grades rubric checks stores the slot, so the row
+  // and its card appear only when the capability says so.
+  const rubricChecks = hasRubricChecksCapability(capabilities);
+  // The deployment's effective goal-judge policy. A suite that stores no
+  // `enabled` inherits it, and rubric checks ride that judge's job, so every
+  // "is the goal judge off" question on this page has to read it too.
+  const goalPolicy = capabilities?.judges?.goalCompletion.policy;
   const model = useMemo(
-    () => groupGradersByStage({ matchOptions, predicates, judgeConfig }),
-    [matchOptions, predicates, judgeConfig],
+    () =>
+      groupGradersByStage({
+        matchOptions,
+        predicates,
+        judgeConfig,
+        rubricChecks,
+      }),
+    [matchOptions, predicates, judgeConfig, rubricChecks],
   );
   const activeModel = useMemo(
     () =>
@@ -159,8 +180,9 @@ export function SuiteScorerTable({
         matchOptions,
         predicates: activePredicates,
         judgeConfig,
+        rubricChecks,
       }),
-    [matchOptions, activePredicates, judgeConfig],
+    [matchOptions, activePredicates, judgeConfig, rubricChecks],
   );
   const judgeEnabled = scope.kind === "case" ? !scope.judgeSkipped : undefined;
   const table = useMemo(
@@ -173,7 +195,7 @@ export function SuiteScorerTable({
         judgeConfig,
         judgeEnabled,
         judgeCapabilities: capabilities?.judge,
-        judgePolicy: capabilities?.judges?.goalCompletion.policy,
+        judgePolicy: goalPolicy,
       }),
     [
       model,
@@ -183,7 +205,7 @@ export function SuiteScorerTable({
       judgeConfig,
       judgeEnabled,
       capabilities?.judge,
-      capabilities?.judges?.goalCompletion.policy,
+      goalPolicy,
     ],
   );
   const [editMode, setEditMode] = useState(false);
@@ -193,8 +215,6 @@ export function SuiteScorerTable({
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
   );
-  const suppressionSupported =
-    capabilities?.scorers?.suppressedSuiteStandardCheckIds === true;
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
@@ -261,7 +281,15 @@ export function SuiteScorerTable({
       if (!row.family) {
         return "Only standard assertions can be turned off per case. Edit this one in suite settings.";
       }
-      return suppressionSupported ? undefined : BACKEND_SUPPORT_HINT;
+      return undefined;
+    }
+    if (row.kind === "judge" && row.judgeSlot === "rubricChecks") {
+      if (scope.kind === "case") {
+        return "Rubric checks are turned on or off in suite settings.";
+      }
+      return judgeMode(judgeConfig, goalPolicy) === "off"
+        ? "Rubric checks run with the goal-completion judge, which is off."
+        : undefined;
     }
     if (
       row.kind === "judge" &&
@@ -308,6 +336,12 @@ export function SuiteScorerTable({
         scope.onDraftChange(
           setSuiteFamilySuppressed(scope.draft, row.family.id, !enabled),
         );
+      }
+      return;
+    }
+    if (row.kind === "judge" && row.judgeSlot === "rubricChecks") {
+      if (scope.kind === "suite") {
+        onJudgeConfigChange?.(withRubricChecks(judgeConfig, { enabled }));
       }
       return;
     }
@@ -562,6 +596,19 @@ export function SuiteScorerTable({
                       judgesCapabilities={capabilities?.judges}
                       groundednessEvidence={groundednessEvidence}
                     />
+                    {rubricChecks ? (
+                      <SuiteJudgeCard
+                        slot="rubricChecks"
+                        judgeConfig={judgeConfig}
+                        onJudgeConfigChange={onJudgeConfigChange}
+                        availableModels={availableModels}
+                        judgesCapabilities={capabilities?.judges}
+                        criteria={judgeRubric?.criteria ?? []}
+                        goalJudgeOff={
+                          judgeMode(judgeConfig, goalPolicy) === "off"
+                        }
+                      />
+                    ) : null}
                   </details>
                 ) : null}
               </div>
@@ -576,11 +623,14 @@ export function SuiteScorerTable({
 /** Whether a row has an On box at all. Observed and match rows are facts. */
 function hasOnControl(row: ScorerTableRow): boolean {
   if (row.kind === "predicate" || row.kind === "preset") return true;
-  return row.kind === "judge" && row.judgeSlot === "goalCompletion";
+  return (
+    row.kind === "judge" &&
+    (row.judgeSlot === "goalCompletion" || row.judgeSlot === "rubricChecks")
+  );
 }
 
 /**
- * A row Edit evaluators opens. Required runner facts and match rows stay
+ * A row Edit evaluators opens. Built-in runner checks and match rows stay
  * closed: their settings are either absent or live in the stage's own
  * disclosure. An off check still opens — the checkbox and Edit evaluators
  * reveal every check, selected or not. The title itself is not a control.
@@ -654,13 +704,14 @@ function ScorerRow({
   // here, because Edit evaluators opens it before the box is ticked. An
   // inherited check that is already on keeps its number on the title line.
   const showEditorFields = Boolean(editorPredicate) && (editorWritable || !on);
+  // Inherited suite checks stay unlabeled for now. A case-authored check
+  // still says so, because that is the only row the case itself wrote.
   const sourceLine =
-    scope === "case" && row.kind === "predicate"
-      ? row.suppressed
-        ? "From suite · off for this case"
-        : inherited
-          ? "From suite"
-          : "This case"
+    scope === "case" &&
+    row.kind === "predicate" &&
+    !inherited &&
+    !row.suppressed
+      ? "This case"
       : null;
   const familyLine =
     inherited && row.family && row.family.suiteRules > 1
@@ -718,7 +769,11 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {row.kind === "observed" || row.kind === "match" ? (
+            {row.kind === "observed" ? (
+              // A runner check decides nothing, so it wears no role: it is on
+              // for every iteration and reports the stage analysis.
+              <Badge variant="outline">{BUILT_IN_BADGE}</Badge>
+            ) : row.kind === "match" ? (
               <Badge variant="outline">Required</Badge>
             ) : null}
           </div>
@@ -795,15 +850,6 @@ function ScorerRow({
         </div>
       ) : null}
     </li>
-  );
-}
-
-/** Keys every predicate carries; anything else is a field its editor shows. */
-const PREDICATE_ENVELOPE_KEYS = new Set(["type", "role", "severity"]);
-
-function predicateHasFields(predicate: Predicate): boolean {
-  return Object.keys(predicate).some(
-    (key) => !PREDICATE_ENVELOPE_KEYS.has(key),
   );
 }
 

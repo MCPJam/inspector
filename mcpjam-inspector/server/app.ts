@@ -70,6 +70,7 @@ import {
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import { indexingHeadersMiddleware } from "./middleware/indexing-headers.js";
 import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
@@ -265,6 +266,10 @@ export async function createHonoApp() {
   // 1. Security headers (always applied)
   app.use("*", securityHeadersMiddleware);
 
+  // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
+  // than another line in the security headers — see indexing-headers.ts.
+  app.use("*", indexingHeadersMiddleware);
+
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
@@ -293,6 +298,9 @@ export async function createHonoApp() {
       }),
     );
   }
+  // Load-bearing for the header middleware above, not only for CORS. See the
+  // same mount in server/index.ts: raw-`Response` handlers only carry the
+  // headers prepared by `c.header()` because `cors()` materializes `c.res`.
   app.use("*", cors(CORS_OPTIONS));
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills

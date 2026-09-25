@@ -427,8 +427,14 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         typeof parsed.walletLocked === "boolean"
           ? parsed.walletLocked
           : undefined;
+      // `holds_committed` arrives as `limitKind: "total"`, but it is the
+      // concurrency case: other in-flight requests hold the last credits and
+      // the backend says retry shortly. Rendering it as a spent allowance
+      // hid it entirely, since the out-of-credits dialog is not raised for it.
       const limitKind =
-        parsed.limitKind === "total" || parsed.limitKind === "concurrency"
+        parsed.refusalReason === "holds_committed"
+          ? "concurrency"
+          : parsed.limitKind === "total" || parsed.limitKind === "concurrency"
           ? parsed.limitKind
           : undefined;
       // `retryAfterMs` is only meaningful for the concurrency banner (which
