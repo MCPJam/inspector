@@ -9,7 +9,11 @@ import {
   type TurnOutcomeBuilderOptions,
 } from "../stream-turn-driver.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { turnOutcomeRecordZ } from "@/shared/turn-outcome";
+import {
+  pauseKindOf,
+  terminationOf,
+  turnOutcomeRecordZ,
+} from "@/shared/turn-outcome";
 
 function collectingWriter(): { writer: ChunkWriter; chunks: any[] } {
   const chunks: any[] = [];
@@ -262,7 +266,7 @@ describe("TurnOutcomeBuilder state machine", () => {
     expect(record.lifecycle).toBe("completed");
     // `completed` FORBIDS a termination, so the superseded diagnosis is dropped
     // rather than smuggled in beside a completion.
-    expect(record.termination).toBeUndefined();
+    expect(terminationOf(record)).toBeUndefined();
   });
 
   it("STOP BEFORE COMPLETION: a late stream completion is superseded", () => {
@@ -271,8 +275,8 @@ describe("TurnOutcomeBuilder state machine", () => {
     b.markCompleted("stop");
     const record = b.record();
     expect(record.lifecycle).toBe("cancelled");
-    expect(record.termination?.cancellationSource).toBe("client_disconnect");
-    expect(record.termination?.superseded).toEqual([
+    expect(terminationOf(record)?.cancellationSource).toBe("client_disconnect");
+    expect(terminationOf(record)?.superseded).toEqual([
       { mark: "completed", at: expect.any(Number) },
     ]);
   });
@@ -288,8 +292,8 @@ describe("TurnOutcomeBuilder state machine", () => {
     b.markCompleted("stop");
     const record = b.record();
     expect(record.lifecycle).toBe("failed");
-    expect(record.termination?.errorCode).toBe("provider_5xx");
-    expect(record.termination?.superseded).toEqual([
+    expect(terminationOf(record)?.errorCode).toBe("provider_5xx");
+    expect(terminationOf(record)?.superseded).toEqual([
       { mark: "completed", at: expect.any(Number) },
     ]);
   });
@@ -303,8 +307,8 @@ describe("TurnOutcomeBuilder state machine", () => {
     b.markFailed({ errorSource: "setup", errorCode: "harness_finalize_failed" });
     const record = b.record();
     expect(record.lifecycle).toBe("failed");
-    expect(record.paused).toBeUndefined();
-    expect(record.termination?.errorCode).toBe("harness_finalize_failed");
+    expect(pauseKindOf(record)).toBeUndefined();
+    expect(terminationOf(record)?.errorCode).toBe("harness_finalize_failed");
   });
 
   it("PAUSE THEN CANCEL: a paused turn the user stopped is cancelled", () => {
@@ -325,8 +329,8 @@ describe("TurnOutcomeBuilder state machine", () => {
     timedOut.markTimedOut({ clock: "turn", budgetMs: 1, elapsedMs: 2 });
     const record = timedOut.record();
     expect(record.lifecycle).toBe("paused");
-    expect(record.paused).toEqual({ kind: "tool_approval" });
-    expect(record.termination?.superseded?.map((s) => s.mark)).toEqual([
+    expect(pauseKindOf(record)).toBe("tool_approval");
+    expect(terminationOf(record)?.superseded?.map((s) => s.mark)).toEqual([
       "timed_out",
     ]);
   });
@@ -338,10 +342,10 @@ describe("TurnOutcomeBuilder state machine", () => {
     b.markCancelled("lease_lost");
     const record = b.record();
     expect(record.lifecycle).toBe("failed");
-    expect(record.termination?.errorCode).toBe("UPSTREAM_ERROR");
-    expect(record.termination?.timeout).toBeUndefined();
-    expect(record.termination?.cancellationSource).toBeUndefined();
-    expect(record.termination?.superseded?.map((s) => s.mark)).toEqual([
+    expect(terminationOf(record)?.errorCode).toBe("UPSTREAM_ERROR");
+    expect(terminationOf(record)?.timeout).toBeUndefined();
+    expect(terminationOf(record)?.cancellationSource).toBeUndefined();
+    expect(terminationOf(record)?.superseded?.map((s) => s.mark)).toEqual([
       "timed_out",
       "cancelled",
     ]);
@@ -352,8 +356,8 @@ describe("TurnOutcomeBuilder state machine", () => {
     // is how the original defect stayed invisible.
     const record = makeBuilder().record();
     expect(record.lifecycle).toBe("failed");
-    expect(record.termination?.errorSource).toBe("setup");
-    expect(record.termination?.errorCode).toBe("no_terminal_mark");
+    expect(terminationOf(record)?.errorSource).toBe("setup");
+    expect(terminationOf(record)?.errorCode).toBe("no_terminal_mark");
   });
 
   it("carries the harness id even on the emulated engine (scope step-up resume)", () => {
@@ -409,7 +413,7 @@ describe("TurnOutcomeBuilder tool dispatch/settle", () => {
         state: "outcome_unknown",
       },
     ]);
-    expect(record.termination?.unresolvedToolCalls).toEqual([
+    expect(terminationOf(record)?.unresolvedToolCalls).toEqual([
       { toolCallId: "c1", toolName: "create_invoice", state: "outcome_unknown" },
     ]);
   });
@@ -424,7 +428,7 @@ describe("TurnOutcomeBuilder tool dispatch/settle", () => {
     b.markCancelled("client_disconnect");
     // Nothing from the transcript — it is empty.
     const record = b.record([]);
-    expect(record.termination?.unresolvedToolCalls).toEqual([
+    expect(terminationOf(record)?.unresolvedToolCalls).toEqual([
       {
         toolCallId: "call-in-sandbox",
         toolName: "charge_card",
@@ -444,7 +448,7 @@ describe("TurnOutcomeBuilder tool dispatch/settle", () => {
         state: "outcome_unknown",
       },
     ]);
-    expect(record.termination?.unresolvedToolCalls).toHaveLength(1);
+    expect(terminationOf(record)?.unresolvedToolCalls).toHaveLength(1);
   });
 
   it("a SETTLED call is never listed, however it was witnessed", () => {
@@ -452,7 +456,7 @@ describe("TurnOutcomeBuilder tool dispatch/settle", () => {
     b.markToolDispatched("call-1", "charge_card");
     b.markToolSettled("call-1");
     b.markCancelled("caller");
-    expect(b.record([]).termination?.unresolvedToolCalls).toBeUndefined();
+    expect(terminationOf(b.record([]))?.unresolvedToolCalls).toBeUndefined();
   });
 
   it("a completed turn never carries an unresolved list", () => {
@@ -461,7 +465,7 @@ describe("TurnOutcomeBuilder tool dispatch/settle", () => {
     const record = b.record([
       { toolCallId: "c1", toolName: "t", state: "never_started" },
     ]);
-    expect(record.termination).toBeUndefined();
+    expect(terminationOf(record)).toBeUndefined();
   });
 });
 
@@ -494,7 +498,7 @@ describe("classifyCatch resolves by evidence, not arrival order", () => {
       now: () => 361_412,
     });
     expect(lifecycle).toBe("timed_out");
-    expect(b.record().termination?.timeout).toEqual({
+    expect(terminationOf(b.record())?.timeout).toEqual({
       clock: "turn",
       budgetMs: 360_000,
       elapsedMs: 360_412,
@@ -512,7 +516,7 @@ describe("classifyCatch resolves by evidence, not arrival order", () => {
         now: () => 120_003,
       }),
     ).toBe("timed_out");
-    expect(b.record().termination?.timeout?.clock).toBe("iteration");
+    expect(terminationOf(b.record())?.timeout?.clock).toBe("iteration");
   });
 
   it("an abort with no clock is a cancellation, sourced from the typed reason", () => {
@@ -527,7 +531,7 @@ describe("classifyCatch resolves by evidence, not arrival order", () => {
         startedAtMs: 0,
       }),
     ).toBe("cancelled");
-    expect(b.record().termination?.cancellationSource).toBe("lease_lost");
+    expect(terminationOf(b.record())?.cancellationSource).toBe("lease_lost");
   });
 
   it("an untyped abort falls back to the caller's declared default", () => {
@@ -538,7 +542,7 @@ describe("classifyCatch resolves by evidence, not arrival order", () => {
       errorSource: "model",
       startedAtMs: 0,
     });
-    expect(b.record().termination?.cancellationSource).toBe(
+    expect(terminationOf(b.record())?.cancellationSource).toBe(
       "client_disconnect",
     );
   });
@@ -555,8 +559,8 @@ describe("classifyCatch resolves by evidence, not arrival order", () => {
       }),
     ).toBe("failed");
     const record = b.record();
-    expect(record.termination?.errorSource).toBe("setup");
-    expect(record.termination?.errorCode).toBe("MCP_CONNECT_FAILED");
+    expect(terminationOf(record)?.errorSource).toBe("setup");
+    expect(terminationOf(record)?.errorCode).toBe("MCP_CONNECT_FAILED");
   });
 
   it("reads a deadline through a cause chain", () => {
@@ -573,7 +577,7 @@ describe("classifyCatch resolves by evidence, not arrival order", () => {
         now: () => 60_001,
       }),
     ).toBe("timed_out");
-    expect(b.record().termination?.timeout?.clock).toBe("sandboxCapacity");
+    expect(terminationOf(b.record())?.timeout?.clock).toBe("sandboxCapacity");
   });
 });
 
@@ -625,7 +629,9 @@ describe("StreamTurnDriver stamps the outcome onto the trace", () => {
       ],
     });
     expect(trace.outcomeAtTurn?.lifecycle).toBe("cancelled");
-    expect(trace.outcomeAtTurn?.termination?.unresolvedToolCalls).toHaveLength(
+    expect(
+      terminationOf(trace.outcomeAtTurn)?.unresolvedToolCalls,
+    ).toHaveLength(
       1,
     );
   });

@@ -44,10 +44,14 @@ import {
   type UnresolvedToolCallState,
 } from "@/shared/turn-outcome";
 
-/** One row of `termination.unresolvedToolCalls`. */
-export type TurnOutcomeUnresolvedToolCall = NonNullable<
-  NonNullable<TurnOutcomeRecord["termination"]>["unresolvedToolCalls"]
->[number];
+/**
+ * One row of `termination.unresolvedToolCalls`, re-exported so this module's
+ * importers keep their existing surface. It is DERIVED from the shared schema
+ * rather than indexed off the record: `TurnOutcomeRecord` is a discriminated
+ * union now, and a `completed` variant has no `termination` key to index.
+ */
+import type { TurnOutcomeUnresolvedToolCall } from "@/shared/turn-outcome";
+export type { TurnOutcomeUnresolvedToolCall };
 import { deadlineClockOf } from "./run-supervisor/deadline.js";
 import type { PersistedTurnTrace } from "./chat-ingestion.js";
 import {
@@ -565,11 +569,10 @@ export class TurnOutcomeBuilder {
       }
     }
 
-    const termination = {
-      ...(this.timeout ? { timeout: this.timeout } : {}),
-      ...(this.cancellationSource
-        ? { cancellationSource: this.cancellationSource }
-        : {}),
+    // The legs that name NO ending. The two that DO — `timeout` and
+    // `cancellationSource` — belong to exactly one lifecycle each, so they are
+    // attached per variant below rather than merged in here.
+    const neutral = {
       ...(errorSource ? { errorSource } : {}),
       ...(errorCode ? { errorCode } : {}),
       ...(this.errorHttpStatus !== undefined
@@ -578,30 +581,78 @@ export class TurnOutcomeBuilder {
       ...(mergedUnresolved.length > 0
         ? { unresolvedToolCalls: mergedUnresolved }
         : {}),
-      ...(this.superseded.length > 0 ? { superseded: [...this.superseded] } : {}),
+      ...(this.superseded.length > 0
+        ? { superseded: [...this.superseded] }
+        : {}),
     };
-    // `completed` FORBIDS a termination (the contract's own invariant): a turn
-    // cannot both have finished and have been ended by something. A superseded
-    // late mark on a completed turn is diagnosis we drop rather than a claim we
-    // make.
-    const hasTermination =
-      lifecycle !== "completed" && Object.keys(termination).length > 0;
-
-    return {
+    const common = {
       contractVersion: CURRENT_TURN_OUTCOME_CONTRACT_VERSION,
-      lifecycle,
       runtime: {
         engine: this.engine,
         ...(this.harness ? { harness: this.harness } : {}),
         modelAccess: this.modelAccess,
       },
       ...(this.finishReason ? { finishReason: this.finishReason } : {}),
-      ...(hasTermination ? { termination } : {}),
-      ...(lifecycle === "paused" && this.pauseKind
-        ? { paused: { kind: this.pauseKind } }
-        : {}),
       recordedAt: this.now(),
-    };
+    } as const;
+    const withNeutral = Object.keys(neutral).length > 0
+      ? { termination: neutral }
+      : {};
+
+    // ASSEMBLED PER VARIANT, so the record cannot claim two endings.
+    //
+    // This used to be one loose object with the lifecycle spread in, which is
+    // what let the shape and the lifecycle drift apart. Now each branch returns
+    // the variant the contract defines, and the compiler checks the pairing:
+    // `timed_out` cannot be built without its clock, `cancelled` without its
+    // source, `paused` without its rail, and `completed` cannot carry a
+    // termination at all — a superseded late mark on a completed turn is
+    // diagnosis we drop rather than a claim we make.
+    switch (lifecycle) {
+      case "completed":
+        return { ...common, lifecycle: "completed" };
+      case "timed_out":
+        return {
+          ...common,
+          lifecycle: "timed_out",
+          termination: {
+            ...neutral,
+            // `markTimedOut` sets `this.timeout` only once the mark has won, so
+            // a `timed_out` lifecycle always has one. The fallback exists
+            // because the field is nullable on the builder, not because the
+            // pairing is in doubt.
+            timeout: this.timeout ?? {
+              clock: "turn",
+              budgetMs: 0,
+              elapsedMs: 0,
+            },
+          },
+        };
+      case "cancelled":
+        return {
+          ...common,
+          lifecycle: "cancelled",
+          termination: {
+            ...neutral,
+            cancellationSource:
+              this.cancellationSource ?? this.defaultCancellationSource,
+          },
+        };
+      case "paused":
+        return {
+          ...common,
+          lifecycle: "paused",
+          ...withNeutral,
+          // A pause with no rail is unrepresentable in the contract, so an
+          // unset kind is a bug in the caller; `tool_approval` is the rail the
+          // engine pauses on most and keeps the record parseable.
+          paused: { kind: this.pauseKind ?? "tool_approval" },
+        };
+      case "interrupted":
+        return { ...common, lifecycle: "interrupted", ...withNeutral };
+      case "failed":
+        return { ...common, lifecycle: "failed", ...withNeutral };
+    }
   }
 
   /** The default source for an abort with no typed reason on it. */

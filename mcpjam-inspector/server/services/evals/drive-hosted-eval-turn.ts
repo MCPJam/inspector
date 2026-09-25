@@ -616,11 +616,16 @@ export async function driveHostedEvalTurn(
     // this driver's `turnTimeoutMs` unconditionally would report the wrong
     // budget for exactly the case the record was added to distinguish, and
     // whoever read the failure would go tuning a limit that was never hit.
-    const timeout = turnOutcome?.termination?.timeout ?? {
-      clock: "turn" as const,
-      budgetMs: turnTimeoutMs,
-      elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
-    };
+    // Narrowed on the lifecycle rather than reaching for the field: only a
+    // `timed_out` record carries a clock, and the union now says so.
+    const timeout =
+      turnOutcome?.lifecycle === "timed_out"
+        ? turnOutcome.termination.timeout
+        : {
+            clock: "turn" as const,
+            budgetMs: turnTimeoutMs,
+            elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
+          };
     const elapsedMs = timeout.elapsedMs ?? timeout.budgetMs;
     const failure = {
       timeout,

@@ -1,5 +1,9 @@
 import type { PersistedTurnTrace } from "./chat-ingestion.js";
-import { didTurnFail, type TurnOutcomeRecord } from "@/shared/turn-outcome";
+import {
+  didTurnFail,
+  terminationOf,
+  type TurnOutcomeRecord,
+} from "@/shared/turn-outcome";
 
 /**
  * Did this hosted turn fail? Shared by evals and synthetic sessions.
@@ -73,13 +77,17 @@ export function getHostedTurnFailure(args: {
 /** One sentence naming what the record says went wrong. */
 function describeRecordedFailure(outcome: TurnOutcomeRecord): string {
   if (outcome.lifecycle === "timed_out") {
-    const timeout = outcome.termination?.timeout;
-    return timeout
-      ? `Turn exceeded its ${timeout.clock} budget of ${timeout.budgetMs}ms (elapsed ${timeout.elapsedMs}ms)`
-      : "Turn timed out";
+    // No fallback: the union narrows a `timed_out` record to the variant whose
+    // `termination.timeout` is REQUIRED, so "Turn timed out" was unreachable.
+    const { timeout } = outcome.termination;
+    return `Turn exceeded its ${timeout.clock} budget of ${timeout.budgetMs}ms (elapsed ${timeout.elapsedMs}ms)`;
   }
-  const source = outcome.termination?.errorSource;
-  const code = outcome.termination?.errorCode;
+  // Not narrowed to one lifecycle here — `failed`, `interrupted` and a
+  // sidecar-failed `paused` all reach this line — so read the projection
+  // rather than a leg the union only promises on some variants.
+  const termination = terminationOf(outcome);
+  const source = termination?.errorSource;
+  const code = termination?.errorCode;
   const where =
     source === "setup"
       ? "Turn failed before the model was invoked"

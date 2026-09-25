@@ -16,7 +16,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessageChunk } from "ai";
-import { turnOutcomeRecordZ } from "@/shared/turn-outcome";
 import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
 
 vi.mock("../harness/run-harness-turn", () => ({
@@ -41,8 +40,11 @@ vi.mock("../logger", () => ({
 
 // eslint-disable-next-line import/first
 import { runChatEngineLoop } from "../mcpjam-stream-handler";
-// eslint-disable-next-line import/first
-import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
+import {
+  pauseKindOf,
+  terminationOf,
+  turnOutcomeRecordZ,
+} from "@/shared/turn-outcome";
 
 const encoder = new TextEncoder();
 const sseResponse = (events: unknown[]) =>
@@ -137,7 +139,7 @@ describe("emulated engine outcome conformance", () => {
       modelAccess: "hosted",
     });
     // `completed` FORBIDS a termination block.
-    expect(outcome?.termination).toBeUndefined();
+    expect(terminationOf(outcome)).toBeUndefined();
     // The callback and the `"none"`-sink return value are the same record.
     expect(viaCallback).toEqual(outcome);
   });
@@ -150,7 +152,7 @@ describe("emulated engine outcome conformance", () => {
       cancellationSource: "client_disconnect",
     });
     expect(outcome?.lifecycle).toBe("cancelled");
-    expect(outcome?.termination?.cancellationSource).toBe("client_disconnect");
+    expect(terminationOf(outcome)?.cancellationSource).toBe("client_disconnect");
   });
 
   it("CANCELLED between steps: the silent-cancellation gate is marked", async () => {
@@ -164,7 +166,7 @@ describe("emulated engine outcome conformance", () => {
     const { outcome } = await runTurn({ abortSignal: controller.signal });
     expect(outcome?.lifecycle).toBe("cancelled");
     // No explicit source declared by this caller → the default.
-    expect(outcome?.termination?.cancellationSource).toBe("caller");
+    expect(terminationOf(outcome)?.cancellationSource).toBe("caller");
   });
 
   it("CANCELLED names WHO, from the signal's typed reason", async () => {
@@ -179,7 +181,7 @@ describe("emulated engine outcome conformance", () => {
       // runtime lost is not the browser going away.
       cancellationSource: "client_disconnect",
     });
-    expect(outcome?.termination?.cancellationSource).toBe("lease_lost");
+    expect(terminationOf(outcome)?.cancellationSource).toBe("lease_lost");
   });
 
   it("TIMED OUT: a fired deadline names its clock rather than reading as cancelled", async () => {
@@ -193,9 +195,9 @@ describe("emulated engine outcome conformance", () => {
       ),
     });
     expect(outcome?.lifecycle).toBe("timed_out");
-    expect(outcome?.termination?.timeout?.clock).toBe("turn");
-    expect(outcome?.termination?.timeout?.budgetMs).toBe(360_000);
-    expect(outcome?.termination?.cancellationSource).toBeUndefined();
+    expect(terminationOf(outcome)?.timeout?.clock).toBe("turn");
+    expect(terminationOf(outcome)?.timeout?.budgetMs).toBe(360_000);
+    expect(terminationOf(outcome)?.cancellationSource).toBeUndefined();
   });
 
   it("FAILED (setup): a failure BEFORE the handover is attributed to us", async () => {
@@ -227,14 +229,14 @@ describe("emulated engine outcome conformance", () => {
       } as never,
     });
     expect(outcome?.lifecycle).toBe("failed");
-    expect(outcome?.termination?.errorSource).toBe("setup");
+    expect(terminationOf(outcome)?.errorSource).toBe("setup");
   });
 
   it("FAILED (stream): a throw once the model has been asked is theirs", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED"));
     const { outcome } = await runTurn();
     expect(outcome?.lifecycle).toBe("failed");
-    expect(outcome?.termination?.errorSource).toBe("model");
+    expect(terminationOf(outcome)?.errorSource).toBe("model");
   });
 
   it("FAILED (step settled with an error, no throw) — the old silent 'completed'", async () => {
@@ -250,10 +252,10 @@ describe("emulated engine outcome conformance", () => {
     );
     const { outcome } = await runTurn();
     expect(outcome?.lifecycle).toBe("failed");
-    expect(outcome?.termination?.errorSource).toBe("model");
+    expect(terminationOf(outcome)?.errorSource).toBe("model");
     // A late `markCompleted` from the epilogue lost the race and is kept only
     // as diagnosis.
-    expect(outcome?.termination?.superseded?.map((s) => s.mark)).toEqual([
+    expect(terminationOf(outcome)?.superseded?.map((s) => s.mark)).toEqual([
       "completed",
     ]);
   });
@@ -267,7 +269,7 @@ describe("emulated engine outcome conformance", () => {
       scopeStepUpResume: { toolCallId: "not-in-history", resolve } as never,
     });
     expect(outcome?.lifecycle).toBe("paused");
-    expect(outcome?.paused).toEqual({ kind: "scope_step_up" });
+    expect(pauseKindOf(outcome)).toBe("scope_step_up");
     expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -306,7 +308,7 @@ describe("emulated engine outcome conformance", () => {
       requireToolApproval: true,
     } as never);
     expect(outcome?.lifecycle).toBe("paused");
-    expect(outcome?.paused).toEqual({ kind: "tool_approval" });
+    expect(pauseKindOf(outcome)).toBe("tool_approval");
   });
 
   it("PAUSED turns leave their dangling call OPEN — it is the resume handle", async () => {
@@ -332,7 +334,7 @@ describe("emulated engine outcome conformance", () => {
       } as never,
     });
     expect(outcome?.lifecycle).toBe("paused");
-    expect(outcome?.termination?.unresolvedToolCalls).toBeUndefined();
+    expect(terminationOf(outcome)?.unresolvedToolCalls).toBeUndefined();
   });
 
   it("UNRESOLVED CALLS on a cancelled turn are listed with their states", async () => {
@@ -375,7 +377,7 @@ describe("emulated engine outcome conformance", () => {
     });
     expect(outcome?.lifecycle).toBe("cancelled");
     // Only the call WITHOUT a result, and in history order.
-    expect(outcome?.termination?.unresolvedToolCalls).toEqual([
+    expect(terminationOf(outcome)?.unresolvedToolCalls).toEqual([
       { toolCallId: "call-1", toolName: "charge_card", state: "never_started" },
     ]);
   });

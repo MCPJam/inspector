@@ -12,17 +12,52 @@
  */
 import { describe, expect, it } from "vitest";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
+import type {
+  TimeoutMetadata,
+  TurnCancellationSource,
+  TurnOutcomeRecord,
+} from "@/shared/turn-outcome";
 import { getHostedTurnFailure } from "../hosted-turn-failure";
 
-const record = (
-  overrides: Partial<TurnOutcomeRecord> = {},
-): TurnOutcomeRecord => ({
+/**
+ * PER-VARIANT builders, not one `Partial<TurnOutcomeRecord>` spread.
+ *
+ * `TurnOutcomeRecord` is a discriminated union, so a single builder taking a
+ * partial and spreading it is exactly the shape the union exists to rule out:
+ * it can produce a `timed_out` with no clock. Each helper below asks for the
+ * legs its own lifecycle requires, so a test cannot construct a record the
+ * parser would refuse.
+ */
+const base = {
   contractVersion: 1,
-  lifecycle: "completed",
   runtime: { engine: "emulated", modelAccess: "hosted" },
   recordedAt: 1_750_000_000_000,
-  ...overrides,
+} as const;
+
+const completedRecord = (
+  extra: { finishReason?: string } = {},
+): TurnOutcomeRecord => ({ ...base, lifecycle: "completed", ...extra });
+
+const failedRecord = (
+  termination: NonNullable<
+    Extract<TurnOutcomeRecord, { lifecycle: "failed" }>["termination"]
+  > = {},
+): TurnOutcomeRecord => ({ ...base, lifecycle: "failed", termination });
+
+const timedOutRecord = (
+  timeout: TimeoutMetadata = { clock: "turn", budgetMs: 1000, elapsedMs: 1000 },
+): TurnOutcomeRecord => ({
+  ...base,
+  lifecycle: "timed_out",
+  termination: { timeout },
+});
+
+const cancelledRecord = (
+  cancellationSource: TurnCancellationSource = "caller",
+): TurnOutcomeRecord => ({
+  ...base,
+  lifecycle: "cancelled",
+  termination: { cancellationSource },
 });
 
 const okSpan: EvalTraceSpan = {
@@ -41,9 +76,9 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
     // the model and so recorded no error span — read as a clean success, with
     // a trace present and a message in history.
     const failure = getHostedTurnFailure({
-      outcome: record({
-        lifecycle: "failed",
-        termination: { errorSource: "setup", errorCode: "MCP_CONNECT_FAILED" },
+      outcome: failedRecord({
+        errorSource: "setup",
+        errorCode: "MCP_CONNECT_FAILED",
       }),
       turnTrace: { spans: [okSpan] },
       newMessageCount: 2,
@@ -56,11 +91,10 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
   it("a timed-out turn names its clock and budget", () => {
     expect(
       getHostedTurnFailure({
-        outcome: record({
-          lifecycle: "timed_out",
-          termination: {
-            timeout: { clock: "turn", budgetMs: 360_000, elapsedMs: 360_412 },
-          },
+        outcome: timedOutRecord({
+          clock: "turn",
+          budgetMs: 360_000,
+          elapsedMs: 360_412,
         }),
         turnTrace: { spans: [okSpan] },
         newMessageCount: 1,
@@ -71,9 +105,9 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
   it("a mid-stream failure is attributed to the stream, with its code", () => {
     expect(
       getHostedTurnFailure({
-        outcome: record({
-          lifecycle: "failed",
-          termination: { errorSource: "model", errorCode: "UPSTREAM_ERROR" },
+        outcome: failedRecord({
+          errorSource: "model",
+          errorCode: "UPSTREAM_ERROR",
         }),
         turnTrace: { spans: [okSpan] },
         newMessageCount: 1,
@@ -86,10 +120,7 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
     // the user ended. Cancellation policy belongs to the caller, not here.
     expect(
       getHostedTurnFailure({
-        outcome: record({
-          lifecycle: "cancelled",
-          termination: { cancellationSource: "client_disconnect" },
-        }),
+        outcome: cancelledRecord("client_disconnect"),
         turnTrace: { spans: [] },
         newMessageCount: 0,
       }),
@@ -99,10 +130,7 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
   it("a cancelled turn with NO trace is still not a failure", () => {
     expect(
       getHostedTurnFailure({
-        outcome: record({
-          lifecycle: "cancelled",
-          termination: { cancellationSource: "lease_lost" },
-        }),
+        outcome: cancelledRecord("lease_lost"),
         turnTrace: undefined,
         newMessageCount: 0,
       }),
@@ -112,10 +140,11 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
   it("a paused turn is not a failure", () => {
     expect(
       getHostedTurnFailure({
-        outcome: record({
-          lifecycle: "paused",
-          paused: { kind: "tool_approval" },
-        }),
+        outcome: {
+          ...base,
+          lifecycle: "paused" as const,
+          paused: { kind: "tool_approval" as const },
+        },
         turnTrace: { spans: [okSpan] },
         newMessageCount: 1,
       }),
@@ -127,7 +156,7 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
     // and produce nothing.
     expect(
       getHostedTurnFailure({
-        outcome: record({ lifecycle: "completed" }),
+        outcome: completedRecord(),
         turnTrace: { spans: [okSpan] },
         newMessageCount: 0,
       }),
@@ -137,7 +166,7 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
   it("a completed turn with content and no error spans passes", () => {
     expect(
       getHostedTurnFailure({
-        outcome: record({ lifecycle: "completed" }),
+        outcome: completedRecord(),
         turnTrace: { spans: [okSpan] },
         newMessageCount: 2,
       }),
@@ -152,7 +181,7 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
     // switch position.
     expect(
       getHostedTurnFailure({
-        outcome: record({ lifecycle: "completed" }),
+        outcome: completedRecord(),
         turnTrace: undefined,
         newMessageCount: 2,
       }),
@@ -162,10 +191,11 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
   it("a paused turn with no trace is not an engine failure either", () => {
     expect(
       getHostedTurnFailure({
-        outcome: record({
-          lifecycle: "paused",
-          paused: { kind: "tool_approval" },
-        }),
+        outcome: {
+          ...base,
+          lifecycle: "paused" as const,
+          paused: { kind: "tool_approval" as const },
+        },
         turnTrace: undefined,
         newMessageCount: 1,
       }),
@@ -177,7 +207,7 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
     // trace-absence branch does not lose the empty-reply one with it.
     expect(
       getHostedTurnFailure({
-        outcome: record({ lifecycle: "completed" }),
+        outcome: completedRecord(),
         turnTrace: undefined,
         newMessageCount: 0,
       }),

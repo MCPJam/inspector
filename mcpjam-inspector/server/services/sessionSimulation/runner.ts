@@ -1845,6 +1845,13 @@ class RecordedAssistantTurnError extends Error {
       turnTrace: PersistedTurnTrace | undefined;
       modelSource: SyntheticModelSource;
       harnessSessionCommit?: HarnessSessionCommitPayload;
+      /**
+       * Absent here — a turn RECORDED as failed is not a cancellation. Declared
+       * so this shape matches `drainAssistantTurn`'s return: the `.catch` below
+       * returns `error.turn`, so a field on one and not the other makes the
+       * awaited type a union that cannot be destructured.
+       */
+      cancelled?: true;
     },
   ) {
     super(message);

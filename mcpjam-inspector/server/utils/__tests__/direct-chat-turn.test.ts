@@ -41,6 +41,7 @@ import {
   runDirectChatTurn,
   withMcpToolOriginChunkMetadata,
 } from "../direct-chat-turn";
+import { pauseKindOf, terminationOf } from "@/shared/turn-outcome";
 
 describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
   beforeEach(() => {
@@ -1032,9 +1033,9 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
 
     const record = handle.outcome.record([]);
     expect(record.lifecycle).toBe("paused");
-    expect(record.paused).toEqual({ kind: "scope_step_up" });
+    expect(pauseKindOf(record)).toBe("scope_step_up");
     // A paused turn has not ended, so it names no termination.
-    expect(record.termination?.cancellationSource).toBeUndefined();
+    expect(terminationOf(record)?.cancellationSource).toBeUndefined();
   });
 
   it("COMPLETED: the same turn with nothing suspended still completes", async () => {
@@ -1064,6 +1065,6 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     const record = handle.outcome.record([]);
     expect(record.lifecycle).toBe("completed");
     expect(record.finishReason).toBe("stop");
-    expect(record.paused).toBeUndefined();
+    expect(pauseKindOf(record)).toBeUndefined();
   });
 });

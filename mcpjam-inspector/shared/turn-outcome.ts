@@ -153,45 +153,6 @@ export type TurnModelAccess = (typeof TURN_MODEL_ACCESS)[number];
 
 export const CURRENT_TURN_OUTCOME_CONTRACT_VERSION = 1 as const;
 
-export type TurnOutcomeRecord = {
-  contractVersion: 1;
-  lifecycle: TurnLifecycle;
-  runtime: {
-    engine: TurnRuntimeEngine;
-    /**
-     * The harness HOST id, kept even when `engine` is `"emulated"`. A scope
-     * step-up resume continues on the emulated engine by design, and a record
-     * that dropped the host would make that turn indistinguishable from a plain
-     * Playground turn on the same session.
-     */
-    harness?: string;
-    modelAccess: TurnModelAccess;
-  };
-  /** The provider's own word, kept separate from `lifecycle` on purpose. */
-  finishReason?: string;
-  termination?: {
-    timeout?: TimeoutMetadata;
-    cancellationSource?: TurnCancellationSource;
-    errorSource?: TurnErrorSource;
-    errorCode?: string;
-    errorHttpStatus?: number;
-    unresolvedToolCalls?: Array<{
-      toolCallId: string;
-      toolName: string;
-      state: UnresolvedToolCallState;
-    }>;
-    /**
-     * Terminal marks that arrived after the turn had already settled, kept for
-     * DIAGNOSIS rather than for policy. Nothing reads these to decide anything;
-     * they exist so "the deadline and the error both fired, which won?" is
-     * answerable from the row instead of from a log grep.
-     */
-    superseded?: Array<{ mark: TurnLifecycle; at: number }>;
-  };
-  paused?: { kind: TurnPauseKind };
-  recordedAt: number;
-};
-
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
@@ -215,15 +176,24 @@ export const unresolvedToolCallZ = z.strictObject({
   state: unresolvedToolCallStateZ,
 });
 
-export const turnTerminationZ = z.strictObject({
-  timeout: timeoutMetadataZ.optional(),
-  cancellationSource: turnCancellationSourceZ.optional(),
+/**
+ * The termination legs that make NO claim about which ending occurred. Every
+ * lifecycle that may carry a termination carries exactly these; the two legs
+ * that DO name an ending live on their own variants below.
+ */
+const terminationCommonShape = {
   errorSource: turnErrorSourceZ.optional(),
   errorCode: z.string().min(1).max(256).optional(),
   errorHttpStatus: z.number().int().min(100).max(599).optional(),
   // Bounded: a pathological turn must not be able to make a trace row
   // unwritable. The cap is generous next to any real step's fan-out.
   unresolvedToolCalls: z.array(unresolvedToolCallZ).max(256).optional(),
+  /**
+   * Terminal marks that arrived after the turn had already settled, kept for
+   * DIAGNOSIS rather than for policy. Deliberately NOT restricted per
+   * lifecycle: a late mark is evidence ABOUT the race, not a second claim
+   * about the ending, and is valid wherever a termination is.
+   */
   superseded: z
     .array(
       z.strictObject({
@@ -233,6 +203,21 @@ export const turnTerminationZ = z.strictObject({
     )
     .max(32)
     .optional(),
+};
+
+/** A termination on a lifecycle that names neither a clock nor a canceller. */
+export const neutralTerminationZ = z.strictObject(terminationCommonShape);
+
+/** A `timed_out` turn's termination: it MUST name the clock that fired. */
+export const timedOutTerminationZ = z.strictObject({
+  ...terminationCommonShape,
+  timeout: timeoutMetadataZ,
+});
+
+/** A `cancelled` turn's termination: it MUST name who stopped it. */
+export const cancelledTerminationZ = z.strictObject({
+  ...terminationCommonShape,
+  cancellationSource: turnCancellationSourceZ,
 });
 
 export const turnRuntimeZ = z.strictObject({
@@ -242,93 +227,124 @@ export const turnRuntimeZ = z.strictObject({
 });
 
 /**
- * The invariants, as refinements rather than as prose nobody runs.
+ * THE RECORD, as a discriminated union on `lifecycle`.
  *
- * Each one exists because its absence would let a record make a claim it cannot
- * back: a `timed_out` with no clock is the bare "aborted" this whole contract
- * replaces; a `completed` carrying a `termination` is a turn claiming both that
- * it finished and that something ended it.
+ * Every invariant this contract has is now STRUCTURAL rather than a refinement
+ * that only runs at parse time, so a producer inside this repo cannot construct
+ * a record that the parser would refuse — the compiler refuses it first. The
+ * wire shape is unchanged: each variant is the same object, and which keys are
+ * required is what differs.
+ *
+ * What each variant pins, and why:
+ *
+ * - `completed` carries NO `termination`. A turn cannot both have finished and
+ *   have been ended by something.
+ * - `timed_out` MUST carry `termination.timeout`. A timeout with no clock is
+ *   the bare "aborted" this whole contract exists to replace.
+ * - `cancelled` MUST carry `termination.cancellationSource`, so "cancelled"
+ *   cannot collapse a user Stop, a lost lease and a lost reservation into one
+ *   word.
+ * - `paused` MUST carry `paused.kind`, because a pause naming no rail sends a
+ *   reader to the wrong resume.
+ * - and the INVERSE of each falls out of the variants being strict: a
+ *   `timeout` on a `failed` record, or a `cancellationSource` on a `completed`
+ *   one, is not a harmless extra. Every reader keys off `lifecycle`, so such a
+ *   record would have one half answering "the turn ran out of time" and the
+ *   other "it did not".
+ *
+ * `interrupted` has NO producer — it is the slot for a process that died
+ * before writing anything, and a test says so.
  */
-export const turnOutcomeRecordZ = z
-  .strictObject({
-    contractVersion: z.literal(CURRENT_TURN_OUTCOME_CONTRACT_VERSION),
-    lifecycle: turnLifecycleZ,
-    runtime: turnRuntimeZ,
-    finishReason: z.string().min(1).max(128).optional(),
-    termination: turnTerminationZ.optional(),
-    paused: z.strictObject({ kind: turnPauseKindZ }).optional(),
-    recordedAt: z.number().int().nonnegative(),
-  })
-  .superRefine((record, ctx) => {
-    if (record.lifecycle === "timed_out" && !record.termination?.timeout) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["termination", "timeout"],
-        message: "timed_out requires termination.timeout naming its clock",
-      });
-    }
-    if (
-      record.lifecycle === "cancelled" &&
-      !record.termination?.cancellationSource
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["termination", "cancellationSource"],
-        message: "cancelled requires termination.cancellationSource",
-      });
-    }
-    if (record.lifecycle === "paused" && !record.paused) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["paused"],
-        message: "paused requires paused.kind",
-      });
-    }
-    if (record.lifecycle === "completed" && record.termination) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["termination"],
-        message: "completed forbids termination",
-      });
-    }
-    // AND THE INVERSE, for each of the three fields that NAME a lifecycle.
-    //
-    // A `timeout` on a `failed` record, or a `cancellationSource` on a
-    // `completed` one, is not a harmless extra: every reader here keys off
-    // `lifecycle`, so a record carrying both would have one half answering
-    // "the turn ran out of time" and the other "it did not". The producer
-    // that emits one is asserting two different endings for the same turn,
-    // and the parse is the only place that can refuse the claim.
-    //
-    // `termination.superseded` is deliberately NOT restricted this way — a
-    // late mark arriving after the turn already settled is diagnosis about
-    // the race, valid under every lifecycle.
-    if (record.termination?.timeout && record.lifecycle !== "timed_out") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["termination", "timeout"],
-        message: "termination.timeout is only valid on a timed_out turn",
-      });
-    }
-    if (
-      record.termination?.cancellationSource &&
-      record.lifecycle !== "cancelled"
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["termination", "cancellationSource"],
-        message:
-          "termination.cancellationSource is only valid on a cancelled turn",
-      });
-    }
-    if (record.paused && record.lifecycle !== "paused") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["paused"],
-        message: "paused is only valid on a paused turn",
-      });
-    }
-  });
+const outcomeCommonShape = {
+  contractVersion: z.literal(CURRENT_TURN_OUTCOME_CONTRACT_VERSION),
+  runtime: turnRuntimeZ,
+  /** The provider's own word, kept separate from `lifecycle` on purpose. */
+  finishReason: z.string().min(1).max(128).optional(),
+  recordedAt: z.number().int().nonnegative(),
+};
+
+export const turnOutcomeRecordZ = z.discriminatedUnion("lifecycle", [
+  z.strictObject({
+    ...outcomeCommonShape,
+    lifecycle: z.literal("completed"),
+  }),
+  z.strictObject({
+    ...outcomeCommonShape,
+    lifecycle: z.literal("failed"),
+    termination: neutralTerminationZ.optional(),
+  }),
+  z.strictObject({
+    ...outcomeCommonShape,
+    lifecycle: z.literal("timed_out"),
+    termination: timedOutTerminationZ,
+  }),
+  z.strictObject({
+    ...outcomeCommonShape,
+    lifecycle: z.literal("cancelled"),
+    termination: cancelledTerminationZ,
+  }),
+  z.strictObject({
+    ...outcomeCommonShape,
+    lifecycle: z.literal("paused"),
+    termination: neutralTerminationZ.optional(),
+    paused: z.strictObject({ kind: turnPauseKindZ }),
+  }),
+  z.strictObject({
+    ...outcomeCommonShape,
+    lifecycle: z.literal("interrupted"),
+    termination: neutralTerminationZ.optional(),
+  }),
+]);
+
+/**
+ * DERIVED from the schema, not declared beside it. The previous hand-written
+ * type allowed `timed_out` with no timeout, `cancelled` with no source, and
+ * `completed` carrying a termination: the refinements caught those at parse
+ * time, but a producer returning this type got no compiler protection at all.
+ */
+export type TurnOutcomeRecord = z.infer<typeof turnOutcomeRecordZ>;
+
+/** One row of `termination.unresolvedToolCalls`. */
+export type TurnOutcomeUnresolvedToolCall = z.infer<typeof unresolvedToolCallZ>;
+
+/** A termination block, whichever lifecycle it belongs to. */
+export type TurnTermination = NonNullable<
+  Extract<TurnOutcomeRecord, { lifecycle: "failed" }>["termination"]
+>;
+
+/**
+ * A READ-ONLY projection of a termination for consumers that do not care which
+ * lifecycle produced the record — every leg optional, DERIVED from the two
+ * variants that carry a lifecycle-naming leg.
+ *
+ * Writers still go through the union, so this cannot be used to build an
+ * invalid record; it only spares a reader from narrowing when it genuinely
+ * wants "whatever this turn recorded". Narrowing on `lifecycle` remains the
+ * only thing that PROVES a particular leg is present.
+ */
+export type TurnTerminationView = Partial<
+  z.infer<typeof timedOutTerminationZ> & z.infer<typeof cancelledTerminationZ>
+>;
+
+/**
+ * The record's termination, whichever variant it is, or `undefined`.
+ *
+ * Takes an OPTIONAL record because most readers hold one that way — a turn that
+ * produced no record at all is the `unrecorded` case, not a failure.
+ */
+export function terminationOf(
+  record: TurnOutcomeRecord | undefined,
+): TurnTerminationView | undefined {
+  if (!record) return undefined;
+  return "termination" in record ? record.termination : undefined;
+}
+
+/** The rail a paused turn is waiting on, or `undefined` when it is not paused. */
+export function pauseKindOf(
+  record: TurnOutcomeRecord | undefined,
+): TurnPauseKind | undefined {
+  return record?.lifecycle === "paused" ? record.paused.kind : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Guards + readers

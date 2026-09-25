@@ -32,8 +32,17 @@ const fixtures: Fixtures = JSON.parse(
   ),
 );
 
+/**
+ * Builds WIRE-SHAPED input, deliberately untyped.
+ *
+ * These rows exist to be REFUSED, so they cannot be `Partial<TurnOutcomeRecord>`
+ * — the record is a discriminated union now, and a partial of it cannot express
+ * `timed_out` with no clock, which is the very thing several of these assert the
+ * parser rejects. Anything reaching `/ingest-chat` is `unknown`; typing this
+ * helper as a record would only be pretending otherwise.
+ */
 const base = (
-  overrides: Partial<TurnOutcomeRecord> = {},
+  overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
   contractVersion: CURRENT_TURN_OUTCOME_CONTRACT_VERSION,
   lifecycle: "completed",

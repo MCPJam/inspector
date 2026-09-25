@@ -123,6 +123,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { turnOutcomeRecordZ } from "@/shared/turn-outcome";
+import { terminationOf } from "@/shared/turn-outcome";
 import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
 import { createCancellationReason } from "../../stream-turn-driver";
 
@@ -201,7 +202,7 @@ describe("harness engine outcome conformance", () => {
       modelAccess: "hosted",
     });
     expect(outcome?.finishReason).toBe("stop");
-    expect(outcome?.termination).toBeUndefined();
+    expect(terminationOf(outcome)).toBeUndefined();
     expect(viaCallback).toEqual(outcome);
   });
 
@@ -217,7 +218,7 @@ describe("harness engine outcome conformance", () => {
       cancellationSource: "client_disconnect",
     });
     expect(outcome?.lifecycle).toBe("cancelled");
-    expect(outcome?.termination?.cancellationSource).toBe("client_disconnect");
+    expect(terminationOf(outcome)?.cancellationSource).toBe("client_disconnect");
   });
 
   it("CANCELLED by a lost lease names the lease, not the user", async () => {
@@ -232,7 +233,7 @@ describe("harness engine outcome conformance", () => {
       abortSignal: controller.signal,
       cancellationSource: "client_disconnect",
     });
-    expect(outcome?.termination?.cancellationSource).toBe("lease_lost");
+    expect(terminationOf(outcome)?.cancellationSource).toBe("lease_lost");
   });
 
   it("TIMED OUT: a fired deadline names its clock instead of reading as cancelled", async () => {
@@ -246,8 +247,8 @@ describe("harness engine outcome conformance", () => {
     );
     const { outcome } = await runOutcome({ abortSignal: controller.signal });
     expect(outcome?.lifecycle).toBe("timed_out");
-    expect(outcome?.termination?.timeout?.clock).toBe("turn");
-    expect(outcome?.termination?.cancellationSource).toBeUndefined();
+    expect(terminationOf(outcome)?.timeout?.clock).toBe("turn");
+    expect(terminationOf(outcome)?.cancellationSource).toBeUndefined();
   });
 
   it("CANCELLED mid-stream leaves a DISPATCHED tool call as outcome_unknown", async () => {
@@ -283,7 +284,7 @@ describe("harness engine outcome conformance", () => {
 
     const { outcome } = await runOutcome({ abortSignal: controller.signal });
     expect(outcome?.lifecycle).toBe("cancelled");
-    expect(outcome?.termination?.unresolvedToolCalls).toEqual([
+    expect(terminationOf(outcome)?.unresolvedToolCalls).toEqual([
       {
         toolCallId: "call-1",
         toolName: "charge_card",
@@ -300,7 +301,7 @@ describe("harness engine outcome conformance", () => {
     // how a wiring bug gets filed against the model vendor.
     const { outcome, viaCallback } = await runOutcome({ projectId: undefined });
     expect(outcome?.lifecycle).toBe("failed");
-    expect(outcome?.termination?.errorSource).toBe("setup");
+    expect(terminationOf(outcome)?.errorSource).toBe("setup");
     expect(viaCallback).toEqual(outcome);
   });
 
