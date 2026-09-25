@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { swarmTargetModelDefinition } from "../swarm-runner";
+import {
+  swarmTargetBackendSelection,
+  swarmTargetModelDefinition,
+} from "../swarm-runner";
 
 const none = { provider: "none", model: "none" } as const;
 
@@ -77,5 +80,69 @@ describe("swarmTargetModelDefinition", () => {
         },
       }).hosted,
     ).toBe(true);
+  });
+});
+
+describe("swarmTargetBackendSelection", () => {
+  const MODEL = "anthropic/claude-haiku-4.5";
+
+  it("legacy snapshot: nothing to forward", () => {
+    expect(swarmTargetBackendSelection({ modelId: MODEL })).toBeUndefined();
+  });
+
+  it("forwards a hosted selection with its fallback", () => {
+    const selection = {
+      modelId: MODEL,
+      source: "hosted" as const,
+      fallback: { provider: "openrouter" as const, model: "none" as const },
+    };
+    expect(
+      swarmTargetBackendSelection({
+        modelId: MODEL,
+        resolvedSelection: selection,
+      }),
+    ).toEqual(selection);
+  });
+
+  it("forwards an org selection with its connectionRef", () => {
+    const selection = {
+      modelId: MODEL,
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_1" },
+      fallback: none,
+    };
+    expect(
+      swarmTargetBackendSelection({
+        modelId: MODEL,
+        resolvedSelection: selection,
+      }),
+    ).toEqual(selection);
+  });
+
+  it("never forwards a local selection", () => {
+    expect(
+      swarmTargetBackendSelection({
+        modelId: "openai/gpt-4o",
+        resolvedSelection: {
+          modelId: "openai/gpt-4o",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "openai" },
+          fallback: none,
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not forward a selection for a different model than the pinned one", () => {
+    expect(
+      swarmTargetBackendSelection({
+        modelId: MODEL,
+        resolvedSelection: {
+          modelId: "anthropic/claude-sonnet-4.5",
+          source: "hosted",
+          fallback: none,
+        },
+      }),
+    ).toBeUndefined();
   });
 });

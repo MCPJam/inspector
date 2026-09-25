@@ -4,6 +4,9 @@
  * matches the hosted catalog first, a `hosted` one goes to the hosted rail,
  * a legacy bare id keeps hosted-first, and a connection that cannot be
  * reached refuses with `credential_missing` before any request is built.
+ * A hosted or org selection is forwarded to the backend as `modelSelection`
+ * (so its resolver re-checks the connection and records the requested
+ * selection); a local selection and a legacy id never are.
  *
  * Mocks mirror `evals-runner.test.ts`.
  */
@@ -460,6 +463,243 @@ describe("eval runner reads saved model selections", () => {
       );
       expect(fetchMock).not.toHaveBeenCalled();
       expect(createLlmModelMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("forwards the saved selection to the backend as modelSelection", () => {
+    /** Every Convex request body the run sent, by path. */
+    function allRequestBodies() {
+      return fetchMock.mock.calls
+        .filter(([url]) =>
+          String(url).startsWith("https://example.convex.site/"),
+        )
+        .map(([url, init]) => ({
+          path: String(url).slice("https://example.convex.site".length),
+          body: JSON.parse((init as { body?: string }).body ?? "{}"),
+        }));
+    }
+
+    it("org → /stream/org carries the selection with its connectionRef", async () => {
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const body = requestTo("/stream/org");
+      expect(body).toMatchObject({
+        model: SAME_ID,
+        providerKey: "openrouter",
+        projectId: "project-1",
+      });
+      expect(body.modelSelection).toEqual(ORG_OPENROUTER);
+      expect(body.modelSelection.connectionRef).toEqual({
+        kind: "orgProvider",
+        id: "orgprov_openrouter_1",
+      });
+    });
+
+    it("org on a local-runtime-eligible provider → /stream/org/resolve carries it too", async () => {
+      const ORG_OLLAMA: ModelSelection = {
+        modelId: "ollama/llama3",
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_ollama_1" },
+        nativeModelId: "llama3",
+        fallback: { provider: "none", model: "none" },
+      };
+      fetchMock.mockImplementation(async (url: string) =>
+        url === "https://example.convex.site/stream/org/resolve"
+          ? {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                ok: true,
+                runtimeLocation: "cloud",
+                providerKey: "ollama",
+              }),
+              text: async () => "",
+            }
+          : createBackendStreamResponse(),
+      );
+      await run(
+        { model: "llama3", provider: "ollama", selection: ORG_OLLAMA },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const resolveBody = requestTo("/stream/org/resolve");
+      expect(resolveBody).toMatchObject({
+        projectId: "project-1",
+        providerKey: "ollama",
+        model: "llama3",
+      });
+      expect(resolveBody.modelSelection).toEqual(ORG_OLLAMA);
+      expect(requestTo("/stream/org")?.modelSelection).toEqual(ORG_OLLAMA);
+    });
+
+    it("hosted → /stream carries the selection with its fallback", async () => {
+      const HOSTED_WITH_FALLBACK: ModelSelection = {
+        ...HOSTED,
+        fallback: { provider: "openrouter", model: "none" },
+      };
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: HOSTED_WITH_FALLBACK,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const body = requestTo("/stream");
+      expect(body).toMatchObject({ model: SAME_ID, projectId: "project-1" });
+      expect(body.modelSelection).toEqual(HOSTED_WITH_FALLBACK);
+      expect(body.modelSelection.fallback).toEqual({
+        provider: "openrouter",
+        model: "none",
+      });
+    });
+
+    it("a legacy bare id sends no modelSelection", async () => {
+      await run(
+        { model: SAME_ID, provider: "openrouter" },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const bodies = allRequestBodies();
+      expect(bodies.map((b) => b.path)).toContain("/stream");
+      for (const { body } of bodies) {
+        expect(body).not.toHaveProperty("modelSelection");
+      }
+    });
+
+    it("a local selection is never sent to the backend", async () => {
+      const LOCAL_OPENAI: ModelSelection = {
+        modelId: "openai/gpt-4o",
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "openai" },
+        fallback: { provider: "none", model: "none" },
+      };
+      await run(
+        { model: "openai/gpt-4o", provider: "openai", selection: LOCAL_OPENAI },
+        {
+          modelApiKeys: { openai: "sk-local" },
+          orgModelConfigTarget: { projectId: "project-1" },
+        },
+      );
+      expect(createLlmModelMock).toHaveBeenCalled();
+      for (const { body } of allRequestBodies()) {
+        expect(body).not.toHaveProperty("modelSelection");
+      }
+      expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(
+        "localProvider",
+      );
+    });
+
+    it("a selection with a field outside the shape (a key) is refused, not forwarded", async () => {
+      const errorSpy = vi.spyOn(logger, "error");
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: {
+            ...ORG_OPENROUTER,
+            apiKey: "sk-should-never-leave",
+          } as ModelSelection,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const failure = errorSpy.mock.calls.find(
+        ([message]) => message === "[evals] Test case failed:",
+      )?.[1] as { name?: string; message?: string } | undefined;
+      errorSpy.mockRestore();
+      expect(failure?.name).toBe("ModelSelectionValidationError");
+      expect(failure?.message).toContain("apiKey");
+      expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(
+        "sk-should-never-leave",
+      );
+    });
+
+    it("is sent unconditionally: no capability probe gates it", async () => {
+      // The deployed backends read request fields by name and ignore unknown
+      // ones, so there is nothing to gate on (unlike the Convex writers, whose
+      // validators reject unknown args and are gated on
+      // `getCapabilities.modelSelections`).
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream/org")?.modelSelection).toEqual(ORG_OPENROUTER);
+      const probed = [
+        ...convexClient.query.mock.calls,
+        ...convexClient.action.mock.calls,
+        ...convexClient.mutation.mock.calls,
+      ].some(([name]) => String(name).includes("getCapabilities"));
+      expect(probed).toBe(false);
+    });
+  });
+
+  describe("eval attribution ids on the backend request", () => {
+    /** A suite run: its iteration row was pre-created and is found by case. */
+    function precreatedSuiteIteration() {
+      convexClient.query.mockImplementation(async (name: string) =>
+        name === "testSuites:getTestSuiteRunDetails"
+          ? {
+              iterations: [
+                {
+                  _id: "iter-suite-1",
+                  testCaseId: "case-1",
+                  iterationNumber: 1,
+                },
+              ],
+            }
+          : { status: "running" },
+      );
+    }
+
+    it("a suite run's /stream body names the iteration and the run", async () => {
+      precreatedSuiteIteration();
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: HOSTED },
+        { runId: "run-1", orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream")).toMatchObject({
+        evalIterationId: "iter-suite-1",
+        evalRunId: "run-1",
+        modelSelection: HOSTED,
+      });
+    });
+
+    it("a suite run's /stream/org body names the iteration and the run", async () => {
+      precreatedSuiteIteration();
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: ORG_OPENROUTER },
+        { runId: "run-1", orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      expect(requestTo("/stream/org")).toMatchObject({
+        providerKey: "openrouter",
+        evalIterationId: "iter-suite-1",
+        evalRunId: "run-1",
+        modelSelection: ORG_OPENROUTER,
+      });
+    });
+
+    it("a legacy suite case still names its iteration and run", async () => {
+      precreatedSuiteIteration();
+      await run(
+        { model: SAME_ID, provider: "openrouter" },
+        { runId: "run-1", orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const body = requestTo("/stream");
+      expect(body).toMatchObject({
+        evalIterationId: "iter-suite-1",
+        evalRunId: "run-1",
+      });
+      expect(body).not.toHaveProperty("modelSelection");
+    });
+
+    it("a quick run (no suite run) names only its iteration", async () => {
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: HOSTED },
+        { orgModelConfigTarget: { projectId: "project-1" } },
+      );
+      const body = requestTo("/stream");
+      expect(body).toMatchObject({ evalIterationId: "iter-1" });
+      expect(body).not.toHaveProperty("evalRunId");
     });
   });
 });
