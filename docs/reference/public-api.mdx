@@ -188,7 +188,7 @@ is stable and machine-readable; `message` is human-readable and may change;
 | `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
 | `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
-| `INTERNAL_ERROR` | 500 | Something failed on our side |
+| `INTERNAL_ERROR` | 500 | Something failed on our side — `details.requestId` carries a reference id that matches the `x-request-id` response header; include it when contacting support |
 
 New error codes may be **added** over time; treat unknown codes as
 non-retryable failures unless the HTTP status says otherwise.
