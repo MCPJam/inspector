@@ -137,13 +137,13 @@ export function SessionListChrome({
 }) {
   return (
     <div className="shrink-0">
-      <div className="px-3 pt-2 pb-1.5">
+      <div className="px-4 pt-3 pb-2">
         <div className="text-sm font-semibold leading-5 text-card-foreground">
           {countLabel}
         </div>
       </div>
       {children ? (
-        <div className="flex min-h-9 items-center gap-1.5 border-b border-border px-3">
+        <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-2">
           {children}
         </div>
       ) : null}

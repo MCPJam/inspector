@@ -248,6 +248,81 @@ describe("ScenarioUsagePanel rating filter", () => {
     ).toBe(false);
   });
 
+  it("names each filter while nothing is picked, as the frame does", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+
+    expect(
+      screen.getByTestId("scenario-sessions-persona-filter")
+    ).toHaveTextContent("Personas");
+    expect(
+      screen.getByTestId("scenario-sessions-rating-filter")
+    ).toHaveTextContent("Ratings");
+  });
+
+  it("filters by persona — the session's sentiment, as Findings groups it", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-persona-filter"));
+
+    // Findings' persona titles, worst first.
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All personas",
+      "Gave up",
+      "Frustrated users",
+      "Neutral users",
+      "Satisfied users",
+      "Uncategorized users",
+    ]);
+
+    fireEvent.click(screen.getByText("Frustrated users"));
+
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "sentiment", value: "frustrated" },
+        expect.objectContaining({ key: "synthetic" }),
+      ])
+    );
+    expect(
+      screen.getByTestId("scenario-sessions-persona-filter")
+    ).toHaveTextContent("Frustrated users");
+  });
+
+  it("composes the persona and rating filters", () => {
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    fireEvent.click(screen.getByTestId("scenario-sessions-persona-filter"));
+    fireEvent.click(screen.getByText("Satisfied users"));
+    fireEvent.click(screen.getByTestId("scenario-sessions-rating-filter"));
+    fireEvent.click(screen.getByText("Low (≤2)"));
+
+    expect(lastFilters().chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "sentiment", value: "satisfied" },
+        { kind: "dimension", key: "feedbackBucket", value: "negative" },
+      ])
+    );
+    // The list's empty-state copy sees both picks, and still not the policy.
+    const listProps = threadListMock.mock.calls.at(-1)?.[0] as {
+      filterState?: { chips: Array<{ key?: string }> };
+    };
+    expect(listProps.filterState?.chips.map((c) => c.key)).toEqual([
+      "feedbackBucket",
+      "sentiment",
+    ]);
+  });
+
+  it("keeps the filter pills at the frame's 28px, not the trigger's 36px default", () => {
+    // The design-system trigger sizes itself through `data-[size=default]:h-9`,
+    // which out-ranks a bare `h-7`.
+    render(<ScenarioUsagePanel scenario={SCENARIO} />);
+    for (const id of [
+      "scenario-sessions-persona-filter",
+      "scenario-sessions-rating-filter",
+    ]) {
+      const classes = screen.getByTestId(id).className.split(/\s+/);
+      expect(classes).toContain("data-[size=default]:h-7");
+      expect(classes).not.toContain("data-[size=default]:h-9");
+    }
+  });
+
   it("re-checks the returned page so a live update cannot leak through", () => {
     useUsageInsightsMock.mockReturnValue({
       threads: [

@@ -31,6 +31,11 @@ import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ScenarioSessionsMetricStrip } from "@/components/scenarios/scenario-sessions-metric-strip";
+import {
+  SENTIMENT_ORDER,
+  SENTIMENT_TITLE,
+} from "@/components/scenarios/findings/scenario-findings-derivation";
+import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
 
 interface ScenarioUsagePanelProps {
   scenario: ScenarioSettings;
@@ -99,6 +104,24 @@ const RATING_FILTER_OPTIONS: Record<
 };
 
 /**
+ * The Personas filter: a User Testing persona is the session's SENTIMENT, the
+ * same closed five-value verdict Findings builds its persona tabs from, under
+ * the same titles and in the same worst-first order — so "Frustrated users"
+ * here is exactly the tab of that name there. An unanalyzed session has no
+ * sentiment and so matches no persona; it shows under "All personas" only.
+ */
+type PersonaFilterValue = "all" | SessionSentiment;
+
+/**
+ * The filter pills' trigger. `data-[size=default]:h-7` and not just `h-7`: the
+ * design-system trigger sets its height through that same variant, which
+ * out-ranks a bare `h-7` and rendered the pill at 36px — filling the bar edge
+ * to edge instead of sitting inside it as the frame draws.
+ */
+const FILTER_TRIGGER_CLASS =
+  "h-7 data-[size=default]:h-7 w-auto min-w-0 gap-1.5 px-2.5 py-0 text-xs";
+
+/**
  * Fold the rating selection into a base filter.
  *
  * `none` is a PRESET (`no_feedback`), not a bucket chip: "nobody rated this"
@@ -132,6 +155,21 @@ function buildRatingFilter(
     chips: [
       ...base.chips,
       { kind: "dimension" as const, key: "feedbackBucket" as const, value },
+    ],
+  };
+}
+
+/** Add the persona pick to a filter, as a `sentiment` dimension chip. */
+function withPersonaFilter<T extends typeof SESSIONS_TRAFFIC_FILTER>(
+  persona: PersonaFilterValue,
+  filter: T,
+): T {
+  if (persona === "all") return filter;
+  return {
+    ...filter,
+    chips: [
+      ...filter.chips,
+      { kind: "dimension" as const, key: "sentiment" as const, value: persona },
     ],
   };
 }
@@ -176,14 +214,23 @@ export function ScenarioUsagePanel({
   const ratingFilter = ratingOptions.some((o) => o.value === ratingChoice)
     ? ratingChoice
     : "all";
+  const [personaFilter, setPersonaFilter] = useState<PersonaFilterValue>("all");
   const sessionsFilter = useMemo(
-    () => buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
-    [ratingFilter],
+    () =>
+      withPersonaFilter(
+        personaFilter,
+        buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
+      ),
+    [ratingFilter, personaFilter],
   );
   // The user-visible half of the filter, for the list's empty-state copy.
   const ratingOnlyFilter = useMemo(
-    () => buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
-    [ratingFilter],
+    () =>
+      withPersonaFilter(
+        personaFilter,
+        buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
+      ),
+    [ratingFilter, personaFilter],
   );
 
   const { threads } = useUsageInsights({
@@ -272,6 +319,34 @@ export function ScenarioUsagePanel({
                 })}
               >
                 <Select
+                  value={personaFilter}
+                  onValueChange={(value) =>
+                    setPersonaFilter(value as PersonaFilterValue)
+                  }
+                >
+                  <SelectTrigger
+                    data-testid="scenario-sessions-persona-filter"
+                    className={FILTER_TRIGGER_CLASS}
+                    aria-label="Filter sessions by persona"
+                  >
+                    {/* The frame names the FILTER while nothing is picked,
+                        and the pick once something is. */}
+                    <SelectValue>
+                      {personaFilter === "all"
+                        ? "Personas"
+                        : SENTIMENT_TITLE[personaFilter]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All personas</SelectItem>
+                    {SENTIMENT_ORDER.map((sentiment) => (
+                      <SelectItem key={sentiment} value={sentiment}>
+                        {SENTIMENT_TITLE[sentiment]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
                   value={ratingFilter}
                   onValueChange={(value) =>
                     setRatingFilter(value as RatingFilterValue)
@@ -279,10 +354,15 @@ export function ScenarioUsagePanel({
                 >
                   <SelectTrigger
                     data-testid="scenario-sessions-rating-filter"
-                    className="h-7 w-auto min-w-0 gap-1.5 px-2.5 text-xs"
+                    className={FILTER_TRIGGER_CLASS}
                     aria-label="Filter sessions by rating"
                   >
-                    <SelectValue placeholder="Ratings" />
+                    <SelectValue>
+                      {ratingFilter === "all"
+                        ? "Ratings"
+                        : ratingOptions.find((o) => o.value === ratingFilter)
+                            ?.label}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {ratingOptions.map((option) => (
