@@ -3518,11 +3518,7 @@ export function TestTemplateEditor({
       if (compareRunUserStoppedRef.current) {
         toast.message("Compare run stopped.");
       } else if (successfulCount === totalRequestedModels) {
-        toast.success(
-          `Compare run finished across ${totalRequestedModels} model${
-            totalRequestedModels === 1 ? "" : "s"
-          }.`,
-        );
+        toast.success("Run finished.");
       } else if (successfulCount > 0) {
         toast.error(
           `${successfulCount}/${totalRequestedModels} model${

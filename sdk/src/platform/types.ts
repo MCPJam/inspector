@@ -3245,6 +3245,18 @@ export interface PlatformEvalCasesGenerated {
   skipped?: Array<{ title: string; error: string }>;
 }
 
+/**
+ * The reply to an import. Same shape as generation, because both finish the
+ * same authoring job.
+ *
+ * `reviewUrl` appears only when something was skipped: it opens the app's
+ * Import page on exactly those drafts, so a person can finish one case without
+ * the caller re-sending — and paying for — the whole document.
+ */
+export interface PlatformEvalCasesImported extends PlatformEvalCasesGenerated {
+  reviewUrl?: string;
+}
+
 /** What produced a stored cost, or why there is none. */
 export interface PlatformEvalIterationCostBasis {
   status: "not_reported" | "provider_reported" | "estimated";
