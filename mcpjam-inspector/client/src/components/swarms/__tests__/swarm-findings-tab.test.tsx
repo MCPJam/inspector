@@ -19,7 +19,7 @@ import {
   isLaunchFailuresUnavailable,
   SwarmFindingsTab,
 } from "../findings/swarm-findings-tab";
-import { reportBoundaryError } from "@/lib/error-reporting";
+import { reportBoundaryError, reportCaught } from "@/lib/error-reporting";
 import { EMPTY_STAGE_COPY } from "../findings/findings-goal-inspect";
 import { SwarmRunDetail } from "../swarm-run-detail";
 
@@ -116,6 +116,7 @@ const { mockUseGoalOutcomeDrilldown, launchFailuresState } = vi.hoisted(() => ({
 vi.mock("@/lib/error-reporting", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/error-reporting")>()),
   reportBoundaryError: vi.fn(),
+  reportCaught: vi.fn(),
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
@@ -768,15 +769,25 @@ describe("SwarmFindingsTab", () => {
       // The dark ship is the state this read is built to sit in, on a page
       // opened again and again: it must not file an error each time.
       expect(reportBoundaryError).not.toHaveBeenCalled();
+      expect(reportCaught).not.toHaveBeenCalled();
     });
 
-    it("files nothing for the redacted production form either", () => {
+    it("keeps the redacted form off the error path, with one info report per page load", () => {
+      // Redacted, it could be the dark ship or a real crash. Not an error on
+      // every visit, but not invisible either.
       launchFailuresState.value = () => {
         throw REDACTED;
       };
-      render(renderTab(deadWave()));
+      const { unmount } = render(renderTab(deadWave()));
+      unmount();
+      render(renderTab(deadWaveOf("run-z")));
 
       expect(reportBoundaryError).not.toHaveBeenCalled();
+      expect(reportCaught).toHaveBeenCalledTimes(1);
+      expect(reportCaught).toHaveBeenCalledWith(REDACTED, {
+        source: "swarm_launch_failures_redacted",
+        level: "info",
+      });
     });
 
     it("still reports a failure it does not expect", () => {

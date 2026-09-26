@@ -40,6 +40,7 @@ import {
 } from "@/lib/swarm-api";
 import { describeLaunchFailures } from "@/components/swarms/swarm-session-not-run";
 import { isConvexQueryUnavailable } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
@@ -182,6 +183,7 @@ export function SwarmFindingsTab({
       key={runKey}
       fallback={null}
       isExpectedError={isLaunchFailuresUnavailable}
+      onError={reportAmbiguousLaunchFailuresError}
     >
       <LaunchFailuresRead runIds={runIds} onRead={receiveLaunchFailures} />
     </ErrorBoundary>
@@ -337,6 +339,28 @@ export function isLaunchFailuresUnavailable(error: Error): boolean {
   if (!message.includes(`Q(${SWARM_QUERIES.listRunLaunchFailures})`))
     return false;
   return isConvexQueryUnavailable(error) || message.includes("Server Error");
+}
+
+/** Set once the redacted form has been reported on this page load. */
+let reportedRedactedLaunchFailures = false;
+
+/**
+ * The redacted production form is ambiguous: a query not deployed yet, or a
+ * real crash inside it, which the redaction makes impossible to tell apart.
+ * It stays off the error path, so a deploy window does not file an issue per
+ * visit, but one info-level report per page load keeps a real crash visible
+ * once the backend has shipped. The DEV "not deployed" shape says exactly
+ * what it is and is never reported.
+ */
+export function reportAmbiguousLaunchFailuresError(error: Error): void {
+  if (reportedRedactedLaunchFailures) return;
+  if (!isLaunchFailuresUnavailable(error) || isConvexQueryUnavailable(error))
+    return;
+  reportedRedactedLaunchFailures = true;
+  reportCaught(error, {
+    source: "swarm_launch_failures_redacted",
+    level: "info",
+  });
 }
 
 function LaunchFailuresRead({
