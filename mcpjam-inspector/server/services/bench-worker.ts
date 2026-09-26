@@ -1482,8 +1482,15 @@ async function defaultRunEvalCell(
       // child ends up filed under the wrong benchmark.
       source: "benchmark",
       benchmarkRunId: job.benchmarkRunId,
-      ...(cell.environmentId ? { environmentId: cell.environmentId } : {}),
-      ...(cell.namedHostId ? { namedHostId: cell.namedHostId } : {}),
+      // An environment cell runs through the environment core. The exam
+      // suite does not run environments, so the launch is ephemeral: the
+      // backend resolves the cell's environment without attaching it. The
+      // host pin is only the fallback for a backend that sends none.
+      ...(cell.environmentId
+        ? { environmentId: cell.environmentId, ephemeralEnvironment: true }
+        : cell.namedHostId
+          ? { namedHostId: cell.namedHostId }
+          : {}),
       // The CELL's pinned repetition count, not the suite's `runs` default.
       // The scorer's `minimumRepetitionsPerRequiredCell` is a publication
       // floor, so a cell declared at 3 that runs once is not merely thinner

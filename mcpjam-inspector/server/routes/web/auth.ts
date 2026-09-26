@@ -1,3 +1,4 @@
+import { serverCheckScope, withServerCheckSignal } from "../../utils/server-check-scope.js";
 import {
   connectionKey,
   type McpToolConnection,
@@ -32,6 +33,7 @@ import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
@@ -81,14 +83,17 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
+import { mapWebBoundaryError } from "./boundary-error.js";
 import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
+  isCredentialRefusalError,
 } from "../../utils/hosted-oauth-refresh.js";
 import {
-  assertRecordedSecretsOriginMatches,
-  assertSecretsOriginMatches,
-} from "../../utils/secret-origin-binding.js";
+  bindCredentialHeaders,
+  bindingForAuthorizedHeaders,
+  type CredentialHeaderBinding,
+} from "../../utils/credential-header-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -432,7 +437,6 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
-    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -500,7 +504,13 @@ export type ConvexOAuthUnavailableReason =
    * The server's URL was repointed, so the backend refuses to hand a
    * credential bound to the old destination to the new one.
    */
-  | "credential_origin_mismatch";
+  | "credential_origin_mismatch"
+  /**
+   * The organization keeps saved credentials inside MCPJam-hosted
+   * connections, and this connect would deliver the token elsewhere. The
+   * token is intact; authorizing again does not change the policy.
+   */
+  | "credential_export_denied";
 
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
@@ -1630,6 +1640,29 @@ export async function createAuthorizedManager(
       continue;
     }
 
+    // The organization's policy withholds a credential that EXISTS. That holds
+    // for an auto-discovery server as much as an explicit-OAuth one: dialing
+    // it without the token would fall into a discovery flow that mints a
+    // token the same policy withholds, so both answer with the policy.
+    if (
+      auth.oauthUnavailableReason === "credential_export_denied" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId]) &&
+      (effectiveAuth === "oauth" || effectiveAuth === "discover")
+    ) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+        {
+          exportDenied: true,
+          policy: "credentialExportPolicy",
+          serverId,
+          serverName: serverNamesById?.[serverId] ?? null,
+          serverUrl: auth.serverConfig.url,
+        },
+      );
+    }
+
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
@@ -1687,7 +1720,9 @@ export async function createAuthorizedManager(
             `Credentials for "${displayServerName}" are being refreshed by another request.${
               retryAfterSeconds === null
                 ? " Try again shortly."
-                : ` Try again in ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}.`
+                : ` Try again in ${retryAfterSeconds} second${
+                    retryAfterSeconds === 1 ? "" : "s"
+                  }.`
             }`,
             errorDetails,
           );
@@ -1735,8 +1770,9 @@ export async function createAuthorizedManager(
     } catch (error) {
       // A "discover" server was only ever going to try its luck: connecting
       // unauthenticated is the documented fallback, and a live 401 escalates
-      // client-side from there. Only an explicit-OAuth server has to fail.
-      if (!recovery.required) {
+      // client-side from there. Only an explicit-OAuth server has to fail —
+      // or any server whose credential was refused rather than unavailable.
+      if (!recovery.required && !isCredentialRefusalError(error)) {
         logger.debug(
           "[connect] private authorization server refresh unavailable; connecting unauthenticated",
           {
@@ -1763,6 +1799,11 @@ export async function createAuthorizedManager(
       pluginLeaseReleases.pop()!();
     }
   };
+
+  // Revealed stored headers, per server: which header names carry them and
+  // the origins the backend bound them to (filled in PASS 2, applied to the
+  // per-server transport below).
+  const credentialBindings = new Map<string, CredentialHeaderBinding>();
 
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
@@ -1954,18 +1995,9 @@ export async function createAuthorizedManager(
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
-      if (
-        useXaa &&
-        resolveXaaConnectRegistrationMode(
-          auth.serverConfig.registrationMode,
-        ) !== "cimd"
-      ) {
-        assertRecordedSecretsOriginMatches({
-          boundOrigin: auth.serverConfig.secretsBoundOrigin,
-          targetUrl: auth.serverConfig.url,
-          serverName: displayServerName,
-        });
-      }
+      // (No client-side origin check for a preregistered/DCR secret: the mint
+      // resolves it with this server's URL as the declared target, and the
+      // backend refuses a secret saved for another origin.)
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -2092,54 +2124,59 @@ export async function createAuthorizedManager(
         };
       }
 
-      // Reject an already-stale authorize snapshot before decrypting. The reveal
-      // helper also checks the binding returned with the values: the row may
-      // change between authorize and reveal.
-      if (auth.serverConfig.hasHeaders === true) {
-        assertSecretsOriginMatches({
-          boundOrigin: auth.serverConfig.secretsBoundOrigin,
-          targetUrl: auth.serverConfig.url,
-          serverName: displayServerName,
-        });
-      }
-
-      const authForConfig =
+      // The reveal sends the URL this connection will dial; the backend
+      // refuses it when the stored headers were saved for another origin, and
+      // answers with the origins they are bound to — which the transport then
+      // holds them to, hop by hop (see `credentialBindings` below).
+      const revealed =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
-          ? {
-              ...auth,
-              serverConfig: {
-                ...auth.serverConfig,
-                headers: {
-                  ...(auth.serverConfig.headers ?? {}),
-                  ...((
-                    await fetchRuntimeServerSecrets({
-                      expectedTargetUrl: auth.serverConfig.url,
-                      bearerToken,
-                      projectId,
-                      serverId,
-                      accessScope: options?.accessScope,
-                      scenarioId: options?.scenarioId,
-                      accessVersion: options?.accessVersion,
-                      // When the caller authed via WorkOS API key, secret
-                      // reveal must use the same delegated-identity exchange
-                      // as `authorizeBatch` — otherwise Convex would see the
-                      // service token without an acting-as user.
-                      workosApiKeyActingAs:
-                        caller.authMethod === "workos_api_key" &&
-                        caller.workosUserId &&
-                        caller.mcpjamOrganizationId
-                          ? {
-                              workosUserId: caller.workosUserId,
-                              mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                            }
-                          : undefined,
-                    })
-                  ).headers ?? {}),
-                },
+          ? await fetchRuntimeServerSecrets({
+              expectedTargetUrl: auth.serverConfig.url,
+              bearerToken,
+              projectId,
+              serverId,
+              accessScope: options?.accessScope,
+              scenarioId: options?.scenarioId,
+              accessVersion: options?.accessVersion,
+              // When the caller authed via WorkOS API key, secret
+              // reveal must use the same delegated-identity exchange
+              // as `authorizeBatch` — otherwise Convex would see the
+              // service token without an acting-as user.
+              workosApiKeyActingAs:
+                caller.authMethod === "workos_api_key" &&
+                caller.workosUserId &&
+                caller.mcpjamOrganizationId
+                  ? {
+                      workosUserId: caller.workosUserId,
+                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                    }
+                  : undefined,
+            })
+          : null;
+      if (revealed?.headers && auth.serverConfig.transportType === "http") {
+        credentialBindings.set(serverId, {
+          headerNames: Object.keys(revealed.headers),
+          boundOrigins: revealed.boundOrigins ?? [],
+        });
+      } else if (!revealed && auth.serverConfig.transportType === "http") {
+        // Stored headers the authorize response carried inline: no reveal
+        // ran, but they are held to an origin on the wire all the same.
+        const binding = bindingForAuthorizedHeaders(auth.serverConfig);
+        if (binding) credentialBindings.set(serverId, binding);
+      }
+      const authForConfig = revealed
+        ? {
+            ...auth,
+            serverConfig: {
+              ...auth.serverConfig,
+              headers: {
+                ...(auth.serverConfig.headers ?? {}),
+                ...(revealed.headers ?? {}),
               },
-            }
-          : auth;
+            },
+          }
+        : auth;
 
       // Spec (MCP enterprise-managed authorization): a client whose access is
       // enterprise-managed MUST advertise the extension in initialize. Merged
@@ -2215,7 +2252,9 @@ export async function createAuthorizedManager(
   // Each server owns its capture even when two configs use the same URL.
   // Install before construction: the manager starts connecting eagerly.
   const connectionsByKey = new Map(
-    Object.values(connectionsByServerId).flat().map((connection) => [connection.key, connection]),
+    Object.values(connectionsByServerId)
+      .flat()
+      .map((connection) => [connection.key, connection]),
   );
   const observedConfigs = Object.fromEntries(
     connectionEntries.map(([id, config]) => {
@@ -2224,20 +2263,41 @@ export async function createAuthorizedManager(
       const authorization = batch.results[serverId];
       let baseFetch = config.baseFetch ?? hostedMcpBaseFetch();
       try {
-        if (authorization?.ok && authorization.accessLevel === "project_member" &&
-            authorization.serverConfig.transportType === "http") {
+        if (
+          authorization?.ok &&
+          authorization.accessLevel === "project_member" &&
+          authorization.serverConfig.transportType === "http"
+        ) {
           baseFetch = hostedMcpBackpressureFetch({
-            fetch: baseFetch, projectId, serverId, userId: authorizedUserId,
-            connectionId: connection?.connectionId ?? options?.connectionIds?.[serverId],
+            fetch: baseFetch,
+            projectId,
+            serverId,
+            userId: authorizedUserId,
+            connectionId:
+              connection?.connectionId ?? options?.connectionIds?.[serverId],
           });
         }
       } catch (error) {
         releasePluginLeases();
         throw error;
       }
-      return [id, { ...config, baseFetch: observeConnectionFetch(baseFetch) }];
+      // The transport rule wraps the egress-guarded fetch, so every redirect
+      // hop is guarded before the stored headers are (or are not) attached.
+      // The observer goes OUTSIDE it: the challenge capture is keyed to the
+      // fetch the transport is actually given, and records the final response.
+      const binding = credentialBindings.get(serverId);
+      return [
+        id,
+        {
+          ...config,
+          baseFetch: observeConnectionFetch(
+            withServerCheckSignal(
+              binding ? bindCredentialHeaders(baseFetch, binding) : baseFetch,
+            ),
+          ),
+        },
+      ];
     }),
-
   );
   const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
@@ -2332,7 +2392,10 @@ export async function handleRoute<T>(
     const result = await handler();
     return c.json(result, successStatus);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // The same mapper as the router-wide `onError`, so a structured backend
+    // refusal gets its own status whether a handler returns through here or
+    // throws past it.
+    const routeError = mapWebBoundaryError(error);
     return webErrorFromRoute(c, routeError);
   }
 }
@@ -2547,10 +2610,17 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     options,
   );
 
+  const signal = serverCheckScope.getStore();
+  let disconnecting: Promise<void> | undefined;
+  const disconnect = () => (disconnecting ??= manager.disconnectAllServers());
+  const onAbort = () => { void disconnect().catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    signal?.throwIfAborted();
     return await fn(manager, body);
   } finally {
-    await manager.disconnectAllServers();
+    signal?.removeEventListener("abort", onAbort);
+    await disconnect();
   }
 }
 
@@ -2823,6 +2893,43 @@ function forwardLogMessagesInto(
   };
 }
 
+/**
+ * The egress guard's refusal as a 400, when one is anywhere in `error`'s chain.
+ *
+ * The MCP client wraps a refused dial in its own connect error — the refusal
+ * sits on `cause`, or on `streamableCause` when the SSE fallback failed after
+ * it — so a check of the top-level error alone would miss the common case.
+ * The guard's message is written to be shown to the caller; its `cause` is
+ * not, and stays out. A `WebRouteError` is a decision some other layer already
+ * made, and keeps it.
+ */
+function blockedEgressRouteError(error: unknown): WebRouteError | undefined {
+  if (error instanceof WebRouteError) return undefined;
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0 && seen.size < 8) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof BlockedEgressTargetError) {
+      return new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        current.message,
+      );
+    }
+    try {
+      pending.push(
+        (current as { cause?: unknown }).cause,
+        (current as { streamableCause?: unknown }).streamableCause,
+      );
+    } catch {
+      // A value whose getters throw has no chain worth reading.
+    }
+  }
+  return undefined;
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
@@ -2845,6 +2952,35 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Runs on the raw body after it is read and BEFORE it is parsed or any
+     * server is connected. The hook an environment launch uses to resolve its
+     * closed server set and prime the connection batch from it (it may mutate
+     * `rawBody`). A throw is answered like any other failure of the route.
+     */
+    beforeConnect?: (rawBody: Record<string, unknown>) => Promise<void>;
+    /**
+     * Rewrites a mapped failure, and the log envelope sent with it, before the
+     * response is built. The hosted validate route uses it to report a status
+     * line in place of the server's own answer (MJ-001).
+     */
+    redactFailure?: (
+      routeError: WebRouteError,
+      error: unknown,
+      logs: Record<string, unknown> | undefined,
+    ) => {
+      routeError: WebRouteError;
+      logs: Record<string, unknown> | undefined;
+    };
+    /**
+     * Rewrites the log envelope attached to a SUCCESSFUL response. The hosted
+     * validate route projects received frames and header values the same way
+     * its failure path does, so a successful connect does not reflect what
+     * the target answered (MJ-001).
+     */
+    redactSuccessLogs?: (
+      logs: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2854,6 +2990,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     if (options?.rpcLogs !== false) {
       rpcCollector = createHostedRpcLogCollector(rawBody);
+    }
+    if (options?.beforeConnect) {
+      await options.beforeConnect(rawBody);
     }
 
     const result = await runEphemeralConnection(
@@ -2871,7 +3010,26 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
     );
 
-    return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
+    let response = attachHostedRpcLogs(result, rpcCollector);
+    if (
+      options?.redactSuccessLogs &&
+      response !== result &&
+      response &&
+      typeof response === "object"
+    ) {
+      const { _rpcLogs, _httpLogs, ...rest } = response as Record<
+        string,
+        unknown
+      >;
+      response = {
+        ...rest,
+        ...options.redactSuccessLogs({
+          ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
+          ...(_httpLogs !== undefined ? { _httpLogs } : {}),
+        }),
+      } as typeof response;
+    }
+    return c.json(response, 200);
   } catch (error) {
     // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
     // helper dials the caller's OWN MCP server, and a connection-class failure
@@ -2882,11 +3040,21 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // 424 still requires the message to positively name an MCP server, so this
     // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
     // Convex deployment — keeps its 5xx and keeps paging us.
-    const routeError = mapTargetServerError(error);
+    //
+    // A target the egress guard refused is the caller's to change, not a
+    // connection that failed: 400, with the guard's own message
+    // (MJ-020, MJ-021).
+    const routeError = mapTargetServerError(
+      blockedEgressRouteError(error) ?? error,
+    );
+    const logs = rpcCollector?.buildEnvelope() as
+      | Record<string, unknown>
+      | undefined;
+    const redacted = options?.redactFailure?.(routeError, error, logs);
     return webErrorFromRoute(
       c,
-      routeError,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      redacted?.routeError ?? routeError,
+      redacted ? redacted.logs : logs,
     );
   }
 }

@@ -12,7 +12,9 @@ vi.mock("@sentry/electron/main", () => ({
   withScope: (callback: (scope: any) => void) =>
     callback({ addEventProcessor: (fn: any) => mocks.processors.push(fn) }),
 }));
-vi.mock("electron-log", () => ({ default: { error: vi.fn(), warn: vi.fn() } }));
+vi.mock("electron-log", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}));
 import {
   flushUpdateReports,
   reportUpdateFailure,
@@ -65,4 +67,36 @@ describe("update failure reporting", () => {
     expect(done).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+it("reports recovery with safe timing and intent metadata, deduplicated separately", () => {
+  const attempt = newAttempt("3.11.0");
+  attempt.downloadRetries = 2;
+  attempt.downloadRequested = true;
+  attempt.activeDownloadMs = 1000;
+  attempt.sleepMs = 2000;
+  attempt.offlineMs = 3000;
+  reportUpdateFailure(attempt, "download_recovered");
+  reportUpdateFailure(attempt, "download_recovered");
+  expect(mocks.capture).toHaveBeenCalledTimes(1);
+  expect(mocks.capture.mock.calls[0][0]).toMatchObject({
+    level: "info",
+    contexts: {
+      update: {
+        download_retries: 2,
+        user_requested: false,
+        download_requested: true,
+        active_download_ms: 1000,
+        sleep_ms: 2000,
+        offline_ms: 3000,
+      },
+    },
+  });
+  const sanitized = mocks.processors[0]({
+    user: { email: "private" },
+    breadcrumbs: [{ message: "private" }],
+    extra: { token: "private" },
+    request: { url: "private" },
+  });
+  expect(JSON.stringify(sanitized)).not.toContain("private");
 });

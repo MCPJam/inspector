@@ -15,6 +15,12 @@ const flagState = vi.hoisted(() => ({
   environments: true,
 }));
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => flagState.skills,
 }));

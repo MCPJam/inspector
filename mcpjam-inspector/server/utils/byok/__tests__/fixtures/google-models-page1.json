@@ -1,0 +1,26 @@
+{
+  "models": [
+    {
+      "name": "models/gemini-2.5-pro",
+      "version": "2.5",
+      "displayName": "Gemini 2.5 Pro",
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+        "batchGenerateContent"
+      ]
+    },
+    {
+      "name": "models/text-embedding-004",
+      "version": "004",
+      "displayName": "Text Embedding 004",
+      "inputTokenLimit": 2048,
+      "outputTokenLimit": 1,
+      "supportedGenerationMethods": ["embedContent"]
+    }
+  ],
+  "nextPageToken": "page-2-token"
+}
