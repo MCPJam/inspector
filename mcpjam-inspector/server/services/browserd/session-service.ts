@@ -8,6 +8,11 @@
  * install), callers can keep their existing JSON ledger instead.
  */
 import type { BrowserContextMode } from "./browser-sessions-client.js";
+import {
+  getConfiguredInspectorServiceToken,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../../middleware/internal-service-auth.js";
+import { getInspectorClientRuntimeConfig } from "../../env.js";
 
 export type BrowserSessionOwnerKind =
   "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
@@ -46,6 +51,11 @@ export interface BrowserSessionServiceOptions {
   baseUrl?: string;
   /** When absent, the service is disabled and callers may use local JSON. */
   enabled?: boolean;
+  /**
+   * Origin of the deployment's file storage, where saved profile archives
+   * live. Defaults to the configured Convex URL.
+   */
+  storageOrigin?: string;
 }
 
 type RequestArgs = {
@@ -108,8 +118,59 @@ function assertSecureTransport(url: URL, source: string): void {
   }
 }
 
+/** Where Convex serves a stored file: `<deployment origin>/api/storage/<id>`. */
+const STORAGE_PATH_PREFIX = "/api/storage/";
+
+function originOf(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A saved profile archive is read only from Convex file storage, under
+ * `/api/storage/` and with no embedded credentials: on the configured Convex
+ * origin, or on a Convex-hosted `https://*.convex.cloud` origin. Storage URLs
+ * are minted on the backend's own storage host, which on a deployment reached
+ * through a custom domain is Convex's host rather than the configured one, so
+ * a Convex-hosted origin is accepted alongside the configured one. A location
+ * anywhere else is refused before any request is made to it.
+ */
+function assertArchiveStorageLocation(
+  url: URL,
+  storageOrigin: string | null,
+): void {
+  const onConfiguredOrigin =
+    storageOrigin !== null && url.origin === storageOrigin;
+  const onConvexCloud =
+    url.protocol === "https:" && url.hostname.endsWith(".convex.cloud");
+  if (
+    (!onConfiguredOrigin && !onConvexCloud) ||
+    !url.pathname.startsWith(STORAGE_PATH_PREFIX) ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(
+      `browser profile download URL is not on this deployment's file storage (got ${url.origin})`,
+    );
+  }
+}
+
 function bearerHeader(value: string): string {
   return /^Bearer\s/i.test(value) ? value : `Bearer ${value}`;
+}
+
+/**
+ * The inspector service token, for the control-plane routes that take it
+ * alongside the user's bearer (MJ-005). Empty when this server holds none; the
+ * backend then answers for itself.
+ */
+function serviceTokenHeaders(): Record<string, string> {
+  const token = getConfiguredInspectorServiceToken();
+  return token ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: token } : {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -181,15 +242,23 @@ function parseSession(value: unknown): BrowserLogicalSessionRecord | null {
 export class BrowserSessionService {
   private readonly requestFetch: typeof globalThis.fetch;
   private readonly baseUrl: string | undefined;
+  private readonly storageOrigin: string | null;
   readonly enabled: boolean;
 
   constructor(options: BrowserSessionServiceOptions = {}) {
     this.requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.baseUrl = options.baseUrl ?? process.env.CONVEX_HTTP_URL?.trim();
     this.enabled = options.enabled ?? Boolean(this.baseUrl);
+    this.storageOrigin = originOf(
+      options.storageOrigin ?? getInspectorClientRuntimeConfig().convexUrl,
+    );
   }
 
-  private async post<T>(path: string, args: RequestArgs): Promise<T | null> {
+  private async post<T>(
+    path: string,
+    args: RequestArgs,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T | null> {
     if (!this.enabled || !this.baseUrl) return null;
     const target = new URL(path, this.baseUrl);
     assertSecureTransport(target, "CONVEX_HTTP_URL");
@@ -198,6 +267,7 @@ export class BrowserSessionService {
       headers: {
         authorization: bearerHeader(args.bearer),
         "content-type": "application/json",
+        ...extraHeaders,
       },
       body: JSON.stringify({ projectId: args.projectId, ...args.body }),
       redirect: "error",
@@ -405,13 +475,20 @@ export class BrowserSessionService {
     return raw?.ok === true;
   }
 
-  /** Resolve and download a saved profile archive for a fresh browser boot. */
-  async downloadProfile(args: {
+  /**
+   * Where a saved profile archive can be read, once the backend has checked
+   * that the caller may use it. Null when the service is disabled or the
+   * backend names no archive.
+   *
+   * Server-side only (MJ-005): this process reads the archive itself, so the
+   * location is never handed on to a browser.
+   */
+  async resolveProfileArchive(args: {
     projectId: string;
     profileId: string;
     bearer: string;
     signal?: AbortSignal;
-  }): Promise<Uint8Array | null> {
+  }): Promise<URL | null> {
     const raw = await this.post<{ url?: unknown }>(
       "/browser-profiles/download-url",
       {
@@ -420,15 +497,34 @@ export class BrowserSessionService {
         signal: args.signal,
         body: { profileId: args.profileId },
       },
+      serviceTokenHeaders(),
     );
     if (!raw || typeof raw.url !== "string" || !raw.url) return null;
+    let location: URL;
+    try {
+      location = new URL(raw.url);
+    } catch {
+      throw new Error("browser profile download URL is malformed");
+    }
     // The storage URL comes back over the wire, so it gets the same scheme
     // check as the control plane itself. What travels over it is a profile
     // archive — the user's cookies and logged-in sessions — which is the last
     // thing that should ride cleartext because a signed URL happened to say
     // `http:`.
-    const downloadUrl = new URL(raw.url);
-    assertSecureTransport(downloadUrl, "browser profile download URL");
+    assertSecureTransport(location, "browser profile download URL");
+    assertArchiveStorageLocation(location, this.storageOrigin);
+    return location;
+  }
+
+  /** Resolve and download a saved profile archive for a fresh browser boot. */
+  async downloadProfile(args: {
+    projectId: string;
+    profileId: string;
+    bearer: string;
+    signal?: AbortSignal;
+  }): Promise<Uint8Array | null> {
+    const downloadUrl = await this.resolveProfileArchive(args);
+    if (!downloadUrl) return null;
     const response = await this.requestFetch(downloadUrl, {
       method: "GET",
       redirect: "error",

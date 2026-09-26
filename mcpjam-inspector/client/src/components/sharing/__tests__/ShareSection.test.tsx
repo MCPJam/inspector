@@ -128,7 +128,7 @@ describe("ShareSection", () => {
         disabledReason="This scenario's environment was archived."
         copy={{
           linkLabel: "Tester link",
-          withheldLabel: "Withheld — this scenario can't run.",
+          withheldLabel: "Withheld: this scenario can't run.",
         }}
         testIds={{
           copy: "scenario-copy-tester-link",
@@ -139,7 +139,7 @@ describe("ShareSection", () => {
     );
 
     expect(screen.getByLabelText("Tester link")).toHaveTextContent(
-      "Withheld — this scenario can't run.",
+      "Withheld: this scenario can't run.",
     );
     expect(screen.getByTestId("scenario-copy-tester-link")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Invite", exact: true })).toBeDisabled();
@@ -204,12 +204,12 @@ describe("ShareSection", () => {
       disabledReason: "This scenario's environment was archived.",
       copy: {
         linkLabel: "Share link",
-        withheldLabel: "Withheld — this scenario can't run.",
+        withheldLabel: "Withheld: this scenario can't run.",
       },
     });
 
     expect(screen.getByLabelText("Share link")).toHaveTextContent(
-      "Withheld — this scenario can't run.",
+      "Withheld: this scenario can't run.",
     );
     expect(screen.getByTestId("share-copy")).toBeDisabled();
     await user.click(screen.getByTestId("share-copy"));

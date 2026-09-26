@@ -657,6 +657,8 @@ interface CreateXaaRouterOptions {
     projectId: string;
     bearerToken: string;
     clientIp?: string | null;
+    /** The resource the secret is requested for; forwarded to the reveal. */
+    targetUrl?: string;
   }) => Promise<ServerClientSecretResult>;
   // Confirms the caller may mint under a scoped issuer path before minting.
   // Two flavors, selected by issuerKind: "org" (/o/:orgId/...) requires org
@@ -1479,6 +1481,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
           clientIp: getClientIp(c),
+          // The resource this token request is for: the backend releases the
+          // stored secret only for that resource's origin.
+          ...(parsed.resource ? { targetUrl: parsed.resource } : {}),
         });
         url = resolved.tokenEndpoint;
         clientId = resolved.clientId;
@@ -1825,6 +1830,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
           clientIp: getClientIp(c),
+          // The resource this token request is for: the backend releases the
+          // stored secret only for that resource's origin.
+          ...(parsed.resource ? { targetUrl: parsed.resource } : {}),
         });
         tokenEndpoint = resolved.tokenEndpoint;
         clientId = resolved.clientId;
