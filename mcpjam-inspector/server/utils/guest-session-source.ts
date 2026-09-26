@@ -1,4 +1,6 @@
+import type { GuestSessionFailureReason } from "@/shared/guest-session-failure";
 import { guestIpForwardHeaders } from "./guest-spend-ip.js";
+import { getFetchErrorCause, isFetchTimeout } from "./fetch-error-cause.js";
 import {
   isConvexProvisioningUnavailable,
   provisionGuestAuthConfigToConvex,
@@ -51,7 +53,30 @@ export type GuestSessionFetchResult =
       setCookies: string[];
       /** Seconds from the upstream `Retry-After` header on a 429. */
       retryAfterSeconds?: number;
+      /** Why the upstream hop failed. Sent to the browser on the 503. */
+      reason: GuestSessionFailureReason;
+      /** The upstream's status, when it answered with a non-ok response. */
+      upstreamStatus?: number;
+      /** The network error code, e.g. `ENOTFOUND`, when the fetch threw. */
+      networkCode?: string;
     };
+
+/**
+ * Name a thrown fetch or body-read failure. The request's signal carries only
+ * our timeout, so an aborted signal means the timeout fired even when the error
+ * itself does not say so.
+ */
+function classifyThrown(
+  error: unknown,
+  signal: AbortSignal | null | undefined,
+  fallback: GuestSessionFailureReason,
+): { reason: GuestSessionFailureReason; networkCode?: string } {
+  if (isFetchTimeout(error)) return { reason: "timeout" };
+  const networkCode = getFetchErrorCause(error);
+  if (networkCode) return { reason: "network", networkCode };
+  if (signal?.aborted) return { reason: "timeout" };
+  return { reason: fallback };
+}
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -176,14 +201,22 @@ async function performGuestSessionFetch(
         status: response.status,
         setCookies,
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+        reason: "upstream_status",
+        upstreamStatus: response.status,
       };
     }
 
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
-      return { kind: "error", status: 503, setCookies };
+    } catch (error) {
+      // A timeout that fires mid-body lands here too, not only a non-JSON page.
+      const failure = classifyThrown(error, init.signal, "bad_json");
+      logger.warn(
+        `[guest-auth] Failed to read ${source} guest session response`,
+        failure,
+      );
+      return { kind: "error", status: 503, setCookies, ...failure };
     }
 
     const session = parseSessionPayload(body);
@@ -191,7 +224,7 @@ async function performGuestSessionFetch(
       logger.warn(
         `[guest-auth] ${source} guest session response was missing token or expiresAt`,
       );
-      return { kind: "error", status: 503, setCookies };
+      return { kind: "error", status: 503, setCookies, reason: "bad_payload" };
     }
 
     logger.info(
@@ -200,10 +233,12 @@ async function performGuestSessionFetch(
     return { kind: "session", session, setCookies };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    const failure = classifyThrown(error, init.signal, "network");
     logger.warn(
       `[guest-auth] Failed to fetch ${source} guest session: ${errMsg}`,
+      failure,
     );
-    return { kind: "error", status: 503, setCookies: [] };
+    return { kind: "error", status: 503, setCookies: [], ...failure };
   }
 }
 
@@ -240,7 +275,12 @@ export async function fetchConvexGuestSession(
     logger.warn(
       `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`,
     );
-    return { kind: "error", status: 503, setCookies: [] };
+    return {
+      kind: "error",
+      status: 503,
+      setCookies: [],
+      reason: "provisioning",
+    };
   }
 
   // Can't administer the deployment (OSS/local dev against MCPJam's shared

@@ -3,6 +3,7 @@ import { Database, Download, Loader2, RefreshCw } from "lucide-react";
 import { useConvex } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { fetchArtifact } from "@/lib/artifact-urls";
 
 type QueryClient = {
   query: (name: unknown, args: unknown) => Promise<unknown>;
@@ -168,7 +169,7 @@ async function captureJsonBlob(
   url: string,
 ): Promise<void> {
   try {
-    const response = await fetch(url);
+    const response = await fetchArtifact(url);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -453,7 +454,7 @@ export async function collectRunRawData(
     }
     if (!scope.swarmRunGroupId) {
       notes.push(
-        "This legacy swarm has no swarmRunGroupId, so wave signals and generated wave insights cannot be addressed.",
+        "This legacy swarm has no swarmRunGroupId, so swarm-run signals and generated swarm-run insights cannot be addressed.",
       );
     }
   } else {

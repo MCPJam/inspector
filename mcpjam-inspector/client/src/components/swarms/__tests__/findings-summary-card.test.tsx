@@ -19,13 +19,12 @@ describe("FindingsSummaryCard", () => {
       <FindingsSummaryCard
         sessionCount={3}
         summary={["First sentence.", "Second sentence.", "Third sentence."]}
-        footnotes={[]}
-      />
+      />,
     );
     // One element holding all three. Rendering them as siblings would satisfy
     // the card's own text but not this.
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      "First sentence. Second sentence. Third sentence."
+      "First sentence. Second sentence. Third sentence.",
     );
     // ONE child, whatever element it is. The old form counted <p> elements,
     // which pinned the summary being an <h2> rather than the sentences being
@@ -38,15 +37,14 @@ describe("FindingsSummaryCard", () => {
       <FindingsSummaryCard
         sessionCount={3}
         summary={["First sentence.", "Second sentence.", "Third sentence."]}
-        footnotes={[]}
-      />
+      />,
     );
     // A named <section> is a region landmark: this string is announced on
     // entering the card and listed in the landmark menu. Labelling it from the
     // summary meant hearing all three sentences as the label, then again as
     // the content. A landmark wants a short name.
     expect(
-      screen.getByRole("region", { name: "Finding summary · 3 sessions" })
+      screen.getByRole("region", { name: "Finding summary · 3 sessions" }),
     ).toBeInTheDocument();
     // And no heading, because prose at heading size is still prose — `H`
     // navigation should not land on the whole summary.
@@ -60,45 +58,101 @@ describe("FindingsSummaryCard", () => {
       <FindingsSummaryCard
         sessionCount={1}
         summary={["The discovery stage broke.", "   ", "", "Maya left lost."]}
-        footnotes={[]}
-      />
+      />,
     );
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      "The discovery stage broke. Maya left lost."
+      "The discovery stage broke. Maya left lost.",
     );
   });
 
-  it("lets a suggested fix take the headline", () => {
+  it("shows a suggested fix BESIDE the summary, never instead of it", () => {
     render(
       <FindingsSummaryCard
         sessionCount={3}
         summary={["First sentence.", "Second sentence."]}
         recommendation="Fix the lookup before calling downstream tools."
-        footnotes={[]}
-      />
+      />,
     );
+    // The fix used to replace the paragraph, so a run could name a cause or
+    // suggest a fix but never both.
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      "Fix the lookup before calling downstream tools."
+      "First sentence. Second sentence.",
     );
-    expect(screen.getByTestId("findings-headline").textContent).not.toContain(
-      "First sentence."
+    // Sibling of the summary, not nested inside it — the card names a cause
+    // and a fix as two slots, and the summary block is only the cause.
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
+    );
+    expect(screen.getByTestId("findings-suggested-fix").textContent).toContain(
+      "Fix the lookup before calling downstream tools.",
+    );
+    expect(screen.getByTestId("findings-suggested-fix").textContent).toContain(
+      "Suggested fix",
     );
   });
 
-  it("still names the session count and the footnotes", () => {
+  it("lets Lane A's wave prose replace the paragraph, as it always has", () => {
+    render(
+      <FindingsSummaryCard
+        sessionCount={3}
+        summary={["First sentence."]}
+        narration="Lane A said this."
+      />,
+    );
+    // A narration is not a fix; it keeps the legacy promotion and never gets
+    // labelled as something to go and do.
+    expect(screen.getByTestId("findings-headline").textContent).toBe(
+      "Lane A said this.",
+    );
+    expect(screen.getByTestId("findings-summary").textContent).not.toContain(
+      "Suggested fix",
+    );
+  });
+
+  it("still names the session count in the singular", () => {
     render(
       <FindingsSummaryCard
         sessionCount={1}
         summary={["Nothing graded yet."]}
-        footnotes={["Rubric findings only"]}
-      />
+      />,
     );
     // Singular, because one session is one session.
     expect(screen.getByTestId("findings-summary-card").textContent).toContain(
-      "Finding summary · 1 session"
+      "Finding summary · 1 session",
     );
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "Rubric findings only"
+    expect(screen.queryByTestId("findings-footnotes")).not.toBeInTheDocument();
+  });
+
+  it("names why sessions didn't run in its own block, beside the count", () => {
+    // MCPJam/inspector#5188: the paragraph counts the refused sessions; the
+    // refusal itself is its own line, never folded into the paragraph.
+    render(
+      <FindingsSummaryCard
+        sessionCount={0}
+        summary={["No sessions launched.", "3 of 3 sessions failed to launch."]}
+        launchReason="Persona turn failed: 400 invalid identity"
+      />,
     );
+    const reason = screen.getByTestId("findings-launch-reason");
+    expect(reason).toHaveTextContent("Why sessions didn't run");
+    expect(reason).toHaveTextContent(
+      "Persona turn failed: 400 invalid identity",
+    );
+    expect(screen.getByTestId("findings-headline").textContent).toBe(
+      "No sessions launched. 3 of 3 sessions failed to launch.",
+    );
+  });
+
+  it("renders no reason block without a reason", () => {
+    render(
+      <FindingsSummaryCard
+        sessionCount={3}
+        summary={["First sentence."]}
+        launchReason="   "
+      />,
+    );
+    expect(
+      screen.queryByTestId("findings-launch-reason"),
+    ).not.toBeInTheDocument();
   });
 });

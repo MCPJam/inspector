@@ -95,6 +95,25 @@ const session = {
   readiness: { status: "completed", verdict: "ready", issueCount: 0 },
 };
 
+// The strip's cohort follows `journeyRunIds`: with a wave it reports that
+// wave, without one the whole project.
+const swarmSessionMetrics = (sessionCount: number) => ({
+  sessionCount,
+  analyzedCount: sessionCount,
+  truncated: false,
+  toolCallCount: 100,
+  toolErrorCount: 8,
+  toolErrorRate: 0.08,
+  sessionsWithToolErrors: 5,
+  topFailingTool: { toolName: "search_web", errorCount: 4 },
+  avgToolCallsPerSession: 8.3,
+  latencyP50Ms: 10500,
+  latencyP95Ms: 18500,
+  avgTokensPerSession: 3200,
+  tokenSampleCount: sessionCount,
+  trend: [],
+});
+
 // Capture every paginated-query dispatch so we can assert the session query's
 // arg NAME is `journeyRunId`.
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
@@ -119,22 +138,11 @@ vi.mock("convex/react", () => ({
       case "journeys:getJourneyRollup":
         return { journeyRefId: "journey-1", runCount: 2, hosts: [] };
       case "journeyRuns:getSwarmSessionMetrics":
-        return {
-          sessionCount: 653,
-          analyzedCount: 653,
-          truncated: false,
-          toolCallCount: 100,
-          toolErrorCount: 8,
-          toolErrorRate: 0.08,
-          sessionsWithToolErrors: 5,
-          topFailingTool: { toolName: "search_web", errorCount: 4 },
-          avgToolCallsPerSession: 8.3,
-          latencyP50Ms: 10500,
-          latencyP95Ms: 18500,
-          avgTokensPerSession: 3200,
-          tokenSampleCount: 653,
-          trend: [],
-        };
+        return swarmSessionMetrics(
+          (args as { journeyRunIds?: readonly string[] })?.journeyRunIds?.length
+            ? 14
+            : 653
+        );
       default:
         return undefined;
     }
@@ -369,7 +377,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     });
   });
 
-  it("does not show project-wide session metrics on a run Sessions tab", () => {
+  it("scopes session metrics to the run on a run Sessions tab", () => {
     render(
       <SwarmsSessionsPanel
         projectId="proj-1"
@@ -382,9 +390,10 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
     const panel = screen.getByTestId("swarms-sessions-panel");
     expect(
-      within(panel).queryByTestId("swarm-sessions-metric-shell"),
-    ).toBeNull();
-    expect(within(panel).queryByText(/sessions in scope/i)).toBeNull();
+      within(panel).getByTestId("swarm-sessions-metric-shell"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText(/14 sessions in scope/i)).toBeInTheDocument();
+    expect(within(panel).queryByText(/653 sessions in scope/i)).toBeNull();
   });
 
   it("keeps project-wide session metrics on the top-level Sessions tab", () => {
@@ -438,7 +447,12 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     );
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
-    expect(within(matrix).getAllByText("Host Two").length).toBeGreaterThan(0);
+    // Scoped to Host Two. The chips no longer PRINT the target name — the
+    // column header above them already does — so this reads the accessible
+    // name, which still carries it.
+    expect(
+      within(matrix).getAllByLabelText(/on Host Two/i).length
+    ).toBeGreaterThan(0);
     // Host Two's unpersisted failures surface as Fail chips.
     const failCells = within(matrix)
       .getAllByTestId("swarm-host-cell")

@@ -1,3 +1,10 @@
+import { getManagerConnections } from "../mcp-connections.js";
+import { toModelMessageToolOutput } from "../normalize-model-messages-for-convex.js";
+import {
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
+  type McpConnectionAttribution,
+} from "@/shared/mcp-tool-origin-metadata";
 /**
  * `runHarnessTurn` — the real Claude Code runtime behind a host's
  * `harness: "claude-code"` field. Drop-in alternative to `runChatEngineLoop`:
@@ -71,6 +78,7 @@ import {
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
+import { requiresServerVerifiedApproval } from "../tool-approval-token.js";
 import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
@@ -84,6 +92,11 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  toolCallLookupFor,
+} from "../history-provenance.js";
 import {
   createSystemStreamFailureReporter,
   oncePerTurn,
@@ -187,7 +200,10 @@ import {
   emitInsufficientScopeChunk,
   emitScopeStepUpRequiredChunk,
 } from "../../routes/web/hosted-elicitation.js";
-import { harnessToolApprovalRefusalReason } from "./harness-availability.js";
+import {
+  harnessModelPurposeForSourceType,
+  harnessToolApprovalRefusalReason,
+} from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -398,14 +414,6 @@ function coerceToolInput(raw: unknown): unknown {
   }
 }
 
-/** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
-const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
-  "json",
-  "text",
-  "error-text",
-  "content",
-]);
-
 /** Build the persisted `tool-result` `output` for a harness tool result, matching
  *  the emulated engine's canonical single-wrap shape (shared/http-tool-calls.ts).
  *
@@ -414,29 +422,29 @@ const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
  *  hand back an already-typed `{type, value}` output. Blindly wrapping that as
  *  `{type:"json", value: rawOutput}` produced the double-nested
  *  `{type:json,value:{type:json,value:…}}` seen in persisted transcripts. So:
- *  errors → `error-text`; an already-typed output passes through unchanged;
- *  anything else is wrapped once as `{type:"json", value}`. */
+ *  errors → `error-text`; a typed output whose value fits its tag passes
+ *  through unchanged; anything else is wrapped once as `{type:"json", value}`. */
 export function toToolResultOutput(
   rawOutput: unknown,
   isError: boolean,
-): { type: string; value: unknown } {
+): { type: string; value?: unknown } {
   if (isError) {
+    // `JSON.stringify(undefined)` is `undefined`, not `"undefined"`, so a
+    // failed tool with no payload would produce a value that serializes away
+    // and fails `modelMessageSchema` — an invalid message describing an error.
+    const text =
+      typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
     return {
       type: "error-text",
-      value:
-        typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput),
+      value: text ?? "The tool reported an error with no payload.",
     };
   }
-  if (
-    rawOutput !== null &&
-    typeof rawOutput === "object" &&
-    typeof (rawOutput as { type?: unknown }).type === "string" &&
-    TYPED_TOOL_OUTPUT_TYPES.has((rawOutput as { type: string }).type) &&
-    "value" in (rawOutput as object)
-  ) {
-    return rawOutput as { type: string; value: unknown };
-  }
-  return { type: "json", value: rawOutput };
+  // Delegated rather than re-decided here: the local copy of this rule
+  // recognized four output types where the schema has five (it dropped
+  // `error-json`, so a genuine one was re-wrapped as `json` and lost its
+  // error signal), and it trusted the type tag without checking the value
+  // against it.
+  return toModelMessageToolOutput(rawOutput) ?? { type: "json", value: null };
 }
 
 /** Per-process id for lease attribution (logs/debugging). */
@@ -720,6 +728,17 @@ export async function runHarnessTurn(
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
   const messageHistory: ModelMessage[] = [...messages];
+  // What this turn streams is signed as the server's own, as the emulated
+  // engine's turns are (MJ-009), so its replies stay in model context when
+  // the conversation continues on another engine. A no-op where nothing can
+  // be signed (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
   // Per-turn prompt index (user-message count − 1), computed from the inbound
@@ -1110,12 +1129,20 @@ export async function runHarnessTurn(
       //       account, so there is no substitution to catch here — asking
       //       `supportsModel` would only be asking the adapter to rubber-stamp
       //       a value nothing consumes.
+      //       Read from the version-keyed evidence table at the adapter's
+      //       pinned CLI version. An UNVERIFIED pair runs only in Playground
+      //       chat (`sourceType: "direct"`), matching the pre-flight's purpose
+      //       rule; evals, scenarios and swarms refuse it here too.
       if (
         harnessAdapter.modelAccess !== "external-account" &&
-        !harnessAdapter.supportsModel(modelId)
+        !harnessAdapter.supportsModel(modelId, {
+          allowUnknown:
+            harnessModelPurposeForSourceType(sourceType) === "chat",
+        })
       ) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}": ` +
+            `${harnessAdapter.modelSupport(modelId).reason}.`,
         );
       }
       //   (a2) capability/hook invariant for plugin BUNDLE install: advertising
@@ -1193,7 +1220,12 @@ export async function runHarnessTurn(
       // Which of the two delivery modes this adapter uses. Mutually exclusive
       // by construction (`HarnessMcpDelivery`), so the model can never see the
       // same MCP tool twice.
-      const nativeMcpDelivery = harnessAdapter.mcpDelivery === "native";
+      // Account selectors and resource conversion must execute together in
+      // the inspector; native sandbox MCP clients cannot own that dispatch.
+      const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
+      const hasAccountRouting = Object.entries(accountGroups).some(([serverId, group]) => group.length > 1 || group.some(connection => connection.key !== serverId));
+      const nativeMcpDelivery =
+        harnessAdapter.mcpDelivery === "native" && !hasAccountRouting;
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
       // Host-executed delivery needs no proxy at all — its tools run in THIS
@@ -1265,6 +1297,7 @@ export async function runHarnessTurn(
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
               selectedServerIds: selectedServers ?? [],
+              connectionsByServerId: accountGroups,
               ...(pluginServerOrigins
                 ? { pluginOrigins: pluginServerOrigins }
                 : {}),
@@ -1987,34 +2020,34 @@ export async function runHarnessTurn(
         localPrepared !== null
           ? localPrepared.sandbox
           : createE2BHarnessSandboxProvider({
-        sandboxId: sandboxId!,
-        defaultWorkingDirectory,
-        // The materialized secrets, as a session-wide env bag on every `run`
-        // and `spawn`. This is the whole of materialized delivery on the
-        // harness path: the agent runs `stripe customers list`, and
-        // `STRIPE_API_KEY` is simply in that process's environment.
-        //
-        // In `envs`, never in the command line — the rule `plugin-box.ts`
-        // already states: argv is readable by every process in the box through
-        // `/proc`, and it lands in shell history.
-        ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
-          ? {
-              sessionEnv: sessionSecretEnv,
-              // Stamped when the env is MERGED INTO A COMMAND, not here.
+              sandboxId: sandboxId!,
+              defaultWorkingDirectory,
+              // The materialized secrets, as a session-wide env bag on every `run`
+              // and `spawn`. This is the whole of materialized delivery on the
+              // harness path: the agent runs `stripe customers list`, and
+              // `STRIPE_API_KEY` is simply in that process's environment.
               //
-              // Constructing this provider only puts the values in a local
-              // object — nothing has reached E2B yet, and harness setup can
-              // still throw before any command runs (`startHarnessModelBroker`
-              // below is the usual one). Stamping at construction made
-              // `lastDeliveredAt` mean "a turn got this far", when the question
-              // it is read for, before deleting a credential believed dormant,
-              // is "did anything actually receive it".
-              ...(onSecretEnvDelivered
-                ? { onSessionEnvUsed: onSecretEnvDelivered }
+              // In `envs`, never in the command line — the rule `plugin-box.ts`
+              // already states: argv is readable by every process in the box through
+              // `/proc`, and it lands in shell history.
+              ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
+                ? {
+                    sessionEnv: sessionSecretEnv,
+                    // Stamped when the env is MERGED INTO A COMMAND, not here.
+                    //
+                    // Constructing this provider only puts the values in a local
+                    // object — nothing has reached E2B yet, and harness setup can
+                    // still throw before any command runs (`startHarnessModelBroker`
+                    // below is the usual one). Stamping at construction made
+                    // `lastDeliveredAt` mean "a turn got this far", when the question
+                    // it is read for, before deleting a credential believed dormant,
+                    // is "did anything actually receive it".
+                    ...(onSecretEnvDelivered
+                      ? { onSessionEnvUsed: onSecretEnvDelivered }
+                      : {}),
+                  }
                 : {}),
-            }
-          : {}),
-      });
+            });
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
@@ -2112,9 +2145,30 @@ export async function runHarnessTurn(
       // are `mcp__…`-prefixed, so the two sets cannot collide — but if a future
       // built-in ever took an `mcp__` name, the host's own built-in wins rather
       // than being shadowed by a server.
+      //
+      // A workspace tool that pauses for approval (MJ-008) is handed over only
+      // to a runtime that can pause on a host-executed tool. Anywhere else it
+      // is left out rather than offered without its pause.
+      const offeredBuiltInTools = Object.fromEntries(
+        Object.entries((builtInTools ?? {}) as Record<string, unknown>).filter(
+          ([name, definition]) => {
+            if (
+              harnessAdapter.supportsHostExecutedToolApproval ||
+              !requiresServerVerifiedApproval(definition)
+            ) {
+              return true;
+            }
+            logger.warn(
+              "[harness] workspace tool withheld: this runtime cannot pause on a host-executed tool for approval",
+              { harness: harnessAdapter.id, toolName: name },
+            );
+            return false;
+          },
+        ),
+      );
       const hostExecutedTools = {
         ...hostExecutedMcp.tools,
-        ...((builtInTools ?? {}) as Record<string, unknown>),
+        ...offeredBuiltInTools,
       } as Record<string, unknown>;
       // The tools that actually ask, read off the same `needsApproval` the
       // other two engines read.
@@ -2722,9 +2776,9 @@ export async function runHarnessTurn(
                   output: toToolResultOutput(tr.output, tr.isError),
                   ...(tr.serverId
                     ? {
-                        providerOptions: mergeMcpToolOriginMetadata(
-                          undefined,
-                          tr.serverId,
+                        providerOptions: mergeMcpToolConnectionMetadata(
+                          mergeMcpToolOriginMetadata(undefined, tr.serverId),
+                          accountByCall.get(tr.toolCallId),
                         ),
                       }
                     : {}),
@@ -2749,6 +2803,7 @@ export async function runHarnessTurn(
         // step. finishStep emits the emulated engine's onStepFinish contract
         // (eval's stream runner turns it into a `step_finish` SSE snapshot).
         let stepIndex = 0;
+        const accountByCall = new Map<string, McpConnectionAttribution>();
         const toolMeta = new Map<
           string,
           { serverId?: string; toolName: string }
@@ -2901,6 +2956,12 @@ export async function runHarnessTurn(
                   keyToServerId: harnessKeyToServerId,
                 })
               : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId);
+            const account = toolConnectionAttribution(
+              hostExecutedMcp.tools[rawToolName],
+              input,
+              toolCallId,
+            );
+            if (account) accountByCall.set(toolCallId, account);
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
@@ -2913,9 +2974,9 @@ export async function runHarnessTurn(
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
             // auto-continues, re-submitting the turn forever.
-            const providerMetadata = mergeMcpToolOriginMetadata(
-              undefined,
-              serverId,
+            const providerMetadata = mergeMcpToolConnectionMetadata(
+              mergeMcpToolOriginMetadata(undefined, serverId),
+              account,
             );
             writer.write({
               type: "tool-input-available",
@@ -3050,6 +3111,10 @@ export async function runHarnessTurn(
             emitToolOutput(writer, {
               toolCallId,
               output,
+              providerMetadata: mergeMcpToolConnectionMetadata(
+                undefined,
+                accountByCall.get(toolCallId),
+              ),
               providerExecuted: true,
             });
             // A policy block is neither a tool result nor a tool span: it never
@@ -3085,6 +3150,11 @@ export async function runHarnessTurn(
                 toolCallId,
                 toolName: meta.toolName,
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
+                ...(accountByCall.get(toolCallId)
+                  ? {
+                      connectionId: accountByCall.get(toolCallId)!.connectionId,
+                    }
+                  : {}),
               });
             }
             // `!policyBlock` for the SAME reason the result and span above
@@ -3736,8 +3806,11 @@ export async function runHarnessTurn(
       // `onFinishEngine` never consumed the reducer's argument, so this is a
       // strict reduction in exposure.
       execute: async (context) => {
+        const writer: ChunkWriter = signChunk
+          ? { write: (chunk) => context.writer.write(signChunk(chunk)) }
+          : context.writer;
         try {
-          await executeEngine(context);
+          await executeEngine({ writer });
         } finally {
           await onFinishEngine(context.writer);
         }

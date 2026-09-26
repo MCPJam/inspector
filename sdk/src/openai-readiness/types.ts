@@ -54,7 +54,13 @@ import type { OpenAIPolicySourceRef } from "./manifest.js";
  * inventories move for unrelated reasons, and a shared counter would make every
  * Anthropic change look like an OpenAI re-audit.
  */
-export const OPENAI_READINESS_ENGINE_VERSION = "1";
+/*
+ * "2" adds the `openai.profile.*` inventory. A persisted report has to say
+ * which rule set produced it: the same server graded before and after this
+ * change can hold a different verdict, and a shared version would make those
+ * two reports look comparable when they are not.
+ */
+export const OPENAI_READINESS_ENGINE_VERSION = "2";
 
 /**
  * The seven lanes. Each answers a different question and fails for different
