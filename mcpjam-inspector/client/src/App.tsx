@@ -94,7 +94,10 @@ import {
   type FirstRunServerDraft,
 } from "./components/onboarding/FirstRunOnboardingOverlay";
 import type { ServerFormData } from "@/shared/types.js";
-import { validateServerFormData } from "@/lib/server-form-validation";
+import {
+  validateBearerTargetUrl,
+  validateServerFormData,
+} from "@/lib/server-form-validation";
 import { parseCommandInput } from "@/lib/command-input";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { ProfileTab } from "./components/ProfileTab";
@@ -2716,8 +2719,12 @@ export default function App() {
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
   const firstRunConnectionAttemptRef = useRef(0);
+  const pendingFirstRunAuthorizationRef = useRef<
+    ((authorized: boolean) => void) | null
+  >(null);
   const restoredFirstRunSelectionRef = useRef<string | null>(null);
   const restoredFirstRunServerRef = useRef<string | null>(null);
+  const firstRunOAuthReturnServerRef = useRef<string | null>(null);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3484,6 +3491,11 @@ export default function App() {
     initialFirstRunServerChoiceState?.status === "started" &&
     pendingDashboardOAuth?.serverName ===
       initialFirstRunServerChoiceState.attemptedServerName;
+  useEffect(() => {
+    if (isReturningFirstRunOAuth && pendingDashboardOAuth) {
+      firstRunOAuthReturnServerRef.current = pendingDashboardOAuth.serverName;
+    }
+  }, [isReturningFirstRunOAuth, pendingDashboardOAuth]);
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
     (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
@@ -3533,12 +3545,36 @@ export default function App() {
       activeProjectId === "none");
   const openFirstRunServerConnection = useCallback(
     (draft: FirstRunServerDraft) => {
-      const stdioCommand = parseCommandInput(draft.urlOrCommand.trim());
+      // A token retry or edited submission replaces any OAuth authorization
+      // challenge that is currently awaiting the user's decision.
+      pendingFirstRunAuthorizationRef.current?.(false);
+      pendingFirstRunAuthorizationRef.current = null;
+      firstRunOAuthReturnServerRef.current = null;
+      const authorizationServerName =
+        firstRunConnectionState.status === "authorization-required"
+          ? firstRunConnectionState.serverName
+          : "";
+      const effectiveServerName =
+        draft.name.trim() || authorizationServerName;
+      const savedServer =
+        projectServers[effectiveServerName] ??
+        appState.servers[effectiveServerName];
+      const savedHttpUrl =
+        savedServer?.config && "url" in savedServer.config
+          ? String(savedServer.config.url)
+          : "";
+      const effectiveUrlOrCommand =
+        draft.urlOrCommand.trim() || savedHttpUrl;
+      const stdioCommand = parseCommandInput(effectiveUrlOrCommand);
+      const authorizationHeader =
+        draft.authentication === "bearer" && draft.bearerToken?.trim()
+          ? `Bearer ${draft.bearerToken.trim()}`
+          : undefined;
       const formData: ServerFormData = {
-        name: draft.name,
+        name: effectiveServerName,
         type: draft.transport,
         ...(draft.transport === "http"
-          ? { url: draft.urlOrCommand }
+          ? { url: effectiveUrlOrCommand }
           : {
               command: stdioCommand.command,
               args: stdioCommand.args,
@@ -3546,8 +3582,19 @@ export default function App() {
         useOAuth:
           draft.authentication === "auto" || draft.authentication === "oauth",
         authMethod: draft.authentication,
+        ...(authorizationHeader
+          ? {
+              headers: { Authorization: authorizationHeader },
+              secretPatch: {
+                headers: { Authorization: authorizationHeader },
+              },
+            }
+          : {}),
       };
-      const validationError = validateServerFormData(formData);
+      const validationError =
+        (authorizationHeader && draft.transport === "http"
+          ? validateBearerTargetUrl(effectiveUrlOrCommand)
+          : null) ?? validateServerFormData(formData);
       if (validationError) {
         setFirstRunConnectionState({
           status: "failed",
@@ -3567,10 +3614,11 @@ export default function App() {
         serverKind: "personal",
       });
     },
-    [],
+    [appState.servers, firstRunConnectionState, projectServers],
   );
 
   const connectFirstRunDemo = useCallback(() => {
+    firstRunOAuthReturnServerRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
     markFirstRunServerChoiceStarted(EXCALIDRAW_SERVER_CONFIG.name);
     setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
@@ -3591,6 +3639,57 @@ export default function App() {
     (!HOSTED_MODE ||
       !isAuthenticated ||
       Boolean(projects[activeProjectId]?.sharedProjectId));
+  const requestFirstRunOAuthAuthorization = useCallback(
+    (serverName: string, attemptId: number) =>
+      new Promise<boolean>((resolve) => {
+        if (firstRunConnectionAttemptRef.current !== attemptId) {
+          resolve(false);
+          return;
+        }
+        pendingFirstRunAuthorizationRef.current?.(false);
+        pendingFirstRunAuthorizationRef.current = resolve;
+        setFirstRunConnectionState((current) => ({
+          status: "authorization-required",
+          serverName,
+          serverKind:
+            current.status === "idle"
+              ? serverName === EXCALIDRAW_SERVER_NAME
+                ? "demo"
+                : "personal"
+              : current.serverKind,
+        }));
+      }),
+    [],
+  );
+  const authorizeFirstRunConnection = useCallback(() => {
+    const resolve = pendingFirstRunAuthorizationRef.current;
+    const serverName =
+      firstRunConnectionState.status === "authorization-required"
+        ? firstRunConnectionState.serverName
+        : null;
+    if (!serverName) return;
+    setFirstRunConnectionState((current) =>
+      current.status === "authorization-required"
+        ? { ...current, status: "connecting" }
+        : current,
+    );
+    if (resolve) {
+      pendingFirstRunAuthorizationRef.current = null;
+      resolve(true);
+      return;
+    }
+
+    // After an OAuth round trip the original authorization promise no longer
+    // exists. A retry must start a fresh interactive flow for the saved server
+    // instead of leaving the dedicated authorization screen unresponsive.
+    void handleReconnect(serverName, {
+      forceOAuthFlow: true,
+      replaceExistingOAuthConnection: false,
+      suppressErrors: true,
+      suppressSuccessToast: true,
+    });
+  }, [firstRunConnectionState, handleReconnect]);
+
   useEffect(() => {
     if (
       !pendingFirstRunConnection ||
@@ -3606,15 +3705,19 @@ export default function App() {
       serverName: pendingFirstRunConnection.name,
       serverKind: firstRunConnectionState.serverKind,
     });
+    const attemptId = firstRunConnectionAttemptRef.current;
     void handleConnect(pendingFirstRunConnection, {
       suppressErrorToast: true,
       suppressSuccessToast: true,
+      requestOAuthAuthorization: (serverName) =>
+        requestFirstRunOAuthAuthorization(serverName, attemptId),
     });
   }, [
     firstRunConnectionState.status,
     handleConnect,
     isFirstRunProjectReady,
     pendingFirstRunConnection,
+    requestFirstRunOAuthAuthorization,
   ]);
 
   useEffect(() => {
@@ -3651,6 +3754,7 @@ export default function App() {
     if (!server) return;
 
     if (server.connectionStatus === "connected") {
+      firstRunOAuthReturnServerRef.current = null;
       const attemptId = firstRunConnectionAttemptRef.current;
       const { serverKind, serverName } = firstRunConnectionState;
       setPendingFirstRunConnection(null);
@@ -3689,15 +3793,34 @@ export default function App() {
     }
 
     if (server.connectionStatus === "failed") {
+      const isOAuthReturnFailure =
+        firstRunOAuthReturnServerRef.current ===
+        firstRunConnectionState.serverName;
+      // The saved project row can briefly replay the 401 from before OAuth
+      // while the callback owner is importing the new credential. The
+      // recovery effect above owns that window and will either publish the
+      // credential-aware success or return to the authorization modal. Do not
+      // let this stale failure launch a second account-picker flow.
+      if (isOAuthReturnFailure && pendingDashboardOAuth) return;
+
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
-        status: "failed",
+        status: isOAuthReturnFailure ? "authorization-required" : "failed",
         serverName: firstRunConnectionState.serverName,
         serverKind: firstRunConnectionState.serverKind,
-        error: server.lastError || "MCPJam could not connect to this server.",
+        error: isOAuthReturnFailure
+          ? sanitizeHostedOAuthErrorMessage(
+              server.lastError,
+              "MCPJam could not verify the server after authorization. Try again or use a token.",
+            )
+          : server.lastError || "MCPJam could not connect to this server.",
       });
     }
-  }, [appState.servers, firstRunConnectionState]);
+  }, [
+    appState.servers,
+    firstRunConnectionState,
+    pendingDashboardOAuth,
+  ]);
 
   // Repair stale `started` records left by the earlier flow, which created the
   // server successfully but never wrote its onboarding completion marker.
@@ -3749,7 +3872,10 @@ export default function App() {
   ]);
 
   const cancelFirstRunConnection = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     if (firstRunConnectionState.status !== "idle") {
       handleRuntimeDisconnect(firstRunConnectionState.serverName);
@@ -3758,13 +3884,19 @@ export default function App() {
   }, [firstRunConnectionState, handleRuntimeDisconnect]);
 
   const returnToFirstRunChoice = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
   }, []);
 
   const openFirstRunPlayground = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
@@ -3775,7 +3907,10 @@ export default function App() {
   }, [navigateApp]);
 
   const dismissFirstRunOverlay = useCallback(() => {
+    pendingFirstRunAuthorizationRef.current?.(false);
+    pendingFirstRunAuthorizationRef.current = null;
     firstRunConnectionAttemptRef.current += 1;
+    firstRunOAuthReturnServerRef.current = null;
     markFirstRunServerChoiceDismissed();
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
@@ -5134,6 +5269,19 @@ export default function App() {
     (shouldRouteToFirstRunOnboarding &&
       (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
       !firstRunOverlayDismissed);
+  // On an OAuth return there is a short auth/project hydration window before
+  // the overlay can mount again. Suspending only when it is already visible
+  // lets the background reconciler connect the same server and emit its own
+  // success toast. A persisted started record means onboarding still owns the
+  // connection, but only while the OAuth return is in flight or onboarding can
+  // still open: a stale record on an ineligible route or account would
+  // otherwise pause auto-connect indefinitely, and the repair effect that
+  // clears it needs a connected server to do so.
+  const shouldSuspendFirstRunBackgroundConnections =
+    shouldShowFirstRunOverlay ||
+    (!firstRunOverlayDismissed &&
+      initialFirstRunServerChoiceState?.status === "started" &&
+      (isReturningFirstRunOAuth || shouldRouteToFirstRunOnboarding));
 
   useLayoutEffect(() => {
     if (shouldRouteToFirstRunOnboarding) {
@@ -5617,7 +5765,7 @@ export default function App() {
     ensureServersReady,
     evalChatHandoff,
     firstRunPlaygroundPrompt,
-    suspendRouteAutoConnect: shouldShowFirstRunOverlay,
+    suspendRouteAutoConnect: shouldSuspendFirstRunBackgroundConnections,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
@@ -5871,6 +6019,26 @@ export default function App() {
     </div>
   );
 
+  const firstRunRecoveryServerDraft = (() => {
+    if (firstRunConnectionState.status !== "authorization-required") {
+      return undefined;
+    }
+    const serverName = firstRunConnectionState.serverName;
+    const savedServer =
+      projectServers[serverName] ?? appState.servers[serverName];
+    const savedUrl =
+      savedServer?.config && "url" in savedServer.config
+        ? String(savedServer.config.url)
+        : "";
+    if (!savedUrl) return undefined;
+    return {
+      name: serverName,
+      transport: "http" as const,
+      urlOrCommand: savedUrl,
+      authentication: "auto" as const,
+    };
+  })();
+
   return (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
@@ -5896,7 +6064,7 @@ export default function App() {
             activeHost={activeHost}
             activeHostId={activeHostId}
             isActiveHostSelectionHydrated={isActiveHostSelectionHydrated}
-            suspendAutoConnect={shouldShowFirstRunOverlay}
+            suspendAutoConnect={shouldSuspendFirstRunBackgroundConnections}
           />
           <AppReadyProvider
             isLoadingAppState={isLoading}
@@ -5943,8 +6111,10 @@ export default function App() {
                 open={shouldShowFirstRunOverlay}
                 skipWelcome={skipFirstRunWelcome}
                 connectionState={firstRunConnectionState}
+                recoveryServerDraft={firstRunRecoveryServerDraft}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
+                onAuthorizeConnection={authorizeFirstRunConnection}
                 onCancelConnection={cancelFirstRunConnection}
                 onReturnToChoice={returnToFirstRunChoice}
                 onOpenPlayground={openFirstRunPlayground}

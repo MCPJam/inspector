@@ -35,6 +35,7 @@ type FirstRunOverlayStep =
   | "welcome"
   | "choose"
   | "connecting"
+  | "authorizing"
   | "connected"
   | "demo-failed"
   | "server-details";
@@ -47,6 +48,12 @@ export type FirstRunConnectionState =
       status: "preparing" | "connecting" | "loading-tools";
       serverName: string;
       serverKind: FirstRunServerKind;
+    }
+  | {
+      status: "authorization-required";
+      serverName: string;
+      serverKind: FirstRunServerKind;
+      error?: string;
     }
   | {
       status: "connected";
@@ -65,15 +72,18 @@ export interface FirstRunServerDraft {
   name: string;
   transport: "http" | "stdio";
   urlOrCommand: string;
-  authentication: "auto" | "oauth" | "none";
+  authentication: "auto" | "oauth" | "bearer" | "none";
+  bearerToken?: string;
 }
 
 interface FirstRunOnboardingOverlayProps {
   open: boolean;
   skipWelcome?: boolean;
   connectionState: FirstRunConnectionState;
+  recoveryServerDraft?: FirstRunServerDraft;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
+  onAuthorizeConnection: () => void;
   onCancelConnection: () => void;
   onReturnToChoice: () => void;
   onOpenPlayground: () => void;
@@ -92,8 +102,10 @@ export function FirstRunOnboardingOverlay({
   open,
   skipWelcome = false,
   connectionState,
+  recoveryServerDraft,
   onConnectOwnServer,
   onConnectDemo,
+  onAuthorizeConnection,
   onCancelConnection,
   onReturnToChoice,
   onOpenPlayground,
@@ -115,6 +127,26 @@ export function FirstRunOnboardingOverlay({
   );
   const [serverAuthentication, setServerAuthentication] =
     useState<FirstRunServerDraft["authentication"]>("auto");
+  const [isTokenEntryOpen, setIsTokenEntryOpen] = useState(false);
+  const [bearerToken, setBearerToken] = useState("");
+  const [bearerTokenError, setBearerTokenError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (
+      connectionState.status !== "authorization-required" ||
+      !recoveryServerDraft ||
+      serverUrlOrCommand.trim()
+    ) {
+      return;
+    }
+
+    setServerName((current) => current || recoveryServerDraft.name);
+    setServerUrlOrCommand(
+      (current) => current || recoveryServerDraft.urlOrCommand,
+    );
+    setServerTransport(recoveryServerDraft.transport);
+    setServerAuthentication(recoveryServerDraft.authentication);
+  }, [connectionState.status, recoveryServerDraft, serverUrlOrCommand]);
 
   useEffect(() => {
     if (open && step === "welcome") onWelcomeShown();
@@ -183,6 +215,38 @@ export function FirstRunOnboardingOverlay({
     ],
   );
 
+  const connectWithBearerToken = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmedToken = bearerToken.trim();
+      if (!trimmedToken) {
+        setBearerTokenError("Enter a bearer token.");
+        return;
+      }
+
+      setBearerTokenError(null);
+      onConnectOwnServer({
+        name:
+          serverName.trim() ||
+          (connectionState.status === "authorization-required"
+            ? connectionState.serverName
+            : deriveServerName(serverUrlOrCommand)),
+        transport: serverTransport,
+        urlOrCommand: serverUrlOrCommand,
+        authentication: "bearer",
+        bearerToken: trimmedToken,
+      });
+    },
+    [
+      bearerToken,
+      connectionState,
+      onConnectOwnServer,
+      serverName,
+      serverTransport,
+      serverUrlOrCommand,
+    ],
+  );
+
   useEffect(() => {
     if (!open) return;
     if (
@@ -191,6 +255,8 @@ export function FirstRunOnboardingOverlay({
       connectionState.status === "loading-tools"
     ) {
       setStep("connecting");
+    } else if (connectionState.status === "authorization-required") {
+      setStep("authorizing");
     } else if (connectionState.status === "connected") {
       setStep("connected");
     } else if (connectionState.status === "failed") {
@@ -397,6 +463,116 @@ export function FirstRunOnboardingOverlay({
                 Set up later
               </Button>
             </>
+          ) : step === "authorizing" &&
+            connectionState.status === "authorization-required" ? (
+            <div className="py-1">
+              <DialogHeader className="gap-0 text-left">
+                <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
+                  {connectionState.serverName} needs authorization
+                </DialogTitle>
+                {serverUrlOrCommand ? (
+                  <DialogDescription className="mt-1 break-all font-mono text-[11.5px] leading-[1.55] text-muted-foreground">
+                    {serverUrlOrCommand}
+                  </DialogDescription>
+                ) : null}
+              </DialogHeader>
+
+              <div className="mt-4 rounded-lg border border-warning/35 bg-warning/10 p-3">
+                <p className="text-[12px] leading-4 font-semibold text-card-foreground">
+                  The server returned 401 Unauthorized
+                </p>
+                <p className="mt-1 text-[11.5px] leading-[1.5] text-muted-foreground">
+                  MCPJam can run the OAuth flow for you. If you already have a
+                  token, use that instead.
+                </p>
+                <p className="mt-2 break-words rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-[1.45] text-muted-foreground">
+                  {connectionState.error?.trim() || "HTTP 401 Unauthorized"}
+                </p>
+              </div>
+
+              <Button
+                type="button"
+                className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                onClick={onAuthorizeConnection}
+              >
+                Authorize
+              </Button>
+
+              <div className="mt-3 border-t border-border pt-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-auto justify-start gap-1.5 px-1 py-1 text-[11.5px] font-normal text-foreground"
+                  aria-expanded={isTokenEntryOpen}
+                  onClick={() => {
+                    setBearerTokenError(null);
+                    setIsTokenEntryOpen((current) => !current);
+                  }}
+                >
+                  <ChevronDown
+                    className={cn(
+                      "size-3 transition-transform",
+                      isTokenEntryOpen && "rotate-180",
+                    )}
+                    aria-hidden
+                  />
+                  Use a token instead
+                </Button>
+                {isTokenEntryOpen ? (
+                  <form
+                    className="mt-2 grid gap-2"
+                    onSubmit={connectWithBearerToken}
+                  >
+                    <Label
+                      htmlFor="first-run-bearer-token"
+                      className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
+                    >
+                      Bearer token
+                    </Label>
+                    <Input
+                      id="first-run-bearer-token"
+                      type="password"
+                      autoComplete="off"
+                      className="h-10 border-border bg-card text-[12px] shadow-none"
+                      placeholder="Enter your bearer token"
+                      value={bearerToken}
+                      aria-invalid={bearerTokenError ? true : undefined}
+                      onChange={(event) => {
+                        setBearerToken(event.target.value);
+                        if (bearerTokenError) setBearerTokenError(null);
+                      }}
+                    />
+                    {bearerTokenError ? (
+                      <p
+                        className="text-[10.5px] text-destructive"
+                        role="alert"
+                      >
+                        {bearerTokenError}
+                      </p>
+                    ) : null}
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      className="h-auto w-full px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                    >
+                      Connect with token
+                    </Button>
+                  </form>
+                ) : null}
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
+                onClick={() => {
+                  onCancelConnection();
+                  setStep("server-details");
+                }}
+              >
+                Edit server details
+              </Button>
+            </div>
           ) : step === "connecting" &&
             (connectionState.status === "preparing" ||
               connectionState.status === "connecting" ||

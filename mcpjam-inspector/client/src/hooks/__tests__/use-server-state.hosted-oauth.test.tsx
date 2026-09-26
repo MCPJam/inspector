@@ -258,6 +258,72 @@ describe("useServerState hosted OAuth callback guards", () => {
     expect(dispatch.mock.calls.some(([action]) => ["RECONNECT_REQUEST", "CONNECT_FAILURE"].includes(action.type))).toBe(false);
   });
 
+  it("preserves inline toast suppression through a forced OAuth reconnect", async () => {
+    const { initiateOAuth } = await import("@/lib/oauth/mcp-oauth");
+    vi.mocked(initiateOAuth).mockResolvedValue({
+      success: true,
+      serverConfig: { url: "https://mcp.asana.com/sse" },
+    } as any);
+    const { result } = renderHostedServerState();
+
+    await act(async () => {
+      await result.current.handleReconnect("asana", {
+        forceOAuthFlow: true,
+        connectionIntent: { kind: "add" },
+        suppressErrors: true,
+        suppressSuccessToast: true,
+      });
+    });
+
+    expect(
+      JSON.parse(localStorage.getItem("mcp-hosted-oauth-pending") ?? "{}"),
+    ).toMatchObject({
+      serverName: "asana",
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { outcome: "success", result: { success: true, serverName: "asana" } },
+    {
+      outcome: "failure",
+      result: { success: false, error: "Consent declined" },
+    },
+  ])(
+    "honors toast suppression on an add-account callback $outcome",
+    async ({ result }) => {
+      writeHostedOAuthPendingMarker({
+        surface: "project",
+        initiatingUserId: "user_1",
+        connectionIntent: { kind: "add" },
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        returnPath: "#servers",
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+      });
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      mockHandleOAuthCallback.mockResolvedValue(result);
+      vi.mocked(sonnerToast.error).mockClear();
+
+      renderHostedServerState();
+
+      await waitFor(() => {
+        expect(mockHandleOAuthCallback).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(window.location.search).toBe("");
+      });
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(sonnerToast.error).not.toHaveBeenCalled();
+    },
+  );
+
   // A `?code=` on a route this hook does not own must not be claimed. The
   // GitHub App bind returns to `/settings/integrations/github/callback`, and
   // this effect used to complete it as an MCP flow, fail, toast "No pending

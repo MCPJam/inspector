@@ -65,7 +65,7 @@ import {
   writeHostedOAuthPendingMarker,
   type HostedOAuthCallbackContext,
 } from "@/lib/hosted-oauth-callback";
-import { getRedirectUri } from "./constants";
+import { getRedirectUri, supportsMcpJamCimdRedirect } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import {
   appendOAuthTraceHttpHistory,
@@ -1755,6 +1755,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
   configuredResourceUrl?: string;
   /** Concrete version resolved for this flow before leaving the page. */
   protocolVersion: OAuthProtocolVersion;
+  shouldContinue?: () => boolean;
 }): Promise<string | undefined> {
   if (!HOSTED_MODE) {
     return undefined;
@@ -1843,6 +1844,12 @@ async function createHostedOAuthSessionIfNeeded(input: {
     sessionId?: string;
     error?: string;
   } | null;
+
+  // Cancel can invalidate the connect while the hosted session request is in
+  // flight. Do not restore the pending marker after the cancel path cleared it.
+  if (input.shouldContinue && !input.shouldContinue()) {
+    return undefined;
+  }
 
   if (
     !response.ok ||
@@ -2636,8 +2643,14 @@ function readStoredClientInformation(
  * brand makes a fifth divergent bag a compile error rather than a bug report.
  */
 export async function initiateOAuth(
-  options: BuiltOAuthRequest
+  options: BuiltOAuthRequest,
+  control?: { shouldContinue?: () => boolean }
 ): Promise<OAuthResult> {
+  const assertCurrent = () => {
+    if (control?.shouldContinue && !control.shouldContinue()) {
+      throw new Error("OAuth authorization was canceled.");
+    }
+  };
   let state = cloneEmptyFlowState();
   const updateState = (updates: Partial<OAuthFlowState>) => {
     state = { ...state, ...updates };
@@ -2701,11 +2714,33 @@ export async function initiateOAuth(
       },
       undefined
     );
-    const authorizationPlan = await resolveOAuthExecutionPlan(
+    let authorizationPlan = await resolveOAuthExecutionPlan(
       provider,
       fetchFn,
       options
     );
+    assertCurrent();
+    if (
+      authorizationPlan.status === "ready" &&
+      authorizationPlan.registrationStrategy === "cimd" &&
+      typeof window !== "undefined" &&
+      !supportsMcpJamCimdRedirect(window.location)
+    ) {
+      if (requestedRegistrationMode !== "auto") {
+        return {
+          success: false,
+          error:
+            "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
+        };
+      }
+
+      authorizationPlan = await resolveOAuthExecutionPlan(provider, fetchFn, {
+        ...options,
+        registrationMode: "dcr",
+        registrationStrategy: undefined,
+      });
+      assertCurrent();
+    }
     traceAuthorizationPlan = authorizationPlan;
     if (
       authorizationPlan.status !== "ready" ||
@@ -2823,6 +2858,7 @@ export async function initiateOAuth(
         emitTraceSnapshot(snapshot);
       },
       onAuthorizationRequest: async ({ authorizationUrl }) => {
+        assertCurrent();
         const electronAuthorization =
           buildElectronMcpAuthorizationRequest(authorizationUrl);
         const resourceMetadata = getState().resourceMetadata as
@@ -2859,8 +2895,11 @@ export async function initiateOAuth(
           authorizationUrl: redirectedAuthorizationUrl,
           configuredResourceUrl: oauthResourceUrl,
           protocolVersion,
+          shouldContinue: control?.shouldContinue,
         });
+        assertCurrent();
         await persistOAuthStateArtifacts(provider, getState());
+        assertCurrent();
         saveOAuthFlowSession(options.serverName, {
           version: 1,
           protocolVersion,
@@ -2870,6 +2909,7 @@ export async function initiateOAuth(
         });
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
+        assertCurrent();
         await provider.redirectToAuthorization(
           new URL(redirectedAuthorizationUrl)
         );
@@ -3994,14 +4034,17 @@ export function clearOAuthData(serverName: string): void {
  * Removing it unconditionally would strand that server's callback: it would
  * arrive with no marker, find no server name, and dead-end.
  */
-function clearOAuthPendingMarkerFor(serverName: string): void {
+function clearOAuthPendingMarkerFor(serverName: string): boolean {
   try {
     if (localStorage.getItem(OAUTH_PENDING_STORAGE_KEY) === serverName) {
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
+      localStorage.removeItem("mcp-oauth-return-hash");
+      return true;
     }
   } catch {
     // Storage access can throw in locked-down contexts; cleanup is best-effort.
   }
+  return false;
 }
 
 /**

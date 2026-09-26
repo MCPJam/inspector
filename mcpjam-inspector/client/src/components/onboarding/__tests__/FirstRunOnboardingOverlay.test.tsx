@@ -17,14 +17,17 @@ import {
   FIRST_RUN_WELCOME_AUTO_ADVANCE_MS,
   FirstRunOnboardingOverlay,
   type FirstRunConnectionState,
+  type FirstRunServerDraft,
 } from "../FirstRunOnboardingOverlay";
 
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
   skipWelcome = false,
+  recoveryServerDraft?: FirstRunServerDraft,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
+  const onAuthorizeConnection = vi.fn();
   const onCancelConnection = vi.fn();
   const onReturnToChoice = vi.fn();
   const onOpenPlayground = vi.fn();
@@ -35,8 +38,10 @@ function renderOverlay(
       open
       skipWelcome={skipWelcome}
       connectionState={connectionState}
+      recoveryServerDraft={recoveryServerDraft}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
+      onAuthorizeConnection={onAuthorizeConnection}
       onCancelConnection={onCancelConnection}
       onReturnToChoice={onReturnToChoice}
       onOpenPlayground={onOpenPlayground}
@@ -48,6 +53,7 @@ function renderOverlay(
     view,
     onConnectOwnServer,
     onConnectDemo,
+    onAuthorizeConnection,
     onCancelConnection,
     onReturnToChoice,
     onOpenPlayground,
@@ -61,8 +67,10 @@ function renderOverlay(
           open
           skipWelcome={skipWelcome}
           connectionState={nextConnectionState}
+          recoveryServerDraft={recoveryServerDraft}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
+          onAuthorizeConnection={onAuthorizeConnection}
           onCancelConnection={onCancelConnection}
           onReturnToChoice={onReturnToChoice}
           onOpenPlayground={onOpenPlayground}
@@ -387,6 +395,107 @@ describe("FirstRunOnboardingOverlay", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();
+  });
+
+  it("shows a dedicated OAuth authorization recovery modal", () => {
+    const {
+      onAuthorizeConnection,
+      onCancelConnection,
+      rerenderWithConnectionState,
+    } = renderOverlay();
+
+    rerenderWithConnectionState({
+      status: "authorization-required",
+      serverName: "Multiaccount",
+      serverKind: "personal",
+    });
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Multiaccount needs authorization",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("The server returned 401 Unauthorized"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Use a token instead" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit server details" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    expect(onAuthorizeConnection).toHaveBeenCalledOnce();
+    expect(onCancelConnection).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
+    expect(onCancelConnection).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("heading", { name: "Set up your server" }),
+    ).toBeInTheDocument();
+  });
+
+  it("restores saved server details before editing a remounted OAuth recovery", () => {
+    renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Multiaccount",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Multiaccount",
+        transport: "http",
+        urlOrCommand: "https://multiaccount.example/mcp",
+        authentication: "auto",
+      },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit server details" }),
+    );
+
+    expect(screen.getByLabelText("Name")).toHaveValue("Multiaccount");
+    expect(screen.getByLabelText("Server URL or command")).toHaveValue(
+      "https://multiaccount.example/mcp",
+    );
+  });
+
+  it("can retry an authorization challenge with a bearer token", () => {
+    const { onConnectOwnServer, rerenderWithConnectionState } = renderOverlay(
+      { status: "idle" },
+      true,
+    );
+
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    rerenderWithConnectionState({
+      status: "authorization-required",
+      serverName: "secure.example",
+      serverKind: "personal",
+      error: "401 Unauthorized",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use a token instead" }),
+    );
+    fireEvent.change(screen.getByLabelText("Bearer token"), {
+      target: { value: "secret-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect with token" }));
+
+    expect(onConnectOwnServer).toHaveBeenLastCalledWith({
+      name: "Secure",
+      transport: "http",
+      urlOrCommand: "https://secure.example/mcp",
+      authentication: "bearer",
+      bearerToken: "secret-token",
+    });
   });
 
   it("keeps demo failures out of the personal-server credential form", () => {

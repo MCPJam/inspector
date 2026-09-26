@@ -71,6 +71,7 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
@@ -715,6 +716,7 @@ interface ReconnectServerInternalOptions {
   allowInteractiveOAuthFlow?: boolean;
   select?: boolean;
   suppressErrors?: boolean;
+  suppressSuccessToast?: boolean;
 }
 
 type StatelessProtocolConnectAttempt =
@@ -2983,7 +2985,9 @@ export function useServerState({
         }
 
         if (!result.success && hostedCallbackContext?.connectionIntent) {
-          toast.error(result.error ?? "Could not connect the account");
+          if (!suppressErrorToast) {
+            toast.error(result.error ?? "Could not connect the account");
+          }
           return;
         }
         if (result.success && hostedCallbackContext?.connectionIntent) {
@@ -2995,7 +2999,9 @@ export function useServerState({
               await guardedReconnectServer(result.serverName, existing.config);
           }
           notifyOAuthConnectionsChanged();
-          toast.success("Account connected");
+          if (!suppressSuccessToast) {
+            toast.success("Account connected");
+          }
           return;
         }
         if (result.success && result.serverConfig && result.serverName) {
@@ -3463,6 +3469,7 @@ export function useServerState({
       options?: {
         suppressErrorToast?: boolean;
         suppressSuccessToast?: boolean;
+        requestOAuthAuthorization?: (serverName: string) => Promise<boolean>;
       }
     ) => {
       const showConnectionError = (
@@ -3744,7 +3751,9 @@ export function useServerState({
               showConnectionError(errorMessage);
               return;
             }
-            const proceed = await confirmAutoOAuthEscalation(formData.name);
+            const requestOAuthAuthorization =
+              options?.requestOAuthAuthorization ?? confirmAutoOAuthEscalation;
+            const proceed = await requestOAuthAuthorization(formData.name);
             if (isStaleOp(formData.name, token)) return;
             if (!proceed) {
               failWithoutEscalation(
@@ -3874,7 +3883,9 @@ export function useServerState({
             suppressErrorToast: options?.suppressErrorToast,
             suppressSuccessToast: options?.suppressSuccessToast,
           });
-          const oauthResult = await initiateOAuth(oauthOptions);
+          const oauthResult = await initiateOAuth(oauthOptions, {
+            shouldContinue: () => !isStaleOp(formData.name, token),
+          });
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const oauthServerConfig = stripAuthorizationFromHttpConfig(
@@ -4861,9 +4872,30 @@ export function useServerState({
       // this, a late completion can overwrite this disconnect with success or
       // failure and reopen a canceled onboarding attempt.
       nextOpToken(serverName);
+      const resolved = tryResolveProjectServer(serverName);
+      autoOAuthEscalation.markFailed({
+        // Auto escalation is created in the active project scope. Use that
+        // same identity for cleanup even when a stale resolver entry points at
+        // a different project.
+        projectId: appState.activeProjectId,
+        serverId: resolved?.serverId ?? null,
+        serverName,
+      });
+      // A connect may have marked Auto before its hosted id was available.
+      // Clear that name-keyed fallback as well so Cancel never suppresses the
+      // next deliberate authorization attempt.
+      autoOAuthEscalation.markFailed({
+        projectId: appState.activeProjectId,
+        serverId: null,
+        serverName,
+      });
+      clearPendingOAuthAttempt(serverName);
+      if (readHostedOAuthPendingMarker()?.serverName === serverName) {
+        clearHostedOAuthPendingState();
+      }
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [dispatch]
+    [appState.activeProjectId, dispatch]
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -5247,8 +5279,12 @@ export function useServerState({
             serverId: hostedProjectServerId,
             serverName,
             serverUrl,
+            suppressErrorToast: suppressErrors,
+            suppressSuccessToast: options?.suppressSuccessToast,
           });
-          oauthResult = await initiateOAuth(oauthOptions);
+          oauthResult = await initiateOAuth(oauthOptions, {
+            shouldContinue: () => !isStaleOp(serverName, token),
+          });
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
@@ -5305,7 +5341,9 @@ export function useServerState({
           if (!HOSTED_MODE)
             await guardedReconnectServer(serverName, server.config);
           notifyOAuthConnectionsChanged();
-          toast.success("Account connected");
+          if (!options?.suppressSuccessToast) {
+            toast.success("Account connected");
+          }
           return { status: "connected" };
         }
         const oauthServerConfig = stripAuthorizationFromHttpConfig(
@@ -5539,6 +5577,8 @@ export function useServerState({
                 serverId: hostedProjectServerId,
                 serverName,
                 serverUrl: oauthOptions.serverUrl,
+                suppressErrorToast: suppressErrors,
+                suppressSuccessToast: options?.suppressSuccessToast,
               });
             },
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
@@ -5708,12 +5748,19 @@ export function useServerState({
       serverName: string,
       options?: {
         forceOAuthFlow?: boolean;
+        replaceExistingOAuthConnection?: boolean;
         connectionIntent?: ConnectionIntent;
         allowInteractiveOAuthFlow?: boolean;
+        suppressErrors?: boolean;
+        suppressSuccessToast?: boolean;
       },
     ) => {
       let connectionIntent = options?.connectionIntent;
-      if (options?.forceOAuthFlow && !connectionIntent) {
+      if (
+        options?.forceOAuthFlow &&
+        options.replaceExistingOAuthConnection !== false &&
+        !connectionIntent
+      ) {
         const target = tryResolveProjectServer(serverName);
         if (target) {
           const result = await listOAuthConnections(
@@ -5733,6 +5780,8 @@ export function useServerState({
         connectionIntent,
         allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
         select: true,
+        suppressErrors: options?.suppressErrors,
+        suppressSuccessToast: options?.suppressSuccessToast,
       });
     },
     [reconnectServerInternal]
