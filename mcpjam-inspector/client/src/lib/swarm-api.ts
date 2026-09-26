@@ -742,12 +742,14 @@ export function journeySessionRowToThread(
     criteria: row.criteria,
     goalScore: row.goalScore,
     // A session refused before it said anything has no preview, so without
-    // this its row reads like any other. Unknown (no verdict) stays unknown.
-    ...(row.verdict
+    // this its row reads like any other. Unknown stays unknown: without a
+    // verdict, or without a message count to read, there is no claim to make,
+    // and an absent count must not be read as zero messages.
+    ...(row.verdict && typeof row.messageCount === "number"
       ? {
           neverRan: swarmSessionNeverRan(
             row.verdict.lifecycle,
-            row.messageCount ?? 0,
+            row.messageCount,
           ),
         }
       : {}),

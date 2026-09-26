@@ -285,6 +285,14 @@ describe("swarm rollup DTO contracts", () => {
     expect(journeySessionRowToThread(row(null, 0))).not.toHaveProperty(
       "neverRan",
     );
+    // No message count either: an absent count is unknown, not zero, so a
+    // broke verdict alone does not make the session one that never ran.
+    expect(
+      journeySessionRowToThread({
+        ...row("broke", 0),
+        messageCount: undefined,
+      }),
+    ).not.toHaveProperty("neverRan");
   });
 
   it("groupSwarmSessionsByRun clusters rows by journeyRunId, newest run first", () => {
