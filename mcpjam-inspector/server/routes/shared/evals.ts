@@ -704,18 +704,25 @@ export function buildGithubCheckServerOverride(args: {
  * entry whose `model` is the requested id). Invalid or absent ⇒ `undefined`
  * and the run reads the id as legacy (hosted-first).
  */
-function storedSelectionForCaseModel(
+export function storedSelectionForCaseModel(
   testCase: unknown,
   model: string,
+  provider: string,
 ): ModelSelection | undefined {
   const models = (testCase as { models?: unknown } | null)?.models;
   if (!Array.isArray(models)) return undefined;
-  const entry = models.find(
-    (candidate) =>
-      candidate !== null &&
-      typeof candidate === "object" &&
-      (candidate as { model?: unknown }).model === model,
-  ) as { selection?: unknown } | undefined;
+  // A case can list one model id under two providers (`gpt-5.1` under
+  // `openai` and under `azure`); the run must take the entry of the
+  // provider it was asked for. An entry saved without a provider matches on
+  // the model alone.
+  const entry = models.find((candidate) => {
+    if (candidate === null || typeof candidate !== "object") return false;
+    const row = candidate as { model?: unknown; provider?: unknown };
+    return (
+      row.model === model &&
+      (row.provider === undefined || row.provider === provider)
+    );
+  }) as { selection?: unknown } | undefined;
   return readStoredModelSelection(entry?.selection);
 }
 
@@ -3117,7 +3124,11 @@ export async function runEvalTestCaseWithManager(
     resolvedServerIds,
     suiteEnvironment,
   });
-  const caseModelSelection = storedSelectionForCaseModel(testCase, model);
+  const caseModelSelection = storedSelectionForCaseModel(
+    testCase,
+    model,
+    provider,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -3552,7 +3563,11 @@ export async function streamEvalTestCaseWithManager(
     resolvedServerIds,
     suiteEnvironment,
   });
-  const caseModelSelection = storedSelectionForCaseModel(testCase, model);
+  const caseModelSelection = storedSelectionForCaseModel(
+    testCase,
+    model,
+    provider,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,

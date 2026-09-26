@@ -2399,6 +2399,9 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        ...(typeof modelDefinition.nativeModelId === "string"
+          ? { nativeModelId: modelDefinition.nativeModelId }
+          : {}),
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,

@@ -36,7 +36,9 @@
  *
  * Whenever the canonical id differs from the row id on an own-provider row,
  * the row id goes in `nativeModelId` — it is what the provider API is called
- * with, and what the runner executes. Anything that still fails the SDK
+ * with, and what the runner executes. A row that names its native id
+ * explicitly (`ModelDefinition.nativeModelId`: an org Azure row's deployment
+ * name) puts that in `nativeModelId` instead. Anything that still fails the SDK
  * validator yields `null` (keep the legacy id).
  *
  * ## Persisting beside a legacy id
@@ -249,8 +251,14 @@ export function modelSelectionFromDefinition(
     candidate = { modelId, source: "hosted", fallback };
   } else {
     const rowId = String(model.id).trim();
-    const nativeModelId =
-      rowId !== modelId ? { nativeModelId: rowId } : undefined;
+    // An explicit native id on the row (an org Azure row's deployment name)
+    // wins: it is chosen, not derived from the row id.
+    const explicitNativeId = model.nativeModelId?.trim();
+    const nativeModelId = explicitNativeId
+      ? { nativeModelId: explicitNativeId }
+      : rowId !== modelId
+        ? { nativeModelId: rowId }
+        : undefined;
     // The row's own stamp (rows built from an org config carry it) wins;
     // otherwise look the row up in the org config the caller passed.
     const orgRow =
