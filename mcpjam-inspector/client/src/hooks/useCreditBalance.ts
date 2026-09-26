@@ -229,16 +229,18 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
 }
 
 /**
- * True when MCPJam-provided usage would be paid from the FREE daily bucket with
- * no purchased credits to fall back on: the population the backend's
- * free-allowance model gate applies to (`free_tier_model_restricted`). Kept
- * conservative so it never locks a model the backend would serve: only the
- * daily billing model counts (monthly teams are billed differently), and an
- * unknown balance is not free-tier-only.
+ * True when a GUEST's MCPJam-provided usage would be paid from the FREE daily
+ * bucket: the population the backend's free-allowance model gate applies to
+ * (`free_tier_model_restricted`). Signed-in users are never gated, with or
+ * without purchased credits. Kept conservative so it never locks a model the
+ * backend would serve: only the daily billing model counts (monthly teams are
+ * billed differently), and an unknown balance is not free-tier-only.
  */
 export function isFreeTierOnly(
   balance: CreditBalanceState | undefined,
+  signedIn: boolean,
 ): boolean {
+  if (signedIn) return false;
   if (!balance) return false;
   if (balance.billingModel !== "daily") return false;
   if (balance.platformPaidFallback) return false;
@@ -247,15 +249,17 @@ export function isFreeTierOnly(
 
 /**
  * {@link isFreeTierOnly} for the active organization (or guest), resolved the
- * same way as {@link useOutOfCredits}. Feeds `applyFreeTierLocks`.
+ * same way as {@link useOutOfCredits}. Feeds `applyFreeTierLocks`. "Signed in"
+ * means a WorkOS user: Convex also authenticates guests (guest JWT), so its
+ * `isAuthenticated` cannot tell the two apart.
  */
 export function useFreeTierOnly(organizationId?: string | null): boolean {
   const { user } = useAuth();
   const resolvedOrganizationId =
     organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null);
-  const { balance } = useCreditBalance({
+  const { balance, hasWorkOsUser } = useCreditBalance({
     organizationId: resolvedOrganizationId,
     includeGuests: true,
   });
-  return isFreeTierOnly(balance);
+  return isFreeTierOnly(balance, hasWorkOsUser);
 }

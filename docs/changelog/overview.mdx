@@ -9,6 +9,17 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-26
+
+#### Changed
+
+- **Swarms now say when a session never ran, and why** — a swarm session whose attempt ended before it recorded a single message tested nothing about the server under test. Every surface that shows such a session now says so explicitly instead of inferring something from the absence of a transcript.
+
+  - **Sessions detail**: the pane says **This session didn't run** with the refusal the attempt recorded, worded the way the Run tab words it. The judge request and the promote affordance are not shown — there is no conversation to grade or turn into a test case.
+  - **Sessions list and Findings drawer**: a **Didn't run** tag appears in place of an empty preview, so a refused session no longer reads like an ordinary session that said nothing.
+  - **Findings summary**: a **Why sessions didn't run** block names the most common refusal reason beside the existing session count. A goal whose sessions never ran no longer reads "No session evidence available" — it reads "No session launched for this goal, so nothing about the server was tested."
+  - **Insights**: when every session in a wave never ran, the flow reads **These sessions didn't run** instead of waiting on or analyzing sessions that have nothing to read. When only some sessions ran, a note beside the drawn flow counts the ones that didn't.
+
 ### 2026-09-25
 
 #### Fixed

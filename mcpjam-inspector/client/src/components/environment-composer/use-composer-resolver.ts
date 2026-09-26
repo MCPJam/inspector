@@ -16,7 +16,17 @@ import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useHostHarnessLoader } from "@/hooks/use-host-harness-targets";
 
-export function useComposerResolver(rawProjectId: string): (args: {
+export function useComposerResolver(
+  rawProjectId: string,
+  options: {
+    /**
+     * Eval surfaces pass `true`: see `resolveComposerEnvironments`. Swarms and
+     * User Testing leave it off — their targets fall back to the client's own
+     * servers.
+     */
+    requireServerAttachment?: boolean;
+  } = {},
+): (args: {
   state: EnvironmentComposerState;
   liveEnvironments: ProjectEnvironmentView[];
   max: number;
@@ -29,6 +39,7 @@ export function useComposerResolver(rawProjectId: string): (args: {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const modelMatrixEnabled = useModelMatrixCapability(projectId);
+  const requireServerAttachment = options.requireServerAttachment === true;
   // Read at resolve time, per client with explicit model picks, so a pair the
   // client's harness cannot run is skipped (and reported) instead of minted.
   const loadHostHarness = useHostHarnessLoader();
@@ -45,6 +56,7 @@ export function useComposerResolver(rawProjectId: string): (args: {
         computersEnabled,
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
+        requireServerAttachment,
         loadHostHarness,
         modelSelectionsEnabled: modelSelectionsEnabled === true,
       }),
@@ -55,7 +67,8 @@ export function useComposerResolver(rawProjectId: string): (args: {
       modelMatrixEnabled,
       modelSelectionsEnabled,
       projectId,
+      requireServerAttachment,
       skillsEnabled,
-    ]
+    ],
   );
 }

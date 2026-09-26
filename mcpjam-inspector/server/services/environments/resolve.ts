@@ -91,8 +91,16 @@ export interface ResolvedEnvironmentForLaunch {
    * actually use, which is this override when one is set.
    */
   modelId?: string;
-  /** The model that will run: the override, else the host's model. */
+  /**
+   * The model that will run: the override, else the host's model. The current
+   * backend refuses to resolve an environment with no model
+   * (`ENV_MODEL_REQUIRED`), so it is present there. BOTH model fields absent
+   * means a backend that predates them (deploy skew); `modelSource: 'none'`,
+   * or a present but empty `effectiveModelId`, means the environment has no
+   * model — see `assertEnvironmentQuickRunModel`.
+   */
   effectiveModelId?: string;
+  /** Where {@link effectiveModelId} came from. */
   modelSource?: "environment" | "host" | "none";
 }
 

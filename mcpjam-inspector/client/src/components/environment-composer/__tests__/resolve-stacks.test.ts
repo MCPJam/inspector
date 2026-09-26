@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ComposerResolveError,
   clientNameResolver,
+  composerMissingServerGroup,
   describeSkippedModelCells,
   isAdhocUnavailable,
+  lacksEvalServerSource,
   resolveComposerEnvironments,
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
@@ -246,6 +248,102 @@ describe("resolveComposerEnvironments — compose path", () => {
         ensureAdhocEnvironments: ensureReturning([]),
       }),
     ).rejects.toMatchObject({ code: "TOO_MANY_TARGETS" });
+  });
+});
+
+describe("resolveComposerEnvironments — requireServerAttachment (evals)", () => {
+  it("refuses a composition with no server group before minting anything", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: composeState({ hostIds: ["h1"] }),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+        requireServerAttachment: true,
+      }),
+    ).rejects.toMatchObject({ code: "NO_SERVER_GROUP" });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("mints a composition that names a group", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: composeState({ hostIds: ["h1"], serverAttachmentId: "grp" }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+      requireServerAttachment: true,
+    });
+    expect(result.environmentIds).toEqual(["adhoc-1"]);
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h1", serverAttachmentId: "grp" }],
+    });
+  });
+
+  it("refuses a picked saved environment with no group, but accepts a plugin-only one", async () => {
+    const saved = (id: string) => ({
+      environmentIds: [id],
+      stack: emptyEnvironmentStack(),
+      customized: false,
+    });
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: saved("bare"),
+        liveEnvironments: [named({ environmentId: "bare" })],
+        ensureAdhocEnvironments: ensureReturning([]),
+        requireServerAttachment: true,
+      }),
+    ).rejects.toMatchObject({ code: "NO_SERVER_GROUP" });
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: saved("plugin-only"),
+      liveEnvironments: [
+        named({ environmentId: "plugin-only", pluginVersionIds: ["pv"] }),
+      ],
+      ensureAdhocEnvironments: ensureReturning([]),
+      requireServerAttachment: true,
+    });
+    expect(result.environmentIds).toEqual(["plugin-only"]);
+  });
+
+  it("leaves non-eval surfaces free to compose without a group", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: composeState({ hostIds: ["h1"] }),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+      }),
+    ).resolves.toMatchObject({ environmentIds: ["adhoc-1"] });
+  });
+
+  it("gates submit on the same rule", () => {
+    expect(lacksEvalServerSource({})).toBe(true);
+    expect(lacksEvalServerSource({ serverAttachmentId: "g" })).toBe(false);
+    expect(lacksEvalServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
+    expect(
+      composerMissingServerGroup(composeState({ hostIds: ["h1"] }), []),
+    ).toBe(true);
+    expect(
+      composerMissingServerGroup(
+        composeState({ hostIds: ["h1"], serverAttachmentId: "g" }),
+        [],
+      ),
+    ).toBe(false);
+    expect(
+      composerMissingServerGroup(
+        {
+          environmentIds: ["bare"],
+          stack: emptyEnvironmentStack(),
+          customized: false,
+        },
+        [named({ environmentId: "bare" })],
+      ),
+    ).toBe(true);
   });
 });
 

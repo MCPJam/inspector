@@ -23,6 +23,7 @@ export function EvalGenerationWorkspace({
   suiteName,
   autoStart = true,
   config,
+  environmentId,
   onChangeSettings,
   onDone,
 }: {
@@ -31,6 +32,8 @@ export function EvalGenerationWorkspace({
   suiteName: string;
   autoStart?: boolean;
   config?: GenerateCasesConfig;
+  /** Environment suites: the environment the cases are written for. */
+  environmentId?: string;
   /** Reopen the scope dialog, for a failure that retrying cannot fix. */
   onChangeSettings?: () => void;
   /** Back to the suite, once there is nothing left to do here. */
@@ -69,6 +72,7 @@ export function EvalGenerationWorkspace({
         },
         "Generate discovery-backed test cases for this suite using its connected servers. Stage the cases for review; do not save or run them.",
         config ? toGenerationOptions(config) : undefined,
+        environmentId,
       );
     } catch (error) {
       setStartError(error instanceof Error ? error.message : String(error));

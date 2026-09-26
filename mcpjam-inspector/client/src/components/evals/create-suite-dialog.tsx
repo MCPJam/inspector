@@ -31,6 +31,7 @@ import {
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import {
   clientNameResolver,
+  composerMissingServerGroup,
   describeSkippedModelCells,
 } from "@/components/environment-composer/resolve-stacks";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
@@ -112,7 +113,9 @@ export function CreateSuiteDialog({
     useEvalComposeCapable(projectId);
   const composeMode = composeCapable || composePending;
   // Only used when `composeMode`; `projectId` is non-null in that case.
-  const resolveTargets = useComposerResolver(projectId ?? "");
+  const resolveTargets = useComposerResolver(projectId ?? "", {
+    requireServerAttachment: true,
+  });
   const composerEnvironments = useProjectEnvironments(
     composeMode ? projectId : null,
   );
@@ -150,10 +153,28 @@ export function CreateSuiteDialog({
   }, [open, initialName]);
 
   useEffect(() => {
-    // Compose mode picks its own defaults through the composer; seeding the
-    // legacy server group here would send a field its runs never read.
-    if (!shouldFetchDefaults || composeMode) return;
-    if (serverAttachmentId === null && serverAttachments.length > 0) {
+    if (!shouldFetchDefaults || serverAttachments.length === 0) return;
+    if (composeMode) {
+      // Seeded into the STACK, like the create page does: an eval run takes
+      // its servers from the environment's group alone, so a suite born
+      // without one would run with no tools. Never the legacy field here —
+      // a compose-mode suite does not read it.
+      setTarget((current) =>
+        current.stack.serverAttachmentId !== null ||
+        current.environmentIds.length > 0
+          ? current
+          : {
+              ...current,
+              stack: {
+                ...current.stack,
+                serverAttachmentId: serverAttachments[0]._id,
+              },
+              customized: true,
+            },
+      );
+      return;
+    }
+    if (serverAttachmentId === null) {
       setServerAttachmentId(serverAttachments[0]._id);
     }
   }, [composeMode, shouldFetchDefaults, serverAttachmentId, serverAttachments]);
@@ -194,8 +215,13 @@ export function CreateSuiteDialog({
   // `composerHasTarget`. Create would otherwise stay enabled on a state that can
   // only fail resolution.
   const composeHasTarget = composerHasTarget(target);
+  // Required, like the create page: every target needs a server group (or,
+  // for a picked saved environment, a plugin pin contributing servers).
+  const composeMissingGroup =
+    composeMode &&
+    composerMissingServerGroup(target, composerEnvironments ?? []);
   const hasRequiredAttachments = composeMode
-    ? composeHasTarget
+    ? composeHasTarget && !composeMissingGroup
     : !attachmentsRequired ||
       (serverAttachmentId !== null && hostAttachments.length > 0);
   // Compose mode also waits for the environment list: the resolver reuses a
@@ -213,6 +239,9 @@ export function CreateSuiteDialog({
     if (name.trim().length === 0) return "Add a suite name first.";
     if (composeMode && !composeHasTarget) {
       return "Pick at least one client first.";
+    }
+    if (composeMode && composeMissingGroup) {
+      return "Pick a server or group first.";
     }
     if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && serverAttachmentId === null) {
@@ -346,9 +375,10 @@ export function CreateSuiteDialog({
                 </p>
               </div>
               <EnvironmentComposer
-                // Evals take servers from the group alone, so the empty slot
-                // cannot claim the client's own servers here.
-                emptyServerLabel="Servers · none"
+                // Evals take servers from the group alone, so the slot is
+                // required: there is no client default to fall back to.
+                emptyServerLabel="Pick a server or group"
+                serverOptional={false}
                 projectId={projectId}
                 environments={composerEnvironments ?? []}
                 value={target}

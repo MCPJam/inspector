@@ -16,6 +16,10 @@ import { SessionReadinessBadge } from "@/components/scenarios/session-readiness"
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { formatCompactRelativeTime } from "@/components/connection/share-usage/session-list-format";
+import {
+  NeverRanTag,
+  threadNeverRan,
+} from "@/components/swarms/swarm-session-not-run";
 import { cn } from "@/lib/utils";
 
 interface ShareUsageThreadListProps {
@@ -202,6 +206,9 @@ export function ThreadCard({
               Preview
             </span>
           ) : null}
+          {/* A refused session has no preview to show, so without this its
+              row reads like any other (#5188). */}
+          {threadNeverRan(thread) ? <NeverRanTag className="shrink-0" /> : null}
         </p>
         {preview ? (
           <p className="truncate text-xs text-muted-foreground">{preview}</p>

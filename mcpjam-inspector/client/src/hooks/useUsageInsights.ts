@@ -83,6 +83,13 @@ export type InsightsAnalysisSummary = {
   lastAnalyzedAt: number | null;
   failures: Record<string, number>;
   skips: Record<string, number>;
+  /**
+   * Swarm sessions that never ran: their run ended and they recorded no
+   * message, so no analysis pass will ever mark them (#5188). Counted in
+   * `total` and nowhere else. Always 0 outside a swarm scope; absent from
+   * backends that predate it.
+   */
+  notRun?: number;
   sampled: boolean;
   taxonomies: Array<{
     dimension: string;

@@ -1,3 +1,4 @@
+import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
  * Shared web-chat streaming turn.
@@ -1358,6 +1359,7 @@ export async function streamWebChatTurn(
     const providerKey = providerKeyResult.key;
     const modelId = String(prepare.modelDefinition.id);
     const scrubbedMessages = scrubMessages(modelMessages);
+    const localTools = withoutServerVerifiedApprovalTools(allTools as ToolSet);
 
     // Cloud-only providers skip the /stream/org/resolve round-trip — the
     // answer is always "cloud" for those. See chat-v2 history for the
@@ -1372,6 +1374,13 @@ export async function streamWebChatTurn(
             scenarioId: persist.scenarioId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
+          },
+          {
+            modelWorkload: modelWorkloadFor({
+              sourceType: persist.sourceType,
+              tools: localTools.tools,
+              messages: scrubbedMessages,
+            }),
           },
         )
       : { runtimeLocation: "cloud", providerKey };
@@ -1389,9 +1398,6 @@ export async function streamWebChatTurn(
       // that pause for approval (MJ-008) would therefore take every other tool
       // down with them; they are withheld here instead — refused, not run
       // unasked.
-      const localTools = withoutServerVerifiedApprovalTools(
-        allTools as ToolSet,
-      );
       if (localTools.removed.length > 0) {
         logger.warn(
           "[web-chat-turn] local-runtime org provider cannot serve workspace tools that pause for approval; withholding them",

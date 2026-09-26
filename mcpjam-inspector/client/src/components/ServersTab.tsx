@@ -1,3 +1,4 @@
+import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
 import {
   useCallback,
   useContext,
@@ -164,7 +165,7 @@ import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sor
 import { toast } from "@/lib/toast";
 import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
-const ORDER_STORAGE_KEY = "mcp-server-order";
+
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
@@ -214,26 +215,6 @@ function isQuickConnectCardExcludedByProject(
       isPendingQuickConnectVisible
     )
   );
-}
-
-function loadServerOrder(projectId: string): string[] | undefined {
-  try {
-    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    return raw ? JSON.parse(raw)[projectId] : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function saveServerOrder(projectId: string, orderedNames: string[]): void {
-  try {
-    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    const all = raw ? JSON.parse(raw) : {};
-    all[projectId] = orderedNames;
-    localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    // ignore
-  }
 }
 
 function clearPersistedLoggerFocus(): void {
@@ -777,6 +758,7 @@ export function ServersTab({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
+    catalogLoaded: viewProjectServersList !== undefined,
     suspendAutoConnect,
   });
 
@@ -867,6 +849,13 @@ export function ServersTab({
     return allNames;
   });
 
+  useEffect(() => {
+    serverCheckQueue.setOrder(
+      sharedProjectIdForHostScope ?? activeProjectId,
+      orderedServerNames,
+    );
+  }, [sharedProjectIdForHostScope, activeProjectId, orderedServerNames]);
+
   // Reconcile when servers are added/removed or project changes
   useEffect(() => {
     setOrderedServerNames((prev) => {
@@ -906,6 +895,7 @@ export function ServersTab({
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
         saveServerOrder(activeProjectId, newOrder);
+        if (sharedProjectIdForHostScope) serverCheckQueue.setOrder(sharedProjectIdForHostScope, newOrder);
       }
     }
     setActiveId(null);

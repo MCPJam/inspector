@@ -11,20 +11,35 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { MAX_MARKDOWN_BYTES } from "@/shared/markdown-case-import";
+import type { EvalSuiteEnvironmentTarget } from "../evals/types";
+import { EnvironmentTargetPicker } from "../evals/environment-target-picker";
 
 interface ImportDatasetDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   suiteId: string;
+  /**
+   * An environment suite whose environments connect different servers: the
+   * environments to pick from. The drafts are written for its tools.
+   */
+  environmentChoices?: EvalSuiteEnvironmentTarget[] | null;
 }
 export function ImportDatasetDialog({
   open,
   onOpenChange,
   projectId,
   suiteId,
+  environmentChoices,
 }: ImportDatasetDialogProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [environmentId, setEnvironmentId] = useState<string>();
+  const needsEnvironment = Boolean(environmentChoices?.length);
+  const pickedEnvironmentId = environmentChoices?.some(
+    (target) => target.environmentId === environmentId,
+  )
+    ? environmentId
+    : undefined;
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "extracting">("idle");
   // The limit dialog already opened on the refusal; the inline line only has
@@ -82,6 +97,7 @@ export function ImportDatasetDialog({
   };
   const extract = async () => {
     if (!file || busy.current) return;
+    if (needsEnvironment && !pickedEnvironmentId) return;
     busy.current = true;
     setPhase("extracting");
     setError(null);
@@ -111,6 +127,9 @@ export function ImportDatasetDialog({
             fileName: file.name,
             projectId,
             suiteId,
+            ...(pickedEnvironmentId
+              ? { environmentId: pickedEnvironmentId }
+              : {}),
             requestKey: (() => {
               if (startIdentity.current.file !== file)
                 startIdentity.current = { file, key: crypto.randomUUID() };
@@ -220,6 +239,16 @@ export function ImportDatasetDialog({
             </div>
           )}
         </div>
+        {environmentChoices?.length ? (
+          <EnvironmentTargetPicker
+            idPrefix="import"
+            legend="Write cases for"
+            targets={environmentChoices}
+            value={pickedEnvironmentId}
+            onChange={setEnvironmentId}
+            disabled={phase !== "idle"}
+          />
+        ) : null}
         {errorText && (
           <p
             role="alert"
@@ -233,7 +262,14 @@ export function ImportDatasetDialog({
           <Button variant="outline" onClick={close}>
             Cancel
           </Button>
-          <Button onClick={extract} disabled={!file || phase !== "idle"}>
+          <Button
+            onClick={extract}
+            disabled={
+              !file ||
+              phase !== "idle" ||
+              (needsEnvironment && !pickedEnvironmentId)
+            }
+          >
             Extract cases
           </Button>
         </div>
