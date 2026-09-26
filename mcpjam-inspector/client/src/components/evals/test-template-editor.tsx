@@ -21,7 +21,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
@@ -103,10 +103,22 @@ import type { EditEvalCaseDraftInspectorCommand } from "@/shared/inspector-comma
 import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
+  prepareEnvironmentTestCaseRun,
   prepareSingleTestCaseRun,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "./single-test-case-runner";
+import {
+  attachedSuiteEnvironments,
+  defaultQuickRunServerGroup,
+  ensureLocalEnvironmentServers,
+  planQuickRunTargets,
+  quickRunClientIds,
+  resolveQuickRunEnvironments,
+} from "./environment-quick-run";
+import { isHostedMode } from "@/lib/apis/mode-client";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import {
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
@@ -181,10 +193,15 @@ import {
 } from "./helpers";
 import { ImportClaimDetails } from "./import-claim-badge";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
-import { useHost } from "@/hooks/useClients";
+import { useHost, useHostList } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
 import { parseDraftTestCaseId } from "./draft-test-case";
+import {
+  caseModelEntry,
+  type CaseModelEntry,
+} from "@/components/chat-v2/shared/model-selection";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
@@ -1401,13 +1418,63 @@ export function TestTemplateEditor({
     [suite],
   );
 
+  // ── Environment suites ──────────────────────────────────────────────────
+  // Run executes one of the suite's ENVIRONMENTS per picked model. The client
+  // and server-group dropdowns come from those environments — never from the
+  // suite's legacy host attachments or server list, which an environment suite
+  // does not read — and the environment itself owns the model, client and
+  // servers the run executes (the request names nothing else).
+  const { isAuthenticated } = useConvexAuth();
+  const convex = useConvex();
+  const isEnvironmentSuite = (suite?.environmentIds?.length ?? 0) > 0;
+  const projectEnvironmentViews = useProjectEnvironments(
+    isEnvironmentSuite ? projectId : null,
+    // A suite's environments may be ad-hoc rows.
+    { includeAdhoc: true },
+  );
+  const attachedEnvironments = useMemo(
+    () =>
+      isEnvironmentSuite && suite
+        ? attachedSuiteEnvironments(suite, projectEnvironmentViews)
+        : null,
+    [isEnvironmentSuite, suite, projectEnvironmentViews],
+  );
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated,
+    projectId: isEnvironmentSuite ? projectId : null,
+  });
+  const [quickRunServerGroup, setQuickRunServerGroup] = useState<string | null>(
+    null,
+  );
+  const quickRunServerGroupPickedRef = useRef(false);
+  useEffect(() => {
+    // Start on the group the suite's environments share; a pick sticks.
+    if (!attachedEnvironments || quickRunServerGroupPickedRef.current) return;
+    setQuickRunServerGroup(defaultQuickRunServerGroup(attachedEnvironments));
+  }, [attachedEnvironments]);
+
   // Quick Run never runs hostless: when the suite has attached hosts the
   // picker lists ONLY those (no "Suite default" — that pseudo-host mapped to a
   // null host context). Attachment-less suites run under the suite's own host
-  // config, surfaced read-only below rather than as a selectable option.
+  // config, surfaced read-only below rather than as a selectable option. An
+  // environment suite lists its environments' clients instead.
   const quickRunHostOptions = useMemo<
     Array<{ value: string; label: string; namedHostId: string }>
   >(() => {
+    if (isEnvironmentSuite) {
+      return (
+        attachedEnvironments ? quickRunClientIds(attachedEnvironments) : []
+      ).map((hostId) => {
+        const host = projectHosts.find(
+          (candidate) => candidate.hostId === hostId,
+        );
+        return {
+          value: hostId,
+          label: host?.displayName ?? host?.name ?? hostId,
+          namedHostId: hostId,
+        };
+      });
+    }
     const attachments = suite?.hostAttachments ?? [];
     return attachments.map(
       (attachment: NonNullable<typeof suite>["hostAttachments"][number]) => ({
@@ -1416,7 +1483,12 @@ export function TestTemplateEditor({
         namedHostId: attachment.namedHostId,
       }),
     );
-  }, [suite?.hostAttachments]);
+  }, [
+    suite?.hostAttachments,
+    isEnvironmentSuite,
+    attachedEnvironments,
+    projectHosts,
+  ]);
 
   useEffect(() => {
     setQuickRunHostSelection((current) => {
@@ -1583,12 +1655,13 @@ export function TestTemplateEditor({
   // only an attachment-less suite runs under the suite hostConfig. Gate the
   // system-tool merge on whichever of those actually carries a harness, so
   // emulated suites never see bash/read/… in the assertion dropdowns.
-  const { isAuthenticated } = useConvexAuth();
+  // An environment suite runs as the picked environment client.
+  const runsOnPickedClient = hasHostAttachments || isEnvironmentSuite;
   const { host: selectedQuickRunHost } = useHost({
     isAuthenticated,
-    hostId: hasHostAttachments ? (selectedQuickRunHostId ?? null) : null,
+    hostId: runsOnPickedClient ? (selectedQuickRunHostId ?? null) : null,
   });
-  const suiteRunHarnessId = hasHostAttachments
+  const suiteRunHarnessId = runsOnPickedClient
     ? (selectedQuickRunHost?.config?.harness ?? null)
     : (hostConfigBaseline?.harness ?? null);
   const { tools: harnessBuiltinCatalog } =
@@ -1602,12 +1675,16 @@ export function TestTemplateEditor({
     [availableTools, harnessBuiltinCatalog],
   );
 
+  // Environment suites resolve their servers server-side from the
+  // environment; the browser's connections are not a precondition.
   const missingServers = useMemo(
     () =>
-      quickRunSuiteServers.filter(
-        (server: string) => !connectedServerNames.has(server),
-      ),
-    [quickRunSuiteServers, connectedServerNames],
+      isEnvironmentSuite
+        ? []
+        : quickRunSuiteServers.filter(
+            (server: string) => !connectedServerNames.has(server),
+          ),
+    [isEnvironmentSuite, quickRunSuiteServers, connectedServerNames],
   );
   const connectedSuiteServerKey = useMemo(
     () =>
@@ -1649,7 +1726,8 @@ export function TestTemplateEditor({
     missingServers.length,
   ]);
 
-  const hasConfiguredSuiteServers = quickRunSuiteServers.length > 0;
+  const hasConfiguredSuiteServers =
+    isEnvironmentSuite || quickRunSuiteServers.length > 0;
   // Guests rely on the local persistent MCP manager; don't block Run on the
   // connected-servers check — the runner surfaces a connection error if the
   // server is genuinely missing.
@@ -2669,15 +2747,21 @@ export function TestTemplateEditor({
     enqueue();
   };
 
+  // Case chips save a model selection only where the deployment stores one.
+  const modelSelectionsSupported = useModelSelectionsSupported(projectId);
   const buildSelectedCompareModels = (
     modelValues: string[],
-  ): Array<{ provider: string; model: string }> => {
+  ): CaseModelEntry[] => {
     return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
-      return { provider, model };
+      return caseModelEntry(
+        { provider, model },
+        availableModels,
+        modelSelectionsSupported,
+      );
     });
   };
 
@@ -2965,35 +3049,114 @@ export function TestTemplateEditor({
       return;
     }
 
-    const suiteServers = normalizeSuiteServerRefs(quickRunSuiteServers);
-    if (suiteServers.length === 0) {
-      toast.error("No MCP servers are configured for this suite.");
-      return;
+    // Legacy suites only: an environment suite's servers are its
+    // environment's, resolved server-side — its legacy server list and the
+    // browser's connections play no part.
+    const suiteServers = isEnvironmentSuite
+      ? []
+      : normalizeSuiteServerRefs(quickRunSuiteServers);
+    if (!isEnvironmentSuite) {
+      if (suiteServers.length === 0) {
+        toast.error("No MCP servers are configured for this suite.");
+        return;
+      }
+      const disconnectedSuiteServers = suiteServers.filter(
+        (name) => !connectedServerNames.has(name),
+      );
+      if (disconnectedSuiteServers.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (hasUnavailableServers(readiness)) {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "run this test case",
+                projectServers,
+              ),
+            );
+            return;
+          }
+        } else {
+          toast.error(
+            formatMcpConnectServerPrompt(disconnectedSuiteServers, {
+              remoteServers: projectServers,
+              kind: "test-case",
+            }),
+          );
+          return;
+        }
+      }
     }
-    const disconnectedSuiteServers = suiteServers.filter(
-      (name) => !connectedServerNames.has(name),
-    );
-    if (disconnectedSuiteServers.length > 0) {
-      if (ensureServersReady != null) {
-        const readiness = await ensureServersReady(suiteServers);
-        if (hasUnavailableServers(readiness)) {
+
+    // Environment suites: every picked model becomes ONE environment — the
+    // suite's own for that client, model and group, or a lossless backend
+    // derivation — and all of them are resolved before any of them runs.
+    let environmentIds: Map<string, string> | null = null;
+    if (isEnvironmentSuite) {
+      if (isDirectGuest || !projectId) {
+        toast.error("Sign in to run this suite's environments.");
+        return;
+      }
+      if (!attachedEnvironments) {
+        toast.error(
+          "This suite's environments are still loading. Try again shortly.",
+        );
+        return;
+      }
+      const clientId =
+        quickRunHostSelection ?? quickRunClientIds(attachedEnvironments)[0];
+      if (!clientId) {
+        toast.error("Pick a client to run this case.");
+        return;
+      }
+      try {
+        environmentIds = await resolveQuickRunEnvironments(convex, {
+          projectId,
+          plans: planQuickRunTargets({
+            attached: attachedEnvironments,
+            serverAttachmentId: quickRunServerGroup,
+            targets: runModelValues.map((value) => {
+              const modelId = parseModelValue(value).model;
+              return {
+                key: value,
+                hostId: clientId,
+                ...(modelId ? { modelId } : {}),
+              };
+            }),
+            clientModelId: (hostId) =>
+              projectHosts
+                .find((host) => host.hostId === hostId)
+                ?.modelId?.trim() || undefined,
+          }),
+        });
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Couldn't prepare this suite's environments.",
+        );
+        return;
+      }
+      // The local run route executes on this inspector's connection pool and
+      // connects nothing itself, so connect the environments' servers first,
+      // as a legacy quick run does above. Hosted routes connect them.
+      if (!isHostedMode() && ensureServersReady != null) {
+        const blocked = await ensureLocalEnvironmentServers({
+          convex,
+          projectId,
+          environmentIds: environmentIds.values(),
+          ensureServersReady,
+        });
+        if (blocked) {
           toast.error(
             formatEnsureServersReadyError(
-              readiness,
+              blocked,
               "run this test case",
               projectServers,
             ),
           );
           return;
         }
-      } else {
-        toast.error(
-          formatMcpConnectServerPrompt(disconnectedSuiteServers, {
-            remoteServers: projectServers,
-            kind: "test-case",
-          }),
-        );
-        return;
       }
     }
 
@@ -3027,7 +3190,9 @@ export function TestTemplateEditor({
     let preparedRuns: Array<{
       modelValue: string;
       modelLabel: string;
-      request: Awaited<ReturnType<typeof prepareSingleTestCaseRun>>;
+      request:
+        | Awaited<ReturnType<typeof prepareSingleTestCaseRun>>
+        | Awaited<ReturnType<typeof prepareEnvironmentTestCaseRun>>;
     }> = [];
     const preparationFailures: Array<{
       modelValue: string;
@@ -3046,41 +3211,54 @@ export function TestTemplateEditor({
           override: undefined,
         });
 
-        const preparedRun = await prepareSingleTestCaseRun({
-          projectId: isDirectGuest ? null : projectId,
-          suite: {
-            ...suite,
-            environment: {
-              ...(suite.environment ?? {}),
-              servers: suiteServers,
-            },
-          },
-          testCase: currentTestCase,
-          selectedModel: modelValue,
-          getAccessToken,
-          namedHostId: quickRunHostPlan.namedHostId,
-          testCaseOverrides: {
-            query: savePayload.query,
-            expectedToolCalls: savePayload.expectedToolCalls,
-            isNegativeTest: savePayload.isNegativeTest,
-            // The workspace owns the count (saved with the case, edited in the
-            // Next run sheet); only the old page has the per-run override.
-            runs: useWorkspace
-              ? (editForm.runs ?? DEFAULTS.RUNS_PER_TEST)
-              : iterationOverride,
-            expectedOutput: savePayload.expectedOutput,
-            steps: savePayload.steps,
-            advancedConfig,
-            matchOptions: savePayload.matchOptions,
-            predicates: savePayload.predicates,
-            ...(savePayload.suppressedSuiteStandardCheckIds !== undefined
-              ? {
-                  suppressedSuiteStandardCheckIds:
-                    savePayload.suppressedSuiteStandardCheckIds,
-                }
-              : {}),
-          },
-        });
+        const testCaseOverrides = {
+          query: savePayload.query,
+          expectedToolCalls: savePayload.expectedToolCalls,
+          isNegativeTest: savePayload.isNegativeTest,
+          // The workspace owns the count (saved with the case, edited in the
+          // Next run sheet); only the old page has the per-run override.
+          runs: useWorkspace
+            ? (editForm.runs ?? DEFAULTS.RUNS_PER_TEST)
+            : iterationOverride,
+          expectedOutput: savePayload.expectedOutput,
+          steps: savePayload.steps,
+          advancedConfig,
+          matchOptions: savePayload.matchOptions,
+          predicates: savePayload.predicates,
+          ...(savePayload.suppressedSuiteStandardCheckIds !== undefined
+            ? {
+                suppressedSuiteStandardCheckIds:
+                  savePayload.suppressedSuiteStandardCheckIds,
+              }
+            : {}),
+        };
+        const preparedRun = environmentIds
+          ? await prepareEnvironmentTestCaseRun({
+              projectId: projectId!,
+              testCase: currentTestCase,
+              environmentId: environmentIds.get(modelValue)!,
+              modelValue,
+              getAccessToken,
+              testCaseOverrides,
+              // One key per target per click: a retried request replays the
+              // same committed rows instead of running them again.
+              idempotencyKey: `quick-run:${crypto.randomUUID()}`,
+            })
+          : await prepareSingleTestCaseRun({
+              projectId: isDirectGuest ? null : projectId,
+              suite: {
+                ...suite,
+                environment: {
+                  ...(suite.environment ?? {}),
+                  servers: suiteServers,
+                },
+              },
+              testCase: currentTestCase,
+              selectedModel: modelValue,
+              getAccessToken,
+              namedHostId: quickRunHostPlan.namedHostId,
+              testCaseOverrides,
+            });
 
         return {
           modelValue,
@@ -4194,6 +4372,18 @@ export function TestTemplateEditor({
                       label: option.label,
                     }))}
                     onHostChange={setQuickRunHostSelection}
+                    {...(isEnvironmentSuite && projectId
+                      ? {
+                          serverGroup: {
+                            projectId,
+                            value: quickRunServerGroup,
+                            onChange: (serverAttachmentId: string) => {
+                              quickRunServerGroupPickedRef.current = true;
+                              setQuickRunServerGroup(serverAttachmentId);
+                            },
+                          },
+                        }
+                      : {})}
                   />
                 ) : quickRunHostOptions.length > 0 ? (
                   <Tooltip>
@@ -4253,6 +4443,23 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {!useWorkspace && isEnvironmentSuite && projectId ? (
+                  // The server group the run's environments use — the same
+                  // picker as suite settings, defaulting to the group the
+                  // suite's environments share.
+                  <ServerPicker
+                    projectId={projectId}
+                    value={quickRunServerGroup}
+                    onChange={(serverAttachmentId) => {
+                      quickRunServerGroupPickedRef.current = true;
+                      setQuickRunServerGroup(serverAttachmentId);
+                    }}
+                    offerClear={false}
+                    disabled={isRunningCompare}
+                    emptyTriggerLabel="Pick a server group"
+                    triggerTestId="quick-run-server-group"
+                  />
+                ) : null}
                 {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>

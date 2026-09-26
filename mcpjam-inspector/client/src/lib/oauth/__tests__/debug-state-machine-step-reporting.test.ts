@@ -20,6 +20,7 @@ import {
   REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT,
   REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
   RESOURCE_METADATA_NOT_IMPLEMENTED,
+  classifyUnauthenticatedProbe,
 } from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
@@ -245,6 +246,39 @@ describe("OAuth debugger step-failure reporting", () => {
 
     expect(reportCaught).not.toHaveBeenCalled();
     expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
+  // A third-party server hit its own GitHub rate limit and answered the probe
+  // with a 500. The proxy worked; the server under test said no.
+  it("ignores an unexpected probe status from the server under test", () => {
+    const { wrapped, updateState } = wrappedUpdateState(
+      vi.fn(),
+      "request_without_token",
+    );
+    const error = classifyUnauthenticatedProbe({
+      status: 500,
+      serverMessage: "Failed to build skills server: API rate limit exceeded",
+    });
+    expect(error.kind).toBe("unexpected");
+    const serverFailure = {
+      error: (error as { message: string }).message,
+    };
+
+    wrapped(serverFailure);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
+  it("still reports the debug proxy failing on the probe", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "request_without_token");
+
+    wrapped({
+      error:
+        "Failed to request MCP server: Backend debug proxy error: 500 Internal Server Error",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
   });
 
   // INSPECTOR-CLIENT-2F9: 18 events, 4 users, escalating — every one a third

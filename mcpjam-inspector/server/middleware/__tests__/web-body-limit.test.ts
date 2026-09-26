@@ -19,6 +19,9 @@ function buildApp() {
   };
   app.post("/api/web/computers/upload", readBody);
   app.put("/api/web/computers/upload", readBody);
+  app.post("/api/web/browser-profiles/upload", readBody);
+  app.put("/api/web/browser-profiles/upload", readBody);
+  app.post("/api/web/browser-profiles/commit", readBody);
   app.post("/api/web/other", readBody);
   app.post("/api/web/audio/transcriptions", readBody);
   return app;
@@ -50,6 +53,27 @@ describe("webBodyLimit", () => {
       body: OVERSIZED,
     });
     expect(res.status).toBe(200);
+  });
+
+  it("exempts POST to the browser profile upload route (it enforces its own cap)", async () => {
+    const res = await buildApp().request("/api/web/browser-profiles/upload", {
+      method: "POST",
+      body: OVERSIZED,
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("keeps the 1MB cap on the other browser profile routes and methods", async () => {
+    for (const [path, method] of [
+      ["/api/web/browser-profiles/upload", "PUT"],
+      ["/api/web/browser-profiles/commit", "POST"],
+    ]) {
+      const res = await buildApp().request(path, {
+        method,
+        body: OVERSIZED,
+      });
+      expect(res.status, `${method} ${path}`).toBe(400);
+    }
   });
 
   it("does NOT exempt non-POST methods on the upload path", async () => {

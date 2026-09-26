@@ -1067,3 +1067,67 @@ describe("SessionFlowSankey", () => {
     }
   });
 });
+
+/**
+ * #5188: a wave refused at launch has no transcript to analyze, and its
+ * session flow read as 100% "Not analyzed" or as work still in flight.
+ */
+describe("SessionFlowSankey for sessions that never ran", () => {
+  /** Three sessions, none analyzed, so the flow is placeholders only. */
+  const PLACEHOLDERS: InsightsSankey = {
+    nodes: (["goal", "behavior", "outcome", "sentiment"] as const).map(
+      (stage) => ({
+        id: `${stage}:__analyzing__`,
+        stage,
+        key: "__analyzing__",
+        label: "Analyzing",
+        count: 3,
+        clickable: false,
+      }),
+    ),
+    links: [],
+    foldedGoalCount: 0,
+    foldedByStage: {},
+  };
+
+  it("says the sessions didn't run instead of waiting on them", () => {
+    renderSankey({
+      breakdown: breakdown({
+        sankey: PLACEHOLDERS,
+        // Inside the idle window every zero-message session is still owed.
+        analysis: analysis({
+          total: 3,
+          analyzed: 0,
+          notRun: 3,
+          owed: 3,
+          pending: 3,
+        }),
+      }),
+      onAnalyzeNow: vi.fn(),
+    });
+
+    const status = screen.getByTestId("session-flow-status");
+    expect(status).toHaveAttribute("data-status", "notRun");
+    expect(status).toHaveTextContent("These sessions didn't run");
+    expect(
+      screen.queryByText(/Waiting for the session/),
+    ).not.toBeInTheDocument();
+    // Analyzing again cannot give a session that never ran a transcript.
+    expect(
+      screen.queryByRole("button", { name: /Analyze now/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("notes the sessions that didn't run beside a drawn flow", () => {
+    renderSankey({
+      breakdown: breakdown({
+        analysis: analysis({ total: 15, analyzed: 7, notRun: 8 }),
+      }),
+    });
+
+    expect(screen.getByTestId("scenario-insights-sankey")).toBeInTheDocument();
+    expect(screen.getByTestId("session-flow-not-run-note")).toHaveTextContent(
+      "8 sessions didn't run, so they have nothing to analyze.",
+    );
+  });
+});

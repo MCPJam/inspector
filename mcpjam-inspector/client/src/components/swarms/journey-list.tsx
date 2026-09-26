@@ -600,7 +600,9 @@ function JourneyGradingEditor({
   projectId: string;
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, modelSelectionsSupported } = useAvailableModels({
+    projectId,
+  });
   const [open, setOpen] = useState(false);
   const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
@@ -682,6 +684,7 @@ function JourneyGradingEditor({
             value={judgeConfig}
             onChange={setJudgeConfig}
             availableModels={availableModels}
+            saveModelSelections={modelSelectionsSupported}
             bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />

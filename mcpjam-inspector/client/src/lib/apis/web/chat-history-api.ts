@@ -133,15 +133,6 @@ export interface ChatHistoryDetailResponse {
   turnTraces?: ChatHistoryTurnTrace[];
 }
 
-export interface GenerateWidgetSnapshotUploadUrlRequest {
-  chatSessionId: string;
-}
-
-export interface GenerateWidgetSnapshotUploadUrlResponse {
-  ok: boolean;
-  uploadUrl: string;
-}
-
 export interface CreateChatHistoryWidgetSnapshotRequest {
   chatSessionId: string;
   serverId?: string;
@@ -310,20 +301,6 @@ export async function chatHistoryAction(
   return webPost<Record<string, unknown>, { ok: boolean }>(
     "/api/web/chat-history/action",
     { action, sessionId, ...params },
-    requestOptions
-  );
-}
-
-export async function generateWidgetSnapshotUploadUrl(
-  payload: GenerateWidgetSnapshotUploadUrlRequest,
-  requestOptions?: ChatHistoryRequestOptions
-): Promise<GenerateWidgetSnapshotUploadUrlResponse> {
-  return webPost<
-    GenerateWidgetSnapshotUploadUrlRequest,
-    GenerateWidgetSnapshotUploadUrlResponse
-  >(
-    "/api/web/chat-history/widget-snapshot/generate-upload-url",
-    payload,
     requestOptions
   );
 }

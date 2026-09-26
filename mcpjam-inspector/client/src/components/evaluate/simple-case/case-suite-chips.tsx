@@ -132,6 +132,7 @@ export function CaseSuiteChips({
         }
         disabled={disabled || !onModelChange || availableModels.length === 0}
         analyticsLocation="eval_case"
+        workload="evalTarget"
       />
       <ChipMenu label="Iterations" value={String(trials)} disabled={disabled}>
         {onTrialsChange ? (

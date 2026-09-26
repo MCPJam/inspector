@@ -30,10 +30,9 @@ const { upstream, validateGuestTokenMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../utils/hosted-mcp-base-fetch.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("../../../utils/hosted-mcp-base-fetch.js")
-    >();
+  const actual = await importOriginal<
+    typeof import("../../../utils/hosted-mcp-base-fetch.js")
+  >();
   return {
     ...actual,
     hostedMcpBaseFetch: () =>
@@ -470,14 +469,30 @@ function expectLogsProjected(body: any) {
 const originalFetch = global.fetch;
 const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 const originalHostedMode = process.env.VITE_MCPJAM_HOSTED_MODE;
+const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
 
 beforeEach(() => {
   vi.clearAllMocks();
   validateGuestTokenMock.mockResolvedValue({ valid: false });
   serverUrlRef.current = SERVER_URL;
   process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+  process.env.INSPECTOR_SERVICE_TOKEN = "test-inspector-service-token";
+  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === "https://example.convex.site/internal/server-check-queue") {
+      expect(new Headers(init?.headers).get("x-inspector-service-token")).toBe(
+        "test-inspector-service-token",
+      );
+      const { operation, requestId } = JSON.parse(String(init?.body));
+      expect(["admit", "poll", "renew", "release"]).toContain(operation);
+      expect(requestId).toEqual(expect.any(String));
+      return json({
+        state: operation === "release" ? "released" : "active",
+        expiresAt: Date.now() + 30_000,
+        active: operation === "release" ? 0 : 1,
+        waiting: 0,
+      });
+    }
     if (url.endsWith("/web/authorize")) {
       return authorizeResponse(serverUrlRef.current);
     }
@@ -490,6 +505,8 @@ beforeEach(() => {
 
 afterAll(() => {
   global.fetch = originalFetch;
+  if (originalServiceToken === undefined) delete process.env.INSPECTOR_SERVICE_TOKEN;
+  else process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
   if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
   else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
   if (originalHostedMode === undefined) {
@@ -749,7 +766,7 @@ describe("hosted validate responses (web and v1)", () => {
     expectLogsProjected(body);
   });
 
-  it("web: reports a failure after initialize by its status line", async () => {
+  it("web: masks a failure after initialize and preserves projected logs", async () => {
     upstream.current = mcpServer(
       () =>
         new Response("<html>UNEXPECTED_MARKER_25</html>", {
@@ -759,17 +776,32 @@ describe("hosted validate responses (web and v1)", () => {
         }),
     );
     const res = await webValidate(routes);
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBe(500);
+    const requestId = res.headers.get("x-request-id");
+    expect(requestId).toBeTruthy();
     const body = (await res.json()) as any;
-    // The initialize result that preceded the failure is in the frame log
-    // only as its envelope.
+    // The hosted internal-error policy masks the message while diagnostics
+    // retain only the projected response and frame envelopes.
     expect(JSON.stringify(body)).not.toMatch(MARKER);
+    expect(body.code).toBe("INTERNAL_ERROR");
     expect(body.message).toBe(
-      "The MCP server responded with HTTP 500 Internal Server Error.",
+      `An unexpected error occurred. If it keeps happening, contact support with reference ${requestId}.`,
+    );
+    expect(body.details.requestId).toBe(requestId);
+    expect(body.normalized.rawMessage).toBe(body.message);
+    expect(body.normalized.requestId).toBe(requestId);
+    expectLogsProjected(body);
+    expect(body._httpLogs).toContainEqual(
+      expect.objectContaining({
+        exchange: expect.objectContaining({
+          response: expect.objectContaining({ status: 500 }),
+        }),
+      }),
     );
     const received = (body._rpcLogs ?? []).filter(
       (event: any) => event.direction === "receive",
     );
+    expect(received.length).toBeGreaterThan(0);
     for (const event of received) {
       expect(event.message).not.toHaveProperty("result");
     }
@@ -954,6 +986,40 @@ describe("hosted validate responses (web and v1)", () => {
       });
     },
   );
+
+  it("web: bounds the frame log and counts what it left out", async () => {
+    const notifications = Array.from({ length: 1000 }, (_, index) => ({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", data: `note ${index}` },
+    }));
+    upstream.current = async (request) => {
+      const message = await readMessage(request.clone());
+      if (message?.method === "tools/list") {
+        const events = [
+          ...notifications,
+          { jsonrpc: "2.0", id: message.id, result: { tools: [] } },
+        ];
+        return new Response(
+          events
+            .map(
+              (event) => `event: message\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return listingServer()(request);
+    };
+    const res = await webValidate(routes);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body._rpcLogs).toHaveLength(200);
+    expect(body._rpcLogsOmitted).toBeGreaterThanOrEqual(800);
+    expect(
+      body._rpcLogs.slice(0, 100).map((event: any) => event.message.method),
+    ).toContain("initialize");
+  });
 
   it("web: reports the frames it sent by their envelope", async () => {
     upstream.current = async (request) => {

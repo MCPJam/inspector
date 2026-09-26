@@ -19,6 +19,15 @@ vi.mock("@/lib/apis/web/base", () => {
   };
 });
 
+// Supporting files go to the backend's upload route as the API actor.
+vi.mock("@/lib/convex-site-url", () => ({
+  getConvexSiteUrl: () => "https://demo.convex.site",
+}));
+vi.mock("@/lib/apis/web/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/apis/web/context")>()),
+  getApiAuthorizationHeader: async () => "Bearer bearer-1",
+}));
+
 import { buildSkillFileTree, uploadSkillFolder } from "../mcp-skills-api";
 import { WebApiError } from "@/lib/apis/web/base";
 
@@ -105,8 +114,6 @@ describe("uploadSkillFolder (cloud, atomic)", () => {
           return { success: true, skill: skillWire };
         case "/api/web/skills/list":
           return { skills: [skillWire] };
-        case "/api/web/skills/files/upload-url":
-          return { uploadUrl: "https://upload.test/u1" };
         case "/api/web/skills/files/attach":
           return { files: [] };
         case "/api/web/skills/delete":
@@ -143,9 +150,29 @@ describe("uploadSkillFolder (cloud, atomic)", () => {
     });
   });
 
+  it("names supporting files over 2 MB before creating anything", async () => {
+    routeWebPost();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const big = makeFile("data.bin", "x", "my-skill/assets/data.bin");
+    Object.defineProperty(big, "size", { value: 2 * 1024 * 1024 + 1 });
+
+    await expect(
+      uploadSkillFolder(
+        [makeFile("SKILL.md", SKILL_MD, "my-skill/SKILL.md"), big],
+        "my-skill",
+        source,
+      ),
+    ).rejects.toThrow(
+      "Supporting files must be 2 MB or smaller: assets/data.bin.",
+    );
+    expect(webPostMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rolls back the created skill and throws when a supporting file fails", async () => {
     routeWebPost();
-    // The direct-to-Convex blob PUT fails for the supporting file.
+    // The upload route fails for the supporting file.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: false, status: 500 })),
@@ -214,14 +241,12 @@ describe("uploadSkillFolder (cloud, atomic)", () => {
 
   it("attaches uploaded files and succeeds without any rollback", async () => {
     routeWebPost();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ storageId: "st_1" }),
-      })),
-    );
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, storageId: "st_1" }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
     const skill = await uploadSkillFolder(
       [
         makeFile("SKILL.md", SKILL_MD, "my-skill/SKILL.md"),
@@ -237,5 +262,57 @@ describe("uploadSkillFolder (cloud, atomic)", () => {
       files: [expect.objectContaining({ path: "notes.txt", storageId: "st_1" })],
     });
     expect(callsTo("/api/web/skills/delete")).toHaveLength(0);
+
+    // The bytes went to the upload route, scoped to the project and skill.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      "https://demo.convex.site/web/uploads/blob?purpose=skill-file&projectId=proj_1&skillId=s1",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({
+      "Content-Type": "text/plain",
+      Authorization: "Bearer bearer-1",
+    });
+    expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe("hello");
+    expect(webPostMock.mock.calls.map(([path]) => path)).toEqual([
+      "/api/web/skills/create",
+      "/api/web/skills/files/attach",
+    ]);
   });
+
+  it.each([
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+    [413, "PAYLOAD_TOO_LARGE"],
+    [429, "RATE_LIMITED"],
+  ])(
+    "rolls back and names the file when the upload route answers %i",
+    async (status, code) => {
+      routeWebPost();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: false,
+          status,
+          json: async () => ({ ok: false, code, error: "refused" }),
+        })),
+      );
+      await expect(
+        uploadSkillFolder(
+          [
+            makeFile("SKILL.md", SKILL_MD, "my-skill/SKILL.md"),
+            makeFile("notes.txt", "hello", "my-skill/notes.txt"),
+          ],
+          "my-skill",
+          source,
+        ),
+      ).rejects.toThrow(/notes\.txt/);
+      expect(callsTo("/api/web/skills/files/attach")).toHaveLength(0);
+      expect(callsTo("/api/web/skills/delete")).toHaveLength(1);
+    },
+  );
 });
