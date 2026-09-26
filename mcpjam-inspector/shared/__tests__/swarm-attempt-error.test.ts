@@ -18,7 +18,7 @@ describe("humanizeSwarmAttemptError", () => {
   it("extracts the readable message from a real rate-limit payload", () => {
     const info = humanizeSwarmAttemptError(REAL_RATE_LIMIT_ERROR);
     expect(info.message).toBe(
-      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 155 minutes."
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 155 minutes.",
     );
     expect(info.code).toBe("user_rate_limit");
     expect(info.retryAfterMs).toBe(9259503);
@@ -48,14 +48,14 @@ describe("humanizeSwarmAttemptError", () => {
 
   it("does not repeat a detail the headline already states", () => {
     const info = humanizeSwarmAttemptError(
-      '{"error":"Try again in 155 minutes.","details":"Try again in 155 minutes."}'
+      '{"error":"Try again in 155 minutes.","details":"Try again in 155 minutes."}',
     );
     expect(info.message).toBe("Try again in 155 minutes.");
   });
 
   it("joins headline and details with sane punctuation", () => {
     const info = humanizeSwarmAttemptError(
-      '{"error":"Spend cap reached","details":"Raise the cap in Billing."}'
+      '{"error":"Spend cap reached","details":"Raise the cap in Billing."}',
     );
     expect(info.message).toBe("Spend cap reached. Raise the cap in Billing.");
   });
@@ -66,9 +66,57 @@ describe("humanizeSwarmAttemptError", () => {
     expect(info.code).toBeUndefined();
   });
 
+  it("lifts the engine's code suffix out of the sentence", () => {
+    const info = humanizeSwarmAttemptError(
+      "A tool on your MCP server has an input schema this model can't accept (JSON Schema propertyNames that does not use a string schema). Try a different model, or simplify that tool's input schema. (invalid_request)",
+    );
+    expect(info.message).toBe(
+      "A tool on your MCP server has an input schema this model can't accept (JSON Schema propertyNames that does not use a string schema). Try a different model, or simplify that tool's input schema.",
+    );
+    expect(info.code).toBe("invalid_request");
+  });
+
+  it("lifts a code and HTTP status suffix together", () => {
+    const info = humanizeSwarmAttemptError(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 1010 minutes. (user_rate_limit, HTTP 429)",
+    );
+    expect(info.message).toBe(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 1010 minutes.",
+    );
+    expect(info.code).toBe("user_rate_limit");
+    expect(info.httpStatus).toBe(429);
+  });
+
+  it.each([
+    [" (provider_error)", { code: "provider_error" }],
+    [
+      "   (user_rate_limit, HTTP 429)",
+      { code: "user_rate_limit", httpStatus: 429 },
+    ],
+    ["(HTTP 502)", { httpStatus: 502 }],
+    [".  (provider_error)", { code: "provider_error" }],
+  ])(
+    "falls back to the generic sentence when %j has no message of its own",
+    (raw, lifted) => {
+      expect(humanizeSwarmAttemptError(raw)).toEqual({
+        message: "The session failed for an unknown reason.",
+        ...lifted,
+      });
+    },
+  );
+
+  it("keeps a trailing parenthetical that is not an engine code", () => {
+    for (const message of [
+      "Could not reach the server (timeout)",
+      "Tool call rejected (see server logs)",
+    ]) {
+      expect(humanizeSwarmAttemptError(message)).toEqual({ message });
+    }
+  });
+
   it("degrades an unparseable envelope to its scrubbed body", () => {
     const info = humanizeSwarmAttemptError(
-      "swarm-agent https://x.convex.site/foo failed (500): upstream exploded"
+      "swarm-agent https://x.convex.site/foo failed (500): upstream exploded",
     );
     expect(info.message).toBe("upstream exploded");
     expect(info.httpStatus).toBe(500);
@@ -76,7 +124,7 @@ describe("humanizeSwarmAttemptError", () => {
 
   it("survives malformed JSON without throwing", () => {
     const info = humanizeSwarmAttemptError(
-      "swarm-agent https://x.convex.site/foo failed (429): {oops"
+      "swarm-agent https://x.convex.site/foo failed (429): {oops",
     );
     expect(info.message).toBe("{oops");
     expect(info.httpStatus).toBe(429);
@@ -91,7 +139,7 @@ describe("humanizeSwarmAttemptError", () => {
 
   it("caps the message length", () => {
     const info = humanizeSwarmAttemptError(
-      JSON.stringify({ error: "x".repeat(2000) })
+      JSON.stringify({ error: "x".repeat(2000) }),
     );
     expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
   });
@@ -126,7 +174,7 @@ describe("humanizeSwarmAttemptError — sandbox error codes", () => {
     // opaque for the user whose swarm didn't run.
     const info = humanizeSwarmAttemptError(
       "This server is not configured to provision disposable sandboxes (the computers data plane is unavailable), so this session cannot run the shell its target requires.",
-      "sandbox_unavailable"
+      "sandbox_unavailable",
     );
     expect(info.message).not.toMatch(/data plane/i);
     expect(info.message).toMatch(/MCPJam cloud/i);
@@ -135,7 +183,7 @@ describe("humanizeSwarmAttemptError — sandbox error codes", () => {
   it("ignores unknown codes and falls back to message parsing", () => {
     const info = humanizeSwarmAttemptError(
       '{"error":"Daily limit reached"}',
-      "spend_cap_exceeded"
+      "spend_cap_exceeded",
     );
     expect(info.message).toBe("Daily limit reached");
   });
@@ -170,7 +218,7 @@ describe("humanizeSwarmAttemptError — connect-time XAA failures", () => {
   it("does not mark a configuration failure re-runnable", () => {
     const info = humanizeSwarmAttemptError(
       'Server "Billing MCP" isn\'t fully configured for enterprise-managed authorization: Client ID is required.',
-      "xaa_configuration_invalid"
+      "xaa_configuration_invalid",
     );
 
     expect(info.rerunnable).toBeUndefined();
@@ -189,7 +237,7 @@ describe("humanizeSwarmAttemptError — connect-time XAA failures", () => {
       const info = humanizeSwarmAttemptError(undefined, code);
       expect(info.message).not.toMatch(/unknown reason/i);
       expect(info.message).toMatch(
-        /sign in again|auth settings|XAA settings|try again/i
+        /sign in again|auth settings|XAA settings|try again/i,
       );
       expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
     }
@@ -208,12 +256,12 @@ describe("isAccountLimit", () => {
   it("recognizes the wire form the swarm runner composes", () => {
     // `runner.ts` builds "<sentence> (<code>, HTTP <status>)".
     expect(
-      isAccountLimit("Daily credit limit reached. (user_rate_limit, HTTP 429)")
+      isAccountLimit("Daily credit limit reached. (user_rate_limit, HTTP 429)"),
     ).toBe(true);
     expect(
       isAccountLimit(
-        "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)"
-      )
+        "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)",
+      ),
     ).toBe(true);
   });
 
@@ -228,14 +276,34 @@ describe("isAccountLimit", () => {
     expect(
       isAccountLimit(
         "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.",
-        "rate_limited"
-      )
+        "rate_limited",
+      ),
     ).toBe(true);
     expect(
       isAccountLimit(
-        "Monthly MCPJam model limit reached. Top up or use BYOK to keep chatting."
-      )
+        "Monthly MCPJam model limit reached. Top up or use BYOK to keep chatting.",
+      ),
     ).toBe(true);
+  });
+
+  it.each([
+    // MCPJam's own daily budget for the feature: every remaining target in a
+    // fan-out meets the same wall.
+    "platform_capacity",
+    // Keyed on the USER, and every session in a fan-out is the same user.
+    "agent_turn_limit",
+    // The attestation did not hold — a property of the deployment, not of one
+    // host, so another host cannot escape it either.
+    "agent_billing_rejected",
+  ])("stops the whole run on %s", (code) => {
+    // Asserted DIRECTLY, not only through the parity loop in
+    // `swarm-runner.test.ts`: that one iterates `USER_OWNED_DENIAL_CODES`, so
+    // dropping a code from BOTH that set and this regex would keep it green
+    // while silently restoring the per-host behaviour these three must not
+    // have. Both forms, because the runner composes the wire string and the
+    // humanizer lifts the code out of the JSON envelope.
+    expect(isAccountLimit(undefined, code)).toBe(true);
+    expect(isAccountLimit(`Limit reached. (${code}, HTTP 429)`)).toBe(true);
   });
 
   it("does NOT claim a 429 on the user's own provider key", () => {
@@ -255,13 +323,15 @@ describe("accountLimitCode", () => {
 
   it("reads the code out of the wire form the runner composes", () => {
     expect(
-      accountLimitCode("Daily credit limit reached. (ORG_RATE_LIMIT, HTTP 429)")
+      accountLimitCode(
+        "Daily credit limit reached. (ORG_RATE_LIMIT, HTTP 429)",
+      ),
     ).toBe("org_rate_limit");
   });
 
   it("prefers the structured code over the message", () => {
     expect(
-      accountLimitCode("(user_rate_limit, HTTP 429)", "wallet_locked")
+      accountLimitCode("(user_rate_limit, HTTP 429)", "wallet_locked"),
     ).toBe("wallet_locked");
   });
 
@@ -270,9 +340,7 @@ describe("accountLimitCode", () => {
     expect(accountLimitCode(undefined, "rate_limited")).toBeUndefined();
     // The sentence identifies the limit, but it names no code to store.
     expect(
-      accountLimitCode(
-        humanizeSwarmAttemptErrorMessage(REAL_RATE_LIMIT_ERROR)
-      )
+      accountLimitCode(humanizeSwarmAttemptErrorMessage(REAL_RATE_LIMIT_ERROR)),
     ).toBeUndefined();
   });
 });
@@ -280,7 +348,7 @@ describe("accountLimitCode", () => {
 describe("spending reservation contention", () => {
   it("explains a truncated historical database conflict", () => {
     const info = humanizeSwarmAttemptError(
-      'Backend stream error: 500 {"code":"Server Error: Documents read from or written to the \\"streamSpendingReservations\\" table changed while this mutation was being run and on every subsequent retry.'
+      'Backend stream error: 500 {"code":"Server Error: Documents read from or written to the \\"streamSpendingReservations\\" table changed while this mutation was being run and on every subsequent retry.',
     );
     expect(info.code).toBe("spending_reservation_busy");
     expect(info.message).toContain("internal execution failure");
@@ -289,21 +357,32 @@ describe("spending reservation contention", () => {
 
   it("reads the structured busy response from the shared stream engine", () => {
     const info = humanizeSwarmAttemptError(
-      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}'
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
     );
-    expect(info).toMatchObject({code: "spending_reservation_busy", httpStatus: 503, message: "MCPJam is temporarily busy. Please retry."});
+    expect(info).toMatchObject({
+      code: "spending_reservation_busy",
+      httpStatus: 503,
+      message: "MCPJam is temporarily busy. Please retry.",
+    });
   });
 
   it("does not classify other database errors as spending contention", () => {
     const info = humanizeSwarmAttemptError(
-      'Documents read from or written to the "chatSessions" table changed while this mutation was being run'
+      'Documents read from or written to the "chatSessions" table changed while this mutation was being run',
     );
     expect(info.code).toBeUndefined();
   });
 });
 
-it.each(["platform_free_budget_exhausted", "account_suspended", "guest_model_not_allowed", "guest_input_too_large"])("treats %s as an account refusal", (code) => {
-  const info = humanizeSwarmAttemptError(JSON.stringify({ code, error: "Admission refused" }));
+it.each([
+  "platform_free_budget_exhausted",
+  "account_suspended",
+  "guest_model_not_allowed",
+  "guest_input_too_large",
+])("treats %s as an account refusal", (code) => {
+  const info = humanizeSwarmAttemptError(
+    JSON.stringify({ code, error: "Admission refused" }),
+  );
   expect(isAccountLimit(info.message, info.code)).toBe(true);
 });
 
@@ -329,4 +408,25 @@ it.each([
   expect(result.code).toBe("upstream_error_page");
   expect(result.message).toContain("HTTP 502");
   expect(result.message).not.toMatch(/<|Cloudflare/);
+});
+
+describe("humanizeSwarmAttemptError provider_not_allowlisted", () => {
+  it("keeps the backend headline and leaves the gateway's upstream details out", () => {
+    const headline =
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
+    const info = humanizeSwarmAttemptError(
+      `Backend stream error: 403 ${JSON.stringify({
+        ok: false,
+        code: "provider_not_allowlisted",
+        error: headline,
+        isRetryable: false,
+        details:
+          "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.",
+      })}`,
+    );
+
+    expect(info.message).toBe(headline);
+    expect(info.code).toBe("provider_not_allowlisted");
+    expect(info.httpStatus).toBe(403);
+  });
 });
