@@ -1,3 +1,4 @@
+import { listBaseServers } from "./mcp-connections.js";
 import { ModelDefinition } from "@/shared/types";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -94,10 +95,15 @@ export const createLlmModel = (
         /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i,
       );
       const resourceName = azureResourceMatch?.[1];
+      // The deployment: the row's explicit `nativeModelId` when it has one
+      // (an org Azure deployment row), else the row id as before. Never the
+      // row id with its `azure/` prefix stripped.
+      const deployment =
+        modelDefinition.nativeModelId?.trim() || String(modelDefinition.id);
       return createAzure({
         apiKey,
         ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
-      })(modelDefinition.id);
+      })(deployment);
     }
     case "custom": {
       const providerName = modelDefinition.customProviderName;
@@ -325,8 +331,8 @@ export const scrubMcpAppsToolResultsForBackend = (
   const serverIds = Array.isArray(selectedServers)
     ? selectedServers
     : selectedServers
-      ? [selectedServers]
-      : mcpClientManager.listServers();
+    ? [selectedServers]
+    : listBaseServers(mcpClientManager);
   const metaByServer = new Map<string, Record<string, any>>();
   for (const serverId of serverIds) {
     metaByServer.set(serverId, mcpClientManager.getAllToolsMetadata(serverId));
@@ -378,8 +384,8 @@ export const scrubChatGPTAppsToolResultsForBackend = (
   const serverIds = Array.isArray(selectedServers)
     ? selectedServers
     : selectedServers
-      ? [selectedServers]
-      : mcpClientManager.listServers();
+    ? [selectedServers]
+    : listBaseServers(mcpClientManager);
   const metaByServer = new Map<string, Record<string, any>>();
   for (const serverId of serverIds) {
     metaByServer.set(serverId, mcpClientManager.getAllToolsMetadata(serverId));

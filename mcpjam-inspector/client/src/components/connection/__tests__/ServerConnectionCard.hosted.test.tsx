@@ -106,7 +106,7 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
     fireEvent.click(toggle);
 
     expect(toast.error).toHaveBeenCalledWith(
-      errorToastMessage("HTTP servers are not supported in hosted mode"),
+      errorToastMessage("MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."),
       { duration: 8000 }
     );
     expect(onReconnect).not.toHaveBeenCalled();

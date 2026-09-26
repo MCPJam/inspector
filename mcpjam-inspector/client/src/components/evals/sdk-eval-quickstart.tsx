@@ -8,6 +8,7 @@ import { CreateApiKeyDialog } from "../settings/api-keys/CreateApiKeyDialog";
 import { useApiKeys } from "@/hooks/useApiKeys";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path";
+import { isApiKeyExpired } from "@/lib/api-key-expiry";
 import { routePaths } from "@/lib/app-navigation";
 import { useSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
@@ -228,7 +229,9 @@ function CreateApiKeyStep({
   // account that already has one. The list endpoint does not include the
   // binding's project organization, so do not claim that an existing key was
   // created for this project; the .env copy still asks the reader to paste it.
-  const keyReady = hasKey || keys.length > 0;
+  // An expired key does not count: it no longer authenticates anything.
+  const keyReady =
+    hasKey || keys.some((key) => !isApiKeyExpired(key.expires_at));
 
   const handleSignIn = useCallback(() => {
     writeApiKeysSignInReturnPath(routePaths.evaluate);
@@ -239,13 +242,15 @@ function CreateApiKeyStep({
     async ({
       name,
       organizationId,
+      expiresInDays,
     }: {
       name: string;
       organizationId: string;
+      expiresInDays: number;
     }) => {
       setMintError(null);
       try {
-        const created = await create({ name, organizationId });
+        const created = await create({ name, organizationId, expiresInDays });
         setDialogOpen(false);
         onKeyCreated(created.value);
       } catch (error) {

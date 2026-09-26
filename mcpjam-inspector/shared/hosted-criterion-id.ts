@@ -28,6 +28,8 @@ import {
 
 /** Stable id of the hosted tool-call matcher projection. */
 export const HOSTED_TOOL_MATCH_SCORER_ID = "toolCalls:match";
+/** Stable id of the hosted tool-call arguments projection. */
+export const HOSTED_TOOL_ARGUMENTS_SCORER_ID = "toolCalls:arguments";
 /** Stable id of the hosted goal-completion judge projection. */
 export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
 
@@ -54,4 +56,16 @@ export function hostedPredicateScorerId(
   scope?: PredicateScope,
 ): string {
   return `predicate:${hostedCriterionId(predicate, scope)}`;
+}
+
+/**
+ * Scorer-id prefix of the rubric-check rows: one advisory row per question,
+ * keyed by the question (`c:<criterionId>` for a suite criterion,
+ * `q:<questionId>` for an authored question) after the prefix.
+ */
+export const HOSTED_RUBRIC_CHECKS_SCORER_PREFIX = "judge:rubricChecks:";
+
+/** `judge:rubricChecks:<key>` — the persisted `scorerId` of a rubric-check row. */
+export function hostedRubricCheckScorerId(key: string): string {
+  return `${HOSTED_RUBRIC_CHECKS_SCORER_PREFIX}${key}`;
 }

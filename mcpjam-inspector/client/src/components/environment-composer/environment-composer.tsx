@@ -43,6 +43,7 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
+import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -173,6 +174,16 @@ export function EnvironmentComposer({
     isAuthenticated,
     projectId: modelsEnabled ? projectId : null,
   });
+  // The harness each selected client runs, so the models slot can disable the
+  // models none of them can run (with the reason) instead of offering a pair
+  // the run admission will refuse.
+  const harnessByHost = useHostHarnessTargets(
+    modelsEnabled ? value.stack.hostIds : [],
+  );
+  const harnessTargets = useMemo(
+    () => value.stack.hostIds.map((hostId) => harnessByHost[hostId]),
+    [harnessByHost, value.stack.hostIds],
+  );
   // `slots` NARROWS, never widens: a slot must be both asked for by the caller
   // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
   // every existing surface renders exactly the strip it rendered before.
@@ -479,6 +490,7 @@ export function EnvironmentComposer({
             inModal={inModal}
             budget={budget}
             clientDefaultLabel={inheritedClientDefaultLabel}
+            harnessTargets={harnessTargets}
           />
         ) : null}
         {showServersSlot

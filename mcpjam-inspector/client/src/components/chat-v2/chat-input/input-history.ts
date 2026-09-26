@@ -14,6 +14,8 @@
  * the honest consequence of not inventing a second copy.
  */
 
+import { isUserContextMessage } from "@/shared/user-context-message";
+
 /** A message as the composer's thread holds it — only what history reads. */
 interface HistorySourceMessage {
   role?: string;
@@ -50,6 +52,10 @@ function messageText(message: HistorySourceMessage): string {
  * entry — resending the same prompt twice is one thing you typed, and making
  * someone press Up twice to get past their own retry is the kind of papercut
  * this feature exists to remove.
+ *
+ * Context the chat adds on the user's side is not history either — a skill, a
+ * tool run by hand, an app's widget state, a prompt's example turn
+ * (`shared/user-context-message.ts`): the user picked it, but did not type it.
  */
 export function collectInputHistory(
   messages: readonly unknown[] | undefined | null,
@@ -59,6 +65,7 @@ export function collectInputHistory(
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index] as HistorySourceMessage | null;
     if (!message || message.role !== "user") continue;
+    if (isUserContextMessage(message)) continue;
     const text = messageText(message);
     if (!text.trim()) continue;
     if (entries[entries.length - 1] === text) continue;
