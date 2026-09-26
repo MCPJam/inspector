@@ -27,6 +27,11 @@ import type {
 } from "@/hooks/useProjectEnvironments";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import {
+  harnessModelRefusalReason,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
+import {
   selectionKey,
   type ModelSelection as SavedModelSelection,
 } from "@mcpjam/sdk/browser";
@@ -139,31 +144,69 @@ export function modelChoiceCount(
   );
 }
 
-/** Inherit first, then explicit ids in list order. Host-major mint uses this. */
+/** A client × model cell the client's harness cannot run, and why. */
+export type SkippedModelCell = {
+  clientId: string;
+  modelId: string;
+  reason: string;
+};
+
+/**
+ * Inherit first, then explicit ids in list order. Host-major mint uses this.
+ *
+ * With a `harness` target, explicit models the harness cannot run for
+ * `purpose` (the harness × model evidence table, at the runtime's pinned
+ * version) are NOT minted into cells — they are returned in `skipped` with the
+ * reason, so the surface can say which client × model pairs it left out
+ * instead of minting an environment the run admission will refuse. The
+ * inherit cell is never skipped here: the client's own model is the host's
+ * configuration, judged by the server's admission.
+ */
 export function expandModelChoices(
   selection: ModelSelection | undefined,
-): Array<{
-  modelId: string | undefined;
-  /** The saved selection behind an explicit id, when it has one. */
-  modelSelection?: SavedModelSelection;
-}> {
+  options?: {
+    /** The client these choices fan out for (reported on skipped cells). */
+    clientId?: string;
+    /** The client's harness, `null`/absent for an emulated client. */
+    harness?: HarnessModelTarget | null;
+    /** Defaults to `eval`: every composer surface launches compared runs. */
+    purpose?: HarnessModelPurpose;
+  },
+): {
+  cells: Array<{
+    modelId: string | undefined;
+    /** The saved selection behind an explicit id, when it has one. */
+    modelSelection?: SavedModelSelection;
+  }>;
+  skipped: SkippedModelCell[];
+} {
   const resolved = selection ?? emptyModelSelection();
-  const choices: Array<{
+  const cells: Array<{
     modelId: string | undefined;
     modelSelection?: SavedModelSelection;
   }> = [];
+  const skipped: SkippedModelCell[] = [];
   if (resolved.includeClientDefaults) {
-    choices.push({ modelId: undefined });
+    cells.push({ modelId: undefined });
   }
   for (const modelId of resolved.explicitModelIds) {
+    const reason = harnessModelRefusalReason(
+      modelId,
+      options?.harness,
+      options?.purpose ?? "eval",
+    );
+    if (reason) {
+      skipped.push({ clientId: options?.clientId ?? "", modelId, reason });
+      continue;
+    }
     const modelSelection = resolved.explicitModelSelections?.[modelId];
-    choices.push(
+    cells.push(
       modelSelection?.modelId === modelId
         ? { modelId, modelSelection }
         : { modelId },
     );
   }
-  return choices;
+  return { cells, skipped };
 }
 
 /**

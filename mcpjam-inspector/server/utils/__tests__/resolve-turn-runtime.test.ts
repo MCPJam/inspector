@@ -270,6 +270,29 @@ describe("resolveTurnRuntime — runtime shape", () => {
     expect((rt.runtime as { provider?: string }).provider).toBeUndefined();
   });
 
+  it("local BYOK on a HARNESS host is refused, never run on the direct engine", async () => {
+    // The direct runtime has no `harness` field: returning it would run the
+    // emulated engine on the org's local key under the harness's name.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as never,
+      },
+    });
+
+    await expect(
+      resolveTurnRuntime(
+        baseArgs({ modelDefinition: LOCAL_MODEL, harness: "claude-code" }),
+      ),
+    ).rejects.toThrow(
+      "This host runs the claude-code harness, which isn't available: the " +
+        "Claude Code harness only runs MCPJam-provided models — pick one on " +
+        "this host to run the real runtime.",
+    );
+    expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+
   it("local BYOK + requireToolApproval=true with non-empty tools throws before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
