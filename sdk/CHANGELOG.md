@@ -1,5 +1,19 @@
 # `@mcpjam/sdk` changelog
 
+## 8.16.1
+
+### Patch Changes
+
+- [#5532](https://github.com/MCPJam/inspector/pull/5532) [`85d8d66`](https://github.com/MCPJam/inspector/commit/85d8d66b77502b346f51da7375b70c60505a5927) Thanks [@ZeHuari](https://github.com/ZeHuari)! - The OAuth debugger now says which authorization-server metadata URLs it tried and what each returned, instead of "Last error: null" when every one answered with a 4xx.
+
+- [#5558](https://github.com/MCPJam/inspector/pull/5558) [`3eaec8a`](https://github.com/MCPJam/inspector/commit/3eaec8ae152287b4bc9dd8a7f6db72e830c28450) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5526](https://github.com/MCPJam/inspector/pull/5526) [`5ae8e46`](https://github.com/MCPJam/inspector/commit/5ae8e461c117832444c403e90e70c844633cf3e1) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Show what an analysis provider may keep in the run disclosure.
+
+  The run disclosure types gain an optional `capture.redaction.providerRetention` fact: the zero-data-retention and no-training policy every platform-key analysis call sends, and what it does not cover. `mcpjam eval run` and the run-disclosure tooltip print an `Analysis providers:` line read off those flags whenever the backend sends the fact. Older backends omit it, and then no line is printed.
+
 ## 8.16.0
 
 ### Minor Changes

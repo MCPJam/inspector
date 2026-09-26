@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { serverCheckQueue } from "@/lib/server-check-queue";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -11,6 +12,7 @@ import {
 } from "../useAutoConnectProjectServers";
 
 const mocks = vi.hoisted(() => ({
+  hosted: false,
   toastError: vi.fn(),
   toastLoading: vi.fn(() => "reconnect-toast"),
   toastSuccess: vi.fn(),
@@ -22,6 +24,11 @@ const mocks = vi.hoisted(() => ({
     trace: vi.fn(),
     context: "AutoConnectProjectServers",
   },
+}));
+
+vi.mock("@/lib/config", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/config")>(),
+  get HOSTED_MODE() { return mocks.hosted; },
 }));
 
 vi.mock("sonner", () => ({
@@ -89,6 +96,7 @@ const flushMicrotasks = () => act(() => Promise.resolve());
 
 describe("useAutoConnectProjectServers", () => {
   beforeEach(() => {
+    mocks.hosted = false;
     resetAutoConnectAttempts();
     localStorage.removeItem("mcpjam-auto-connect-servers");
     mocks.toastError.mockClear();
@@ -99,6 +107,33 @@ describe("useAutoConnectProjectServers", () => {
     mocks.logger.info.mockClear();
     mocks.logger.debug.mockClear();
     mocks.logger.trace.mockClear();
+  });
+
+  it("keeps checks while the catalog loads, then removes them for a loaded empty catalog", async () => {
+    mocks.hosted = true;
+    const pending = serverCheckQueue.run(
+      { projectId: "loading-project", serverName: "alpha", identity: "host-a" },
+      async () => "unused",
+    );
+    const cancelled = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    const { rerender, unmount } = renderHook(
+      ({ loaded }) => useAutoConnectProjectServers({
+        projectId: "loading-project",
+        hostScopeKey: "host-a",
+        serverNames: [],
+        catalogLoaded: loaded,
+      }),
+      {
+        initialProps: { loaded: false },
+        wrapper: ({ children }) => wrapper({ children, ensureServersReady: vi.fn(), appState: makeAppState([]) }),
+      },
+    );
+    expect(serverCheckQueue.state("loading-project", "alpha")).toBe("queued");
+    rerender({ loaded: true });
+    await cancelled;
+    expect(serverCheckQueue.state("loading-project", "alpha")).toBeUndefined();
+    unmount();
+    mocks.hosted = false;
   });
 
   it("calls ensureServersReady once for the same (project, required set) across re-renders", async () => {

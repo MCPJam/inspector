@@ -57,6 +57,10 @@ import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import {
+  SwarmSessionNotRun,
+  threadNeverRan,
+} from "@/components/swarms/swarm-session-not-run";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
@@ -704,6 +708,22 @@ export function ShareUsageThreadDetail({
     // the journey goal, not the transcript. Render a minimal shell with the
     // judge section instead of a dead-end "No messages" message.
     if (thread.sourceType === "swarm") {
+      // Unless its attempt ended without recording a single message (#5188):
+      // then there is nothing to judge or promote, and "may not have run" is a
+      // guess about something the attempt row already knows. Say it never
+      // ran, and why.
+      if (thread.runAttemptStatus && threadNeverRan(thread)) {
+        return (
+          <div className="flex h-full items-center justify-center px-6">
+            <SwarmSessionNotRun
+              status={thread.runAttemptStatus}
+              errorCode={thread.runAttemptErrorCode}
+              errorMessage={thread.runAttemptErrorMessage}
+              modelId={thread.modelId}
+            />
+          </div>
+        );
+      }
       return (
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />

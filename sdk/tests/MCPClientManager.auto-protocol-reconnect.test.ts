@@ -129,6 +129,15 @@ describe("MCPClientManager Automatic legacy fallback", () => {
     await fixture.close();
   });
 
+  it("retains the established connection after its startup caller is cancelled", async () => {
+    const controller = new AbortController();
+    const client = await manager.connectToServer("retained", { url: fixture.url }, { signal: controller.signal });
+    controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(manager.getConnectionStatus("retained")).toBe("connected");
+    await expect(client.listTools()).resolves.toBeDefined();
+  });
+
   it("accepts 2025-06-18 after disconnect and reconnect despite a stale list", async () => {
     await manager.connectToServer("bart", {
       url: fixture.url,

@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "type": "model",
+      "id": "claude-sonnet-4-5-20250929",
+      "display_name": "Claude Sonnet 4.5",
+      "created_at": "2025-09-29T00:00:00Z"
+    },
+    {
+      "type": "model",
+      "id": "claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "created_at": "2026-05-01T00:00:00Z"
+    }
+  ],
+  "has_more": true,
+  "first_id": "claude-sonnet-4-5-20250929",
+  "last_id": "claude-sonnet-5"
+}

@@ -134,7 +134,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/trace-raw-view.tsx", 1],
   ["components/evals/trace-view-mode-tabs.tsx", 1],
   ["components/evals/trial-judge-review.tsx", 3],
-  ["components/evals/use-eval-handlers.ts", 1],
   ["components/evals/use-suite-settings-draft.ts", 1],
   ["components/EvalsTab.tsx", 10],
   ["components/evaluate/case-scorecard/case-scorecard-model.ts", 5],

@@ -15,6 +15,7 @@ import {
   toolInputChunk,
   toolOutputChunk,
   toolOutputDeniedChunk,
+  toolOutputErrorChunk,
 } from "../chat-stream-chunks";
 
 // THE DRIFT LOCK: both chat engines (emulated runChatEngineLoop + harness
@@ -103,6 +104,16 @@ describe("chat-stream-chunks builders — frozen shapes", () => {
     expect(toolOutputDeniedChunk({ toolCallId: "c1" })).toEqual({
       type: "tool-output-denied",
       toolCallId: "c1",
+    });
+    expect(
+      toolOutputErrorChunk({
+        toolCallId: "c1",
+        errorText: "why it did not run",
+      }),
+    ).toEqual({
+      type: "tool-output-error",
+      toolCallId: "c1",
+      errorText: "why it did not run",
     });
   });
 
