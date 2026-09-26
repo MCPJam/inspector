@@ -1,3 +1,4 @@
+import { serverCheckScope, withServerCheckSignal } from "../../utils/server-check-scope.js";
 import {
   connectionKey,
   type McpToolConnection,
@@ -2290,7 +2291,9 @@ export async function createAuthorizedManager(
         {
           ...config,
           baseFetch: observeConnectionFetch(
-            binding ? bindCredentialHeaders(baseFetch, binding) : baseFetch,
+            withServerCheckSignal(
+              binding ? bindCredentialHeaders(baseFetch, binding) : baseFetch,
+            ),
           ),
         },
       ];
@@ -2607,10 +2610,17 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     options,
   );
 
+  const signal = serverCheckScope.getStore();
+  let disconnecting: Promise<void> | undefined;
+  const disconnect = () => (disconnecting ??= manager.disconnectAllServers());
+  const onAbort = () => { void disconnect().catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    signal?.throwIfAborted();
     return await fn(manager, body);
   } finally {
-    await manager.disconnectAllServers();
+    signal?.removeEventListener("abort", onAbort);
+    await disconnect();
   }
 }
 
@@ -2943,6 +2953,13 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
     /**
+     * Runs on the raw body after it is read and BEFORE it is parsed or any
+     * server is connected. The hook an environment launch uses to resolve its
+     * closed server set and prime the connection batch from it (it may mutate
+     * `rawBody`). A throw is answered like any other failure of the route.
+     */
+    beforeConnect?: (rawBody: Record<string, unknown>) => Promise<void>;
+    /**
      * Rewrites a mapped failure, and the log envelope sent with it, before the
      * response is built. The hosted validate route uses it to report a status
      * line in place of the server's own answer (MJ-001).
@@ -2973,6 +2990,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     if (options?.rpcLogs !== false) {
       rpcCollector = createHostedRpcLogCollector(rawBody);
+    }
+    if (options?.beforeConnect) {
+      await options.beforeConnect(rawBody);
     }
 
     const result = await runEphemeralConnection(

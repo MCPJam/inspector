@@ -826,6 +826,86 @@ describe("v1 eval-edit routes", () => {
     expect(args.environment.servers).toEqual(["Excalidraw (App)", "Other"]);
   });
 
+  it("PATCH on an environment suite sends its environments' settings, not the legacy envelope", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({
+          ...SUITE_DOC,
+          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          environment: {
+            ...SUITE_DOC.environment,
+            computerEnvironmentId: "img_stale",
+          },
+        });
+      if (name === "projectEnvironments:getCapabilities")
+        return Promise.resolve({ environmentSuiteSettings: true });
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { environment: { servers: ["Other"], computerEnvironment: null } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    // `null` reaches the platform as a clear of every environment's image;
+    // the stale suite pin is neither carried nor compared.
+    expect(args.environmentSettings).toEqual({
+      servers: ["Other"],
+      computerEnvironmentId: null,
+    });
+    expect(args.environment).toBeUndefined();
+    expect(args.refreshHostConfigFromEnvironment).toBeUndefined();
+  });
+
+  it("PATCH on an environment suite refuses per-client servers before writing anything", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({
+          ...SUITE_DOC,
+          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+        });
+      if (name === "projectEnvironments:getCapabilities")
+        return Promise.resolve({ environmentSuiteSettings: true });
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      {
+        name: "Renamed",
+        environment: { servers: ["Other"] },
+        hosts: [{ host: "Claude", servers: ["Other"] }],
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCH on an environment suite keeps the legacy envelope on an older platform", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { environment: { servers: ["Other"] } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.environmentSettings).toBeUndefined();
+    expect(args.environment.servers).toEqual(["Other"]);
+  });
+
   it("PATCH an unknown computer image 404s and names the real choices", async () => {
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "computerEnvironments:listEnvironments") {

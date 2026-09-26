@@ -555,6 +555,7 @@ export {
   classifyUnauthenticatedProbe,
   hasBearerChallenge,
   isUnauthenticatedProbeChallenge,
+  isUnexpectedProbeStatus,
   UNAUTHENTICATED_PROBE_STEP,
   type UnauthenticatedProbeOutcome,
 } from "./oauth/state-machines/shared/challenges.js";

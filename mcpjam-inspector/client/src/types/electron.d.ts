@@ -109,6 +109,8 @@ export interface ElectronAPI {
     removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
+    retryDownload: () => void;
+    relaunchToRetry: () => void;
     simulateUpdate?: () => void;
     simulateUpdateDownloaded?: () => void;
     simulateUpdateError?: () => void;

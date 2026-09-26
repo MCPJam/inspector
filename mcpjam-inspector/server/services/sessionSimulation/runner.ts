@@ -1981,6 +1981,7 @@ export async function drainAssistantTurn(
   // persist uses, so the two attribution paths can't drift.
   const rt = await resolveTurnRuntime({
     modelDefinition,
+    messages: args.messages,
     projectId: args.projectId ?? "",
     authHeader: args.authHeader,
     scenarioId: args.scenarioId,

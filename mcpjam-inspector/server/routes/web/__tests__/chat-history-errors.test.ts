@@ -182,9 +182,10 @@ describe("chat-history backend failures", () => {
       error: "UNEXPECTED_MARKER budget exhausted",
     });
 
-    const response = await post("/widget-snapshot/generate-upload-url", {
-      chatSessionId: "chat-1",
-    });
+    const response = await post(
+      "/widget-snapshot/create",
+      WIDGET_SNAPSHOT_BODY,
+    );
 
     expect(response.status).toBe(429);
     const body = await response.json();

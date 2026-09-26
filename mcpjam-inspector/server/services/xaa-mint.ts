@@ -1,3 +1,4 @@
+import { localCheckScope } from "../utils/local-server-check-queue.js";
 // Cross-App Access (XAA) token-mint orchestration, extracted from the XAA
 // router so BOTH the debugger's `/proxy/token` endpoint AND the connect-page
 // server-side mint depend on one implementation. Keeping the jwt-bearer body
@@ -112,7 +113,7 @@ async function discoverIssuerFromResourceMetadata(
   }
 
   for (const candidate of candidates) {
-    const result = await fetchOAuthMetadata(candidate, httpsOnly);
+    const result = await fetchOAuthMetadata(candidate, httpsOnly, undefined, localCheckScope.getStore());
     if ("metadata" in result) {
       const issuer = extractAuthorizationServer(result.metadata);
       if (issuer) {
@@ -189,7 +190,7 @@ export async function discoverServerTargetTokenEndpoint(
   }
 
   for (const candidate of candidates) {
-    const result = await fetchOAuthMetadata(candidate, httpsOnly);
+    const result = await fetchOAuthMetadata(candidate, httpsOnly, undefined, localCheckScope.getStore());
     if ("metadata" in result) {
       const verdict = evaluateDiscovery(result.metadata, {
         requestedIssuer: issuer,
@@ -870,6 +871,7 @@ export async function mintXaaAccessToken(args: {
   }
 
   const proxyResult = await executeOAuthProxy({
+    signal: localCheckScope.getStore(),
     url: target.tokenEndpoint,
     method: "POST",
     body: tokenRequest.body,

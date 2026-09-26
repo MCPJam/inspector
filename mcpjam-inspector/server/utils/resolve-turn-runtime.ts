@@ -29,6 +29,7 @@
  *     have. See the branch for what wiring it would take.
  */
 
+import { modelWorkloadFor } from "./model-workload.js";
 import type { ToolSet } from "ai";
 import type { Harness, ModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
@@ -88,6 +89,8 @@ export interface ResolveTurnRuntimeArgs {
    */
   requireToolApproval?: boolean;
   tools?: ToolSet;
+  /** Effective input transcript, used only to derive image admission. */
+  messages?: unknown;
   /** Harness selector — carried onto the hosted runtime (Omitted from HostedTurnOptions). */
   harness?: Harness;
   /**
@@ -168,6 +171,7 @@ export async function resolveTurnRuntime(
     scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
+    modelWorkload: modelWorkloadFor(args),
     ...(args.modelSelection?.source === "org"
       ? { modelSelection: args.modelSelection }
       : {}),
