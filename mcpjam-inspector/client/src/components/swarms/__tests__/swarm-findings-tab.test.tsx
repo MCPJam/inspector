@@ -15,7 +15,11 @@ import type {
   SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { groupRunsIntoSwarmWaves } from "../swarm-overview-panel";
-import { SwarmFindingsTab } from "../findings/swarm-findings-tab";
+import {
+  isLaunchFailuresUnavailable,
+  SwarmFindingsTab,
+} from "../findings/swarm-findings-tab";
+import { reportBoundaryError, reportCaught } from "@/lib/error-reporting";
 import { EMPTY_STAGE_COPY } from "../findings/findings-goal-inspect";
 import { SwarmRunDetail } from "../swarm-run-detail";
 
@@ -95,11 +99,24 @@ const waveSignals: SwarmWaveSignals = {
   terminal: true,
 };
 
-const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
+const { mockUseGoalOutcomeDrilldown, launchFailuresState } = vi.hoisted(() => ({
   mockUseGoalOutcomeDrilldown: vi.fn(() => ({
     drilldown: undefined,
     isLoading: false,
   })),
+  // `journeyRuns:listRunLaunchFailures`: what it answers (a function of the
+  // args, which may throw the way a real subscription does), and every args
+  // object it was subscribed with.
+  launchFailuresState: {
+    value: undefined as unknown,
+    calls: [] as unknown[],
+  },
+}));
+
+vi.mock("@/lib/error-reporting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/error-reporting")>()),
+  reportBoundaryError: vi.fn(),
+  reportCaught: vi.fn(),
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
@@ -115,6 +132,11 @@ vi.mock("convex/react", () => ({
         return overview;
       case "swarmWaveInsights:getWaveSignals":
         return waveSignals;
+      case "journeyRuns:listRunLaunchFailures":
+        launchFailuresState.calls.push(args);
+        return typeof launchFailuresState.value === "function"
+          ? (launchFailuresState.value as (a: unknown) => unknown)(args)
+          : launchFailuresState.value;
       default:
         return undefined;
     }
@@ -191,6 +213,8 @@ afterEach(() => {
     drilldown: undefined,
     isLoading: false,
   });
+  launchFailuresState.value = undefined;
+  launchFailuresState.calls = [];
 });
 
 // ── SwarmFindingsTab (pure props) ───────────────────────────────────────────
@@ -633,6 +657,257 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("swarm-findings-tab").textContent).not.toContain(
       "handled every request",
     );
+  });
+
+  /**
+   * #5188: the summary could count the refused sessions but never say why,
+   * which is how "one endpoint returned 400 on every turn" read as a finding
+   * about the server under test for three days.
+   */
+  describe("why sessions didn't run", () => {
+    const deadWave = () =>
+      groupRunsIntoSwarmWaves([
+        run({
+          report: neverStartedReport(3),
+          summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+        }),
+      ])[0]!;
+
+    it("names the refusal the attempts recorded", () => {
+      launchFailuresState.value = [
+        {
+          runId: "run-1",
+          sessionsNotRun: 3,
+          sessionsTotal: 3,
+          reasons: [
+            {
+              errorCode: "session_failed",
+              errorMessage: "Persona turn failed: 400 invalid identity",
+              count: 3,
+            },
+          ],
+        },
+      ];
+      render(
+        <SwarmFindingsTab
+          wave={deadWave()}
+          waveSignals={{ ...waveSignals, candidates: [] }}
+          personas={personas}
+        />,
+      );
+
+      // Subscribed with the wave's runs (once per render, same args).
+      expect(launchFailuresState.calls.length).toBeGreaterThan(0);
+      for (const args of launchFailuresState.calls)
+        expect(args).toEqual({ journeyRunIds: ["run-1"] });
+      const reason = screen.getByTestId("findings-launch-reason");
+      expect(reason).toHaveTextContent("Why sessions didn't run");
+      expect(reason).toHaveTextContent(/invalid identity/i);
+      // The count stays where it was.
+      expect(screen.getByTestId("findings-headline").textContent).toContain(
+        "3 of 3 sessions failed to launch.",
+      );
+    });
+
+    // What `useQuery` throws for a function the deployment does not serve:
+    // the DEV shape, and the redacted form production turns it into.
+    const NOT_DEPLOYED = new Error(
+      "[CONVEX Q(journeyRuns:listRunLaunchFailures)] [Request ID: 1] Server Error\n" +
+        "Could not find public function for 'journeyRuns:listRunLaunchFailures'. " +
+        "Did you forget to run `npx convex dev`?",
+    );
+    const REDACTED = new Error(
+      "[CONVEX Q(journeyRuns:listRunLaunchFailures)] [Request ID: 2] Server Error",
+    );
+    const REFUSED = new Error(
+      "[CONVEX Q(journeyRuns:listRunLaunchFailures)] [Request ID: 3] " +
+        "journeyRunIds names 101 runs; at most 100 may be read at once",
+    );
+    const failuresFor = (runId: string) => [
+      {
+        runId,
+        sessionsNotRun: 3,
+        sessionsTotal: 3,
+        reasons: [
+          {
+            errorCode: "session_failed",
+            errorMessage: `Persona turn failed for ${runId}: 400 invalid identity`,
+            count: 3,
+          },
+        ],
+      },
+    ];
+    const deadWaveOf = (runId: string) =>
+      groupRunsIntoSwarmWaves([
+        run({
+          runId,
+          journeyRefId: `journey-${runId}`,
+          report: neverStartedReport(3),
+          summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+        }),
+      ])[0]!;
+    const renderTab = (w: ReturnType<typeof deadWaveOf>) => (
+      <SwarmFindingsTab
+        wave={w}
+        waveSignals={{ ...waveSignals, candidates: [] }}
+        personas={personas}
+      />
+    );
+
+    it("leaves the summary intact, and files nothing, on a backend without the query", () => {
+      launchFailuresState.value = () => {
+        throw NOT_DEPLOYED;
+      };
+      render(renderTab(deadWave()));
+
+      expect(screen.getByTestId("findings-headline").textContent).toContain(
+        "3 of 3 sessions failed to launch.",
+      );
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+      // The dark ship is the state this read is built to sit in, on a page
+      // opened again and again: it must not file an error each time.
+      expect(reportBoundaryError).not.toHaveBeenCalled();
+      expect(reportCaught).not.toHaveBeenCalled();
+    });
+
+    it("keeps the redacted form off the error path, with one info report per page load", () => {
+      // Redacted, it could be the dark ship or a real crash. Not an error on
+      // every visit, but not invisible either.
+      launchFailuresState.value = () => {
+        throw REDACTED;
+      };
+      const { unmount } = render(renderTab(deadWave()));
+      unmount();
+      render(renderTab(deadWaveOf("run-z")));
+
+      expect(reportBoundaryError).not.toHaveBeenCalled();
+      expect(reportCaught).toHaveBeenCalledTimes(1);
+      expect(reportCaught).toHaveBeenCalledWith(REDACTED, {
+        source: "swarm_launch_failures_redacted",
+        level: "info",
+      });
+    });
+
+    it("still reports a failure it does not expect", () => {
+      launchFailuresState.value = () => {
+        throw REFUSED;
+      };
+      render(renderTab(deadWave()));
+
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+      expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+    });
+
+    it("tells the dark-ship shapes of this query from everything else", () => {
+      expect(isLaunchFailuresUnavailable(NOT_DEPLOYED)).toBe(true);
+      expect(isLaunchFailuresUnavailable(REDACTED)).toBe(true);
+      expect(isLaunchFailuresUnavailable(REFUSED)).toBe(false);
+      // Another query's redacted failure is not this one's to swallow.
+      expect(
+        isLaunchFailuresUnavailable(
+          new Error(
+            "[CONVEX Q(journeyRuns:getJourneyRun)] [Request ID: 4] Server Error",
+          ),
+        ),
+      ).toBe(false);
+    });
+
+    it("reads the next wave's reason after one read failed", () => {
+      // The boundary is keyed to the wave: a failed read for one wave must
+      // not leave the line off every wave the tab shows after it.
+      launchFailuresState.value = (args: { journeyRunIds: string[] }) => {
+        if (args.journeyRunIds.includes("run-a")) throw REFUSED;
+        return failuresFor("run-b");
+      };
+      const { rerender } = render(renderTab(deadWaveOf("run-a")));
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+
+      rerender(renderTab(deadWaveOf("run-b")));
+      expect(screen.getByTestId("findings-launch-reason")).toHaveTextContent(
+        "run-b",
+      );
+    });
+
+    it("never shows one wave's reason on the next while its read is in flight", () => {
+      // `SwarmRunDetail` does not remount the tab between waves, so the
+      // stored reason is keyed to the runs it was read for.
+      launchFailuresState.value = (args: { journeyRunIds: string[] }) =>
+        args.journeyRunIds.includes("run-a") ? failuresFor("run-a") : undefined;
+      const { rerender } = render(renderTab(deadWaveOf("run-a")));
+      expect(screen.getByTestId("findings-launch-reason")).toHaveTextContent(
+        "run-a",
+      );
+
+      rerender(renderTab(deadWaveOf("run-b")));
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("asks nothing of a published wave whose sessions all started", () => {
+      const journeyFindings = brokenWire();
+      journeyFindings.population = {
+        ...journeyFindings.population,
+        configured: 3,
+        started: 3,
+        limited: 0,
+      };
+      render(
+        <SwarmFindingsTab
+          wave={wave()}
+          waveSignals={waveSignals}
+          personas={personas}
+          journeyFindings={journeyFindings}
+        />,
+      );
+
+      expect(launchFailuresState.calls).toEqual([]);
+    });
+
+    it("names the refusal on a published wave where some sessions did not start", () => {
+      launchFailuresState.value = failuresFor("run-1");
+      const journeyFindings = brokenWire();
+      journeyFindings.population = {
+        ...journeyFindings.population,
+        configured: 3,
+        started: 1,
+        limited: 0,
+      };
+      render(
+        <SwarmFindingsTab
+          wave={wave()}
+          waveSignals={waveSignals}
+          personas={personas}
+          journeyFindings={journeyFindings}
+        />,
+      );
+
+      expect(launchFailuresState.calls.length).toBeGreaterThan(0);
+      expect(screen.getByTestId("findings-launch-reason")).toHaveTextContent(
+        /invalid identity/i,
+      );
+    });
+
+    it("asks nothing of a wave whose sessions all started", () => {
+      render(
+        <SwarmFindingsTab
+          wave={wave()}
+          waveSignals={waveSignals}
+          personas={personas}
+        />,
+      );
+
+      expect(launchFailuresState.calls).toEqual([]);
+      expect(
+        screen.queryByTestId("findings-launch-reason"),
+      ).not.toBeInTheDocument();
+    });
   });
 });
 

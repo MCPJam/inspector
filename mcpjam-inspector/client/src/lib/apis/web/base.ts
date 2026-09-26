@@ -32,6 +32,7 @@ export class WebApiError extends Error {
    * field would be missing exactly when it is most needed.
    */
   requestId?: string;
+  retryAfterMs?: number;
 
   constructor(
     status: number,
@@ -209,7 +210,7 @@ async function webPostAttempt<TRequest, TResponse>(
       return webPostAttempt(path, payload, options, retriesLeft - 1);
     }
     const requestId = requestIdOfResponse(response);
-    throw new WebApiError(
+    const error = new WebApiError(
       response.status,
       code,
       message,
@@ -217,6 +218,12 @@ async function webPostAttempt<TRequest, TResponse>(
       details,
       requestId,
     );
+    const retryAfter = response.headers?.get?.("Retry-After");
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      error.retryAfterMs = Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : Math.max(0, Date.parse(retryAfter) - Date.now());
+    }
+    throw error;
   }
 
   return sanitizedPayload as TResponse;
