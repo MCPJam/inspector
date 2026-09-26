@@ -16,6 +16,7 @@
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
 
 export type HostRuntimeConfig = RuntimeExecutionFields & {
@@ -235,10 +236,12 @@ export async function fetchHostRuntimeConfig(args: {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Host runtime-config failed (${response.status})`,
+      error: backendFailureText({
+        source: "host-runtime-config",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: `Host runtime-config failed (${response.status})`,
+      }),
     };
   }
 

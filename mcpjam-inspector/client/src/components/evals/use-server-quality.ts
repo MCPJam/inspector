@@ -24,6 +24,7 @@ export function useServerQuality(
     canRequest: hook.canRequest,
     error: hook.error,
     unavailable: hook.unavailable,
+    signInRequired: hook.signInRequired,
     requested: hook.requested,
     requestServerQuality: hook.requestInsight,
     cancelServerQuality: hook.cancelInsight,
