@@ -132,7 +132,7 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
     formatErrorMessage: (error: Error | null) =>
       error ? { message: error.message } : null,
     buildMcpPromptMessages: () => [],
-    buildSkillToolMessages: () => [],
+    buildSkillContextMessages: () => [],
   };
 });
 

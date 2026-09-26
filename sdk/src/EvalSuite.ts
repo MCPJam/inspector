@@ -8,6 +8,7 @@ export type {
   EvalSuiteClientOptions,
   EvalSuiteSingleClientOptions,
 } from "./saved-client-runner.js";
+export { UnsupportedModelSelectionError } from "./saved-client-runner.js";
 import { composeAbortSignals } from "./compose-abort-signals.js";
 import { formatRunSummaryTable } from "./eval-summary.js";
 import type { EvalSelectionManifest } from "./eval-selection.js";

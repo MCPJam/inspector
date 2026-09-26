@@ -73,3 +73,69 @@ export type {
   TaskMode,
   TaskSurface,
 } from "./tasks-policy.js";
+
+// Saved model selection: model + credential source + connection reference +
+// settings + fallback, beside the bare `modelId`. Pure and browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./model-selection.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./model-selection.js";
+
+// Execution record reader + provenance formatting (reads what a run ran on).
+export {
+  EXECUTION_RAILS,
+  EXECUTION_DEVIATION_KINDS,
+  PROVIDER_DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_EXECUTION_ATTEMPTS,
+  readExecutionRecord,
+  executionRailLabel,
+  executionDeviationTitle,
+  describeExecutionRoute,
+  describeMaxOutputTokens,
+  describeExecutionSettings,
+  describeExecutionModel,
+  formatExecutionProvenanceLine,
+  describeExecutionRequest,
+  describeExecutionAttempts,
+  summarizeExecutionRecord,
+  formatExecutionDeviationLine,
+} from "./execution-record.js";
+export type {
+  ExecutionRecord,
+  ExecutionRail,
+  KnownExecutionRail,
+  ExecutionOffering,
+  ExecutionAttempt,
+  ExecutionAttemptOutcome,
+  ExecutionDeviation,
+  ExecutionDeviationKind,
+  KnownExecutionDeviationKind,
+  ExecutionProvenanceSummary,
+} from "./execution-record.js";

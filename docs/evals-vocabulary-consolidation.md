@@ -86,7 +86,7 @@ These are the invariants. A PR that trips one has found a defect in itself, not 
 These words mean something else. A codemod that proposes to mutate one fails the run.
 
 - **GitHub Checks.** `server/routes/v1/eval-checks.ts`, `server/services/github-checks/**`,
-  `server/routes/web/checks.ts`, `checkRunId` outside `chatSessionChecks`, `checksEnabled`,
+  `checkRunId` outside `chatSessionChecks`, `checksEnabled`,
   `githubCheck*`, `EvalCheckRepo*`, the `connect_eval_check_repo` / `list_eval_check_repos`
   operations, the deprecated `mcpjam cloud eval checks` alias, and the `checks:` key in `mcpjam.yml`.
 - **Protocol and conformance checks.** `ServerDoctorCheck*`, `CheckOAuthResult`,
