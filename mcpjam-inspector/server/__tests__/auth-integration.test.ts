@@ -16,6 +16,7 @@ import { Hono } from "hono";
 import { sessionAuthMiddleware } from "../middleware/session-auth.js";
 import { originValidationMiddleware } from "../middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "../middleware/security-headers.js";
+import { indexingHeadersMiddleware } from "../middleware/indexing-headers.js";
 import {
   applyHostedPartition,
   mountHostedOpenRoutes,
@@ -36,6 +37,7 @@ function createSecureTestApp(): Hono {
 
   // Apply security middleware in the same order as app.ts
   app.use("*", securityHeadersMiddleware);
+  app.use("*", indexingHeadersMiddleware);
   app.use("*", originValidationMiddleware);
   app.use("*", sessionAuthMiddleware);
 
@@ -232,6 +234,34 @@ describe("Auth Integration", () => {
       });
 
       expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    });
+
+    it("sets X-Robots-Tag header", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+    });
+
+    // A request the stack short-circuits never reaches a handler, and the
+    // headers are prepared before the rejection. Crawlers see these responses
+    // too, so the directive has to survive one.
+    it("keeps the headers on a request session auth rejects", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+      expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     });
   });
 

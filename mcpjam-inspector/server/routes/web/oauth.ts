@@ -15,6 +15,7 @@ import {
 } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
 
@@ -35,6 +36,10 @@ oauthWeb.use("*", bearerAuthMiddleware);
 
 // Rate limit guest users on OAuth proxy routes
 oauthWeb.use("*", guestRateLimitMiddleware);
+
+// MJ-012: signed-in callers. Mounted here, not only on `/api/web`, because
+// that `*` limiter runs before this router sets `authMethod`.
+oauthWeb.use("*", passthroughRateLimitMiddleware);
 
 function statusToErrorCode(status: number): ErrorCode {
   if (status === 400) return ErrorCode.VALIDATION_ERROR;
