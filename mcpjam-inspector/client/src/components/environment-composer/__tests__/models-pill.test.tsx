@@ -370,3 +370,99 @@ describe("ModelsPill on the one picker", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe("ModelsPill — harness × model support", () => {
+  const HARNESS_MODELS = [
+    {
+      id: "openai/gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+      provider: "openai",
+      hosted: true,
+    },
+    {
+      id: "anthropic/claude-sonnet-4.5",
+      name: "Claude Sonnet 4.5",
+      provider: "anthropic",
+      hosted: true,
+    },
+    {
+      id: "anthropic/claude-fable-5",
+      name: "Claude Fable 5",
+      provider: "anthropic",
+      hosted: true,
+    },
+  ];
+
+  it("disables, with the reason, a model the client's harness cannot run", async () => {
+    mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
+    const user = userEvent.setup();
+    renderPill(
+      { includeClientDefaults: true, explicitModelIds: [] },
+      { harnessTargets: [{ harnessId: "claude-code" }] }
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    // Claude Code only runs Anthropic models.
+    const luna = option("GPT-5.6 Luna");
+    expect(luna).toHaveAttribute("aria-disabled", "true");
+    await user.hover(luna);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "the Claude Code harness can't run this host's model"
+    );
+    // Not verified on the pinned runtime ⇒ refused for an eval.
+    expect(option("Claude Fable 5")).toHaveAttribute("aria-disabled", "true");
+    // Supported stays pickable.
+    expect(option("Claude Sonnet 4.5")).not.toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
+  });
+
+  it("keeps a model pickable when some selected client can run it", async () => {
+    mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
+    const user = userEvent.setup();
+    renderPill(
+      { includeClientDefaults: true, explicitModelIds: [] },
+      // An emulated client runs anything; the Codex cell is skipped at
+      // resolve time instead.
+      { harnessTargets: [{ harnessId: "codex" }, null] }
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(option("GPT-5.6 Luna")).not.toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
+  });
+
+  it("allows an unverified pair where the purpose is chat", async () => {
+    mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
+    const user = userEvent.setup();
+    renderPill(
+      { includeClientDefaults: true, explicitModelIds: [] },
+      { harnessTargets: [{ harnessId: "claude-code" }], purpose: "chat" }
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(option("Claude Fable 5")).not.toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
+    expect(option("GPT-5.6 Luna")).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("lets the user remove a persisted pick the harness now refuses", async () => {
+    mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
+    const user = userEvent.setup();
+    const onChange = renderPill(
+      { includeClientDefaults: true, explicitModelIds: ["openai/gpt-5.6-luna"] },
+      { harnessTargets: [{ harnessId: "claude-code" }] }
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const luna = option("GPT-5.6 Luna");
+    expect(luna).toHaveAttribute("aria-checked", "true");
+    expect(luna).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(luna);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: true,
+      explicitModelIds: [],
+    });
+  });
+});

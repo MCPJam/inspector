@@ -59,12 +59,16 @@ vi.mock("../harness/harness-proxy-strategy.js", () => ({
 
 import { streamWebChatTurn } from "../web-chat-turn";
 
-function args(modelDefinition: {
-  id: string;
-  provider: string;
-  name?: string;
-  hosted?: boolean;
-}) {
+function args(
+  modelDefinition: {
+    id: string;
+    provider: string;
+    name?: string;
+    hosted?: boolean;
+  },
+  /** `null` = a non-harness host. */
+  harness: "claude-code" | null = "claude-code",
+) {
   const c = {
     req: {
       raw: { headers: new Headers(), signal: undefined },
@@ -88,7 +92,7 @@ function args(modelDefinition: {
       origin: "playground" as const,
       originalMessages: [],
       selectedServerIds: [],
-      harness: "claude-code" as const,
+      ...(harness ? { harness } : {}),
     },
     runtime: {
       authHeader: "Bearer t",
@@ -131,7 +135,10 @@ describe("streamWebChatTurn model dispatch", () => {
   // Only the explicit `hosted: false` stamp tells the two apart.
   it("routes a bare id the picker stamped hosted: false to the org-BYOK path", async () => {
     await streamWebChatTurn(
-      args({ id: "gpt-5-nano", provider: "openai", hosted: false }) as never,
+      args(
+        { id: "gpt-5-nano", provider: "openai", hosted: false },
+        null,
+      ) as never,
     );
     expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
     expect(handlers.mcpjamFree).not.toHaveBeenCalled();
@@ -147,9 +154,23 @@ describe("streamWebChatTurn model dispatch", () => {
 
   it("routes a non-MCPJam model to the org-BYOK path", async () => {
     await streamWebChatTurn(
-      args({ id: "gpt-4.1-mini-custom", provider: "openai" }) as never,
+      args({ id: "gpt-4.1-mini-custom", provider: "openai" }, null) as never,
     );
     expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+    expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+  });
+
+  // A HARNESS turn never takes the org-BYOK branch: that branch runs the
+  // emulated engine, which would then be reported under the harness's name.
+  it.each([
+    [{ id: "gpt-5-nano", provider: "openai", hosted: false }],
+    [{ id: "gpt-4.1-mini-custom", provider: "openai" }],
+  ])("refuses a harness turn on a BYOK model (%o) instead of emulating", async (model) => {
+    await expect(streamWebChatTurn(args(model) as never)).rejects.toThrow(
+      /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/,
+    );
+    expect(handlers.hostedOrg).not.toHaveBeenCalled();
+    expect(handlers.localOrg).not.toHaveBeenCalled();
     expect(handlers.mcpjamFree).not.toHaveBeenCalled();
   });
 });

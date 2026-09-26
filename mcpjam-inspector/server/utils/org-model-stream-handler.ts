@@ -96,6 +96,12 @@ export interface OrgModelHandlerOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   modelId: string;
+  /**
+   * The provider-native id chosen explicitly for this model (the row's
+   * `nativeModelId`): an org Azure deployment name. Sent to `/stream/org` as
+   * `nativeModelId`; never derived from `modelId`.
+   */
+  nativeModelId?: string;
   chatSessionId?: string;
   sourceType?: string;
   messages: ModelMessage[];
@@ -1053,6 +1059,9 @@ export async function handleHostedOrgChatModel(
       // contract can't be silently broken by a downstream caller.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
+      ...(options.nativeModelId?.trim()
+        ? { nativeModelId: options.nativeModelId.trim() }
+        : {}),
       // scenarioId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length

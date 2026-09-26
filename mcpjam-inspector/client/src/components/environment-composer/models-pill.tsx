@@ -38,6 +38,11 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import {
+  harnessModelLockReason,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -61,6 +66,8 @@ export function ModelsPill({
   clientDefaultLabel,
   variant = "pill",
   workload = "evalTarget",
+  harnessTargets,
+  purpose = "eval",
 }: {
   variant?: "pill" | "table";
   projectId: string;
@@ -75,6 +82,16 @@ export function ModelsPill({
   /** Secondary text on the Client-defaults row (the previewed host's model). */
   clientDefaultLabel?: string | null;
   /**
+   * The harness each selected client runs (`null`/absent = emulated or not
+   * known yet), with its runtime version when known (else the adapter's pinned
+   * one). A model EVERY client's harness refuses for `purpose` renders
+   * disabled with the reason; one only some refuse stays pickable and those
+   * cells are skipped at resolve time.
+   */
+  harnessTargets?: ReadonlyArray<HarnessModelTarget | null | undefined>;
+  /** Decides whether an unverified harness × model pair is pickable. */
+  purpose?: HarnessModelPurpose;
+  /**
    * What the picked models run as (capability locks, see
    * `MODEL_WORKLOAD_POLICIES`). Environment models are eval or swarm
    * targets; a surface picking a persona's model passes `persona`.
@@ -82,6 +99,16 @@ export function ModelsPill({
   workload?: ModelWorkload;
 }) {
   const { availableModels } = useAvailableModels({ projectId });
+  const harnessLockReasons = useMemo(() => {
+    const byId = new Map<string, string>();
+    if (!harnessTargets || harnessTargets.length === 0) return byId;
+    for (const model of availableModels) {
+      const id = String(model.id);
+      const reason = harnessModelLockReason(id, harnessTargets, purpose);
+      if (reason) byId.set(id, reason);
+    }
+    return byId;
+  }, [availableModels, harnessTargets, purpose]);
 
   const explicit = value.explicitModelIds;
   // The row each explicit id refers to: the one whose selection is saved for
@@ -215,6 +242,15 @@ export function ModelsPill({
       ? capReason
       : undefined;
 
+  // A model every selected client's harness refuses is locked before any
+  // budget reason. The selector only blocks adding a locked row, so a
+  // persisted pick stays removable.
+  const rowDisabledReason = (
+    model: ModelDefinition,
+    state: { selected: boolean },
+  ): string | undefined =>
+    harnessLockReasons.get(String(model.id)) ?? rowCapReason(model, state);
+
   const extraOptions: ModelSelectorExtraOption[] = [
     {
       id: "client-defaults",
@@ -300,7 +336,7 @@ export function ModelsPill({
       maxSelectedModels={Number.POSITIVE_INFINITY}
       allowEmptySelection
       extraOptions={extraOptions}
-      rowDisabledReason={rowCapReason}
+      rowDisabledReason={rowDisabledReason}
     />
   );
 }

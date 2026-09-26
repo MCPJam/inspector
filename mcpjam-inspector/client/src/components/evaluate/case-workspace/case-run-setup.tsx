@@ -79,8 +79,9 @@ export function CaseRunSetup({
             onHostsChange={(ids) => controls.onHostChange?.(ids[0])}
             onRemoveClient={() => {}}
             onModelSelectionChange={() => {}}
-            renderModels={() => (
+            renderModels={(_hostId, harness) => (
               <EvalModelChoices
+                harness={harness}
                 inModal
                 value={selection}
                 availableModels={availableModels}

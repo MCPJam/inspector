@@ -286,6 +286,26 @@ describe("isAccountLimit", () => {
     ).toBe(true);
   });
 
+  it.each([
+    // MCPJam's own daily budget for the feature: every remaining target in a
+    // fan-out meets the same wall.
+    "platform_capacity",
+    // Keyed on the USER, and every session in a fan-out is the same user.
+    "agent_turn_limit",
+    // The attestation did not hold — a property of the deployment, not of one
+    // host, so another host cannot escape it either.
+    "agent_billing_rejected",
+  ])("stops the whole run on %s", (code) => {
+    // Asserted DIRECTLY, not only through the parity loop in
+    // `swarm-runner.test.ts`: that one iterates `USER_OWNED_DENIAL_CODES`, so
+    // dropping a code from BOTH that set and this regex would keep it green
+    // while silently restoring the per-host behaviour these three must not
+    // have. Both forms, because the runner composes the wire string and the
+    // humanizer lifts the code out of the JSON envelope.
+    expect(isAccountLimit(undefined, code)).toBe(true);
+    expect(isAccountLimit(`Limit reached. (${code}, HTTP 429)`)).toBe(true);
+  });
+
   it("does NOT claim a 429 on the user's own provider key", () => {
     // BB-172: the user's own key really was throttled. No MCPJam code appears,
     // and the advice differs — MCPJam cannot lift someone else's rate limit.
@@ -388,4 +408,25 @@ it.each([
   expect(result.code).toBe("upstream_error_page");
   expect(result.message).toContain("HTTP 502");
   expect(result.message).not.toMatch(/<|Cloudflare/);
+});
+
+describe("humanizeSwarmAttemptError provider_not_allowlisted", () => {
+  it("keeps the backend headline and leaves the gateway's upstream details out", () => {
+    const headline =
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
+    const info = humanizeSwarmAttemptError(
+      `Backend stream error: 403 ${JSON.stringify({
+        ok: false,
+        code: "provider_not_allowlisted",
+        error: headline,
+        isRetryable: false,
+        details:
+          "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.",
+      })}`,
+    );
+
+    expect(info.message).toBe(headline);
+    expect(info.code).toBe("provider_not_allowlisted");
+    expect(info.httpStatus).toBe(403);
+  });
 });

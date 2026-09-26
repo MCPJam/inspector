@@ -390,6 +390,132 @@ describe("org rows carry their connection", () => {
   });
 });
 
+describe("org Azure deployments", () => {
+  const azureConfig = (modelIds?: string[]): OrgVisibleConfig => ({
+    providers: [
+      {
+        id: "orgprov_azure_1",
+        providerKey: "azure",
+        enabled: true,
+        hasSecret: true,
+        baseUrl: "https://contoso.openai.azure.com/openai",
+        ...(modelIds ? { modelIds } : {}),
+      },
+    ],
+  });
+
+  it("deployment rows replace the static azure rows and carry the deployment", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      azureConfig(["prod-gpt51", " prod-gpt51 ", "eval.mini"]),
+      [],
+    );
+    const azure = models.filter((m) => m.provider === "azure");
+    expect(azure).toEqual([
+      {
+        id: "azure/prod-gpt51",
+        name: "prod-gpt51 (Azure)",
+        provider: "azure",
+        nativeModelId: "prod-gpt51",
+        orgProvider: { providerKey: "azure", id: "orgprov_azure_1" },
+        hosted: false,
+      },
+      {
+        id: "azure/eval.mini",
+        name: "eval.mini (Azure)",
+        provider: "azure",
+        nativeModelId: "eval.mini",
+        orgProvider: { providerKey: "azure", id: "orgprov_azure_1" },
+        hosted: false,
+      },
+    ]);
+  });
+
+  it("the selection builder saves the deployment as nativeModelId", () => {
+    const [row] = buildAvailableModelsFromOrgConfig(
+      azureConfig(["prod-gpt51"]),
+      [],
+    ).filter((m) => m.provider === "azure");
+    expect(modelSelectionFromDefinition(row, undefined, "evalTarget")).toEqual({
+      modelId: "azure/prod-gpt51",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_azure_1" },
+      nativeModelId: "prod-gpt51",
+      fallback: { provider: "none", model: "none" },
+    });
+  });
+
+  it("with no deployments configured, the static rows stay and name none", () => {
+    const azure = buildAvailableModelsFromOrgConfig(azureConfig(), []).filter(
+      (m) => m.provider === "azure",
+    );
+    expect(azure.map((m) => m.id)).toContain("azure/gpt-5.1");
+    const selection = modelSelectionFromDefinition(
+      azure.find((m) => m.id === "azure/gpt-5.1")!,
+      undefined,
+      "chat",
+    );
+    // No deployment is invented by stripping the prefix.
+    expect(selection?.nativeModelId).toBeUndefined();
+  });
+});
+
+describe("org OpenAI-compatible providers with listed models", () => {
+  // The org lists the provider's own ids. A listed id whose `<vendor>/<id>`
+  // the model catalog knows is saved with the org connection; one the
+  // catalog does not know gets no selection and runs as a legacy id (no
+  // canonical id is invented by adding a prefix).
+  const config: OrgVisibleConfig = {
+    providers: [
+      {
+        id: "orgprov_moonshot",
+        providerKey: "moonshotai",
+        enabled: true,
+        hasSecret: true,
+        modelIds: ["kimi-k2-0905", "kimi-k2-0905", "kimi-k2-0905-preview"],
+      },
+      {
+        id: "orgprov_zai_nokey",
+        providerKey: "z-ai",
+        enabled: true,
+        hasSecret: false,
+        modelIds: ["glm-4.6"],
+      },
+    ],
+  };
+
+  it("offer the org's model ids, saved with the connection", () => {
+    const rows = buildAvailableModelsFromOrgConfig(config, []);
+    expect(rows).toEqual([
+      {
+        id: "kimi-k2-0905",
+        name: "kimi-k2-0905",
+        provider: "moonshotai",
+        orgProvider: { providerKey: "moonshotai", id: "orgprov_moonshot" },
+        hosted: false,
+      },
+      {
+        id: "kimi-k2-0905-preview",
+        name: "kimi-k2-0905-preview",
+        provider: "moonshotai",
+        orgProvider: { providerKey: "moonshotai", id: "orgprov_moonshot" },
+        hosted: false,
+      },
+    ]);
+    expect(modelSelectionFromDefinition(rows[0], undefined, "chat")).toEqual({
+      modelId: "moonshotai/kimi-k2-0905",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_moonshot" },
+      nativeModelId: "kimi-k2-0905",
+      fallback: { provider: "openrouter", model: "none" },
+    });
+  });
+
+  it("an id the catalog does not list stays legacy", () => {
+    const rows = buildAvailableModelsFromOrgConfig(config, []);
+    expect(modelSelectionFromDefinition(rows[1], undefined, "chat")).toBeNull();
+  });
+});
+
 describe("stored choices", () => {
   it("store the canonical id beside the selection and read back the picked row", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
