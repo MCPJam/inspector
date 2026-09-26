@@ -42,7 +42,7 @@ import {
 } from "@/shared/eval-matching";
 import type { Predicate } from "@/shared/eval-matching";
 import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
-import { extractToolCallsFromEnvelopeMessages } from "./checks/run-predicates-on-chat-session.js";
+import { extractToolCallsFromEnvelopeMessages } from "./checks/chat-session-envelope.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;

@@ -23,10 +23,12 @@ type CreateSuiteArgs = {
   projectId: string;
   name: string;
   description?: string;
-  environment: { servers: string[] };
+  environment?: { servers: string[] };
   tags?: string[];
   serverAttachmentId?: string;
   hostAttachments?: HostAttachmentDraft[];
+  /** `createSuiteWithEnvironments`: the suite is born an environment suite. */
+  environmentTargets?: Array<{ hostId: string; serverAttachmentId: string }>;
 };
 
 type CreateSuiteResult = { _id: string } | null | undefined;
@@ -75,6 +77,12 @@ export type RunExcalidrawQuickstartOptions = {
    * user is already working with, instead of just `hosts[0]`.
    */
   previewedHostId: string | null;
+  /**
+   * The backend creates environment suites in one call
+   * (`createSuiteWithEnvironments`). The quickstart then makes one: the
+   * previewed client with the Excalidraw group, instead of a legacy suite.
+   */
+  environmentSuites?: boolean;
   /**
    * Where to land once the suite exists. Defaults to the shipped Evals tab;
    * Evaluate (New) passes its own so the quickstart does not drop the reader
@@ -184,6 +192,7 @@ export async function runExcalidrawQuickstart(
     isExcalidrawConnected,
     existingQuickstartSuiteId,
     previewedHostId,
+    environmentSuites = false,
     navigate = navigatePlaygroundEvalsRoute,
   } = options;
 
@@ -239,15 +248,28 @@ export async function runExcalidrawQuickstart(
 
   let createdSuiteId: string | null = null;
   try {
-    const created = await createTestSuite({
-      projectId,
-      name: EXCALIDRAW_QUICKSTART_SUITE_NAME,
-      description: "Curated cases for the Excalidraw MCP server.",
-      environment: { servers: [EXCALIDRAW_SERVER_NAME] },
-      tags: [QUICKSTART_SUITE_TAG],
-      serverAttachmentId,
-      ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
-    });
+    const created = await createTestSuite(
+      environmentSuites && hostAttachments.length > 0
+        ? {
+            projectId,
+            name: EXCALIDRAW_QUICKSTART_SUITE_NAME,
+            description: "Curated cases for the Excalidraw MCP server.",
+            tags: [QUICKSTART_SUITE_TAG],
+            environmentTargets: hostAttachments.map((attachment) => ({
+              hostId: attachment.namedHostId,
+              serverAttachmentId,
+            })),
+          }
+        : {
+            projectId,
+            name: EXCALIDRAW_QUICKSTART_SUITE_NAME,
+            description: "Curated cases for the Excalidraw MCP server.",
+            environment: { servers: [EXCALIDRAW_SERVER_NAME] },
+            tags: [QUICKSTART_SUITE_TAG],
+            serverAttachmentId,
+            ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
+          },
+    );
     createdSuiteId = created?._id ?? null;
   } catch (error) {
     console.error("Excalidraw quickstart: create suite failed", error);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import {
   environmentEffectiveServerIds,
@@ -9,6 +9,7 @@ import {
   environmentServerRefsForManager,
   isEnvironmentLaunchConflict,
   resolveEnvironmentForLaunch,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "../resolve";
 import { WebRouteError } from "../../../routes/web/errors";
@@ -369,5 +370,97 @@ describe("environmentLaunchRejectionError", () => {
     expect(environmentLaunchRejectionError({ data: { code: 42 } })).toBeNull();
     expect(environmentLaunchRejectionError({ data: [] })).toBeNull();
     expect(environmentLaunchRejectionError({ data: null })).toBeNull();
+  });
+});
+
+describe("eval-only resolution compatibility", () => {
+  const args = {
+    projectId: "p_1",
+    environmentId: "env-1",
+    serverSource: "environment_only" as const,
+  };
+  it("forwards the opt-in and preserves an explicit empty set", async () => {
+    const empty = {
+      ...RESOLVED,
+      selectedServerIds: [],
+      effectiveServerIds: [],
+      servers: [],
+    };
+    const query = vi.fn().mockResolvedValue(empty);
+    expect(await resolveEnvironmentForLaunch({ query } as any, args)).toEqual(
+      empty,
+    );
+    expect(query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      args,
+    );
+  });
+  it("retries an older validator once without serverSource", async () => {
+    const query = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "ArgumentValidationError: Object contains extra field `serverSource` that is not in the validator.",
+        ),
+      )
+      .mockResolvedValueOnce(RESOLVED);
+    expect(await resolveEnvironmentForLaunch({ query } as any, args)).toEqual(
+      RESOLVED,
+    );
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      { projectId: "p_1", environmentId: "env-1" },
+    );
+  });
+  it.each([
+    "network failure",
+    "Object contains extra field `suiteId`. Object: {serverSource: environment_only}",
+    "ENV_NO_SERVERS",
+  ])("does not retry %s", async (message) => {
+    const error = new Error(message);
+    const query = vi.fn().mockRejectedValue(error);
+    await expect(
+      resolveEnvironmentForLaunch({ query } as any, args),
+    ).rejects.toBe(error);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+  it("does not retry the retry", async () => {
+    const error = new Error("Object contains extra field `serverSource`");
+    const query = vi.fn().mockRejectedValue(error);
+    await expect(
+      resolveEnvironmentForLaunch({ query } as any, args),
+    ).rejects.toBe(error);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+});
+describe("translateEnvironmentResolveError", () => {
+  it.each([
+    "ENV_NO_SERVERS",
+    "ENV_ATTACHMENT_MISSING",
+    "ENV_PLUGIN_UNAVAILABLE",
+  ])("maps %s to an actionable conflict", (code) => {
+    expect(
+      translateEnvironmentResolveError(
+        new ConvexError({ code, message: "Pick a valid group" }),
+      ),
+    ).toMatchObject({
+      status: 409,
+      message: "Pick a valid group",
+      details: { code },
+    });
+  });
+  it.each(["ENV_NOT_FOUND", "ENV_CROSS_PROJECT"])(
+    "hides %s behind 404",
+    (code) => {
+      expect(
+        translateEnvironmentResolveError(new ConvexError({ code })),
+      ).toMatchObject({ status: 404, message: "Environment not found" });
+    },
+  );
+  it("preserves non-environment errors", () => {
+    const error = new Error("broken");
+    expect(translateEnvironmentResolveError(error)).toBe(error);
   });
 });

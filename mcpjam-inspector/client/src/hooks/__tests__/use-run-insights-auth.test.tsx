@@ -205,3 +205,56 @@ describe("useRunInsights permission refusals", () => {
     await waitFor(() => expect(result.current.error).toBeNull());
   });
 });
+
+describe("useRunInsights sign-in refusals", () => {
+  it("offers sign-in instead of hiding the band, and stops auto-requesting", async () => {
+    // `Server Error` is in the message on purpose: that prefix is what Convex
+    // puts on every thrown mutation error, and matching it before the
+    // sign-in code is exactly the bug — the band would latch `unavailable`
+    // and disappear for the one viewer who can fix it in a click.
+    state.requestMock.mockRejectedValue(
+      new Error(
+        '[CONVEX M(swarmWaveInsights:requestWaveInsights)] Server Error ' +
+          '{"code":"sign_in_required","feature":"wave insights",' +
+          '"message":"Sign in to generate insights for this wave."}',
+      ),
+    );
+    const { result, rerender } = renderHook(
+      ({ scope }: { scope: RunInsightsScope }) =>
+        useRunInsights(scope, { terminal: true }),
+      { initialProps: { scope: SCOPE_A } },
+    );
+
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.signInRequired).toBe(true));
+    // The refusal's own copy, not a re-worded guess at it.
+    expect(result.current.error).toBe(
+      "Sign in to generate insights for this wave.",
+    );
+    // A guest is not an undeployed backend: the surface stays visible.
+    expect(result.current.unavailable).toBe(false);
+
+    // ...and navigating must not fire a second doomed request. The latch is
+    // about WHO is asking, which navigation does not change.
+    rerender({ scope: SCOPE_B });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.requestMock).toHaveBeenCalledTimes(1);
+    // The flag clears with the message it belongs to, so the next cohort does
+    // not draw a sign-in control under a blank explanation.
+    expect(result.current.signInRequired).toBe(false);
+  });
+
+  it("an explicit press asks again — the viewer may have signed in since", async () => {
+    state.requestMock.mockRejectedValue(
+      new Error('Server Error {"code":"sign_in_required","message":"Sign in."}'),
+    );
+    const { result } = renderHook(() =>
+      useRunInsights(SCOPE_C, { terminal: true }),
+    );
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.signInRequired).toBe(true));
+
+    act(() => result.current.request());
+    await waitFor(() => expect(state.requestMock).toHaveBeenCalledTimes(2));
+  });
+});
