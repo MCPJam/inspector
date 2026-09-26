@@ -381,6 +381,15 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // Saved browser profile download (routes/web/browser-profile-download.ts,
+  // MJ-005): the archive could not be served. `stage` is the hop that failed,
+  // `lookup` (the backend's owner check) or `archive` (reading the archive).
+  // `statusCode` is the upstream answer, when there was one.
+  "browser_profile.download.failed": {
+    stage: "lookup" | "archive";
+    statusCode?: number;
+    errorMessage?: string;
+  };
   // Swarm AI generation (routes/web/swarm-generate.ts): the backend
   // /swarms/* endpoint answered with a server error. The upstream message is
   // deliberately NOT forwarded to the caller (it carries the deployment URL),
@@ -394,11 +403,13 @@ export type RequestEventMap = {
     errorCode: string;
   };
   // Sign-out session revocation (routes/web/auth-session.ts, MJ-011): the
-  // backend could not be asked to revoke the session a user just signed out
-  // of, so tokens already issued for it stay valid until they expire. The
-  // sign-out itself still completed.
+  // backend did not acknowledge a durable record of the revocation in time.
+  // This replica already refuses the session; `status` says whether retries
+  // were scheduled ("pending") or could not be ("failed"). The sign-out itself
+  // still completed.
   "auth.session.revoke_incomplete": {
     reason: "failed" | "timeout";
+    status: "pending" | "failed";
   };
   "route.operation.failed": RouteOperationFailedFields;
   /**

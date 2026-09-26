@@ -1,34 +1,53 @@
 /**
  * Models slot of the environment composer — the second fan-out axis.
  *
- * Two modes on one component (TL):
- *  - `multiple` (evals): "Client defaults" checkbox first, then catalog
- *    models as checkboxes. Value is a {@link ModelSelection}.
- *  - `single`: picking a catalog model replaces the current explicit
- *    pick and closes — for future quick-switch surfaces.
+ * The one model picker (`ModelSelector`) in multi-select mode, with the
+ * composer's own choices around it:
+ *  - `multiple` (evals, swarms): "Client defaults" first, then catalog models,
+ *    each toggled on or off. Value is a {@link ModelSelection}.
+ *  - `single`: picking a catalog model replaces the current explicit pick and
+ *    closes — for future quick-switch surfaces.
+ *
+ * Rows are identified by `modelRowKey` (source, connection, id), so the same
+ * id listed by the hosted catalog and under an org connection are two rows:
+ * the one checked is the one whose saved selection is stored for that id, and
+ * picking the other swaps the stored selection. The id list stays keyed by
+ * the legacy id, so one id is one choice.
  *
  * Cap awareness (D6): when `budget` is provided, an option that would
  * push the product over `maxTargets` is disabled with the product
  * explanation. A static `max=10` inside this pill is not sufficient.
  */
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Label } from "@mcpjam/design-system/label";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
+  ModelSelector,
+  type ModelSelectorExtraOption,
+} from "@/components/chat-v2/chat-input/model-selector";
+import type { ModelWorkload } from "@/components/chat-v2/shared/available-models";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
+  findModelForStoredChoice,
+  modelRowKey,
+} from "@/components/chat-v2/shared/model-selection";
+import {
+  syncExplicitModelSelections,
   targetProductCapReason,
   type ModelSelection,
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { cn } from "@/lib/utils";
+import type { ModelDefinition } from "@/shared/types";
+
+/** Stands in for "no explicit pick" where the selector needs a model. */
+const NO_EXPLICIT_MODEL: ModelDefinition = {
+  id: "__client_defaults__",
+  name: "Client defaults",
+  provider: "unknown" as ModelDefinition["provider"],
+  hosted: true,
+};
 
 export function ModelsPill({
   projectId,
@@ -41,6 +60,7 @@ export function ModelsPill({
   budget,
   clientDefaultLabel,
   variant = "pill",
+  workload = "evalTarget",
 }: {
   variant?: "pill" | "table";
   projectId: string;
@@ -54,258 +74,234 @@ export function ModelsPill({
   budget?: TargetBudgetContext;
   /** Secondary text on the Client-defaults row (the previewed host's model). */
   clientDefaultLabel?: string | null;
+  /**
+   * What the picked models run as (capability locks, see
+   * `MODEL_WORKLOAD_POLICIES`). Environment models are eval or swarm
+   * targets; a surface picking a persona's model passes `persona`.
+   */
+  workload?: ModelWorkload;
 }) {
   const { availableModels } = useAvailableModels({ projectId });
-  const [open, setOpen] = useState(false);
 
   const explicit = value.explicitModelIds;
-  const catalogIds = useMemo(
-    () => new Set(availableModels.map((model) => String(model.id))),
-    [availableModels],
-  );
-  const staleExplicit = explicit.filter((id) => !catalogIds.has(id));
-  const includeDefaults = value.includeClientDefaults;
-  const catalogNameById = useMemo(() => {
-    const byId = new Map<string, string>();
-    for (const model of availableModels) {
-      const id = String(model.id);
-      byId.set(id, compactModelLabel(model.name) || id);
-    }
-    return byId;
-  }, [availableModels]);
-  const triggerLabel = useMemo(
+  // The row each explicit id refers to: the one whose selection is saved for
+  // it, else (a legacy pick) the hosted row with that id first.
+  const pickedRows = useMemo(
     () =>
-      modelsPillTriggerLabel(value, {
-        clientDefaultLabel,
-        modelName: (id) =>
-          catalogNameById.get(id) || compactModelLabel(id) || id,
-      }),
-    [value, clientDefaultLabel, catalogNameById],
+      explicit.map((id) => ({
+        id,
+        row: findModelForStoredChoice(
+          { modelId: id, selection: value.explicitModelSelections?.[id] },
+          availableModels,
+          undefined,
+        ),
+      })),
+    [explicit, value.explicitModelSelections, availableModels],
   );
+  const selectedModels = useMemo(
+    () => pickedRows.flatMap(({ row }) => (row ? [row] : [])),
+    [pickedRows],
+  );
+  const staleExplicit = pickedRows
+    .filter(({ row }) => !row)
+    .map(({ id }) => id);
+  const includeDefaults = value.includeClientDefaults;
+  const nameForId = (id: string): string => {
+    const row = pickedRows.find((picked) => picked.id === id)?.row;
+    const listed =
+      row ?? availableModels.find((model) => String(model.id) === id);
+    return (
+      (listed && compactModelLabel(listed.name)) || compactModelLabel(id) || id
+    );
+  };
+  const triggerLabel = modelsPillTriggerLabel(value, {
+    clientDefaultLabel,
+    modelName: nameForId,
+  });
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
 
+  // Every edit keeps the saved selections in step with the picked ids; the
+  // row just picked decides the selection saved for its id.
+  const emit = (next: ModelSelection, picked?: ModelDefinition) =>
+    onChange(
+      syncExplicitModelSelections(next, {
+        models: availableModels,
+        previous: value,
+        ...(picked ? { picked } : {}),
+      }),
+    );
+
   const toggleDefaults = (checked: boolean) => {
     if (mode === "single") {
-      onChange({ includeClientDefaults: checked, explicitModelIds: [] });
-      setOpen(false);
+      emit({ includeClientDefaults: checked, explicitModelIds: [] });
       return;
     }
     if (checked && replaceSoleChoice) {
-      onChange({ includeClientDefaults: true, explicitModelIds: [] });
+      emit({ includeClientDefaults: true, explicitModelIds: [] });
       return;
     }
-    onChange({ ...value, includeClientDefaults: checked });
+    emit({ ...value, includeClientDefaults: checked });
   };
 
-  const toggleModel = (modelId: string, checked: boolean) => {
-    if (mode === "single") {
-      onChange({
-        includeClientDefaults: false,
-        explicitModelIds: checked ? [modelId] : [],
-      });
-      setOpen(false);
-      return;
-    }
-    if (checked) {
-      if (explicit.includes(modelId)) return;
-      if (replaceSoleChoice) {
-        onChange({
-          includeClientDefaults: false,
-          explicitModelIds: [modelId],
-        });
-        return;
-      }
-      onChange({ ...value, explicitModelIds: [...explicit, modelId] });
-      return;
-    }
-    onChange({
+  const removeModelId = (modelId: string) =>
+    emit({
       ...value,
       explicitModelIds: explicit.filter((id) => id !== modelId),
     });
+
+  const addModel = (model: ModelDefinition) => {
+    const modelId = String(model.id);
+    if (mode === "single") {
+      emit(
+        { includeClientDefaults: false, explicitModelIds: [modelId] },
+        model,
+      );
+      return;
+    }
+    if (explicit.includes(modelId)) {
+      // Another row with this id was picked: this one takes its place.
+      emit(value, model);
+      return;
+    }
+    if (replaceSoleChoice) {
+      emit(
+        { includeClientDefaults: false, explicitModelIds: [modelId] },
+        model,
+      );
+      return;
+    }
+    emit({ ...value, explicitModelIds: [...explicit, modelId] }, model);
   };
 
+  // The selector reports the whole next list; one row was added or removed.
+  const handleSelectedModelsChange = (next: ModelDefinition[]) => {
+    const before = new Set(selectedModels.map(modelRowKey));
+    const added = next.find((model) => !before.has(modelRowKey(model)));
+    if (added) {
+      addModel(added);
+      return;
+    }
+    const after = new Set(next.map(modelRowKey));
+    const removed = selectedModels.find(
+      (model) => !after.has(modelRowKey(model)),
+    );
+    if (removed) removeModelId(String(removed.id));
+  };
+
+  const wouldAddChoice = wouldExceedBudget(budget, { extraChoices: 1 });
   const defaultsCapBlocked =
     mode === "multiple" &&
     !includeDefaults &&
-    wouldExceedBudget(budget, { extraChoices: 1 }) &&
+    wouldAddChoice &&
     !replaceSoleChoice;
-  const modelCapBlocked = (checked: boolean) =>
+  const capReason = budget
+    ? targetProductCapReason(
+        budget.hostCount,
+        budget.choiceCount + 1,
+        budget.maxTargets,
+      )
+    : undefined;
+  const rowCapReason = (
+    model: ModelDefinition,
+    state: { selected: boolean },
+  ): string | undefined =>
     mode === "multiple" &&
-    !checked &&
-    wouldExceedBudget(budget, { extraChoices: 1 }) &&
-    !replaceSoleChoice;
+    !state.selected &&
+    // Swapping in another row for a picked id adds no choice.
+    !explicit.includes(String(model.id)) &&
+    wouldAddChoice &&
+    !replaceSoleChoice
+      ? capReason
+      : undefined;
+
+  const extraOptions: ModelSelectorExtraOption[] = [
+    {
+      id: "client-defaults",
+      label: "Client defaults",
+      ...(clientDefaultLabel ? { description: clientDefaultLabel } : {}),
+      checked: includeDefaults,
+      disabled: defaultsCapBlocked,
+      ...(defaultsCapBlocked && capReason ? { disabledReason: capReason } : {}),
+      onSelect: () => toggleDefaults(!includeDefaults),
+      ...(testId ? { testId: `${testId}-client-defaults` } : {}),
+    },
+    // A picked id the catalog no longer lists stays removable.
+    ...staleExplicit.map((id): ModelSelectorExtraOption => ({
+      id: `stale:${id}`,
+      label: id,
+      description: "No longer in the catalog",
+      checked: true,
+      onSelect: () => removeModelId(id),
+    })),
+  ];
+
+  const trigger =
+    variant === "table" ? (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        disabled={disabled}
+        data-testid={testId}
+        aria-label="Models"
+        className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-left font-normal whitespace-normal"
+      >
+        <span className="min-w-0 flex-1 break-words">
+          {[
+            ...(includeDefaults
+              ? [
+                  clientDefaultLabel
+                    ? compactModelLabel(clientDefaultLabel)
+                    : "Client default",
+                ]
+              : []),
+            ...explicit.map(nameForId),
+          ].join(", ") || "Select models"}
+        </span>
+        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+      </Button>
+    ) : (
+      <button
+        type="button"
+        disabled={disabled}
+        data-testid={testId}
+        aria-label="Models"
+        className={cn(
+          "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+          "outline-none transition-colors",
+          includeDefaults || explicit.length > 0
+            ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+            : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+          disabled && "cursor-not-allowed opacity-60",
+        )}
+      >
+        <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          {triggerLabel}
+        </span>
+        <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+      </button>
+    );
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (!next || !disabled) setOpen(next);
-      }}
-    >
-      <PopoverTrigger asChild>
-        {variant === "table" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            data-testid={testId}
-            aria-label="Models"
-            className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-left font-normal whitespace-normal"
-          >
-            <span className="min-w-0 flex-1 break-words">
-              {[
-                ...(includeDefaults
-                  ? [
-                      clientDefaultLabel
-                        ? compactModelLabel(clientDefaultLabel)
-                        : "Client default",
-                    ]
-                  : []),
-                ...explicit.map(
-                  (id) => catalogNameById.get(id) || compactModelLabel(id),
-                ),
-              ].join(", ") || "Select models"}
-            </span>
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          </Button>
-        ) : (
-          <button
-            type="button"
-            disabled={disabled}
-            data-testid={testId}
-            aria-label="Models"
-            className={cn(
-              "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
-              "outline-none transition-colors",
-              includeDefaults || explicit.length > 0
-                ? "border-border/60 bg-muted/40 hover:bg-muted/60"
-                : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
-              disabled && "cursor-not-allowed opacity-60",
-            )}
-          >
-            <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate text-xs font-medium">
-              {triggerLabel}
-            </span>
-            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-          </button>
-        )}
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-72 p-1"
-        align="start"
-        sideOffset={4}
-        portalled={!inModal}
-      >
-        <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {mode === "single" ? "Model" : "Models"}
-        </div>
-        <div className="max-h-64 space-y-0.5 overflow-y-auto">
-          <Label
-            className={cn(
-              "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
-              (defaultsCapBlocked || disabled) &&
-                "cursor-not-allowed opacity-60 hover:bg-transparent",
-            )}
-          >
-            <Checkbox
-              checked={includeDefaults}
-              onCheckedChange={(next) => toggleDefaults(next === true)}
-              disabled={defaultsCapBlocked || disabled}
-              aria-label="Client defaults"
-              data-testid={testId ? `${testId}-client-defaults` : undefined}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-normal">
-                Client defaults
-              </span>
-              {clientDefaultLabel ? (
-                <span className="block truncate text-[10px] text-muted-foreground">
-                  {clientDefaultLabel}
-                </span>
-              ) : null}
-            </span>
-          </Label>
-          {defaultsCapBlocked && budget ? (
-            <p className="px-2 pb-1 text-[10px] text-muted-foreground">
-              {targetProductCapReason(
-                budget.hostCount,
-                budget.choiceCount + 1,
-                budget.maxTargets,
-              )}
-            </p>
-          ) : null}
-          {availableModels.length === 0 && staleExplicit.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              No catalog models available.
-            </p>
-          ) : (
-            <>
-              {availableModels.map((model) => {
-                const id = String(model.id);
-                const checked = explicit.includes(id);
-                const locked = model.disabled === true;
-                const capBlocked = modelCapBlocked(checked);
-                // A persisted locked model must stay checkable so the user
-                // can remove it. Lock and cap only block adding a new pick.
-                const optionDisabled =
-                  disabled || (!checked && (locked || capBlocked));
-                return (
-                  <Label
-                    key={id}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
-                      optionDisabled &&
-                        "cursor-not-allowed opacity-60 hover:bg-transparent",
-                    )}
-                    title={
-                      locked
-                        ? model.disabledReason
-                        : capBlocked && budget
-                        ? targetProductCapReason(
-                            budget.hostCount,
-                            budget.choiceCount + 1,
-                            budget.maxTargets,
-                          )
-                        : undefined
-                    }
-                  >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(next) => toggleModel(id, next === true)}
-                      disabled={optionDisabled}
-                      aria-label={compactModelLabel(model.name) || id}
-                    />
-                    <span className="min-w-0 flex-1 truncate font-normal">
-                      {compactModelLabel(model.name) || id}
-                    </span>
-                  </Label>
-                );
-              })}
-              {staleExplicit.map((id) => (
-                <Label
-                  key={id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30"
-                  title="No longer in the catalog"
-                >
-                  <Checkbox
-                    checked
-                    onCheckedChange={(next) => toggleModel(id, next === true)}
-                    disabled={disabled}
-                    aria-label={id}
-                  />
-                  <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
-                    {id}
-                  </span>
-                </Label>
-              ))}
-            </>
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <ModelSelector
+      trigger={trigger}
+      inModal={inModal}
+      disabled={disabled}
+      analyticsLocation="environment_composer"
+      workload={workload}
+      currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
+      availableModels={availableModels}
+      onModelChange={addModel}
+      multiModelEnabled={mode === "multiple"}
+      selectedModels={selectedModels}
+      onSelectedModelsChange={handleSelectedModelsChange}
+      maxSelectedModels={Number.POSITIVE_INFINITY}
+      allowEmptySelection
+      extraOptions={extraOptions}
+      rowDisabledReason={rowCapReason}
+    />
   );
 }
 

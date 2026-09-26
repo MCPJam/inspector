@@ -268,7 +268,7 @@ export type EvalTraceWidgetSnapshot = {
 
 // PR 6b: browser-rendered MCP App eval — render observations + interaction
 // steps. Runner records carry base64 screenshots until `finalizeEvalIteration`
-// uploads them via `chatSessions:generateSnapshotUploadUrl`; serialized records
+// uploads them through the backend's upload route; serialized records
 // replace that field with `screenshotBlobId`. These never enter
 // `EvalTraceBlobV1` — they fan out to the sibling `widgetRenderObservations` /
 // `browserInteractionSteps` Convex tables via `appendEvalTurnTrace`, which has

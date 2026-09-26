@@ -24,6 +24,10 @@ import {
   type EnvironmentStack,
   type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
+import {
+  selectionKey,
+  type ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import type {
   ProjectEnvironmentSkillSelection,
@@ -38,6 +42,8 @@ export type AdhocStackInput = {
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
+  /** Saved selection behind `modelId` (only with `modelSelectionsEnabled`). */
+  modelSelection?: SavedModelSelection;
 };
 
 export type EnsureAdhocEnvironmentsFn = (args: {
@@ -150,6 +156,12 @@ function matchingNamedEnvironment(
   preferIds: readonly string[] = [],
   /** Inherit cell = undefined. A named row with an override must not match. */
   modelId?: string,
+  /**
+   * The cell's saved selection. When set, a named row is reused only if it
+   * saved the SAME selection — an org-connection pick must not reuse a row
+   * that runs the same id on the hosted catalog.
+   */
+  modelSelection?: SavedModelSelection,
 ): ProjectEnvironmentView | undefined {
   const matches = (env: ProjectEnvironmentView) =>
     !env.archivedAt &&
@@ -157,6 +169,9 @@ function matchingNamedEnvironment(
     isNamedEnvironment(env) &&
     (env.pluginVersionIds?.length ?? 0) === 0 &&
     sameOptionalModel(env.modelId, modelId) &&
+    (!modelSelection ||
+      (env.modelSelection !== undefined &&
+        selectionKey(env.modelSelection) === selectionKey(modelSelection))) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -188,6 +203,12 @@ export async function resolveComposerEnvironments(args: {
    * must not send `modelId` — an older validator would reject the arg.
    */
   modelMatrixEnabled?: boolean;
+  /**
+   * Backend `modelSelections` capability. Undefined / false means this client
+   * must not send `modelSelection` — an older validator would reject the arg;
+   * the cell then mints with its legacy `modelId` alone.
+   */
+  modelSelectionsEnabled?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -198,6 +219,7 @@ export async function resolveComposerEnvironments(args: {
     computersEnabled,
     max,
     modelMatrixEnabled = false,
+    modelSelectionsEnabled = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -283,13 +305,23 @@ export async function resolveComposerEnvironments(args: {
 
   const fields = sharedFields(state.stack, skillsEnabled, computersEnabled);
 
-  type Cell = { hostId: string; modelId: string | undefined; key: string };
+  type Cell = {
+    hostId: string;
+    modelId: string | undefined;
+    modelSelection?: SavedModelSelection;
+    key: string;
+  };
   const cells: Cell[] = [];
   for (const { hostId, selection } of selectionsByHost) {
     for (const choice of expandModelChoices(selection)) {
+      // A selection the backend cannot store must not steer reuse either.
+      const modelSelection = modelSelectionsEnabled
+        ? choice.modelSelection
+        : undefined;
       cells.push({
         hostId,
         modelId: choice.modelId,
+        ...(modelSelection ? { modelSelection } : {}),
         key: cellKey(hostId, choice.modelId),
       });
     }
@@ -305,6 +337,7 @@ export async function resolveComposerEnvironments(args: {
       live,
       state.environmentIds,
       cell.modelId,
+      cell.modelSelection,
     );
     if (named) reusedByCell.set(cell.key, named);
     else toMint.push(cell);
@@ -330,6 +363,9 @@ export async function resolveComposerEnvironments(args: {
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),
       ...(cell.modelId ? { modelId: cell.modelId } : {}),
+      ...(cell.modelId && cell.modelSelection
+        ? { modelSelection: cell.modelSelection }
+        : {}),
     }));
 
     let results: Awaited<ReturnType<EnsureAdhocEnvironmentsFn>>;
@@ -388,9 +424,21 @@ export async function resolveComposerEnvironments(args: {
 }
 
 function normalizeModelSelection(selection: ModelSelection): ModelSelection {
+  const explicitModelIds = [
+    ...new Set(selection.explicitModelIds.filter(Boolean)),
+  ];
+  const explicitModelSelections = Object.fromEntries(
+    explicitModelIds.flatMap((id) => {
+      const saved = selection.explicitModelSelections?.[id];
+      return saved?.modelId === id ? [[id, saved] as const] : [];
+    }),
+  );
   return {
     includeClientDefaults: selection.includeClientDefaults,
-    explicitModelIds: [...new Set(selection.explicitModelIds.filter(Boolean))],
+    explicitModelIds,
+    ...(Object.keys(explicitModelSelections).length > 0
+      ? { explicitModelSelections }
+      : {}),
   };
 }
 

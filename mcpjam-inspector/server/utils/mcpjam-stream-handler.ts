@@ -604,6 +604,16 @@ const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
  */
 export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts` `categorizeError`): the
+ * provider failed and the request's model selection forbids the OpenRouter
+ * fallback (`fallback.provider === "none"`, the eval/swarm/judge default). It
+ * keeps the provider's status and retryability, so read by status alone a 401
+ * would become "the provider rejected your key" and a 502 an MCPJam outage —
+ * neither is the fix. Its own slug says what happened and never pages.
+ */
+const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -625,6 +635,8 @@ export function describeBackendStreamFailure(
   // "update your API key" advice. The catalog origin is already `mcpjam`.
   if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
     return describeAsSlug("provider/not_allowlisted", detail);
+  if (code === FALLBACK_PROHIBITED_CODE)
+    return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -679,6 +691,8 @@ export function describeStreamErrorChunkFailure(
   // "update your API key" advice. The catalog origin is already `mcpjam`.
   if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
     return describeAsSlug("provider/not_allowlisted", detail);
+  if (code === FALLBACK_PROHIBITED_CODE)
+    return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
