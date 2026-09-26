@@ -342,4 +342,55 @@ describe("generateXAAFlowText", () => {
     expect(copied).toContain("[REDACTED]");
     expect(copied).toContain('"method": "POST"');
   });
+
+  it("copies only the selected range of steps, in flow order", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "received_access_token",
+        infoLogs: [
+          {
+            id: "discovery",
+            step: "resource_metadata_request",
+            label: "Discovering resource metadata",
+            timestamp: 1,
+          },
+        ],
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 2,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: {},
+              body: { scope: "mcp.access" },
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { token_type: "Bearer" },
+            },
+          },
+        ],
+      }),
+      {},
+      { steps: ["jwt_bearer_request", "received_access_token"] }
+    );
+
+    expect(copied).not.toContain("resource_metadata_request");
+    expect(copied).toContain("[jwt_bearer_request]");
+    expect(copied).toContain("[received_access_token]");
+
+    // Selection order shouldn't matter — output always follows flow order.
+    const reversed = generateXAAFlowText(
+      createInitialXAAFlowState({ currentStep: "received_access_token" }),
+      {},
+      { steps: ["received_access_token", "jwt_bearer_request"] }
+    );
+    const jwtIndex = reversed.indexOf("[jwt_bearer_request]");
+    const receivedIndex = reversed.indexOf("[received_access_token]");
+    expect(jwtIndex).toBeGreaterThan(-1);
+    expect(receivedIndex).toBeGreaterThan(jwtIndex);
+  });
 });
