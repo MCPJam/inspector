@@ -23,7 +23,11 @@ export interface RequestLocalMap {
    * and a sub-router. `null` is a real cached value (the lookup ran and the
    * key is orphaned); `undefined` means "not looked up yet".
    */
-  workosApiKeyBinding: { mcpjamOrganizationId: string } | null;
+  workosApiKeyBinding: {
+    mcpjamOrganizationId: string;
+    /** Epoch ms after which the key is refused; null/absent = no expiry. */
+    expiresAt?: number | null;
+  } | null;
   /**
    * Set once the per-key WorkOS rate-limit token has been debited for this
    * request. The limit is per user-visible request, not per middleware

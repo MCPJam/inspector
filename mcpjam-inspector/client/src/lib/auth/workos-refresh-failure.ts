@@ -1,8 +1,26 @@
+import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { reportCaught } from "@/lib/error-reporting";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
+
+/**
+ * Whether this tab has ever held a WorkOS session.
+ *
+ * Set from `<AuthKitProvider onRefresh>`, which authkit only calls after a
+ * successful sign-in or refresh. Never cleared: once a tab has had a user, a
+ * later rejection is that user's session dying.
+ */
+let workosSessionSeen = false;
+
+export function markWorkosSessionSeen(): void {
+  workosSessionSeen = true;
+}
+
+export function resetWorkosSessionSeenForTests(): void {
+  workosSessionSeen = false;
+}
 
 /**
  * Handler for `<AuthKitProvider onRefreshFailure>`.
@@ -19,8 +37,17 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
  * on login, which is the honest state. Either way the navigation tears the tab
  * down before the burst can surface.
  *
- * authkit skips this callback from its INITIAL state, so a signed-out visitor
- * is never redirected.
+ * The usual cause is WorkOS's maximum session length running out, which is
+ * expected, so it is tracked as a product event rather than reported as an
+ * error.
+ *
+ * authkit means to skip this callback for a signed-out visitor, but it can
+ * still fire for one: when the visitor's first refresh fails on the NETWORK,
+ * authkit (0.13.0) moves from INITIAL to AUTHENTICATED anyway, and the next
+ * rejected refresh then looks like a dead session. A tab that never held a
+ * session has nothing to sign back into, so it stays a guest — no banner, no
+ * redirect — and the failure is reported, since it is a library bug we route
+ * around rather than an expected outcome.
  *
  * A sign-out in flight is the one rejection that is NOT a dead session
  * surprising us — it is the session we just deliberately revoked, seen by a
@@ -40,10 +67,14 @@ export function handleWorkosRefreshFailure({
   }) => void | Promise<void>;
 }): void {
   if (isSignOutInProgress()) return;
-  reportCaught(new Error("WorkOS session refresh failed"), {
-    source: "workos_refresh_failure",
-    level: "warning",
-  });
+  if (!workosSessionSeen) {
+    reportCaught(
+      new Error("WorkOS refresh failed in a tab that never signed in"),
+      { source: "workos_refresh_failure_no_session" },
+    );
+    return;
+  }
+  track("workos_session_expired", { location: "session-refresh" });
   // Set BEFORE navigating. On success the page unloads and this never renders;
   // if the navigation is blocked or fails, the banner is already up offering a
   // sign-in, instead of leaving signed-in chrome over a dead session.
@@ -55,6 +86,6 @@ export function handleWorkosRefreshFailure({
   captureAppSignInReturnPath();
   // Fire-and-forget, but wrapped: `signIn` is async and a failure to build the
   // authorization URL would otherwise surface as an unhandled rejection inside
-  // authkit's callback. The report above already recorded the dead session.
+  // authkit's callback. The event above already recorded the dead session.
   void Promise.resolve(signIn(permalinkSignInOptions())).catch(() => {});
 }

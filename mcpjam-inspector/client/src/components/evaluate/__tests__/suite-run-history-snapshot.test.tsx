@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { SuiteRunHistorySnapshot } from "../suite-run-history-snapshot";
+import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
 function run(partial: Partial<EvalSuiteRun>): EvalSuiteRun {
@@ -30,11 +31,11 @@ describe("SuiteRunHistorySnapshot", () => {
     render(
       <SuiteRunHistorySnapshot
         runs={[run({})]}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           iteration({
             usage: cost === undefined ? undefined : { estimatedCostUsd: cost },
           }),
-        ]}
+        ])}
       />,
     );
     if (cost === undefined)
@@ -44,7 +45,10 @@ describe("SuiteRunHistorySnapshot", () => {
 
   it("renders nothing when there is no measured run", () => {
     const { container } = render(
-      <SuiteRunHistorySnapshot runs={[]} allIterations={[]} />,
+      <SuiteRunHistorySnapshot
+        runs={[]}
+        metricsByRun={metricsByRunFromIterations([])}
+      />,
     );
     expect(container.firstChild).toBeNull();
     expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
@@ -60,7 +64,7 @@ describe("SuiteRunHistorySnapshot", () => {
             summary: { total: 2, passed: 1, failed: 1, passRate: 50 },
           }),
         ]}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           iteration({
             _id: "a",
             suiteRunId: "run-2",
@@ -82,7 +86,7 @@ describe("SuiteRunHistorySnapshot", () => {
             startedAt: 1_000_000,
             updatedAt: 1_004_000,
           }),
-        ]}
+        ])}
       />,
     );
 
@@ -120,7 +124,7 @@ describe("SuiteRunHistorySnapshot", () => {
             summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
           }),
         ]}
-        allIterations={[
+        metricsByRun={metricsByRunFromIterations([
           iteration({
             _id: "i-old",
             suiteRunId: "old",
@@ -131,7 +135,7 @@ describe("SuiteRunHistorySnapshot", () => {
             suiteRunId: "new",
             result: "failed",
           }),
-        ]}
+        ])}
       />,
     );
 
@@ -161,7 +165,7 @@ describe("SuiteRunHistorySnapshot", () => {
             run({ _id: "missing", runNumber: 8, createdAt: 2000 }),
             run({ _id: "old", runNumber: 7, createdAt: 1000 }),
           ]}
-          allIterations={[
+          metricsByRun={metricsByRunFromIterations([
             iteration({
               _id: "new-it",
               suiteRunId: "new",
@@ -183,7 +187,7 @@ describe("SuiteRunHistorySnapshot", () => {
               startedAt: 1000,
               updatedAt: 3000,
             }),
-          ]}
+          ])}
         />,
       );
       for (const metric of ["pass-rate", "latency", "tokens", "tool-calls"]) {
@@ -216,7 +220,9 @@ describe("SuiteRunHistorySnapshot", () => {
         runs={[
           run({ summary: { total: 2, passed: 0, failed: 0, passRate: 0 } }),
         ]}
-        allIterations={[iteration({ result: "pending", status: "running" })]}
+        metricsByRun={metricsByRunFromIterations([
+          iteration({ result: "pending", status: "running" }),
+        ])}
       />,
     );
     expect(screen.queryByText(/failed iteration/)).toBeNull();
