@@ -48,7 +48,7 @@ Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/e
 
 The hosted app uses a daily credit system to power AI features like chat.
 
-- **Guests** get a free daily usage allowance and can use a subset of the free hosted models. The sidebar shows a progress bar with how much of your daily limit you've used and when it resets. When you reach the limit, you'll be prompted to sign in.
+- **Guests** get a free daily usage allowance. Higher-priced models are greyed out in the model picker with a "Sign in to use this model" tooltip — sign in to unlock them. The sidebar shows a progress bar with how much of your daily limit you've used and when it resets. When you reach the limit, you'll be prompted to sign in.
 - **Guest session limit**: The hosted app creates a guest session the first time you visit from a given network. If too many guest sessions have been created from your network in a single day, a banner appears: "Too many guest sessions from your network today. Sign in to continue." Signing in removes this restriction.
 - **Signed-in users** get **10×** the daily usage of a guest. Your daily usage and any paid credit balance are visible in the account menu at the bottom of the sidebar.
 - **Paid credits** can be topped up from the billing page and are shown alongside your daily limit in the account menu.
@@ -64,12 +64,12 @@ OAuth tokens you connected while signed in remain in your hosted workspace and a
 
 ## OAuth token reveal
 
-When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Overview** tab without them ever being written to `localStorage` or shared with other users.
+When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Auth** tab without them ever being written to `localStorage` or shared with other users.
 
 To reveal tokens:
 
 1. Open the **Servers** tab and click the server name to open its detail modal.
-2. Go to the **Overview** tab.
+2. Go to the **Auth** tab.
 3. Under **OAuth Tokens**, click **Reveal tokens**.
 4. Each token (access token, refresh token, ID token) is masked by default. Click the eye icon next to a token to reveal its value, or click the copy icon to copy it directly without revealing it.
 
@@ -130,6 +130,10 @@ To add credits, click **Top up** — either from the empty state when you have n
 
 <Note>
   **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+</Note>
+
+<Note>
+  **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes — no redirect back into the app is required.
 </Note>
 
 ### Spend budget

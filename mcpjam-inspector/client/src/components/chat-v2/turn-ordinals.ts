@@ -10,8 +10,10 @@ import type { UIMessage } from "@ai-sdk/react";
  * every `role: "user"` message, unfiltered. Filtering internal messages here
  * would make the two disagree and quietly attach ratings to the wrong response.
  *
- * (Injected `widget-state-*` messages carry `role: "assistant"`, so they are
- * outside this count on both sides already.)
+ * (Context the chat adds on the user's side — an app's widget state, a skill,
+ * a tool run by hand — is `role: "user"`, so both sides count it like any
+ * other prompt. That is why a widget's cleared state is recorded rather than
+ * removed: see `applyWidgetStateUpdates` in `shared/user-context-message.ts`.)
  *
  * An assistant message with no preceding prompt — a seeded greeting — belongs
  * to no turn and is deliberately absent from the map, which is how the render

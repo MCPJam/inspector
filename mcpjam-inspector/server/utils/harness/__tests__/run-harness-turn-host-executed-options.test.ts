@@ -147,6 +147,7 @@ vi.mock("../harness-model-broker.js", () => ({
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { mcpToolOptionsFor } from "../../mcp-tool-options.js";
+import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -333,6 +334,60 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
 
       expect(agentConstruction.last?.toolApproval).toEqual({
         mcp__srv__load: "user-approval",
+      });
+    });
+
+    it("withholds a workspace tool that pauses from a runtime that cannot pause on a host tool (MJ-008)", async () => {
+      adapterCapabilities.value = {
+        ...APPROVAL_CAPABLE,
+        supportsHostExecutedToolApproval: false,
+      };
+
+      await runHarnessTurn(
+        baseOptions({
+          requireToolApproval: false,
+          selectedServers: [],
+          builtInTools: {
+            create_project_server: markServerVerifiedApproval({
+              needsApproval: true,
+              execute: vi.fn(),
+            }),
+            list_projects: { needsApproval: false, execute: vi.fn() },
+          },
+        }) as never,
+        "none",
+      );
+
+      expect(Object.keys(agentConstruction.last?.tools ?? {})).toEqual([
+        "list_projects",
+      ]);
+      expect(agentConstruction.last).not.toHaveProperty("toolApproval");
+    });
+
+    it("hands a workspace tool that pauses to a runtime that can pause on it, gated (MJ-008)", async () => {
+      adapterCapabilities.value = APPROVAL_CAPABLE;
+
+      await runHarnessTurn(
+        baseOptions({
+          requireToolApproval: false,
+          selectedServers: [],
+          builtInTools: {
+            create_project_server: markServerVerifiedApproval({
+              needsApproval: true,
+              execute: vi.fn(),
+            }),
+            list_projects: { needsApproval: false, execute: vi.fn() },
+          },
+        }) as never,
+        "none",
+      );
+
+      expect(Object.keys(agentConstruction.last?.tools ?? {}).sort()).toEqual([
+        "create_project_server",
+        "list_projects",
+      ]);
+      expect(agentConstruction.last?.toolApproval).toEqual({
+        create_project_server: "user-approval",
       });
     });
 

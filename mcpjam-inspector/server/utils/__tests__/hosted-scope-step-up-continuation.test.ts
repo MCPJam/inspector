@@ -224,4 +224,67 @@ describe("hosted scope step-up continuation", () => {
     expect(store.markWire).not.toHaveBeenCalled();
     expect(store.scrub).toHaveBeenCalledTimes(1);
   });
+  it("does not replay under another account after the saved connection is deleted", async () => {
+    await createHostedScopeStepUpContinuation({
+      bearer: "bearer",
+      authPrincipal: "user-1",
+      projectId: "project-1",
+      chatSessionId: "chat-1",
+      manager: manager(),
+      connectionId: "account-b",
+      info: {
+        serverId: "server-1",
+        toolCallId: "call-1",
+        requiredScope: "write",
+      },
+      toolName: "write",
+      toolInput: { account: "account-b", value: 7 },
+    });
+    const saved = store.create.mock.calls[0][1];
+    store.claim.mockResolvedValue({
+      ok: true,
+      status: "resuming",
+      stateVersion: 0,
+      state: { ...saved, resumeState: saved.resumeState },
+    });
+    const execute = vi.fn();
+    const resume = buildHostedScopeStepUpResume({
+      request: { continuationId: "continuation-1", toolCallId: "call-1" },
+      bearer: "bearer",
+      authPrincipal: "user-1",
+      projectId: "project-1",
+      chatSessionId: "chat-1",
+      manager: manager(),
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "write",
+              input: { account: "account-b", value: 7 },
+            },
+          ],
+        },
+      ] as any,
+      tools: {
+        write: {
+          _serverId: "server-1",
+          execute,
+          _connectionForInput: () => ({
+            serverId: "server-1",
+            connectionId: "account-a",
+            label: "A",
+          }),
+        },
+      } as any,
+    });
+    expect(await resume.resolve(() => {})).toMatchObject({
+      kind: "halted",
+      outcome: "failed",
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.markWire).not.toHaveBeenCalled();
+  });
 });

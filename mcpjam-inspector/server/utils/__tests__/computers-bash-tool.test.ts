@@ -263,13 +263,57 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
   it("surfaces reserve denials (e.g. non-member) as tool errors", async () => {
     fetchHandler = (path) => {
       if (path === "/computers/reserve") {
-        return { status: 403, json: { error: "Not authorized" } };
+        return {
+          status: 403,
+          json: { error: "Not authorized: UNEXPECTED_MARKER" },
+        };
       }
       throw new Error("should not get further");
     };
     const tool = buildBashTool(toolOpts, vi.fn());
     const result = await execTool(tool, { command: "ls" });
-    expect(result.error).toMatch(/Not authorized/);
+    // MJ-020, MJ-021: the status decides the sentence; the control plane's own
+    // text stays out of the tool result.
+    expect(result.error).toBe(
+      "Computer unavailable: you do not have access to this computer.",
+    );
+  });
+
+  it("does not relay the control plane's text for a refusal it did not classify", async () => {
+    fetchHandler = (path) => {
+      if (path === "/computers/reserve") {
+        return {
+          status: 400,
+          json: { error: "UNEXPECTED_MARKER Uncaught Error at reserve" },
+        };
+      }
+      throw new Error("should not get further");
+    };
+    const tool = buildBashTool(toolOpts, vi.fn());
+    const result = await execTool(tool, { command: "ls" });
+    expect(result.error).toBe(
+      "Computer unavailable: the request was not accepted.",
+    );
+  });
+
+  it("answers a sandbox-info 401 as a service error, not a sign-in prompt", async () => {
+    fetchHandler = (path) => {
+      if (path === "/computers/reserve") {
+        return {
+          status: 200,
+          json: { computerId: "comp_1", status: "ready", provider: "e2b" },
+        };
+      }
+      if (path === "/computers/sandbox-info") {
+        return { status: 401, json: { error: "Unauthorized" } };
+      }
+      throw new Error("should not get further");
+    };
+    const tool = buildBashTool(toolOpts, vi.fn());
+    const result = await execTool(tool, { command: "ls" });
+    expect(result.error).toBe(
+      "Computer unavailable: the computers service returned an error.",
+    );
   });
 
   it("errors when the sandbox id is not yet assigned", async () => {
