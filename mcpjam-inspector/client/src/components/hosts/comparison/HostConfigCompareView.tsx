@@ -56,6 +56,7 @@ import {
   excludedFlagGatedHostIds,
   FLAG_GATED_HOST_IDS,
 } from "@/lib/host-compat/feature-visibility";
+import { MAIN_PRODUCT_URL } from "@/lib/vanity-landing-hosts";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -105,7 +106,6 @@ type CompareViewMode = "table" | "list";
 const HOSTS_QUERY_PARAM = "hosts";
 const CAPABILITY_QUERY_PARAM = "capability";
 const SEARCH_QUERY_PARAM = "q";
-const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
 const MOBILE_COMPARE_MEDIA_QUERY = "(max-width: 640px)";
 const CANIUSE_ACTION_BUTTON_CLASS =
   "h-8 rounded-full border-border bg-background px-3 text-[12px] font-medium text-foreground hover:border-border hover:bg-muted hover:text-foreground";

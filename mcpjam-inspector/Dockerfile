@@ -43,6 +43,7 @@ FROM deps AS build
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 ARG VITE_MCPJAM_HOSTED_MODE
+ARG VITE_ENVIRONMENT
 ARG VITE_MCPJAM_NONPROD_LOCKDOWN
 ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
@@ -69,6 +70,10 @@ ARG VITE_MCPJAM_VIEW_SUBDOMAINS
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
 # is not readable back out of the dashboard or API.
 ARG SENTRY_AUTH_TOKEN
+# Same handling as SENTRY_AUTH_TOKEN, for `@posthog/rollup-plugin` in the same
+# config: a PostHog personal API key with error tracking write. Absent, the
+# plugin is disabled and PostHog exceptions stay unsymbolicated.
+ARG POSTHOG_PERSONAL_API_KEY
 
 COPY evaluators ./evaluators
 RUN npm run build -w @mcpjam/evaluators
@@ -128,6 +133,7 @@ RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+    if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \
@@ -137,6 +143,7 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
+    if [ -n "$POSTHOG_PERSONAL_API_KEY" ]; then export POSTHOG_PERSONAL_API_KEY; fi; \
     MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################

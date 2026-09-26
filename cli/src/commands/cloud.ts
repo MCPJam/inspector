@@ -7,16 +7,15 @@ import { registerEvalCommands } from "./eval.js";
 import { registerClientsCommands } from "./clients.js";
 import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
-import { registerJourneysCommands } from "./journeys.js";
+import { registerGoalsCommands } from "./goals.js";
 import { registerOrganizationsCommands } from "./organizations.js";
 import { registerProjectsCommands } from "./projects.js";
-import { registerScenariosCommands } from "./scenarios.js";
+import { registerStudiesCommands } from "./studies.js";
 import { registerSecretsCommands } from "./secrets.js";
 import { registerSessionsCommands } from "./sessions.js";
 import { registerSwarmAuthoringCommands } from "./swarms.js";
 import { registerTraceDestinationsCommands } from "./trace-destinations.js";
 import { registerTunnelCommands } from "./tunnel.js";
-import { registerUserTestingCommands } from "./user-testing.js";
 
 /**
  * Account-bound MCPJam Cloud commands. Local MCP testing stays at the program
@@ -59,9 +58,8 @@ export function registerCloudCommands(program: Command): Command {
   registerTraceDestinationsCommands(cloud);
 
   cloud.commandsGroup("Swarms and user testing:");
-  const journeys = registerJourneysCommands(cloud);
-  registerScenariosCommands(cloud);
-  registerSwarmAuthoringCommands(cloud, journeys);
-  registerUserTestingCommands(cloud);
+  const goals = registerGoalsCommands(cloud);
+  registerSwarmAuthoringCommands(cloud, goals);
+  registerStudiesCommands(cloud);
   return cloud;
 }
