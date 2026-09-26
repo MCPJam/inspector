@@ -20,9 +20,12 @@ The key for the **[MCPJam API](/reference/public-api)** — programmatic access 
 
 **When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots, and **saving `@mcpjam/sdk` eval results** (set `MCPJAM_API_KEY` to this key; see [Saving Results](/sdk/concepts/saving-results)).
 
+**Expiry.** Every new key expires. The default is **90 days**; you can pick 7, 30, 60, 90, 180, or 365 days when you create one. The key list shows when each key expires and flags keys expiring within two weeks. Keys created before expiry was introduced keep working until they are revoked — they show as "No expiry". Create a replacement key before the old one expires; revoke the old one once traffic has moved.
+
 **Errors you might see**
 - `401 UNAUTHORIZED` → invalid or revoked key.
 - `401` with `details.reason: "ORPHANED_KEY"` → the key lost its organization binding; create a new one from Settings.
+- `401` with `details.reason: "EXPIRED_KEY"` → the key has passed its expiry date; create a new one from Settings.
 - `403 FORBIDDEN` ("API keys cannot manage other API keys") → you pointed an `sk_…` key at the key-management endpoints; key management is UI-only.
 - `429 RATE_LIMITED` → per-key rate limit (60/min, burst 10); honor `Retry-After`.
 
@@ -57,6 +60,14 @@ A per-server bearer token for an HTTP MCP server that requires `Authorization: B
 </Warning>
 
 This was a project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, read from the `MCPJAM_API_KEY` environment variable. If your CI logs show `410` reporting errors, this retirement is why. **To fix CI:** upgrade `@mcpjam/sdk`, replace the `MCPJAM_API_KEY` value with an `sk_…` key from [Settings → API keys](https://app.mcpjam.com/settings/api-keys), and (optionally) set `MCPJAM_PROJECT_ID` to keep filing results under the same project — otherwise they land in your org's Default project. Old SDK versions' default auto-save path warns and continues, so eval runs themselves keep passing either way.
+
+## Organization key management
+
+Organization owners and admins have additional controls under **Organization settings → Organization keys**:
+
+- **Revoke any member's key.** Owners and admins can revoke any key bound to the organization, not just their own. The key list shows who minted each key, when it expires, and a revoke action on every row. If a member's account has been removed, their key is still listed (as "Unknown user") and can still be revoked by id.
+- **Restrict who can create keys.** The **Key creation** toggle ("Only owners and admins can create keys") limits minting to owners and admins. Members who already have keys keep using them until those expire or are revoked. The default is unchanged: any member can create a key.
+- **Truncation warning.** If an organization has more keys than the page can list, a warning banner appears. Revoking keys you no longer need brings the rest into view.
 
 ## Quick reference
 
