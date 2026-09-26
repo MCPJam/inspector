@@ -153,6 +153,22 @@ describe("mapErrorToV1 — upstream auth refusals", () => {
   });
 });
 
+describe("mapErrorToV1 — revoked sessions", () => {
+  it("maps SESSION_REVOKED to UNAUTHORIZED with the reason in details", () => {
+    const err = new WebRouteError(
+      401,
+      ErrorCode.SESSION_REVOKED,
+      "This session has been signed out.",
+    );
+
+    const result = mapErrorToV1(err);
+
+    expect(result.code).toBe("UNAUTHORIZED");
+    expect(result.details).toEqual({ reason: "SESSION_REVOKED" });
+    expect(V1_ERROR_STATUS[result.code]).toBe(401);
+  });
+});
+
 describe("mapErrorToV1 — passthrough", () => {
   it("maps a generic non-WebRouteError into INTERNAL_ERROR", () => {
     const result = mapErrorToV1(new Error("boom"));

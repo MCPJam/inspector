@@ -33,6 +33,7 @@ import type { Context } from "hono";
 import { Sandbox } from "e2b";
 import { verifyComputerTerminalToken } from "../../utils/computers/terminal-token.js";
 import {
+  computerUnavailableError,
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   reserveUploadBytes,
@@ -117,7 +118,7 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
     });
     if (!info.ok) {
       return c.json(
-        { ok: false, error: `Computer unavailable: ${info.error}` },
+        { ok: false, error: computerUnavailableError(info, "sandbox-info") },
         503
       );
     }

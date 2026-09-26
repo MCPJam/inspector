@@ -22,6 +22,10 @@ describe("isSpaDocumentRequest", () => {
     "/assets/index-C1FTdFWO.js",
     "/assets/index-DYymtqx-.css",
     "/demo_1.png",
+    // client/public/robots.txt only reaches crawlers as text/plain because it
+    // falls here. Routed to the document handler instead, /robots.txt answers
+    // with index.html and parsers read the HTML as allow-all.
+    "/robots.txt",
   ])("leaves %s to the static handler", (path) => {
     expect(isSpaDocumentRequest(path)).toBe(false);
   });

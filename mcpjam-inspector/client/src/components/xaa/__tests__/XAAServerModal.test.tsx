@@ -714,7 +714,7 @@ describe("XAAServerModal", () => {
     const user = userEvent.setup();
     const onSave = vi
       .fn()
-      .mockRejectedValue(new Error("Hosted mode requires HTTPS server URLs"));
+      .mockRejectedValue(new Error("MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app."));
     const onOpenChange = vi.fn();
     render(
       <XAAServerModal
@@ -745,7 +745,7 @@ describe("XAAServerModal", () => {
     // The modal surfaces the rejection inline and never closes.
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Hosted mode requires HTTPS server URLs/i
+      /hosted web app requires an HTTPS server URL/i
     );
 
     // Every entered value is still in the form, so there's nothing to re-type.

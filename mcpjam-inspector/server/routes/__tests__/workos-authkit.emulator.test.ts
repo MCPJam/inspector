@@ -14,9 +14,21 @@
  * `isLocalHttpUrl` keys the multi-origin cookie jar off, and the hosted branch
  * writes a different cookie entirely.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { decodeJwt } from "jose";
+
+// The Convex half of revocation is out of scope here; what matters is WHICH
+// token the proxy hands it, and that WorkOS really issued that token.
+const { revokeAuthKitSessionMock } = vi.hoisted(() => ({
+  revokeAuthKitSessionMock: vi.fn(async (_token: string) => ({
+    revoked: true,
+  })),
+}));
+vi.mock("../../services/auth-session-revocation.js", () => ({
+  revokeAuthKitSession: revokeAuthKitSessionMock,
+}));
+
 import workosAuthkitRoutes from "../workos-authkit.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
 import {
@@ -149,7 +161,7 @@ describe("code exchange", () => {
     // the entire reason this proxy holds it instead of the browser.
     expect(setCookieFor(res, SESSION_COOKIE)).toContain("HttpOnly");
     expect(setCookieFor(res, HAS_SESSION_COOKIE)).toContain(
-      `${HAS_SESSION_COOKIE}=true`,
+      `${HAS_SESSION_COOKIE}=1`,
     );
   }, 30_000);
 });
@@ -253,5 +265,33 @@ describe("logout", () => {
       redirect: "manual",
     });
     expect(upstream.headers.get("location")).toContain(ORIGIN);
+  }, 30_000);
+
+  it("revokes, in Convex, the very session it is logging out of", async () => {
+    revokeAuthKitSessionMock.mockClear();
+    const app = createApp();
+    const { verifier, callback } = await authorizeThroughProxy(app);
+    const exchanged = await exchangeThroughProxy(app, {
+      code: callback.searchParams.get("code")!,
+      verifier,
+    });
+    const jar = cookieHeaderFrom(exchanged, [SESSION_COOKIE]);
+    const signedIn = decodeJwt(
+      ((await exchanged.json()) as { access_token: string }).access_token,
+    ) as { sid?: string; sub?: string };
+
+    const res = await app.request(
+      `${ORIGIN}/user_management/sessions/logout?session_id=session_not_ours`,
+      { headers: { Cookie: jar } },
+    );
+
+    expect(res.status).toBe(302);
+    expect(revokeAuthKitSessionMock).toHaveBeenCalledTimes(1);
+    const [revokedWith] = revokeAuthKitSessionMock.mock.calls[0];
+    // A real, freshly issued token for the same user and the same session —
+    // never the session id the query string named.
+    const verified = await verifyAuthKitToken(revokedWith);
+    expect(verified.sub).toBe(SEED.user.id);
+    expect((decodeJwt(revokedWith) as { sid?: string }).sid).toBe(signedIn.sid);
   }, 30_000);
 });
