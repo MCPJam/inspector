@@ -632,6 +632,8 @@ function SelectedToolView({
           description={entry.tool.description}
           inputSchema={entry.tool.inputSchema}
           outputSchema={entry.tool.outputSchema}
+          annotations={entry.tool.annotations}
+          metadata={entry.tool._meta}
           openSections={openSections}
           onOpenSectionsChange={setOpenSections}
           parameters={

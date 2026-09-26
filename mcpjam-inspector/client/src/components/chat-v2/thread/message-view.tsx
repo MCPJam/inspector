@@ -8,6 +8,8 @@ import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-acti
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
 import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
+import { UserContextCard } from "./user-context-card";
+import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
 import { ModelDefinition } from "@/shared/types";
@@ -32,9 +34,18 @@ import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assist
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { CopilotMessageHeader } from "./copilot-message-header";
+import { ExecutionProvenance } from "@/components/evals/execution-provenance";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
+
+/** `message.metadata.execution`, raw — `ExecutionProvenance` validates it. */
+function readMessageExecution(message: UIMessage): unknown {
+  const metadata = message.metadata;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as { execution?: unknown }).execution
+    : undefined;
+}
 type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
@@ -134,6 +145,10 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
     (prevMessage.id === nextMessage.id &&
       prevMessage.role === nextMessage.role &&
       prevMessage.parts === nextMessage.parts &&
+      // The finish chunk delivers the turn's metadata (usage, execution
+      // record) after the last part, so an unchanged `parts` array is not
+      // enough to skip a render.
+      prevMessage.metadata === nextMessage.metadata &&
       getMessageTimestampMs(prevMessage) === getMessageTimestampMs(nextMessage))
   );
 }
@@ -491,6 +506,11 @@ function MessageViewImpl({
   if (role !== "user" && role !== "assistant") return null;
 
   if (role === "user") {
+    // Context the user added (a skill, a tool run, a prompt's example turn,
+    // an app's widget state) is not something they typed: no bubble, no edit.
+    const contextBlocks = getUserContextBlocks(message);
+    if (contextBlocks) return <UserContextCard blocks={contextBlocks} />;
+
     // Separate file parts from other parts - files render above the bubble
     const fileParts =
       message.parts?.filter((part) => part.type === "file") ?? [];
@@ -699,6 +719,16 @@ function MessageViewImpl({
             ) : null}
             <MessageTimestamp message={message} />
           </div>
+        ) : null}
+        {/* What this turn ran on, from the execution record MCPJam's /stream
+            puts on the finish message. Nothing for a turn without one (local
+            keys, older backends, turns still streaming). */}
+        {!minimalMode ? (
+          <ExecutionProvenance
+            execution={readMessageExecution(message)}
+            className="pt-2"
+            testIdPrefix="chat-turn-execution"
+          />
         ) : null}
         {renderAssistantTurnFooter?.(message)}
       </div>
