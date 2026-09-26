@@ -3,7 +3,6 @@ import type { ModelDefinition } from "@/shared/types";
 import {
   buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
-  buildModelMenuGroups,
   getDefaultModel,
   getProviderDisplayName,
   isMCPJamProvidedModelMenuItem,
@@ -251,29 +250,22 @@ describe("org model helpers", () => {
   });
 
   it("keeps OpenRouter models with provider-prefixed ids under configured providers", () => {
-    const groups = buildModelMenuGroups([
-      {
+    // Same id, two rows: the hosted one is MCPJam-provided, the OpenRouter one
+    // is the user's own key, so the picker files them under different tabs.
+    expect(
+      isMCPJamProvidedModelMenuItem({
         id: "openai/gpt-5-mini",
         name: "GPT-5 Mini (Free)",
         provider: "openai",
-      },
-      {
+      }),
+    ).toBe(true);
+    expect(
+      isMCPJamProvidedModelMenuItem({
         id: "openai/gpt-5-mini",
         name: "openai/gpt-5-mini",
         provider: "openrouter",
-      },
-    ]);
-
-    expect(groups).toEqual([
-      expect.objectContaining({
-        provider: "openai",
-        providerType: "provided",
       }),
-      expect.objectContaining({
-        provider: "openrouter",
-        providerType: "configured",
-      }),
-    ]);
+    ).toBe(false);
   });
 });
 

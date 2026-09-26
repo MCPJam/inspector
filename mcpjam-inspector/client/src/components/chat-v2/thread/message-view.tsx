@@ -8,6 +8,8 @@ import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-acti
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
 import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
+import { UserContextCard } from "./user-context-card";
+import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
 import { ModelDefinition } from "@/shared/types";
@@ -504,6 +506,11 @@ function MessageViewImpl({
   if (role !== "user" && role !== "assistant") return null;
 
   if (role === "user") {
+    // Context the user added (a skill, a tool run, a prompt's example turn,
+    // an app's widget state) is not something they typed: no bubble, no edit.
+    const contextBlocks = getUserContextBlocks(message);
+    if (contextBlocks) return <UserContextCard blocks={contextBlocks} />;
+
     // Separate file parts from other parts - files render above the bubble
     const fileParts =
       message.parts?.filter((part) => part.type === "file") ?? [];

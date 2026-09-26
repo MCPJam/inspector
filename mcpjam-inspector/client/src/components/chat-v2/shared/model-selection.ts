@@ -21,10 +21,18 @@
  *  - an id that already has a lowercase `provider/` prefix is kept, with a
  *    Gateway-spelled prefix rewritten (`xai/grok-4` → `x-ai/grok-4`) — hosted
  *    catalog rows, OpenRouter rows, static Azure rows;
- *  - a bare own-provider id gets its provider's canonical prefix: `gpt-4o`
- *    (openai) → `openai/gpt-4o`, `grok-3` (xai) → `x-ai/grok-3`, Ollama
- *    `llama3.2:latest` → `ollama/llama3.2:latest`;
- *  - a custom-provider id `custom:<slug>:<model>` → `custom:<slug>/<model>`.
+ *  - a bare own-provider id is canonical only when a table says what it is,
+ *    never by adding a prefix alone (`claude-sonnet-4-5` is not
+ *    `anthropic/claude-sonnet-4-5`; the canonical id is
+ *    `anthropic/claude-sonnet-4.5`). {@link BARE_MODEL_ID_CANONICAL} lists
+ *    the ids whose canonical spelling differs; otherwise the model catalog
+ *    must list the provider's `<vendor>/<id>` (`gpt-4o` (openai) →
+ *    `openai/gpt-4o`, `grok-code-fast-1` (xai) → `x-ai/grok-code-fast-1`).
+ *    Any other bare id (`grok-3`, `deepseek-chat`) has no known canonical id,
+ *    so it gets no selection and keeps the legacy id;
+ *  - local namespaces that name no catalog model: Ollama `llama3.2:latest` →
+ *    `ollama/llama3.2:latest`, custom `custom:<slug>:<model>` →
+ *    `custom:<slug>/<model>`.
  *
  * Whenever the canonical id differs from the row id on an own-provider row,
  * the row id goes in `nativeModelId` — it is what the provider API is called
@@ -73,6 +81,45 @@ function canonicalPrefix(prefix: string): string {
   return CANONICAL_PROVIDER_PREFIX[prefix] ?? prefix;
 }
 
+/**
+ * Bare own-provider ids whose canonical id is not `<vendor>/<id>`, keyed by
+ * provider. Each target must be a canonical catalog id (the test pins them
+ * against `shared/hosted-model-ids.generated.ts`).
+ *
+ * Evidence: Anthropic's API names these models with a dashed version
+ * (`claude-sonnet-4-5`, `SUPPORTED_MODELS` / `Model` in `shared/types.ts`),
+ * while the canonical catalog spells the same model with a dot
+ * (`anthropic/claude-sonnet-4.5` in the generated hosted id list); the
+ * dashed `anthropic/claude-sonnet-4-5` is no catalog id.
+ */
+export const BARE_MODEL_ID_CANONICAL: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> = {
+  anthropic: {
+    "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+    "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
+    "claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
+    "claude-opus-4-6": "anthropic/claude-opus-4.6",
+    "claude-opus-4-7": "anthropic/claude-opus-4.7",
+    "claude-opus-4-8": "anthropic/claude-opus-4.8",
+  },
+};
+
+/**
+ * The canonical id of a bare own-provider id, from the table above or from a
+ * catalog entry listing exactly `<vendor>/<id>` under that provider; `null`
+ * when neither knows it.
+ */
+function canonicalIdForBareId(provider: string, raw: string): string | null {
+  const listed = BARE_MODEL_ID_CANONICAL[provider]?.[raw];
+  if (listed) return listed;
+  const known = getCanonicalModelId(raw, provider);
+  const slash = known.indexOf("/");
+  return slash > 0 && known.slice(slash + 1) === raw
+    ? `${canonicalPrefix(known.slice(0, slash))}/${raw}`
+    : null;
+}
+
 function isHostedRow(model: ModelDefinition): boolean {
   return model.hosted === true || isMCPJamProvidedModelMenuItem(model);
 }
@@ -84,6 +131,28 @@ export function providerKeyForModelDefinition(model: ModelDefinition): string {
     return `custom:${model.customProviderName}`;
   }
   return provider;
+}
+
+/**
+ * A picker row's identity: `${source}:${connectionRef?.id ?? providerKey}:${modelId}`.
+ *
+ * The raw row id alone collides: one id can be listed by the hosted catalog
+ * and again under an org OpenRouter connection (or two org connections), and
+ * a picker keyed by id checks, highlights and toggles both rows as one. The
+ * source and connection part keeps them apart. `source` is `hosted` for
+ * MCPJam rows, `org` for rows stamped with an org provider, else `local`;
+ * the connection is the org provider row id when the stamp carries one, else
+ * the provider key (`custom:<slug>` for custom providers).
+ */
+export function modelRowKey(model: ModelDefinition): string {
+  const source = isHostedRow(model)
+    ? "hosted"
+    : model.orgProvider
+      ? "org"
+      : "local";
+  const connection =
+    model.orgProvider?.id?.trim() || providerKeyForModelDefinition(model);
+  return `${source}:${connection}:${String(model.id)}`;
 }
 
 /**
@@ -111,8 +180,9 @@ export function canonicalSelectionModelId(
     const native = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     return native ? `custom:${name.toLowerCase()}/${native}` : null;
   }
+  if (provider === "ollama") return `ollama/${raw}`;
   if (!PROVIDER_SEGMENT.test(provider)) return null;
-  return `${canonicalPrefix(provider)}/${raw}`;
+  return canonicalIdForBareId(provider, raw);
 }
 
 /**

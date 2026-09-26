@@ -2,6 +2,7 @@
 import { modelRejectsTemperature } from "@mcpjam/sdk/browser";
 
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
+import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
 
 import type {
   AuthMethod,
@@ -147,20 +148,12 @@ const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] = [...MCPJAM_PROVIDED_MODEL_IDS];
  * catalog. */
 export type CanonicalModelCandidate = { id: string | Model; provider: string };
 
-// Canonical (OpenRouter-style) id prefixes whose ModelProvider key differs from
-// the prefix. Everything else uses the prefix verbatim.
-const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
-  "x-ai": "xai",
-  spacexai: "xai",
-  "meta-llama": "meta",
-  mistralai: "mistral",
-};
-
 /** Derive the provider key from a canonical hosted id's prefix. */
 export function hostedProviderFromCanonicalId(id: string): string {
   const slash = id.indexOf("/");
   const prefix = (slash > 0 ? id.slice(0, slash) : id).toLowerCase();
-  return HOSTED_PROVIDER_ALIASES[prefix] ?? prefix;
+  // Prefixes whose provider key differs (`x-ai` → `xai`); the rest verbatim.
+  return MODEL_ID_PREFIX_ALIASES[prefix] ?? prefix;
 }
 
 // The hosted snapshot projected to `{ id, provider }` so `getCanonicalModelId`
@@ -283,15 +276,17 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
  * Catalog metadata may only *withdraw* temperature, never restore it: the id
  * predicate encodes Anthropic families that answer a 400, and a catalog row
  * claiming `temperature` for one of those is stale, not news. What the metadata
- * adds is the models no id pattern covers — the reasoning families that reject
+ * adds is the models no id pattern covers: the reasoning families that reject
  * sampling for reasons unrelated to being Claude, which today only `gpt-5`
  * catches by name.
  *
- * An absent or empty `supportedParameters` means the catalog said nothing, not
- * that the model supports nothing: BYOK, org, Ollama and custom rows never
- * carry it, and hosted rows cached before the field existed arrive without it.
- * Reading empty as "supports nothing" would strip temperature from every model
- * on a stale cache.
+ * Only a COMPLETE parameter list may withdraw it
+ * (`supportedParametersComplete`, set when the backend read the Gateway's full
+ * list). A partial list says what the catalog happened to record, not what the
+ * model rejects: the legacy DTO sent `['structured_outputs']` for every hosted
+ * model, which read as "no temperature" stripped it from all of them. Absent,
+ * empty and partial lists therefore all mean "no metadata". BYOK, org, Ollama
+ * and custom rows never carry a list.
  */
 export const modelDefinitionSupportsTemperature = (
   model: ModelDefinition,
@@ -299,11 +294,72 @@ export const modelDefinitionSupportsTemperature = (
   if (!modelSupportsTemperature(model.id)) {
     return false;
   }
-  const params = model.supportedParameters;
-  if (!params?.length) {
+  if (model.supportedParametersComplete !== true) {
     return true;
   }
+  const params = model.supportedParameters ?? [];
   return params.includes("temperature");
+};
+
+/**
+ * Status of one catalog observation. `supported`/`unsupported`/`unknown` answer
+ * a yes/no capability (tools, vision, temperature, OpenRouter ZDR); `all`,
+ * `some`, `none` answer how many of a model's Gateway endpoints honor a data
+ * policy (ZDR, no training).
+ */
+export type ModelObservationStatus =
+  | "supported"
+  | "unsupported"
+  | "unknown"
+  | "all"
+  | "some"
+  | "none";
+
+export type ModelObservationSource =
+  | "gateway-catalog"
+  | "openrouter-zdr"
+  | "measured";
+
+/** One observed fact about a model, with where and when it was observed. */
+export interface ModelObservation {
+  status: ModelObservationStatus;
+  source?: ModelObservationSource | (string & {});
+  /** Epoch ms. */
+  observedAt?: number;
+}
+
+/**
+ * Capability and data-policy observations the backend catalog carries per
+ * hosted model. Every key is optional: an absent observation means
+ * "unknown", never "unsupported".
+ */
+export interface ModelObservations {
+  tools?: ModelObservation;
+  vision?: ModelObservation;
+  temperature?: ModelObservation;
+  openRouterZdr?: ModelObservation;
+  gatewayZdr?: ModelObservation;
+  gatewayNoTraining?: ModelObservation;
+}
+
+export type ModelObservationKey = keyof ModelObservations;
+
+/** Yes/no reading of an observation; absent reads as `unknown`. */
+export type ModelCapabilityStatus = "supported" | "unsupported" | "unknown";
+
+/**
+ * Collapse an observation to supported / unsupported / unknown. `all` counts
+ * as supported and `none` as unsupported; `some` stays unknown because it
+ * depends on which endpoint serves the request.
+ */
+export const modelObservationStatus = (
+  model: Pick<ModelDefinition, "observations">,
+  key: ModelObservationKey,
+): ModelCapabilityStatus => {
+  const status = model.observations?.[key]?.status;
+  if (status === "supported" || status === "all") return "supported";
+  if (status === "unsupported" || status === "none") return "unsupported";
+  return "unknown";
 };
 
 export interface ModelDefinition {
@@ -359,6 +415,39 @@ export interface ModelDefinition {
    * as "no metadata" rather than "accepts nothing".
    */
   supportedParameters?: string[];
+  /**
+   * True only when `supportedParameters` is the provider's full list (the
+   * backend read it from the Gateway catalog). Only then may the list withdraw
+   * temperature; see {@link modelDefinitionSupportsTemperature}.
+   */
+  supportedParametersComplete?: boolean;
+  /** Epoch ms the model was released, from the catalog. Drives newest-first. */
+  releasedAt?: number;
+  /** Epoch ms the provider retires the model. Drives the "Retiring" tag. */
+  deprecatedAt?: number;
+  /** Catalog capability/data-policy observations (hosted rows only). */
+  observations?: ModelObservations;
+  /**
+   * Whether the free daily allowance may buy this hosted model. Only an
+   * explicit `false` locks it for free-tier-only subjects.
+   */
+  freeTierEligible?: boolean;
+  /** Whether the catalog admits this hosted model as an eval judge. */
+  judgeEligible?: boolean;
+  /**
+   * Epoch ms of the catalog read that produced this row's observations. Its
+   * presence is what makes an absent observation mean "observed as unknown"
+   * rather than "a catalog that predates observations"; pickers only act on
+   * observations when it is set.
+   */
+  catalogObservedAt?: number;
+  /**
+   * Picker annotation: required capabilities the catalog has not verified for
+   * the surface's workload. Set by `applyWorkloadCapabilityLocks`.
+   */
+  unverifiedCapabilities?: ModelObservationKey[];
+  /** Picker annotation: a non-blocking warning shown on the row. */
+  warningReason?: string;
 }
 
 export enum Model {

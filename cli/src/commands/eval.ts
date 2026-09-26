@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Command } from "commander";
 import {
@@ -17,6 +17,7 @@ import {
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalCaseOperation,
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
@@ -6328,6 +6329,96 @@ export function registerEvalCommands(program: Command): void {
             : {}),
         });
         await executeOp(generateEvalCasesOperation, input, options, command);
+      }
+    );
+
+  cases
+    .command("import")
+    .description(
+      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite"
+    )
+    .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+    .option("--project <id-or-name>", PROJECT_OPT)
+    .option("--file <path>", 'Document to import ("-" reads stdin)')
+    .option("--content <text>", "Document text, instead of --file")
+    .option(
+      "--file-name <name>",
+      "Name recorded on each case's source (default: --file's basename)"
+    )
+    .option(
+      "--server <id-or-name...>",
+      "Servers to discover tools from (default: suite's)"
+    )
+    .option(
+      "--environment <id-or-name>",
+      "Discover tools from this attached environment's server set"
+    )
+    .option("--case-model <id...>", "Execution model(s) for the imported cases")
+    .option(
+      "--duplicate-policy <block|warn|create_anyway>",
+      "What to do with a case that already exists (default block)"
+    )
+    .option(
+      "--override-reason <text>",
+      "Why importing a duplicate is intended (required by warn / create_anyway)"
+    )
+    .option(
+      "--idempotency-key <key>",
+      "Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again"
+    )
+    .action(
+      async (
+        options: PlatformOptions & {
+          project?: string;
+          suite: string;
+          file?: string;
+          content?: string;
+          fileName?: string;
+          server?: string[];
+          environment?: string;
+          caseModel?: string[];
+          duplicatePolicy?: string;
+          overrideReason?: string;
+          idempotencyKey?: string;
+        },
+        command
+      ) => {
+        if (!options.file === !options.content)
+          throw usageError(
+            "Pass exactly one of --file or --content.",
+            options.file
+              ? { source: "Both were given." }
+              : { source: "Neither was given." }
+          );
+        const content = options.file
+          ? readFileOrStdin(options.file, "document")
+          : options.content!;
+        const fileName =
+          options.fileName ??
+          (options.file && options.file !== "-"
+            ? basename(options.file)
+            : undefined);
+        const input = validateOpInput(importEvalCasesOperation, {
+          project: options.project,
+          suite: options.suite,
+          content,
+          ...(fileName ? { fileName } : {}),
+          ...(options.server ? { servers: options.server } : {}),
+          ...(options.environment ? { environment: options.environment } : {}),
+          ...(options.caseModel
+            ? { caseModels: options.caseModel.map((model) => ({ model })) }
+            : {}),
+          ...(options.duplicatePolicy
+            ? { duplicatePolicy: options.duplicatePolicy }
+            : {}),
+          ...(options.overrideReason
+            ? { overrideReason: options.overrideReason }
+            : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+        });
+        await executeOp(importEvalCasesOperation, input, options, command);
       }
     );
 }

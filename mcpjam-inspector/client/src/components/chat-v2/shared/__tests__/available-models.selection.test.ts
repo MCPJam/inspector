@@ -3,10 +3,13 @@ import { isModelSelection, selectionKey } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
 import type { OrgVisibleConfig } from "../model-helpers";
 import { buildAvailableModelsFromOrgConfig } from "../model-helpers";
+import { HOSTED_MODEL_IDS } from "@/shared/hosted-model-ids.generated";
 import {
+  BARE_MODEL_ID_CANONICAL,
   canonicalSelectionModelId,
   caseModelEntry,
   findModelForStoredChoice,
+  modelRowKey,
   modelSelectionFromDefinition,
   storedModelChoice,
 } from "../model-selection";
@@ -84,15 +87,26 @@ function collectKeys(value: unknown, into: string[] = []): string[] {
 describe("canonicalSelectionModelId", () => {
   it.each([
     [{ id: "gpt-4o", provider: "openai" }, "openai/gpt-4o"],
+    // Dashed Anthropic API ids map to the dotted catalog id, never by
+    // prefixing alone.
     [
       { id: "claude-haiku-4-5", provider: "anthropic" },
-      "anthropic/claude-haiku-4-5",
+      "anthropic/claude-haiku-4.5",
     ],
-    [{ id: "grok-3", provider: "xai" }, "x-ai/grok-3"],
     [
-      { id: "mistral-large-latest", provider: "mistral" },
-      "mistralai/mistral-large-latest",
+      { id: "claude-sonnet-4-5", provider: "anthropic" },
+      "anthropic/claude-sonnet-4.5",
     ],
+    [{ id: "grok-code-fast-1", provider: "xai" }, "x-ai/grok-code-fast-1"],
+    [
+      { id: "mistral-small-2603", provider: "mistral" },
+      "mistralai/mistral-small-2603",
+    ],
+    // No known canonical id: no selection, the legacy id stays.
+    [{ id: "grok-3", provider: "xai" }, null],
+    [{ id: "mistral-large-latest", provider: "mistral" }, null],
+    [{ id: "claude-opus-5", provider: "anthropic" }, null],
+    [{ id: "deepseek-chat", provider: "deepseek" }, null],
     [{ id: "llama3.2:latest", provider: "ollama" }, "ollama/llama3.2:latest"],
     [{ id: "openai/gpt-4o", provider: "openrouter" }, "openai/gpt-4o"],
     [{ id: "xai/grok-4", provider: "openrouter" }, "x-ai/grok-4"],
@@ -105,10 +119,54 @@ describe("canonicalSelectionModelId", () => {
       },
       "custom:acme/llama-3",
     ],
-  ])("%j → %s", (row, expected) => {
+  ] as Array<[Partial<ModelDefinition>, string | null]>)(
+    "%j → %s",
+    (row, expected) => {
+      expect(
+        canonicalSelectionModelId({
+          name: "x",
+          hosted: false,
+          ...row,
+        } as ModelDefinition),
+      ).toBe(expected);
+    },
+  );
+
+  it("maps every table entry to a catalog id", () => {
+    for (const byId of Object.values(BARE_MODEL_ID_CANONICAL)) {
+      for (const canonical of Object.values(byId)) {
+        expect(HOSTED_MODEL_IDS).toContain(canonical);
+      }
+    }
+  });
+
+  it("writes no selection for a bare id with no known canonical id", () => {
+    const unknown: ModelDefinition = {
+      id: "grok-3",
+      name: "Grok 3",
+      provider: "xai",
+      hosted: false,
+    };
+    expect(modelSelectionFromDefinition(unknown, undefined, "chat")).toBeNull();
+    expect(storedModelChoice(unknown, undefined, "evalTarget")).toEqual({
+      modelId: "grok-3",
+    });
     expect(
-      canonicalSelectionModelId({ name: "x", hosted: false, ...row }),
-    ).toBe(expected);
+      modelSelectionFromDefinition(
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+          hosted: false,
+        },
+        undefined,
+        "chat",
+      ),
+    ).toMatchObject({
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "local",
+      nativeModelId: "claude-sonnet-4-5",
+    });
   });
 
   it("keeps hosted catalog ids verbatim", () => {
@@ -165,16 +223,16 @@ describe("modelSelectionFromDefinition", () => {
 
   it("org first-party BYOK row → canonical id + nativeModelId", () => {
     const row: ModelDefinition = {
-      id: "gpt-4-turbo",
-      name: "GPT-4 Turbo",
+      id: "gpt-4.1-mini",
+      name: "GPT-4.1 Mini",
       provider: "openai",
       hosted: false,
     };
     expect(modelSelectionFromDefinition(row, orgConfig, "judge")).toEqual({
-      modelId: "openai/gpt-4-turbo",
+      modelId: "openai/gpt-4.1-mini",
       source: "org",
       connectionRef: { kind: "orgProvider", id: "orgprov_openai_1" },
-      nativeModelId: "gpt-4-turbo",
+      nativeModelId: "gpt-4.1-mini",
       fallback: { provider: "none", model: "none" },
     });
   });
@@ -526,5 +584,54 @@ describe("case model chips", () => {
         false,
       ),
     ).toEqual({ provider: "openrouter", model: "anthropic/claude-haiku-4.5" });
+  });
+});
+
+describe("modelRowKey", () => {
+  it("keeps one id apart by source and connection", () => {
+    const hosted: ModelDefinition = {
+      id: "openai/gpt-4o",
+      name: "GPT-4o",
+      provider: "openai",
+      hosted: true,
+    };
+    const orgOpenRouter: ModelDefinition = {
+      id: "openai/gpt-4o",
+      name: "openai/gpt-4o",
+      provider: "openrouter",
+      hosted: false,
+      orgProvider: { providerKey: "openrouter", id: "orgprov_1" },
+    };
+    const localOpenRouter: ModelDefinition = {
+      ...orgOpenRouter,
+      orgProvider: undefined,
+    };
+    expect(modelRowKey(hosted)).toBe("hosted:openai:openai/gpt-4o");
+    expect(modelRowKey(orgOpenRouter)).toBe("org:orgprov_1:openai/gpt-4o");
+    expect(modelRowKey(localOpenRouter)).toBe("local:openrouter:openai/gpt-4o");
+  });
+
+  it("names the provider key when an org row carries no connection id", () => {
+    expect(
+      modelRowKey({
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        hosted: false,
+        orgProvider: { providerKey: "openai" },
+      }),
+    ).toBe("org:openai:gpt-4o");
+  });
+
+  it("uses custom:<slug> for custom providers", () => {
+    expect(
+      modelRowKey({
+        id: "custom:acme:m1",
+        name: "m1",
+        provider: "custom",
+        customProviderName: "acme",
+        hosted: false,
+      }),
+    ).toBe("local:custom:acme:custom:acme:m1");
   });
 });

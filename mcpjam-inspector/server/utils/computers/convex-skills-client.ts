@@ -170,7 +170,6 @@ const FN = {
   del: "projectSkills:deleteSkill",
   promote: "projectSkills:promoteSkillToProject",
   adopt: "projectSkills:adoptComputerSkills",
-  fileUploadUrl: "projectSkills:generateSkillFileUploadUrl",
   attachFiles: "projectSkills:attachSkillFiles",
   removeFile: "projectSkills:removeSkillFile",
   listFiles: "projectSkills:listSkillFiles",
@@ -352,17 +351,6 @@ export async function convexAdoptComputerSkills(
 }
 
 // ── supporting files (v2) ──────────────────────────────────────────────────
-
-export async function convexGenerateSkillFileUploadUrl(
-  bearer: string,
-  projectId: string,
-  skillId: string,
-): Promise<{ uploadUrl: string }> {
-  return await makeClient(bearer).mutation(FN.fileUploadUrl as any, {
-    projectId,
-    skillId,
-  });
-}
 
 export async function convexAttachSkillFiles(
   bearer: string,

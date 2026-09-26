@@ -18,6 +18,7 @@ import type {
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
+import { SIGN_IN_REQUIRED_CODE } from "@/lib/sign-in-required";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
@@ -1046,6 +1047,15 @@ export class SwarmGenerateError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
+  /**
+   * The refusal envelope the route sent, when it had one. A sign-in refusal is
+   * read off `details.code` by `signInRemedyMessage` — deliberately NOT a
+   * `signInRequired` boolean on this class, which would be a second place the
+   * same refusal is recognised, one of which a consumer could read alone and
+   * be wrong. `code` is the route's HTTP-shaped one and says nothing about who
+   * is asking: a 403 here can also mean "not a member of this project", which
+   * signing in does not fix.
+   */
   constructor(
     status: number,
     message: string,
@@ -1099,6 +1109,14 @@ async function postGenerate<T>(
       body?.details && typeof body.details === "object"
         ? (body.details as Record<string, unknown>)
         : undefined;
+    // The backend's own code. The proxy forwards its whole refusal envelope as
+    // `details` (`upstreamRefusalRouteError`), so the backend's `code` lives
+    // there; the response's TOP-LEVEL `code` is the proxy's HTTP-shaped one —
+    // `FORBIDDEN` for every 403, whatever caused it — and "not a member of
+    // this project" is a 403 that signing in does not fix.
+    const signInRequired =
+      typeof details?.code === "string" &&
+      details.code.toLowerCase() === SIGN_IN_REQUIRED_CODE.toLowerCase();
     // Raise the top-up dialog HERE, where the body still carries the route's
     // `code`. `SwarmGenerateError` keeps only status + message, so by the time
     // the create flow catches this the limit is no longer identifiable — and
@@ -1113,6 +1131,25 @@ async function postGenerate<T>(
     // that suppresses the card — `normalized` exists to feed that same card.
     if (limitDialogRaised) {
       throw new SwarmGenerateError(response.status, message, true);
+    }
+    // BEFORE the `normalized` branch. `handleRoute` runs every route error
+    // through `mapRuntimeError`, which backfills `normalized`, so on the real
+    // proxy response `normalized` is ALWAYS present — a sign-in check placed
+    // below it never ran at all, which is how a guest ended up with the generic
+    // error card instead of the Sign in control.
+    //
+    // A consumer is no longer at that branch's mercy: `signInRemedyMessage`
+    // reads the envelope off either class. The order still decides which
+    // affordance this refusal arrives dressed as, and `normalized` exists to
+    // feed the card this one does not want.
+    if (signInRequired) {
+      throw new SwarmGenerateError(
+        response.status,
+        message,
+        false,
+        code ?? undefined,
+        details,
+      );
     }
     if (normalized) {
       throw new WebApiError(

@@ -345,6 +345,7 @@ export function BehaviorTab({
                 disabled={readOnly || !modelState.enforced}
                 align="end"
                 analyticsLocation="client_builder"
+                workload="host"
               />
             </div>
           }

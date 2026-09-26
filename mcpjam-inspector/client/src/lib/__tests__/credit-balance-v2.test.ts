@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { normalizeBalance, isOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  normalizeBalance,
+  isFreeTierOnly,
+  isOutOfCredits,
+} from "@/hooks/useCreditBalance";
 it("recognizes flat monthly credits and does not declare a funded Pro wallet empty", () => {
   const balance = normalizeBalance({
     billingModel: "monthly_flat",
@@ -43,4 +47,22 @@ it("preserves debt and carried credits without treating missing values as balanc
     outstandingDeficitCredits: 0,
     rolloverCreditsRemaining: 0,
   });
+});
+
+it("reads free-tier-only as the daily allowance with no purchased credits", () => {
+  expect(isFreeTierOnly(undefined)).toBe(false);
+  expect(isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 0 }))).toBe(
+    true,
+  );
+  expect(isFreeTierOnly(normalizeBalance({ paidCreditsRemaining: 50 }))).toBe(
+    false,
+  );
+  expect(
+    isFreeTierOnly(
+      normalizeBalance({
+        billingModel: "monthly_per_seat",
+        paidCreditsRemaining: 0,
+      }),
+    ),
+  ).toBe(false);
 });
