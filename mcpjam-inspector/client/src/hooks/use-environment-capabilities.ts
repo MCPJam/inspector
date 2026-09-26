@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as ConvexReact from "convex/react";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 
@@ -11,6 +11,8 @@ export type EnvironmentCapabilities = {
   modelMatrix?: boolean;
   /** Settings writes accept `environmentSettings` for environment suites. */
   environmentSuiteSettings?: boolean;
+  /** `createTestSuite` takes `environmentIds` / `environmentTargets`. */
+  createSuiteWithEnvironments?: boolean;
 };
 
 /**
@@ -38,8 +40,15 @@ export function useEnvironmentCapabilities(
   const [state, setState] = useState<
     EnvironmentCapabilities | null | undefined
   >(undefined);
+  // Probed once per project: the client is read through a ref so a caller
+  // (or a test double) whose `useConvex()` is not referentially stable does
+  // not re-probe, and re-render, on every render.
+  const convexRef = useRef(convex);
+  convexRef.current = convex;
+  const hasConvex = Boolean(convex);
 
   useEffect(() => {
+    const convex = convexRef.current;
     const normalized = projectId?.trim() || null;
     if (!normalized || !shouldQueryProjectId(normalized) || !convex) {
       // Nothing to probe: callers take their conservative path rather than
@@ -70,7 +79,7 @@ export function useEnvironmentCapabilities(
     return () => {
       cancelled = true;
     };
-  }, [convex, projectId]);
+  }, [hasConvex, projectId]);
 
   return state;
 }

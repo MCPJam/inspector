@@ -56,6 +56,8 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { isDraftTestCaseId } from "./evals/draft-test-case";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { SuiteSwitcher } from "./evals/suite-switcher";
 import {
   sortSuiteOverviewEntries,
@@ -203,6 +205,8 @@ function EvalsTabContent({
     suiteId: string;
     environmentIds: string[] | null;
   }) => Promise<unknown>;
+  // `createSuiteWithEnvironments`: an environment suite is created in one call.
+  const environmentCapabilities = useEnvironmentCapabilities(projectId);
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -451,6 +455,8 @@ function EvalsTabContent({
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
         previewedHostId,
+        environmentSuites:
+          environmentCapabilities?.createSuiteWithEnvironments === true,
       });
     } finally {
       setIsQuickstartRunning(false);
@@ -466,6 +472,7 @@ function EvalsTabContent({
     connectedServerNames,
     existingQuickstartSuiteId,
     previewedHostId,
+    environmentCapabilities,
   ]);
 
   const showQuickstart = Boolean(handleConnect);
@@ -484,46 +491,14 @@ function EvalsTabContent({
       }
 
       try {
-        const createdSuite = await mutations.createTestSuiteMutation({
+        const createdSuite = await createSuiteFromPayload({
           projectId,
-          name: payload.name,
-          // environment.servers is left empty: hosts own server selection
-          // now, and the runner derives the per-run server set from each
-          // attachment's snapshot. Suites with zero attachments are valid
-          // skeletons — they just can't run until a host is attached.
-          environment: { servers: [] },
-          ...(payload.hostAttachments && payload.hostAttachments.length > 0
-            ? { hostAttachments: payload.hostAttachments }
-            : {}),
-          ...(payload.serverAttachmentId
-            ? { serverAttachmentId: payload.serverAttachmentId }
-            : {}),
+          payload,
+          createTestSuite: mutations.createTestSuiteMutation,
+          setSuiteEnvironments,
+          oneCall:
+            environmentCapabilities?.createSuiteWithEnvironments === true,
         });
-
-        if (!createdSuite?._id) {
-          throw new Error("Suite was created without an id");
-        }
-
-        // `createTestSuite` cannot take environments, so a suite born in
-        // environment mode needs a second call. The dialog already resolved
-        // these ids and sent the matching clients as legacy rollback data, so a
-        // failure here leaves a runnable legacy suite the header can convert —
-        // worth a toast, not worth discarding the suite.
-        if (payload.environmentIds && payload.environmentIds.length > 0) {
-          try {
-            await setSuiteEnvironments({
-              suiteId: createdSuite._id,
-              environmentIds: payload.environmentIds,
-            });
-          } catch (error) {
-            toast.error(
-              getBillingErrorMessage(
-                error,
-                "Suite created, but attaching its environments failed",
-              ),
-            );
-          }
-        }
 
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
@@ -535,7 +510,12 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
+    [
+      mutations.createTestSuiteMutation,
+      projectId,
+      setSuiteEnvironments,
+      environmentCapabilities,
+    ],
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
