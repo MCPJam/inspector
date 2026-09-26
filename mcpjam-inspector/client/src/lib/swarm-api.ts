@@ -15,6 +15,7 @@ import type {
   JourneyRunVerdictSummary,
   SwarmReport,
 } from "@mcpjam/sdk/contract";
+import { swarmSessionNeverRan } from "@mcpjam/sdk/contract";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -34,6 +35,12 @@ export const SWARM_QUERIES = {
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   /** Single run by id — prefer this over paging `listJourneyRuns` when the id is known. */
   getJourneyRun: "journeyRuns:getJourneyRun",
+  /**
+   * Why a wave's sessions never ran, from the attempts that refused them
+   * (#5188). The findings wire counts those sessions; only the attempt rows
+   * know the reason. See {@link RunLaunchFailures}.
+   */
+  listRunLaunchFailures: "journeyRuns:listRunLaunchFailures",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
   /** Flat Sessions-tab default: all swarm sessions in the project. */
   listSessionsByProject: "journeyRuns:listSessionsByProject",
@@ -229,6 +236,26 @@ export interface JourneyRunAttempt {
    * it existed. Read through `readExecutionRecord`, never trusted raw.
    */
   execution?: unknown;
+}
+
+/**
+ * Why one run's sessions never ran — `journeyRuns:listRunLaunchFailures`,
+ * mirrored by hand from the backend `RunLaunchFailures`. Only runs with at
+ * least one session that never ran are returned.
+ */
+export interface RunLaunchFailures {
+  runId: string;
+  /** Sessions whose attempt ended without recording a single message. */
+  sessionsNotRun: number;
+  /** Every attempt the run planned. */
+  sessionsTotal: number;
+  /** Distinct (code, message) reasons, most common first, at most three. */
+  reasons: Array<{
+    errorCode: string | null;
+    /** Render through `humanizeSwarmAttemptError`, like the attempt row. */
+    errorMessage: string | null;
+    count: number;
+  }>;
 }
 
 export interface JourneyRun {
@@ -714,6 +741,18 @@ export function journeySessionRowToThread(
     // having no stamp at all and classifies it `ungraded`.
     criteria: row.criteria,
     goalScore: row.goalScore,
+    // A session refused before it said anything has no preview, so without
+    // this its row reads like any other. Unknown stays unknown: without a
+    // verdict, or without a message count to read, there is no claim to make,
+    // and an absent count must not be read as zero messages.
+    ...(row.verdict && typeof row.messageCount === "number"
+      ? {
+          neverRan: swarmSessionNeverRan(
+            row.verdict.lifecycle,
+            row.messageCount,
+          ),
+        }
+      : {}),
   };
 }
 
