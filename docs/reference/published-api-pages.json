@@ -118,6 +118,7 @@
   "/api-reference/eval-runs/revoke-a-model-lease",
   "/api-reference/eval-runs/update-an-eval-case",
   "/api-reference/eval-runs/update-an-eval-suites-settings",
+  "/api-reference/eval-runs/upload-a-run-artifact",
   "/api-reference/eval-runs/waive-a-run-gate",
   "/api-reference/eval-runs/write-a-finished-authoring-jobs-cases-into-the-suite",
   "/api-reference/eval-suites/attach-one-environment-to-a-suite-atomic-append",

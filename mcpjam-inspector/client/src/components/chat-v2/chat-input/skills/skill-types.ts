@@ -33,12 +33,12 @@ export interface SkillResult extends Skill {
    */
   source?: SkillsSource;
   /**
-   * The EXACT `loadSkill` output to inject, when it is not the default
-   * `# Skill: <name>\n\n<content>` shape.
+   * The EXACT `loadSkill` output this skill is sent as, when it is not the
+   * default `# Skill: <name>\n\n<content>` shape.
    *
    * Set for server-served skills (SEP-2640), whose real tool result is the
-   * shared origin banner plus the body. The injected message must be
-   * byte-identical to what the tool would have returned, so the banner is
+   * shared origin banner plus the body. The model reads a skill the user
+   * picked as the same text the tool would have returned, so the banner is
    * built once in `shared/server-skill-banner.ts` and passed through here
    * rather than reconstructed.
    */

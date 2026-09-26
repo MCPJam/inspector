@@ -674,23 +674,29 @@ export class MCPClientManager {
    *
    * @param serverId - Unique identifier for the server
    * @param config - Server configuration
+   * @param options - Optional startup cancellation; success detaches the signal.
    * @returns The connected MCP Client
    */
   async connectToServer(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    options?: { signal?: AbortSignal }
   ): Promise<ManagedMcpClient> {
+    options?.signal?.throwIfAborted();
     const liveState = this.liveClientStates.get(serverId);
     if (liveState?.client) {
       throw new Error(`MCP server "${serverId}" is already connected.`);
     }
     if (liveState?.retryPromise) {
-      return liveState.retryPromise;
+      return this.awaitWithAbort(liveState.retryPromise, options?.signal);
     }
 
     const timeout = config.timeout ?? this.defaultTimeout;
     this.registerServer(serverId, config, timeout);
-    const { signal, cleanup } = this.createRetrySignal(serverId);
+    const { signal, cleanup } = this.createRetrySignal(
+      serverId,
+      options?.signal
+    );
 
     const state: LiveClientState = liveState ?? {};
     const retryPromise = Promise.resolve().then(() =>
@@ -2381,29 +2387,38 @@ export class MCPClientManager {
         serverId,
         registeredState.config,
         registeredState.timeout,
-        state
+        state,
+        signal
       )
     );
-    // Mark handled without affecting awaiters (they hold the original
-    // promise): awaitWithAbort abandons connectionPromise when the caller's
-    // signal fires first, and an abandoned rejection escapes as a
-    // process-level unhandledRejection.
+    // Duplicate callers may stop waiting independently; keep startup failures
+    // observed while the owning attempt waits for transport cleanup.
     connectionPromise.catch(() => {});
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
-    return this.awaitWithAbort(connectionPromise, signal);
+    return connectionPromise;
   }
 
   private async performConnection(
     serverId: string,
     config: MCPServerConfig,
     timeout: number,
-    state: LiveClientState
+    state: LiveClientState,
+    signal?: AbortSignal
   ): Promise<ManagedMcpClient> {
     let client: ManagedMcpClient | undefined;
     let transport: Transport | undefined;
+    let closing: Promise<void> | undefined;
+    const abort = () => {
+      closing ??= (async () => {
+        await client?.close().catch(() => undefined);
+        if (state.transport) await this.safeCloseTransport(state.transport);
+      })();
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     const clientCapabilities = this.buildCapabilities(serverId, config);
     try {
+      signal?.throwIfAborted();
       // Resolve clientInfo from (in order): per-server `clientInfo` >
       // per-server `version` (legacy) > manager defaults. Extras (e.g.
       // `title` and future spec fields) merge through verbatim so the
@@ -2467,11 +2482,11 @@ export class MCPClientManager {
       // against every version supported by the upstream SDK.
       const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
-        : config.supportedProtocolVersions ??
+        : (config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
-            : undefined);
+            : undefined));
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
@@ -2572,7 +2587,7 @@ export class MCPClientManager {
         () => this.perRequestLogLevels.get(serverId),
         this.traceContextProvider
           ? () => this.traceContextProvider?.(serverId)
-          : undefined,
+          : undefined
       );
       client = managedClient;
 
@@ -2609,18 +2624,53 @@ export class MCPClientManager {
           client,
           config,
           timeout,
-          state
+          state,
+          signal
         );
       } else {
-        transport = await this.connectViaHttp(
-          serverId,
-          client,
-          config,
-          timeout,
-          state
-        );
+        // Startup cancellation must reach discovery fetches as well as the
+        // initialize RPC. Detach it after startup so later caller cancellation
+        // cannot close a successfully established connection.
+        let startupSignal = signal;
+        const configuredFetch = config.baseFetch ?? this.defaultBaseFetch;
+        const startupConfig = {
+          ...config,
+          baseFetch: async (
+            input: Parameters<typeof fetch>[0],
+            init?: RequestInit
+          ) => {
+            // Resolve the default at request time so fetch instrumentation
+            // added after startup still observes established connections.
+            const baseFetch = configuredFetch ?? globalThis.fetch;
+            const caller = startupSignal;
+            if (!caller) return baseFetch(input, init);
+            caller.throwIfAborted();
+            const requestSignal =
+              init?.signal ??
+              (input instanceof globalThis.Request ? input.signal : undefined);
+            return baseFetch(input, {
+              ...init,
+              signal: requestSignal
+                ? AbortSignal.any([caller, requestSignal])
+                : caller,
+            });
+          },
+        };
+        try {
+          transport = await this.connectViaHttp(
+            serverId,
+            client,
+            startupConfig,
+            timeout,
+            state,
+            signal
+          );
+        } finally {
+          startupSignal = undefined;
+        }
       }
 
+      signal?.throwIfAborted();
       if (this.liveClientStates.get(serverId) !== state) {
         await client.close().catch(() => undefined);
         // Transport is undefined for the stateless preview path (the
@@ -2666,13 +2716,16 @@ export class MCPClientManager {
       } catch {
         // Ignore close errors
       }
-      if (transport) {
-        await this.safeCloseTransport(transport);
+      if (transport ?? state.transport) {
+        await this.safeCloseTransport((transport ?? state.transport)!);
       }
       this.clearLiveState(serverId, {
         preserveRetryPromise: Boolean(state.retryPromise),
       });
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      await closing;
     }
   }
 
@@ -2681,7 +2734,8 @@ export class MCPClientManager {
     client: ManagedMcpClient,
     config: StdioServerConfig,
     timeout: number,
-    state: LiveClientState
+    state: LiveClientState,
+    signal?: AbortSignal
   ): Promise<Transport> {
     const underlying = new StdioClientTransport({
       command: config.command,
@@ -2707,7 +2761,10 @@ export class MCPClientManager {
     const stderrDrain = this.createStdioStderrDrain(underlying);
 
     try {
-      await client.connect(transport, { timeout });
+      signal?.throwIfAborted();
+      state.transport = underlying;
+      // Await negotiation teardown too: it may own a disposable stdio probe.
+      await client.connect(transport, { timeout, signal });
     } catch (error) {
       const stderrOutput = stderrDrain.getCapturedOutput();
       stderrDrain.cleanup();
@@ -2723,7 +2780,8 @@ export class MCPClientManager {
     client: ManagedMcpClient,
     config: HttpServerConfig,
     timeout: number,
-    state: LiveClientState
+    state: LiveClientState,
+    signal?: AbortSignal
   ): Promise<Transport | undefined> {
     const url = new URL(config.url);
 
@@ -2785,7 +2843,6 @@ export class MCPClientManager {
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
 
-
     let streamableError: unknown;
 
     if (!preferSSE) {
@@ -2845,12 +2902,19 @@ export class MCPClientManager {
             )
           )
         );
-        await client.connect(wrapped, {
-          timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
-        });
+        signal?.throwIfAborted();
+        state.transport = streamableTransport;
+        await this.awaitWithAbort(
+          client.connect(wrapped, {
+            signal,
+            timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
+          }),
+          signal
+        );
         client.onclose = pendingOnClose;
         return streamableTransport;
       } catch (error) {
+        signal?.throwIfAborted();
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
         client.onclose = pendingOnClose;
@@ -2900,7 +2964,7 @@ export class MCPClientManager {
             connectionErrorMessage(
               url,
               [error],
-              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(error)}`,
+              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(error)}`
             ),
             { cause: error }
           );
@@ -2954,7 +3018,12 @@ export class MCPClientManager {
           )
         )
       );
-      await client.connect(wrapped, { timeout });
+      signal?.throwIfAborted();
+      state.transport = sseTransport;
+      await this.awaitWithAbort(
+        client.connect(wrapped, { timeout, signal }),
+        signal
+      );
       return sseTransport;
     } catch (error) {
       await this.safeCloseTransport(sseTransport);
@@ -3014,7 +3083,7 @@ export class MCPClientManager {
           connectionErrorMessage(
             url,
             [streamableError, error],
-            `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`,
+            `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`
           ),
           { cause: error }
         ),

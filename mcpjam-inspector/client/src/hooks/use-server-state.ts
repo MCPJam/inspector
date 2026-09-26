@@ -1,3 +1,4 @@
+import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
 import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
@@ -710,6 +711,7 @@ export interface EnsureServerConnectionResult {
 }
 
 interface ReconnectServerInternalOptions {
+  queueSignal?: AbortSignal;
   forceOAuthFlow?: boolean;
   connectionIntent?: ConnectionIntent;
   allowInteractiveOAuthFlow?: boolean;
@@ -977,6 +979,12 @@ export function useServerState({
 
   const oauthCallbackHandledRef = useRef(new Set<string>());
   const opTokenRef = useRef<Map<string, number>>(new Map());
+  const checkWasConnectedRef = useRef(new Map<string, boolean>());
+  useEffect(() => serverCheckQueue.onCancel((_projectId, name) => {
+    opTokenRef.current.set(name, (opTokenRef.current.get(name) ?? 0) + 1);
+    const currentScope = tryResolveProjectServer(name);
+    if (currentScope?.projectId === _projectId) dispatch({ type: "CONNECT_CANCELLED", name, wasConnected: checkWasConnectedRef.current.get(name) ?? false });
+  }), [dispatch]);
   const nextOpToken = (name: string) => {
     const current = opTokenRef.current.get(name) ?? 0;
     const next = current + 1;
@@ -1674,7 +1682,8 @@ export function useServerState({
     async (
       serverName: string,
       serverConfig: MCPServerConfig,
-      telemetry?: StatelessProtocolConnectTelemetry
+      telemetry?: StatelessProtocolConnectTelemetry,
+      queueSignal?: AbortSignal
     ) => {
       assertClientConfigSynced();
       const resolved = tryResolveProjectServer(serverName);
@@ -1700,6 +1709,7 @@ export function useServerState({
             projectId: resolved.projectId,
             serverName,
             connectionDefaults,
+            queueSignal,
           }
         );
         if (
@@ -3495,6 +3505,7 @@ export function useServerState({
       }
 
       const mcpConfig = toMCPConfig(formData);
+      checkWasConnectedRef.current.set(formData.name, false);
       dispatch({
         type: "CONNECT_REQUEST",
         name: formData.name,
@@ -4825,8 +4836,18 @@ export function useServerState({
     [appState.servers]
   );
 
+  useEffect(() => {
+    const projectId = activeProject?.sharedProjectId ?? effectiveActiveProjectId;
+    if (!projectId) return;
+    serverCheckQueue.keepProject(projectId);
+  }, [activeProject?.sharedProjectId, effectiveActiveProjectId, previewedHostIdForToast]);
+
   const handleDisconnect = useCallback(
     async (serverName: string) => {
+      checkWasConnectedRef.current.delete(serverName);
+      const queuedScope = tryResolveProjectServer(serverName);
+      if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
+      nextOpToken(serverName);
       logger.info("Disconnecting from server", { serverName });
       dispatch({ type: "DISCONNECT", name: serverName });
       try {
@@ -4860,6 +4881,8 @@ export function useServerState({
       // Invalidate any connect/reconnect that is still awaiting I/O. Without
       // this, a late completion can overwrite this disconnect with success or
       // failure and reopen a canceled onboarding attempt.
+      const queuedScope = tryResolveProjectServer(serverName);
+      if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       dispatch({ type: "DISCONNECT", name: serverName });
     },
@@ -4964,11 +4987,12 @@ export function useServerState({
     []
   );
 
-  const reconnectServerInternal = useCallback(
+  const executeReconnectServerInternal = useCallback(
     async (
       serverName: string,
       options?: ReconnectServerInternalOptions
     ): Promise<EnsureServerConnectionResult> => {
+      const reconnectForAttempt = (...args: Parameters<typeof guardedReconnectServer>) => guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
       // Snapshot before anything awaits. `reportError` runs at the END of a
@@ -5066,9 +5090,11 @@ export function useServerState({
         };
       }
 
+      checkWasConnectedRef.current.set(serverName, server.connectionStatus === "connected");
       if (!options?.connectionIntent)
         dispatch({
           type: "RECONNECT_REQUEST",
+          preserveConnected: true,
           name: serverName,
           config: server.config,
           select,
@@ -5211,6 +5237,8 @@ export function useServerState({
             { intent: "reconnect" }
           );
         } catch (error) {
+          if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
+          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
           const errorMessage =
             error instanceof Error
               ? error.message
@@ -5250,6 +5278,8 @@ export function useServerState({
           });
           oauthResult = await initiateOAuth(oauthOptions);
         } catch (error) {
+          if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
+          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
           if (isStaleOp(serverName, token)) {
             return {
               status: "superseded",
@@ -5303,7 +5333,7 @@ export function useServerState({
         }
         if (options?.connectionIntent) {
           if (!HOSTED_MODE)
-            await guardedReconnectServer(serverName, server.config);
+            await reconnectForAttempt(serverName, server.config);
           notifyOAuthConnectionsChanged();
           toast.success("Account connected");
           return { status: "connected" };
@@ -5311,7 +5341,7 @@ export function useServerState({
         const oauthServerConfig = stripAuthorizationFromHttpConfig(
           oauthResult.serverConfig!
         );
-        const result = await guardedReconnectServer(
+        const result = await reconnectForAttempt(
           serverName,
           withProjectConnectionDefaults(oauthServerConfig),
           buildStatelessTelemetry("forced_oauth")
@@ -5424,7 +5454,7 @@ export function useServerState({
           server.config
         );
         try {
-          const result = await guardedReconnectServer(
+          const result = await reconnectForAttempt(
             serverName,
             syncedReconnectConfig,
             buildStatelessTelemetry("synced_oauth_credentials")
@@ -5485,6 +5515,8 @@ export function useServerState({
           );
           hadSyncedOAuthRetry = true;
         } catch (error) {
+          if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
+          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
           if (isStaleOp(serverName, token)) {
             return {
               status: "superseded",
@@ -5610,7 +5642,7 @@ export function useServerState({
           "url" in authResult.serverConfig
             ? stripAuthorizationFromHttpConfig(authResult.serverConfig)
             : authResult.serverConfig;
-        const result = await guardedReconnectServer(
+        const result = await reconnectForAttempt(
           serverName,
           withProjectConnectionDefaults(authServerConfig),
           buildStatelessTelemetry("authorized_reconnect")
@@ -5662,6 +5694,8 @@ export function useServerState({
           error: errorMessage,
         };
       } catch (error) {
+        if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
+          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         if (isStaleOp(serverName, token)) {
@@ -5701,6 +5735,44 @@ export function useServerState({
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
     ]
+  );
+
+  const reconnectServerInternal = useCallback(
+    async (
+      serverName: string,
+      options?: ReconnectServerInternalOptions,
+    ): Promise<EnsureServerConnectionResult> => {
+      const target = tryResolveProjectServer(serverName);
+      if (!target || options?.allowInteractiveOAuthFlow !== false)
+        return executeReconnectServerInternal(serverName, options);
+      checkWasConnectedRef.current.set(
+        serverName,
+        latestEffectiveServersRef.current[serverName]?.connectionStatus ===
+          "connected",
+      );
+      try {
+        return await serverCheckQueue.run(
+          {
+            projectId: target.projectId,
+            serverName,
+            identity: "connection-operation",
+          },
+          (queueSignal) =>
+            executeReconnectServerInternal(serverName, {
+              ...options,
+              queueSignal,
+            }),
+        );
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return { status: "failed", error: "Server check cancelled" };
+        const message =
+          error instanceof Error ? error.message : "Connection failed";
+        dispatch({ type: "CONNECT_FAILURE", name: serverName, error: message });
+        return { status: "failed", error: message };
+      }
+    },
+    [executeReconnectServerInternal, dispatch],
   );
 
   const handleReconnect = useCallback(
@@ -5795,7 +5867,7 @@ export function useServerState({
       // owns the outcome — not a failure. Treat it as a no-op so the
       // client-switch recycle doesn't surface a spurious "Failed to reconnect"
       // toast.
-      if (result.status === "connected" || result.status === "superseded") {
+      if (result.status === "connected" || result.status === "superseded" || result.error === "Server check cancelled") {
         return;
       }
       throw new Error(result.error || `Failed to reconnect ${serverName}`);

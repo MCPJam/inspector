@@ -372,7 +372,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
         tools: tools as any,
         historyPresentation: {
           fenceKey: resolveToolOutputFenceKey(),
-          labelUnverified: true,
+          excludeUnverified: true,
         },
       });
       const body = await readSseBody(response);

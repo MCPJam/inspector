@@ -1,3 +1,4 @@
+import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -43,6 +44,7 @@ import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
+import { toExecutionProjection } from "./eval-execution-projection.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -219,23 +221,43 @@ import {
   requireConvexIdShape,
 } from "./convex-id-param.js";
 import { redactForLog } from "./redact-log-message.js";
+import {
+  publicArtifactLink,
+  withPublicTraceArtifactLinks,
+} from "./artifact-links.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   getCanonicalModelId,
-  hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
+  type ModelDefinition,
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import {
+  hostedCatalogModelDefinitions,
+  isHostedCatalogModel,
+} from "../../services/hosted-model-catalog.js";
 
-// BYOK statics + the hosted snapshot — hosted display rows were removed from
-// SUPPORTED_MODELS, so provider derivation / suggestions read both.
-const MODEL_LOOKUP = [
-  ...SUPPORTED_MODELS,
-  ...hostedModelDefinitionsFromSnapshot(),
-];
+let modelLookupCache: {
+  hosted: ModelDefinition[];
+  rows: ModelDefinition[];
+} | null = null;
+
+/**
+ * BYOK statics, then the hosted catalog (hosted display rows were removed from
+ * SUPPORTED_MODELS, so provider derivation and suggestions read both). The
+ * hosted part is the checked-in snapshot with the live catalog service's ids
+ * after it, so a model the backend added since the snapshot is known here too.
+ * Statics stay first: a `find` keeps preferring them.
+ */
+function modelLookup(): ModelDefinition[] {
+  const hosted = hostedCatalogModelDefinitions();
+  if (modelLookupCache?.hosted !== hosted) {
+    modelLookupCache = { hosted, rows: [...SUPPORTED_MODELS, ...hosted] };
+  }
+  return modelLookupCache.rows;
+}
 
 const evals = new Hono();
 
@@ -1013,13 +1035,17 @@ export function assertInlineTestModelsValid(
     const canonical = getCanonicalModelId(test.model, test.provider);
     if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
-    if (MODEL_LOOKUP.some((model) => String(model.id) === canonical)) continue;
+    if (modelLookup().some((model) => String(model.id) === canonical)) {
+      continue;
+    }
 
-    const hostedIds = MODEL_LOOKUP.filter(
-      (m) =>
-        String(m.provider).toLowerCase() === provider &&
-        isHostedCatalogModel(String(m.id), m.provider),
-    ).map((m) => String(m.id));
+    const hostedIds = modelLookup()
+      .filter(
+        (m) =>
+          String(m.provider).toLowerCase() === provider &&
+          isHostedCatalogModel(String(m.id), m.provider),
+      )
+      .map((m) => String(m.id));
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -2091,6 +2117,11 @@ function toIterationDto(
     // The SUSPECTED condition behind one of those patterns, when step 2's
     // advisory judge ran. Never a cause, never a verdict input.
     ...toSuspectedConditionProjection(iteration.metadata),
+    // What this iteration actually ran on. Re-read through the SDK's reader,
+    // not passed through: known keys only, so nothing the row carries beyond
+    // the contract crosses this boundary. OMITTED on rows written before the
+    // record existed (and on a malformed one) — "not recorded", never a guess.
+    ...toExecutionProjection(iteration.execution),
   };
 }
 
@@ -2100,13 +2131,16 @@ function toIterationDto(
 // `evidence` is omitted entirely when the step produced none.
 function toStepResultDto(step: EvalStepReplay) {
   const ev = step.evidence;
+  // Artifact links only as signed `/web/artifact` links (MJ-005).
+  const screenshotUrl = publicArtifactLink(ev?.screenshotUrl);
+  const videoUrl = publicArtifactLink(ev?.videoUrl);
   const evidence = ev
     ? {
         ...(ev.toolCalls?.length ? { toolCalls: ev.toolCalls } : {}),
-        ...(ev.screenshotUrl ? { screenshotUrl: ev.screenshotUrl } : {}),
-        ...(ev.videoUrl
+        ...(screenshotUrl ? { screenshotUrl } : {}),
+        ...(videoUrl
           ? {
-              videoUrl: ev.videoUrl,
+              videoUrl,
               // With the URL, never without: metadata for a video this row
               // does not carry describes a recording nobody can reach.
               ...(ev.videoMeta ? { videoMeta: ev.videoMeta } : {}),
@@ -2721,7 +2755,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
  * take that guess (`providerForModelId`); callers that can defer instead defer.
  */
 function attributedProvider(id: string): string | undefined {
-  const match = MODEL_LOOKUP.find(
+  const match = modelLookup().find(
     (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`),
   );
   if (match) return String(match.provider);
@@ -4984,8 +5018,16 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // freeze, so the dry run and the launch judge one configuration.
       target.namedHostId ?? servers.environmentLaunch?.hostId,
     );
+    // …and the MODEL this target runs, which is the environment's override
+    // when it sets one — not the host's own model. Judging the host model
+    // would admit a harness environment whose override the harness cannot run
+    // (and refuse one whose override fixes a host the harness can't run).
+    const environmentModelOverride =
+      servers.environmentLaunch?.modelId?.trim() || undefined;
     const admission = checkEvalHarnessStaticAdmission({
-      hostConfig,
+      hostConfig: environmentModelOverride
+        ? { ...hostConfig, modelId: environmentModelOverride }
+        : hostConfig,
       serverIds: servers.serverIds,
     });
     if (!admission.ok) {
@@ -5224,6 +5266,8 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // behind. The per-host `servers` picks are deliberately dropped for this
     // pass: they resolve against the suite's environment bindings, which do
     // not exist until the suite is written. The real resolution runs below.
+    let preResolvedHosts:
+      Array<{ namedHostId: string; selectedServerIds?: string[] }> | undefined;
     if (body.hosts?.length) {
       await resolveHostAttachments(
         convexClient,
@@ -5231,9 +5275,30 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
         { environment: {} },
         body.hosts.map(({ host }) => ({ host })),
       );
+      // The same picks, resolved against this request's own servers: what a
+      // suite born with its environment needs, since it gets no legacy
+      // bindings to resolve them against later.
+      if (serverNames && serverNames.length === resolvedServerIds.length) {
+        preResolvedHosts = await resolveHostAttachments(
+          convexClient,
+          projectId,
+          {
+            environment: {
+              serverBindings: serverNames.map((serverName, index) => ({
+                serverName,
+                projectServerId: resolvedServerIds[index],
+              })),
+            },
+          } as SuiteDoc,
+          body.hosts,
+        );
+      }
     }
 
     const { suiteId, caseUpsert } = await authorEvalSuite({
+      ...(preResolvedHosts
+        ? { environmentHostAttachments: preResolvedHosts }
+        : {}),
       convexClient,
       tests: normalizedTests,
       resolvedServerIds,
@@ -5255,12 +5320,16 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     // against the suite's environment bindings, which the write above is what
     // creates. Re-read for the same reason the PATCH route does.
     let attachedHostIds: string[] = [];
-    if (body.hosts?.length) {
-      const suite = await readSuiteInProject(
-        convexAuthToken,
-        projectId,
-        suiteId,
+    const authoredSuite = body.hosts?.length
+      ? await readSuiteInProject(convexAuthToken, projectId, suiteId)
+      : null;
+    if ((authoredSuite?.environmentIds?.length ?? 0) > 0) {
+      // Born an environment suite on the requested client: nothing to attach.
+      attachedHostIds = (preResolvedHosts ?? []).map((attachment) =>
+        String(attachment.namedHostId),
       );
+    } else if (body.hosts?.length) {
+      const suite = authoredSuite!;
       const hostAttachments = await resolveHostAttachments(
         convexClient,
         projectId,
@@ -6215,6 +6284,8 @@ evals.get(
         { reason: "TRACE_NOT_AVAILABLE" },
       );
     }
+    // Artifact links only as signed `/web/artifact` links (MJ-005).
+    trace = withPublicTraceArtifactLinks(trace);
     // AFTER the read resolves and after the 404s, so a row means a transcript
     // actually left the product.
     //
@@ -8245,10 +8316,68 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     assertScheduleSurvivesEnvironmentChange(suite!, body.environmentIds ?? []);
   }
 
+  // An environment suite's servers are its environments' group, never a
+  // per-client pick. Refuse before the first write, so a PATCH never saves
+  // half of itself and then fails on the host list.
+  if (
+    (suite!.environmentIds?.length ?? 0) > 0 &&
+    body.hosts?.some((entry) => entry.servers !== undefined)
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "An environment suite's servers come from its environments' server group, not per client. Send `environment.servers` instead of `hosts[].servers`.",
+    );
+  }
+
   const updateArgs: Record<string, unknown> = { suiteId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
-  if (body.environment !== undefined) {
+  // An ENVIRONMENT suite's servers and image are its environments'. On a
+  // backend that carries settings onto them, send what the caller asked for
+  // as `environmentSettings` (servers become the environments' group, the
+  // image every environment's pin, `null` clearing it) rather than the
+  // legacy envelope, which is compared with the suite row's own stale pin.
+  const environmentSuite =
+    body.environment !== undefined &&
+    (suite!.environmentIds?.length ?? 0) > 0 &&
+    (await readClient
+      .query("projectEnvironments:getCapabilities" as any, { projectId })
+      .then(
+        (caps: { environmentSuiteSettings?: boolean } | null) =>
+          caps?.environmentSuiteSettings === true,
+      )
+      .catch(() => false));
+  if (body.environment !== undefined && environmentSuite) {
+    const environmentSettings: Record<string, unknown> = {};
+    if (body.environment.servers !== undefined) {
+      environmentSettings.servers = body.environment.servers;
+    }
+    if (body.environment.computerEnvironment !== undefined) {
+      environmentSettings.computerEnvironmentId =
+        body.environment.computerEnvironment === null
+          ? null
+          : (
+              await resolveComputerEnvironment(
+                readClient,
+                projectId,
+                body.environment.computerEnvironment,
+              )
+            ).id;
+    }
+    if (Object.keys(environmentSettings).length > 0) {
+      updateArgs.environmentSettings = environmentSettings;
+    }
+  } else if (body.environment !== undefined) {
+    logLegacyEvalRequest({
+      surface: "suite_patch",
+      use:
+        (suite!.environmentIds?.length ?? 0) > 0
+          ? "environment_envelope_on_environment_suite"
+          : "environment_envelope",
+      suiteId,
+      projectId,
+    });
     // `updateTestSuite` REPLACES the environment envelope wholesale, so this
     // has to be a merge over the suite's current one. Sending `{ servers }`
     // alone — which is what this did — silently dropped the server bindings
@@ -8436,9 +8565,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   // re-read, letting one PATCH atomically add a server (environment.servers)
   // and scope a host to that newly-added server.
   if (body.hosts !== undefined) {
-    const refreshed: SuiteDoc | null = updateArgs.environment
-      ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
-      : suite;
+    const refreshed: SuiteDoc | null =
+      updateArgs.environment || updateArgs.environmentSettings
+        ? await readClient.query("testSuites:getTestSuite" as any, { suiteId })
+        : suite;
     try {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         suiteId,

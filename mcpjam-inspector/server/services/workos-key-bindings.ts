@@ -36,10 +36,17 @@ export interface WorkosKeyBinding {
  */
 export class WorkosKeyBindingError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The backend's reason code, when it sent one — e.g. `ADMINS_ONLY` on a
+   * mint refused because the organization lets only its owners and admins
+   * create keys (MJ-010).
+   */
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = "WorkosKeyBindingError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -116,13 +123,18 @@ export async function createWorkosKeyBinding(args: {
   });
   if (!response.ok) {
     let message = `Binding create failed (${response.status})`;
+    let code: string | undefined;
     try {
-      const body = (await response.json()) as { error?: unknown };
+      const body = (await response.json()) as {
+        error?: unknown;
+        code?: unknown;
+      };
       if (typeof body?.error === "string") message = body.error;
+      if (typeof body?.code === "string") code = body.code;
     } catch {
       // keep the status-only message
     }
-    throw new WorkosKeyBindingError(response.status, message);
+    throw new WorkosKeyBindingError(response.status, message, code);
   }
 }
 
@@ -164,7 +176,7 @@ export async function removeWorkosKeyBinding(
 const ORGANIZATION_API_KEYS_PATH = "/internal/v1/organization-api-keys";
 const ORGANIZATION_KEY_TIMEOUT_MS = 5_000;
 
-interface OrganizationKeyArgs {
+export interface OrganizationKeyArgs {
   /** MCPJam organization id (Convex `Id<'organizations'>`). */
   organizationId: string;
   /** MCPJam `Id<'users'>` of the admin acting, NOT the WorkOS `sub`. */
@@ -225,8 +237,11 @@ export async function authorizeOrganizationKeyRevoke(
  * Drop the binding of a key an org admin has just revoked at WorkOS. The
  * backend re-checks admin rank, writes the audit row naming both the admin
  * and the minter, and is idempotent (200 whether or not a row existed).
- * Throws on any non-2xx; the caller treats that as best-effort cleanup, since
- * the WorkOS key is already gone.
+ * A 404 the backend answers itself (its `{ ok: false }` JSON) also means
+ * there is nothing left to drop. Throws with the status on any other
+ * non-2xx, including a 404 without that answer: that is a route that is not
+ * there (not deployed, or the wrong `CONVEX_HTTP_URL`), and nothing was
+ * dropped.
  */
 export async function removeOrganizationKeyBinding(
   args: OrganizationKeyArgs,
@@ -240,6 +255,12 @@ export async function removeOrganizationKeyBinding(
       signal: AbortSignal.timeout(ORGANIZATION_KEY_TIMEOUT_MS),
     },
   );
+  if (response.status === 404) {
+    const body = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+    } | null;
+    if (body?.ok === false) return;
+  }
   if (!response.ok) {
     throw new WorkosKeyBindingError(
       response.status,

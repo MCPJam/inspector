@@ -196,6 +196,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
     serverNames: projectServerNames,
+    catalogLoaded: projectServersList !== undefined,
     suspendAutoConnect: props.suspendAutoConnect,
   });
 
