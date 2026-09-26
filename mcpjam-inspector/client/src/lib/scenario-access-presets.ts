@@ -37,13 +37,13 @@ export const SCENARIO_ACCESS_OPTIONS: ReadonlyArray<{
   {
     value: "invited_only",
     label: "Invited users only",
-    description: "Only people you invite by email can open this scenario.",
+    description: "Only people you invite by email can open this study.",
   },
   {
     value: "link_guests",
     label: "Anyone with the link who is signed in",
     description:
-      "Testers must sign in or create an account to preview and test this scenario.",
+      "Testers must sign in or create an account to preview and test this study.",
   },
   {
     value: "project",

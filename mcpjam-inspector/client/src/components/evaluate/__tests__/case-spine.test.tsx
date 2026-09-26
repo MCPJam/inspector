@@ -379,11 +379,36 @@ describe("the spine", () => {
     expect(onStepsChange).not.toHaveBeenCalled();
   });
 
-  it("keeps every prompt editable but never removable", async () => {
-    await openSpine({ steps: twoTurn });
+  it("lets an extra prompt be removed and keeps the last one", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "First" },
+        { id: "turn-2", kind: "prompt", prompt: "Second" },
+      ],
+      onStepsChange,
+    });
+    expect(screen.getByRole("button", { name: "Remove step 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove step 2" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+    expect(written.map((step) => step.id)).toEqual(["turn-1"]);
     expect(screen.queryByRole("button", { name: "Remove step 1" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove step 2" })).toBeNull();
     expect(screen.getByLabelText("What does the user ask?")).toBeEnabled();
+  });
+
+  it("keeps the only prompt while other actions stay removable", async () => {
+    await openSpine({ steps: withClick });
+    expect(screen.queryByRole("button", { name: "Remove step 1" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove step 2" })).toBeTruthy();
+  });
+
+  it("asks before deleting a prompt that has checks under it", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({ steps: twoTurn, onStepsChange });
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    expect(screen.getByTestId("spine-delete-action")).toBeTruthy();
+    expect(onStepsChange).not.toHaveBeenCalled();
   });
 
   it("deletes without asking when the action stands alone", async () => {

@@ -585,6 +585,10 @@ export const SWARM_FINDING_COVERAGE_NOTE_LABELS = Object.freeze({
   // "Rejected", not "checked and rejected": validation can refuse a proposal
   // before any model is asked to verify it.
   mechanismsRejected: "A possible cause was rejected",
+  // The opposite of `mechanismsRejected`, and the reason both exist: nothing
+  // was weighed. Without it a wave whose analysis never ran published the same
+  // empty counts as one where the model looked and had nothing to say.
+  analysisUnavailable: "Causes could not be analysed",
 } satisfies Record<SwarmFindingCoverageNote, string>);
 export const SWARM_FINDING_SUMMARY_KIND_LABELS = Object.freeze({
   notLaunched: "Not launched",

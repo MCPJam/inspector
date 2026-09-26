@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { projectHostedConnectFailureLogs } from "../../../utils/hosted-connect-failure.js";
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
@@ -102,6 +103,14 @@ function createRpcLogsTestApp(): Hono {
       toolsListSchema,
       (manager, body) => listTools(manager, body),
       { rpcLogs: false }
+    )
+  );
+  app.post("/api/web/testing/tools/list-redacted-success-logs", async (c) =>
+    withEphemeralConnection(
+      c,
+      toolsListSchema,
+      (manager, body) => listTools(manager, body),
+      { redactSuccessLogs: projectHostedConnectFailureLogs }
     )
   );
   return app;
@@ -302,6 +311,43 @@ describe("web hosted rpc logs", () => {
     expect(status).toBe(200);
     expect(data.tools).toEqual([{ name: "tool-srv-1" }]);
     expect(data._rpcLogs).toBeUndefined();
+  });
+
+  it("projects the success envelope when a route redacts success logs (MJ-001)", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/testing/tools/list-redacted-success-logs",
+      {
+        projectId: "project-1",
+        serverId: "srv-1",
+        serverName: "Notion",
+      },
+      "test-token"
+    );
+
+    const { status, data } = await expectJson<{
+      tools: Array<{ name: string }>;
+      _rpcLogs: Array<{
+        direction: string;
+        message: Record<string, unknown>;
+      }>;
+    }>(response);
+
+    expect(status).toBe(200);
+    // The route's own answer is untouched.
+    expect(data.tools).toEqual([{ name: "tool-srv-1" }]);
+    const received = data._rpcLogs.filter((e) => e.direction === "receive");
+    expect(received.length).toBeGreaterThan(0);
+    for (const event of received) {
+      // The target's answer is not reflected: envelope only, content omitted.
+      expect(event.message.result).toBeUndefined();
+      expect(event.message.contentOmitted).toBe(true);
+    }
+    // Frames this server sent are kept.
+    const sent = data._rpcLogs.find((e) => e.direction === "send");
+    expect(sent?.message).toMatchObject({ method: "tools/list" });
   });
 });
 

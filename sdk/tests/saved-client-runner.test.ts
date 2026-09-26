@@ -3,7 +3,10 @@ import * as receipts from "../src/eval-reporting-receipt.js";
 import { EvalSuite } from "../src/EvalSuite.js";
 import { EvalTest } from "../src/EvalTest.js";
 import { PlatformApiClient } from "../src/platform/client.js";
-import { createSavedClientRunner } from "../src/saved-client-runner.js";
+import {
+  createSavedClientRunner,
+  UnsupportedModelSelectionError,
+} from "../src/saved-client-runner.js";
 import {
   buildReportingBody,
   normalizeReportingConfig,
@@ -604,4 +607,124 @@ describe("runGroupId on the reporting wire", () => {
       );
     }
   );
+});
+
+describe("saved client model selection", () => {
+  const modelId = "anthropic/claude-haiku-4.5";
+  const withSelection = (modelSelection: unknown) => {
+    const saved = detail();
+    return {
+      ...saved,
+      config: { ...saved.config, modelSelection },
+    };
+  };
+  const run = async () =>
+    createSavedClientRunner(input(), new AbortController().signal);
+
+  it("refuses an org selection with a typed error instead of running it as a bare id", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "k17abc" },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const selected = input();
+    const error = await createSavedClientRunner(
+      selected,
+      new AbortController().signal
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnsupportedModelSelectionError);
+    expect(error).toMatchObject({ source: "org", modelId });
+    expect(String((error as Error).message)).toContain('source "org"');
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it("refuses a local selection with a typed error", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "anthropic" },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    await expect(run()).rejects.toMatchObject({
+      name: "UnsupportedModelSelectionError",
+      source: "local",
+    });
+  });
+
+  it("refuses the whole run through runWithClient too", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "k17abc" },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    await expect(
+      new EvalSuite({
+        defaults: { iterations: 1 },
+        mcpjam: { enabled: false },
+      }).runWithClient(input())
+    ).rejects.toThrow(/source "org"/);
+  });
+
+  it("refuses a malformed selection rather than ignoring it", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({ modelId, source: "org" })
+    );
+    await expect(run()).rejects.toThrow(/hostConfigV2: modelSelection/);
+  });
+
+  it("refuses a hosted selection that names a different model than modelId", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const selected = input();
+    await expect(
+      createSavedClientRunner(selected, new AbortController().signal)
+    ).rejects.toThrow(
+      `hostConfigV2: modelSelection.modelId ("openai/gpt-5") must equal modelId ("${modelId}")`
+    );
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it("runs a hosted selection exactly like no selection", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      detail()
+    );
+    const bare = (await run()).executor.getHostSnapshot();
+    vi.restoreAllMocks();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const hosted = (await run()).executor.getHostSnapshot();
+    expect(hosted).toEqual(bare);
+    expect(hosted).toMatchObject({ model: `mcpjam/${modelId}` });
+    expect(JSON.stringify(hosted)).not.toContain("modelSelection");
+  });
+
+  it("leaves a client without a selection unchanged", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      detail()
+    );
+    const snapshot = (await run()).executor.getHostSnapshot();
+    expect(snapshot).toMatchObject({
+      model: `mcpjam/${modelId}`,
+      systemPrompt: "original prompt",
+      temperature: 0.4,
+    });
+  });
 });

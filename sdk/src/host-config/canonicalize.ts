@@ -56,6 +56,10 @@ import {
   type OpenAiAppsCapabilities,
   type ServerId,
 } from "./types.js";
+import {
+  assertModelSelection,
+  type ModelSelection,
+} from "./model-selection.js";
 
 // Allowed keys on `openaiAppsOverrides`. Centralized so the canonicalizer's
 // typo-rejection stays in sync with the type — if you add a method to
@@ -2452,6 +2456,32 @@ function canonicalizeComputer(
   };
 }
 
+/**
+ * Canonicalize the optional `modelSelection`. Absent ⇒ undefined (key omitted,
+ * so pre-feature rows hash byte-identically). Present ⇒ validated (unknown
+ * keys, source/connectionRef mismatch, non-canonical id, out-of-range
+ * temperature all throw) and rebuilt with a fixed key order. `modelId` stays
+ * the required canonical id; the selection must agree with it — a mismatch is
+ * an error, never resolved by picking one side.
+ *
+ * Exported (module-level only, not from a barrel) so the saved-client runner
+ * applies the identical validation + agreement check to a stored config
+ * before it rewrites `modelId`.
+ */
+export function canonicalizeModelSelection(
+  modelId: string,
+  value: HostConfigInputV2["modelSelection"]
+): ModelSelection | undefined {
+  if (value === undefined) return undefined;
+  const selection = assertModelSelection(value, "hostConfigV2: modelSelection");
+  if (selection.modelId !== modelId) {
+    throw new Error(
+      `hostConfigV2: modelSelection.modelId ("${selection.modelId}") must equal modelId ("${modelId}")`
+    );
+  }
+  return selection;
+}
+
 export function canonicalizeHostConfigV2(
   input: HostConfigInputV2
 ): CanonicalHostConfigV2 {
@@ -2504,10 +2534,17 @@ export function canonicalizeHostConfigV2(
     canonicalizeMcpToolResultImageRenderingPolicy(
       input.mcpToolResultImageRendering
     );
+  const modelSelection = canonicalizeModelSelection(
+    input.modelId,
+    input.modelSelection
+  );
   return {
     schemaVersion: HOST_CONFIG_SCHEMA_VERSION_V2,
     hostStyle: input.hostStyle,
     modelId: input.modelId,
+    // Absent ⇒ key not written at all, so pre-feature rows keep their bytes
+    // (and hash) exactly.
+    ...(modelSelection !== undefined ? { modelSelection } : {}),
     systemPrompt: input.systemPrompt,
     temperature: input.temperature,
     requireToolApproval: input.requireToolApproval,
