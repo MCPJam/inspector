@@ -29,13 +29,14 @@ import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
 import {
-  historyProvenanceContextFor,
+  historyVerificationFor,
   resolveToolOutputFenceKey,
   signHistoryForPersistence,
   TOOL_OUTPUT_TRUST_NOTE,
   verifyClientHistory,
   type HistoryPresentation,
 } from "./history-provenance.js";
+import { toolApprovalBindingFor } from "./tool-approval-token.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -138,6 +139,9 @@ import {
 } from "./harness/harness-proxy-strategy.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
+
+/** Once per process: a hosted deployment without a history signing key. */
+let warnedUnverifiableHistory = false;
 
 /**
  * The direct-chat `resumeConfig.selectedServers` list.
@@ -685,16 +689,33 @@ export async function streamWebChatTurn(
 
   // HISTORY PROVENANCE (MJ-009). The browser sent this whole conversation.
   // What the server itself produced carries its signatures; anything that
-  // does not verify is marked here, before conversion, so the engine shows it
-  // to the model as client-supplied and persistence does not re-sign it. Off
-  // (null) in local mode and without a signing key.
-  const provenance = historyProvenanceContextFor(persist.projectId);
-  const provenanceReport = provenance
-    ? verifyClientHistory(prepare.uiMessages as unknown[], provenance)
+  // does not verify is marked here, before conversion, so the engine leaves
+  // it out of what the model is shown and persistence does not re-sign it.
+  // Always checked in hosted mode — with no signing key nothing verifies —
+  // and used as sent in local mode (null).
+  const verification = historyVerificationFor(persist.projectId);
+  const provenance = verification?.ctx ?? null;
+  if (verification && !provenance && !warnedUnverifiableHistory) {
+    warnedUnverifiableHistory = true;
+    logger.warn(
+      "[web-chat-turn] no history signing key on this hosted deployment; history the server cannot verify is left out of model context",
+    );
+  }
+  const provenanceReport = verification
+    ? verifyClientHistory(prepare.uiMessages as unknown[], provenance, {
+        // The engine's own approval binding, so an approval it issued for a
+        // call is proof the call was issued.
+        approvalBinding: toolApprovalBindingFor({
+          authHeader: runtime.authHeader,
+          projectId: persist.projectId,
+          chatSessionId: persist.chatSessionId,
+        }),
+      })
     : null;
   if (
     provenanceReport &&
     (provenanceReport.unverifiedTextParts > 0 ||
+      provenanceReport.unverifiedToolCalls > 0 ||
       provenanceReport.unverifiedToolResults > 0 ||
       provenanceReport.demotedSystemMessages > 0 ||
       provenanceReport.removedAssistantContextParts > 0)
@@ -703,6 +724,7 @@ export async function streamWebChatTurn(
       "[web-chat-turn] client-sent history carried content the server could not verify",
       {
         unverifiedTextParts: provenanceReport.unverifiedTextParts,
+        unverifiedToolCalls: provenanceReport.unverifiedToolCalls,
         unverifiedToolResults: provenanceReport.unverifiedToolResults,
         demotedSystemMessages: provenanceReport.demotedSystemMessages,
         removedAssistantContextParts:
@@ -711,14 +733,14 @@ export async function streamWebChatTurn(
     );
   }
   const uiMessagesForTurn = provenanceReport?.messages ?? prepare.uiMessages;
-  // What each step shows the model: tool output fenced, unverified content
-  // labelled. The harness engine builds its own context from the last user
-  // message, so it gets neither this nor the prompt note below.
+  // What each step shows the model: tool output fenced, content that did not
+  // verify left out. The harness engine builds its own context from the last
+  // user message, so it gets neither this nor the prompt note below.
   const historyPresentation: HistoryPresentation | undefined = persist.harness
     ? undefined
     : {
         fenceKey: resolveToolOutputFenceKey(),
-        labelUnverified: provenanceReport !== null,
+        excludeUnverified: provenanceReport !== null,
       };
 
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
@@ -1329,15 +1351,16 @@ export async function streamWebChatTurn(
 
     if (orgRuntime.runtimeLocation === "local") {
       // The local runtime cannot resume a server-executed approval, and it
-      // refuses a WHOLE turn that advertises one. The always-ask workspace
-      // operations (MJ-008) would therefore take every other tool down with
-      // them; they are withheld here instead — refused, not run unasked.
+      // refuses a WHOLE turn that advertises one. The workspace operations
+      // that pause for approval (MJ-008) would therefore take every other tool
+      // down with them; they are withheld here instead — refused, not run
+      // unasked.
       const localTools = withoutServerVerifiedApprovalTools(
         allTools as ToolSet,
       );
       if (localTools.removed.length > 0) {
         logger.warn(
-          "[web-chat-turn] local-runtime org provider cannot serve always-ask workspace tools; withholding them",
+          "[web-chat-turn] local-runtime org provider cannot serve workspace tools that pause for approval; withholding them",
           { toolNames: localTools.removed },
         );
       }

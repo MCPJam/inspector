@@ -19,6 +19,7 @@ import type {
   JourneyRollup,
   JourneySessionRow,
 } from "@/lib/swarm-api";
+import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -501,5 +502,95 @@ describe("launchJourneyRun — MCPJam limit", () => {
       "This goal is already running."
     );
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});
+
+/**
+ * A guest generating personas.
+ *
+ * The backend refuses at the door with 403 `sign_in_required`, before it reads
+ * the body and before it reserves the platform lane. The proxy forwards that
+ * whole refusal envelope as `details`, so its `code` is the backend's own —
+ * the response's top-level `code` is the
+ * proxy's HTTP-shaped one, `FORBIDDEN` for every 403 whatever caused it, and
+ * "not a member of this project" is also a 403 that signing in does not fix.
+ */
+describe("generateSwarmPersonaBatch — sign-in refusal", () => {
+  const generate = () =>
+    generateSwarmPersonaBatch({
+      projectId: "proj-1",
+      environmentId: "env-1",
+      personaCount: 3,
+      journeyCount: 5,
+    });
+
+  async function refusalFrom(body: unknown): Promise<SwarmGenerateError> {
+    authFetchMock.mockResolvedValue(jsonResponse(403, body));
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    return err as SwarmGenerateError;
+  }
+
+  it("flags the refusal so the surface can offer sign-in", async () => {
+    const err = await refusalFrom({
+      code: "FORBIDDEN",
+      message: "Sign in to generate personas and journeys.",
+      details: { ok: false, code: "sign_in_required", feature: "swarm generation" },
+    });
+    // Asserted through the consumer's question rather than a field on the
+    // class: `signInRemedyMessage` is the one owner of "is this a sign-in
+    // refusal", so a class that stopped carrying the envelope would fail here
+    // even while every field it does carry still looked right.
+    expect(signInRemedyMessage(err)).toBe(
+      "Sign in to generate personas and journeys.",
+    );
+    expect(err.status).toBe(403);
+  });
+
+  it("survives the `normalized` block the real proxy always attaches", async () => {
+    // The fixture above omits `normalized`, and that omission hid a bug.
+    // `handleRoute` runs every route error through `mapRuntimeError`, which
+    // backfills `normalized`, and `webErrorFromRoute` serializes it — so on the
+    // response a guest actually receives, `normalized` is ALWAYS there. With
+    // the sign-in check below that branch, this threw `WebApiError` instead.
+    //
+    // Every field below is load-bearing: `isNormalizedError` is a full
+    // structural check (slug, oneLine, docsAnchor, severity, rawMessage and
+    // both arrays), and a fixture missing any one of them leaves `normalized`
+    // undefined — which is a test that passes whichever order the branches are
+    // in, and so pins nothing. The assertion that sees the ordering is the
+    // CLASS one inside `refusalFrom`: both classes now carry the envelope, so
+    // `signInRemedyMessage` answers the same either way.
+    const err = await refusalFrom({
+      code: "UNAUTHORIZED",
+      message: "Sign in to generate personas and journeys.",
+      details: { ok: false, code: "SIGN_IN_REQUIRED" },
+      normalized: {
+        slug: "unauthorized",
+        title: "Sign in to generate personas and journeys.",
+        oneLine: "Sign in to generate personas and journeys.",
+        docsAnchor: "#unauthorized",
+        severity: "error",
+        rawMessage: "Sign in to generate personas and journeys.",
+        likelyCauses: [],
+        nextSteps: [],
+      },
+    });
+    expect(signInRemedyMessage(err)).toBe(
+      "Sign in to generate personas and journeys.",
+    );
+  });
+
+  it("does NOT flag a 403 that signing in cannot fix", async () => {
+    const err = await refusalFrom({
+      code: "FORBIDDEN",
+      message: "You are not a member of this project.",
+    });
+    expect(signInRemedyMessage(err)).toBeNull();
   });
 });

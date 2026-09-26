@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import {
@@ -135,33 +134,10 @@ export function EvalGenerationWorkspace({
       data-testid="suite-case-generation-workspace"
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
-      {/* No title here: the breadcrumb above reads
-          Evaluate / <suite> / Generate test cases, and repeating both lines
-          under it said the same thing twice. */}
-      <header className="flex items-center justify-end gap-3">
-        <div
-          role="status"
-          className="flex items-center gap-2 text-xs text-muted-foreground"
-        >
-          {busy ? (
-            <Loader2
-              className="size-4 animate-spin motion-reduce:animate-none"
-              aria-hidden
-            />
-          ) : (
-            !error && (
-              <CheckCircle2 className="size-4 text-success" aria-hidden />
-            )
-          )}
-          {running
-            ? "Generating cases…"
-            : revealing
-              ? "Loading cases…"
-              : error
-                ? "Generation stopped"
-                : "Generation complete"}
-        </div>
-      </header>
+      {/* No title and no status line here: the breadcrumb above reads
+          Evaluate / <suite> / Generate test cases, and the drafts panel below
+          carries the state — how many are written, the failure, and the retry.
+          A second "Generating cases…" in the corner said it twice. */}
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
         {running && (
           <p className="text-sm text-muted-foreground">

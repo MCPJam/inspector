@@ -19,6 +19,14 @@ import {
   handleSurfaceServiceAuth,
   isDiscordServiceToken,
 } from "./surface-service-auth.js";
+import { refuseUnservableSession } from "./session-revocation.js";
+
+/**
+ * The sign-out route (`routes/web/auth-session.ts`). It records the revocation
+ * of the caller's own session and must answer for a session this process has
+ * already marked — a second tab, or a retried sign-out — rather than refuse it.
+ */
+export const SESSION_REVOKE_PATH = "/api/web/auth-session/revoke";
 
 /**
  * Reusable Hono middleware that:
@@ -31,7 +39,8 @@ import {
  * 5. If valid guest token, sets `c.set("guestId", guestId)`.
  * 6. If not a guest token and it claims a WorkOS AuthKit issuer, VERIFIES it
  *    (signature, issuer, audience, expiry) — `authkit_jwt` on success, 401 on
- *    a token that fails. Anything else passes through for Convex to judge.
+ *    a token that fails, and 401 `SESSION_REVOKED` for a session known to be
+ *    revoked. Anything else passes through for Convex to judge.
  *
  * Prefix discrimination is sound: real WorkOS JWTs start with `eyJ`
  * (base64 `{"`), so `sk_`/`slk_` prefixes are unambiguous and those
@@ -357,6 +366,18 @@ export async function bearerAuthMiddleware(
   // cached by jose, so on the hot path this is a local signature check.
   const verdict = await classifyAuthKitBearer(token);
   if (verdict.kind === "verified") {
+    // A session this process knows to be revoked is refused here, on every
+    // route (MJ-011). Only KNOWN revocations: most routes behind this
+    // middleware forward the bearer to Convex, which checks the durable record
+    // itself, so they need not wait for the list to be current. The routes
+    // that decide on their own add that requirement (`requireVerifiedAuth`,
+    // API-key management). Sign-out is exempt so it stays idempotent.
+    if (c.req.path !== SESSION_REVOKE_PATH) {
+      const refusal = refuseUnservableSession(c, verdict.sid, {
+        requireFresh: false,
+      });
+      if (refusal) return refusal;
+    }
     c.set("authMethod", "authkit_jwt");
     c.set("workosUserId", verdict.sub);
     if (verdict.sid) c.set("workosSessionId", verdict.sid);

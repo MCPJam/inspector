@@ -12,6 +12,7 @@ import {
 } from "../../utils/export-helpers.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { backendFailureText } from "../../utils/backend-failure-text.js";
 
 export type ReplayConfig = {
   runId: string;
@@ -110,7 +111,14 @@ export async function fetchReplayConfig(
   };
 
   if (!response.ok || !body.ok) {
-    throw new Error(body.error || "Failed to fetch replay config");
+    throw new Error(
+      backendFailureText({
+        source: "evals-replay-config",
+        status: response.status,
+        detail: body.error,
+        fallback: "Failed to fetch replay config",
+      }),
+    );
   }
 
   return body.replayConfig ?? null;
@@ -160,7 +168,14 @@ export async function storeReplayConfig(
   };
 
   if (!response.ok || !body.ok) {
-    throw new Error(body.error || "Failed to store replay config");
+    throw new Error(
+      backendFailureText({
+        source: "evals-replay-config",
+        status: response.status,
+        detail: body.error,
+        fallback: "Failed to store replay config",
+      }),
+    );
   }
 }
 

@@ -691,12 +691,7 @@ describe("reportEvalResults", () => {
     });
 
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (String(url).includes("artifacts/upload-url")) {
-        return Promise.resolve(
-          okResponse({ uploadUrl: "https://example.com/upload" })
-        );
-      }
-      if (String(url) === "https://example.com/upload") {
+      if (String(url).endsWith("/eval-ingest/artifacts")) {
         return Promise.resolve(okResponse({ storageId: "storage_1" }));
       }
       return Promise.resolve(
@@ -733,14 +728,28 @@ describe("reportEvalResults", () => {
       expect(sent.widgetHtml).toBeUndefined();
       expect(sent.widgetHtmlBlobId).toBe("storage_1");
     }
-    // Uploaded as text so storage never serves the widget as a page.
-    const uploadCalls = fetchMock.mock.calls.filter(
-      (call) => String(call[0]) === "https://example.com/upload"
+    // The raw HTML goes to the ingest API's artifacts route with the API key,
+    // as text so storage never serves the widget as a page.
+    const uploadCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).endsWith("/eval-ingest/artifacts")
     );
     expect(uploadCalls).toHaveLength(2);
-    for (const [, init] of uploadCalls) {
-      expect(init.headers["Content-Type"]).toBe("text/plain; charset=utf-8");
+    for (const [url, init] of uploadCalls) {
+      expect(url).toBe(
+        "https://example.com/api/v1/projects/default/eval-ingest/artifacts"
+      );
+      expect(init.method).toBe("POST");
+      expect(init.headers).toEqual({
+        "Content-Type": "text/plain; charset=utf-8",
+        Authorization: "Bearer sk_test_key",
+      });
+      expect(init.body).toBe(bigWidgetHtml);
     }
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).includes("upload-url")
+      )
+    ).toBe(false);
     // The point of the offload: the request now fits.
     expect(new TextEncoder().encode(reportCall![1].body).length).toBeLessThan(
       1024 * 1024
@@ -764,12 +773,7 @@ describe("reportEvalResults", () => {
     });
 
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (String(url).includes("artifacts/upload-url")) {
-        return Promise.resolve(
-          okResponse({ uploadUrl: "https://example.com/upload" })
-        );
-      }
-      if (String(url) === "https://example.com/upload") {
+      if (String(url).endsWith("/eval-ingest/artifacts")) {
         return Promise.resolve(okResponse({ storageId: "storage_1" }));
       }
       return Promise.resolve(
@@ -845,13 +849,29 @@ describe("reportEvalResults", () => {
     };
   };
 
-  const mockUploadUrl = (uploadUrl: string) =>
-    vi.fn().mockImplementation((url: string) => {
-      if (String(url).includes("artifacts/upload-url")) {
-        return Promise.resolve(okResponse({ uploadUrl }));
+  /**
+   * A report of one oversized result, answered like a real ingestion
+   * backend: `artifacts` by `onArtifact`, the chunked run routes with
+   * well-formed acknowledgments, and the one-shot report as completed.
+   */
+  const mockIngestion = (onArtifact: (attempt: number) => any) => {
+    let artifactAttempts = 0;
+    return vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      const target = String(url);
+      if (target.endsWith("/eval-ingest/artifacts")) {
+        artifactAttempts += 1;
+        return Promise.resolve(onArtifact(artifactAttempts));
       }
-      if (String(url) === uploadUrl) {
-        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      if (target.endsWith("/runs/iterations")) {
+        const count = JSON.parse(init.body as string).results.length;
+        return Promise.resolve(
+          okResponse({ inserted: count, skipped: 0, total: count })
+        );
+      }
+      if (target.endsWith("/runs/start")) {
+        return Promise.resolve(
+          okResponse({ suiteId: "suite_1", runId: "run_1" })
+        );
       }
       return Promise.resolve(
         okResponse({
@@ -863,13 +883,119 @@ describe("reportEvalResults", () => {
         })
       );
     });
+  };
 
-  it.each([
-    "https://example.com/upload",
-    "http://127.0.0.1:3210/upload",
-    "http://localhost:3210/upload",
-  ])("uploads widget evidence through %s", async (uploadUrl) => {
-    const fetchMock = mockUploadUrl(uploadUrl);
+  const artifactCalls = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls.filter((call) =>
+      String(call[0]).endsWith("/eval-ingest/artifacts")
+    );
+
+  const sentWidgets = (fetchMock: ReturnType<typeof vi.fn>) => {
+    const reportCall = fetchMock.mock.calls.find((call) =>
+      /eval-ingest\/(report|runs\/iterations)$/.test(String(call[0]))
+    );
+    return JSON.parse(reportCall![1].body).results[0].widgetSnapshots;
+  };
+
+  function retryableResponse(status: number): any {
+    return {
+      ok: false,
+      status,
+      statusText: "Error",
+      headers: new Headers({ "retry-after": "0" }),
+      json: async () => ({ code: "RATE_LIMITED", message: "Try again" }),
+    };
+  }
+
+  it("uploads widget evidence to the configured project's artifacts route", async () => {
+    const fetchMock = mockIngestion(() =>
+      okResponse({ storageId: "storage_1" })
+    );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      project: "prj_1",
+      suiteName: "widget-snapshots",
+      results: [oversizedWidgetResult()],
+    });
+
+    expect(artifactCalls(fetchMock).map((call) => call[0])).toEqual([
+      "https://example.com/api/v1/projects/prj_1/eval-ingest/artifacts",
+      "https://example.com/api/v1/projects/prj_1/eval-ingest/artifacts",
+    ]);
+    for (const snapshot of sentWidgets(fetchMock)) {
+      expect(snapshot.widgetHtmlBlobId).toBe("storage_1");
+      expect(snapshot.widgetHtml).toBeUndefined();
+    }
+  });
+
+  it.each([503, 429])(
+    "retries an artifact upload answered with %i, then reports the stored id",
+    async (status) => {
+      const fetchMock = mockIngestion((attempt) =>
+        attempt === 1
+          ? retryableResponse(status)
+          : okResponse({ storageId: `storage_${attempt}` })
+      );
+      global.fetch = fetchMock as any;
+
+      await reportEvalResults({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "widget-snapshots",
+        results: [oversizedWidgetResult()],
+      });
+
+      // First widget: refused once, stored on the retry. Second: stored.
+      expect(artifactCalls(fetchMock)).toHaveLength(3);
+      expect(
+        sentWidgets(fetchMock).map(
+          (snapshot: { widgetHtmlBlobId?: string }) => snapshot.widgetHtmlBlobId
+        )
+      ).toEqual(["storage_2", "storage_3"]);
+      expect(
+        fetchMock.mock.calls.some((call) =>
+          String(call[0]).includes("upload-url")
+        )
+      ).toBe(false);
+    }
+  );
+
+  it.each([400, 401, 403, 413])(
+    "keeps the widget inline without retrying a %i artifact refusal",
+    async (status) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchMock = mockIngestion(() => errorResponse(status, "refused"));
+      global.fetch = fetchMock as any;
+
+      await reportEvalResults({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "widget-snapshots",
+        results: [oversizedWidgetResult()],
+      });
+
+      // One attempt per widget, then the evidence rides inline instead.
+      expect(artifactCalls(fetchMock)).toHaveLength(2);
+      for (const snapshot of sentWidgets(fetchMock)) {
+        expect(snapshot.widgetHtmlBlobId).toBeUndefined();
+        expect(snapshot.widgetHtml).toContain("<html>");
+      }
+      expect(
+        warn.mock.calls.some((call) =>
+          String(call[0]).includes("skipped widget snapshot upload")
+        )
+      ).toBe(true);
+    }
+  );
+
+  it("never sends an artifact over maxArtifactBytes", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = mockIngestion(() =>
+      okResponse({ storageId: "storage_1" })
+    );
     global.fetch = fetchMock as any;
 
     await reportEvalResults({
@@ -877,32 +1003,11 @@ describe("reportEvalResults", () => {
       baseUrl: "https://example.com",
       suiteName: "widget-snapshots",
       results: [oversizedWidgetResult()],
+      transport: { maxArtifactBytes: 1024 },
     });
 
-    expect(
-      fetchMock.mock.calls.some((call) => String(call[0]) === uploadUrl)
-    ).toBe(true);
-  });
-
-  it("never sends widget evidence to a cleartext URL off the machine", async () => {
-    const uploadUrl = "http://cdn.example.com/upload";
-    const fetchMock = mockUploadUrl(uploadUrl);
-    global.fetch = fetchMock as any;
-
-    // The widget app is not put on a cleartext wire. Reporting then fails,
-    // because the snapshot stays inline and the payload is over the limit —
-    // a loud failure is the right outcome for a server handing out http URLs.
-    await expect(
-      reportEvalResults({
-        apiKey: "sk_test_key",
-        baseUrl: "https://example.com",
-        suiteName: "widget-snapshots",
-        results: [oversizedWidgetResult()],
-      })
-    ).rejects.toThrow();
-    expect(
-      fetchMock.mock.calls.some((call) => String(call[0]) === uploadUrl)
-    ).toBe(false);
+    expect(artifactCalls(fetchMock)).toHaveLength(0);
+    expect(warn).toHaveBeenCalled();
   });
 
   it("wraps reporting failures in EvalReportingError and captures once", async () => {

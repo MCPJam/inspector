@@ -1,12 +1,10 @@
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
-import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
 import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
-import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Public Evaluate experience. Reuses the shared eval data and mutation layer;
  * legacy Evaluate remains available separately behind evaluate-enabled.
@@ -382,11 +380,29 @@ function EvaluateTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
+    // Missing from the overview is not yet proof the suite is gone — not
+    // until the suite's OWN query has answered. "Promote to test case" into a
+    // NEW suite creates it in an action, whose result can reach this client
+    // before the overview subscription's update does; and the promote dialog
+    // holds that same subscription (same args), so this page can mount on a
+    // cached overview older than the suite it was just sent to. Bouncing on
+    // that landed the promoter on the list instead of their case.
+    //
+    // The per-suite query is a fresh subscription for a suite nobody has
+    // opened yet, and Convex applies every subscription's update in one
+    // consistent transition — so once it answers, the overview has caught up
+    // too. (A one-shot `convex.query` would not do: it returns the cached
+    // overview when there is one, which is exactly the stale answer.) For a
+    // suite that really is gone it answers `[]`, and the bounce proceeds.
+    if (queries.isSuiteDetailsLoading) {
+      return;
+    }
     if (!selectedSuiteEntry) {
       navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
     }
   }, [
     overviewQueries.isOverviewLoading,
+    queries.isSuiteDetailsLoading,
     route,
     selectedSuiteEntry,
     selectedSuiteId,
@@ -601,15 +617,10 @@ function EvaluateTabContent({
     async (
       suite: EvalSuite,
       refinement?: string,
-      stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
       options?: GenerationOptions,
     ) => {
       const suiteServers = getEffectiveSuiteServers(suite);
-      if (suiteServers.length === 0) {
-        if (stageCase)
-          throw new Error("Attach servers before generating cases.");
-        return;
-      }
+      if (suiteServers.length === 0) return;
       // Scope generation by the suite's saved server attachment when present.
       // Backend uses this to (a) require per-server cases AND at least one
       // cross-server case when the attachment spans ≥2 servers, and (b) put
@@ -637,14 +648,6 @@ function EvaluateTabContent({
             ? { refinement: refinement.trim() }
             : undefined);
       await handlers.handleGenerateTests(suite._id, suiteServers, {
-        ...(stageCase
-          ? {
-              stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(
-                  normalizeGeneratedDraft(input, suite.defaultPredicates),
-                ),
-            }
-          : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
@@ -696,8 +699,6 @@ function EvaluateTabContent({
             );
           return result;
         },
-        generate: (instructions, stage, options) =>
-          generateTestsForSuite(selectedSuite, instructions, stage, options),
         save: (input) => mutations.createTestCaseMutation(input as any),
       },
     );
@@ -705,7 +706,6 @@ function EvaluateTabContent({
     projectId,
     selectedSuite,
     suiteDetails,
-    generateTestsForSuite,
     mutations.createTestCaseMutation,
     isLoading,
     isAuthenticated,
