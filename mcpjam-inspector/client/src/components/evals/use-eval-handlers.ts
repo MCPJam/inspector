@@ -2021,6 +2021,36 @@ export function useEvalHandlers({
           }
         }
 
+        // An environment's servers are resolved server-side, but the LOCAL
+        // generate route reads them from this inspector's connection pool and
+        // connects nothing itself — connect them first, as for a quick run.
+        // Hosted routes connect them.
+        if (
+          environmentId &&
+          projectId &&
+          !isHostedMode() &&
+          ensureServersReady != null
+        ) {
+          const blocked = await ensureLocalEnvironmentServers({
+            convex,
+            projectId,
+            environmentIds: [environmentId],
+            // Same connect options as the legacy branch above.
+            ensureServersReady: (names) =>
+              ensureServersReady(names, { allowInteractiveOAuthFlow: true }),
+          });
+          if (blocked) {
+            const message = formatEnsureServersReadyError(
+              blocked,
+              "generate test cases",
+              projectServers,
+            );
+            if (postOptions?.stageCase) throw new Error(message);
+            toast.error(message);
+            return;
+          }
+        }
+
         const outcome = await generateAndPersistEvalTests({
           convex,
           getAccessToken,
