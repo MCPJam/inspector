@@ -84,6 +84,16 @@ export interface ResolvedEnvironmentForLaunch {
    * would drop it silently.
    */
   computerEnvironmentId?: string;
+  /**
+   * The environment's own model OVERRIDE, verbatim (absent ⇒ it inherits the
+   * host's model). Declared for the same reason as `computerEnvironmentId`:
+   * the eval dry run judges the harness gate on the model the run will
+   * actually use, which is this override when one is set.
+   */
+  modelId?: string;
+  /** The model that will run: the override, else the host's model. */
+  effectiveModelId?: string;
+  modelSource?: "environment" | "host" | "none";
 }
 
 /**

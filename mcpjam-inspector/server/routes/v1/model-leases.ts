@@ -22,6 +22,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { backendFailureText } from "../../utils/backend-failure-text.js";
 import { v1Error } from "./envelope.js";
 import type { V1ErrorCode } from "./contract.js";
 
@@ -123,10 +124,12 @@ async function callBroker(
     const code =
       BROKER_STATUS_TO_V1[response.status] ??
       (response.status >= 500 ? "SERVER_UNREACHABLE" : "INTERNAL_ERROR");
-    const message =
-      typeof body.error === "string" && body.error
-        ? body.error
-        : "Could not complete the model lease operation";
+    const message = backendFailureText({
+      source: "model-leases",
+      status: response.status,
+      detail: body.error,
+      fallback: "Could not complete the model lease operation",
+    });
     // `retryAfter` is seconds, and the spec documents `Retry-After` on every
     // 429 — pass it through rather than promising a header we never send.
     const retryAfter =
