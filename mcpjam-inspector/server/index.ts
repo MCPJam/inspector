@@ -1,3 +1,4 @@
+import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -7,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
+import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { reportRouteFailure } from "./utils/route-error-report.js";
@@ -52,6 +54,10 @@ import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { indexingHeadersMiddleware } from "./middleware/indexing-headers";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
+import {
+  startRevokedSessionCache,
+  stopRevokedSessionCache,
+} from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
@@ -184,6 +190,7 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
@@ -338,6 +345,10 @@ initXAAIdpKeyPair();
 // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
 // dispatch classifies newly-added hosted models correctly. Memoized.
 startHostedModelCatalogRefresh();
+// The revoked-session list (MJ-011). Loads in the background; the routes that
+// depend on it answer 503 until the first scan completes, and nothing else
+// waits for it. A no-op without the service token. Mirror of server/app.ts.
+startRevokedSessionCache();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
@@ -631,23 +642,11 @@ app.post(
   createComputerUploadHandler(),
 );
 
-// Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
-// core helpers and emit the canonical v1 envelope. Mirror of the mount in
+// Hosted public API (v1). Same 1MB JSON cap as /api/web (with the eval
+// artifact upload carved out; see `v1BodyLimit`); routes wrap the same core
+// helpers and emit the canonical v1 envelope. Mirror of the mount in
 // server/app.ts::createHonoApp — both production entries must wire this up.
-app.use(
-  "/api/v1/*",
-  bodyLimit({
-    maxSize: 1024 * 1024,
-    onError: (c) =>
-      c.json(
-        {
-          code: "VALIDATION_ERROR",
-          message: "Request body exceeds 1MB limit",
-        },
-        400,
-      ),
-  }),
-);
+app.use("/api/v1/*", v1BodyLimit());
 app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
 app.route("/api/slack/link", slackLinkRoutes);
@@ -704,6 +703,10 @@ app.route("/tlm", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
+// PR previews only (no-op unless PREVIEW_EDGE_SECRET is set): lets the
+// *.mcpjam.dev preview router verify it's talking to one of our previews.
+// Not mirrored in server/app.ts: Electron is never a PR preview.
+registerPreviewIdentityRoute(app);
 
 // Health check
 app.get("/health", (c) => {
@@ -1069,10 +1072,12 @@ async function shutdown() {
   try {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
+    await localServerCheckQueue.shutdown();
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
     await benchWorker?.stop();
     await productionChecksWorker.stop();
+    stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.

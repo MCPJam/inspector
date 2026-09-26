@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   canonicalJson,
+  claimToolApprovalUse,
+  EXPIRED_APPROVAL_RESULT,
   markServerVerifiedApproval,
   mintToolApprovalId,
   requiresServerVerifiedApproval,
@@ -136,6 +138,24 @@ describe("tool approval ids", () => {
     ).toEqual({ ok: false, reason: "signature_mismatch" });
   });
 
+  it("answers an approval for fifteen minutes, and no longer", () => {
+    expect(TOOL_APPROVAL_TOKEN_MAX_AGE_MS).toBe(15 * 60 * 1000);
+    const id = mint();
+    expect(
+      verify(id, { nowMs: NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS - 1_000 }),
+    ).toEqual({ ok: true });
+    expect(
+      verify(id, { nowMs: NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 1_000 }),
+    ).toEqual({ ok: false, reason: "expired" });
+  });
+
+  it("tells the model and the user an expired approval ran nothing and can be asked again", () => {
+    expect(EXPIRED_APPROVAL_RESULT).toMatch(/expired/);
+    expect(EXPIRED_APPROVAL_RESULT).toMatch(/15 minutes/);
+    expect(EXPIRED_APPROVAL_RESULT).toMatch(/nothing was run/);
+    expect(EXPIRED_APPROVAL_RESULT).toMatch(/make it again/);
+  });
+
   it("rejects an id dated beyond the tolerated clock skew", () => {
     const id = mint({ nowMs: NOW + 60 * 60 * 1000 });
     expect(verify(id)).toEqual({ ok: false, reason: "malformed" });
@@ -153,6 +173,38 @@ describe("tool approval ids", () => {
 
   it("mints a distinct id for every request, even for the same call", () => {
     expect(mint()).not.toBe(mint());
+  });
+});
+
+describe("claimToolApprovalUse", () => {
+  it("lets each approval run its call once", () => {
+    const id = mint();
+    expect(claimToolApprovalUse(id, NOW)).toBe(true);
+    expect(claimToolApprovalUse(id, NOW + 1_000)).toBe(false);
+    expect(
+      claimToolApprovalUse(id, NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS - 1_000),
+    ).toBe(false);
+  });
+
+  it("tracks every approval on its own", () => {
+    const first = mint();
+    const second = mint();
+    expect(claimToolApprovalUse(first, NOW)).toBe(true);
+    expect(claimToolApprovalUse(second, NOW)).toBe(true);
+    expect(claimToolApprovalUse(first, NOW)).toBe(false);
+    expect(claimToolApprovalUse(second, NOW)).toBe(false);
+  });
+
+  it("remembers a used approval for as long as it could still verify", () => {
+    const id = mint();
+    expect(claimToolApprovalUse(id, NOW)).toBe(true);
+    expect(claimToolApprovalUse(id, NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS)).toBe(
+      false,
+    );
+    // Past that, the id itself no longer verifies.
+    expect(
+      verify(id, { nowMs: NOW + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 1_000 }),
+    ).toEqual({ ok: false, reason: "expired" });
   });
 });
 

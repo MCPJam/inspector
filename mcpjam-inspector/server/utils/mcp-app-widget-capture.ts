@@ -1,10 +1,20 @@
 import type { ModelMessage } from "ai";
 import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
 import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
-import type { ConvexHttpClient } from "convex/browser";
+import { uploadBlob } from "@/shared/blob-upload";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import { WIDGET_HTML_STORAGE_CONTENT_TYPE } from "@/shared/widget-snapshot";
+import { HOSTED_MODE } from "../config.js";
+import {
+  getConfiguredInspectorServiceToken,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../middleware/internal-service-auth.js";
 import { logger } from "./logger";
+import {
+  snapshotScenarioScope,
+  type SnapshotUploadTarget,
+} from "./snapshot-upload-target.js";
+import { isUsableStorageDestination } from "./storage-destination.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
 
 const LOG_PREFIX = "[mcp-app-widget-capture]";
@@ -238,72 +248,64 @@ function collectToolSnapshotSources(
   return sources;
 }
 
-async function uploadWidgetHtmlBlob(
-  convexClient: ConvexHttpClient,
-  html: string,
-): Promise<string | undefined> {
-  const uploadUrl = await convexClient.mutation(
-    "chatSessions:generateSnapshotUploadUrl" as any,
-    {},
-  );
-
-  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
-    return undefined;
+/**
+ * Send captured bytes to the backend's upload route (`@/shared/blob-upload`,
+ * MJ-006) as `target`, scoped to its chat (and, for a hosted scenario, its
+ * grant), and return the storage id.
+ */
+async function uploadSnapshotBytes(
+  target: SnapshotUploadTarget,
+  body: Blob,
+  contentType: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const siteUrl = process.env.CONVEX_HTTP_URL;
+  if (!siteUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
   }
-
-  // Text, not `text/html` — see WIDGET_HTML_STORAGE_CONTENT_TYPE.
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: { "Content-Type": WIDGET_HTML_STORAGE_CONTENT_TYPE },
-    body: new Blob([html], { type: WIDGET_HTML_STORAGE_CONTENT_TYPE }),
+  return await uploadBlob({
+    siteUrl,
+    bearerToken: target.convexAuthToken,
+    scope: {
+      purpose: "widget-snapshot",
+      chatSessionId: target.chatSessionId,
+      ...snapshotScenarioScope(target),
+    },
+    body,
+    contentType,
+    ...(signal ? { signal } : {}),
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`Failed to upload widget HTML (${response.status})`);
-  }
-
-  const body = (await response.json().catch(() => null)) as
-    | { storageId?: string }
-    | null;
-  return typeof body?.storageId === "string" ? body.storageId : undefined;
+async function uploadWidgetHtmlBlob(
+  target: SnapshotUploadTarget,
+  html: string,
+): Promise<string> {
+  // Text, not `text/html` — see WIDGET_HTML_STORAGE_CONTENT_TYPE.
+  return await uploadSnapshotBytes(
+    target,
+    new Blob([html], { type: WIDGET_HTML_STORAGE_CONTENT_TYPE }),
+    WIDGET_HTML_STORAGE_CONTENT_TYPE,
+  );
 }
 
 /**
- * PR 6b sibling to `uploadWidgetHtmlBlob`. Same content-agnostic upload mutation
- * (`chatSessions:generateSnapshotUploadUrl` → `ctx.storage.generateUploadUrl()`);
- * only the Blob mime type changes. The caller hands base64 from the harness —
+ * PR 6b sibling to `uploadWidgetHtmlBlob`. Same upload route and scope; only
+ * the Blob mime type changes. The caller hands base64 from the harness —
  * decode → Blob → POST → return the storageId. Exported (unlike its HTML
  * sibling) because `finalize-iteration.ts` serializes browser artifacts.
  */
 export async function uploadScreenshotBlob(
-  convexClient: ConvexHttpClient,
+  target: SnapshotUploadTarget,
   base64: string,
 ): Promise<string | undefined> {
-  const uploadUrl = await convexClient.mutation(
-    "chatSessions:generateSnapshotUploadUrl" as any,
-    {},
-  );
-
-  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
-    return undefined;
-  }
-
   const mediaType = detectScreenshotMediaType(base64);
   const bytes = Buffer.from(base64, "base64");
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: { "Content-Type": mediaType },
-    body: new Blob([bytes], { type: mediaType }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to upload screenshot (${response.status})`);
-  }
-
-  const body = (await response.json().catch(() => null)) as
-    | { storageId?: string }
-    | null;
-  return typeof body?.storageId === "string" ? body.storageId : undefined;
+  return await uploadSnapshotBytes(
+    target,
+    new Blob([new Uint8Array(bytes)], { type: mediaType }),
+    mediaType,
+  );
 }
 
 // Mirrors `detectImageMediaType` in computer-use-tool.ts but kept local so
@@ -324,10 +326,10 @@ function detectScreenshotMediaType(base64: string): "image/jpeg" | "image/png" {
 export const MAX_REPLAY_VIDEO_BYTES = 64 * 1024 * 1024;
 
 /**
- * Wall-clock bound on the whole upload (URL mint + POST). Video upload happens
- * on a TERMINAL path, after the run has already produced its result, so a
- * stalled upload must never hold the caller open — for a session run it would
- * pin the browser and the MCP manager alive behind it.
+ * Wall-clock bound on the whole upload (destination request + POST). Video
+ * upload happens on a TERMINAL path, after the run has already produced its
+ * result, so a stalled upload must never hold the caller open — for a session
+ * run it would pin the browser and the MCP manager alive behind it.
  */
 export const VIDEO_UPLOAD_TIMEOUT_MS = 60_000;
 
@@ -343,19 +345,117 @@ export const VIDEO_UPLOAD_TIMEOUT_MS = 60_000;
  */
 export const DEFAULT_REPLAY_VIDEO_MIME = "video/webm";
 
+/** The backend's replay destination issuer; service credential only. */
+const REPLAY_VIDEO_DESTINATION_PATH =
+  "/internal/v1/chat-sessions/replay-video/upload-url";
+
+/**
+ * Where to store one replay, asked for on the launching user's behalf with the
+ * inspector service credential. The backend checks the user's bearer and chat
+ * the way it does for snapshots; this process uploads the bytes and keeps
+ * only the storage id (MJ-006).
+ */
+async function requestReplayVideoDestination(
+  target: SnapshotUploadTarget,
+  serviceToken: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
+  }
+  const response = await fetch(`${convexUrl}${REPLAY_VIDEO_DESTINATION_PATH}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${target.convexAuthToken}`,
+      "Content-Type": "application/json",
+      [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken,
+    },
+    body: JSON.stringify({
+      chatSessionId: target.chatSessionId,
+      ...snapshotScenarioScope(target),
+    }),
+    signal,
+  });
+  const body = (await response.json().catch(() => null)) as {
+    uploadUrl?: unknown;
+    error?: unknown;
+  } | null;
+  if (!response.ok) {
+    throw new Error(
+      `Replay video upload was refused (${response.status})${
+        typeof body?.error === "string" ? `: ${body.error}` : ""
+      }`,
+    );
+  }
+  if (!isUsableStorageDestination(body?.uploadUrl)) {
+    throw new Error("Replay video upload got no usable destination");
+  }
+  return body.uploadUrl;
+}
+
+/**
+ * Store the replay's bytes. With the inspector service credential they go to
+ * the destination the backend names for them (replays can be larger than the
+ * upload route takes). A local install holds no service credential and sends
+ * them through the upload route instead, within that route's cap; a hosted
+ * deployment without the credential is misconfigured and refuses.
+ */
+async function storeReplayVideo(
+  target: SnapshotUploadTarget,
+  body: Blob,
+  contentType: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const serviceToken = getConfiguredInspectorServiceToken();
+  if (!serviceToken) {
+    if (HOSTED_MODE) {
+      throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
+    }
+    return await uploadSnapshotBytes(target, body, contentType, signal);
+  }
+
+  const destination = await requestReplayVideoDestination(
+    target,
+    serviceToken,
+    signal,
+  );
+  const response = await fetch(destination, {
+    method: "POST",
+    headers: { "Content-Type": contentType },
+    body,
+    redirect: "error",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to upload replay video (${response.status})`);
+  }
+  let stored: { storageId?: unknown } | null = null;
+  try {
+    stored = (await response.json()) as { storageId?: unknown } | null;
+  } catch (err) {
+    // A deadline hit mid-answer is a timeout, and the caller reports it as
+    // one; a malformed answer is genuinely "no storage id".
+    if (signal.aborted) throw err;
+  }
+  return typeof stored?.storageId === "string" && stored.storageId
+    ? stored.storageId
+    : undefined;
+}
+
 /**
  * Upload one run's replay video to Convex storage and return its storageId.
- * Same path as {@link uploadScreenshotBlob} (generate URL → POST bytes →
- * storageId); only the mime type differs. One video per run, so this runs at
- * most once per finalize.
+ * Same identity and chat scope as {@link uploadScreenshotBlob}; see
+ * {@link storeReplayVideo} for where the bytes go. One video per run, so this
+ * runs at most once per finalize.
  *
  * Bounded on both axes — size ({@link MAX_REPLAY_VIDEO_BYTES}, matching the
  * backend's write-boundary check) and time ({@link VIDEO_UPLOAD_TIMEOUT_MS}).
- * Throws on transport failure, oversize, or timeout; callers wrap it
+ * Throws on transport failure, oversize, refusal or timeout; callers wrap it
  * best-effort so a missing replay never fails the run it came from.
  */
 export async function uploadVideoBlob(
-  convexClient: ConvexHttpClient,
+  target: SnapshotUploadTarget,
   bytes: Buffer,
   options: { contentType?: string } = {},
 ): Promise<string | undefined> {
@@ -367,60 +467,24 @@ export async function uploadVideoBlob(
   }
 
   const timeout = AbortSignal.timeout(VIDEO_UPLOAD_TIMEOUT_MS);
-  const uploadUrl = await Promise.race([
-    convexClient.mutation("chatSessions:generateSnapshotUploadUrl" as any, {}),
-    abortRejection(timeout, "replay video upload url"),
-  ]);
-
-  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
-    return undefined;
-  }
-
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: { "Content-Type": contentType },
-    // `new Uint8Array(bytes)` so a Node `Buffer` is a valid `BlobPart`
-    // regardless of its backing-buffer type.
-    body: new Blob([new Uint8Array(bytes)], { type: contentType }),
-    signal: timeout,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to upload replay video (${response.status})`);
-  }
-
-  // A timeout mid-body rejects `response.json()`. Swallowing that into
-  // `undefined` would report a TIMED-OUT upload as an ordinary absent video,
-  // which is the one thing a terminal caller can't distinguish. Surface it.
-  let body: { storageId?: string } | null = null;
   try {
-    body = (await response.json()) as { storageId?: string } | null;
-  } catch (err) {
-    if (timeout.aborted) {
-      throw new Error("Timed out: replay video upload response");
-    }
-    // Anything else: a malformed body is genuinely "no storage id".
-    void err;
-  }
-  return typeof body?.storageId === "string" ? body.storageId : undefined;
-}
-
-/**
- * A promise that never resolves and rejects when `signal` aborts. Used to bound
- * a call that takes no signal of its own (the Convex client's `mutation`).
- */
-function abortRejection(signal: AbortSignal, label: string): Promise<never> {
-  return new Promise((_resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error(`Timed out: ${label}`));
-      return;
-    }
-    signal.addEventListener(
-      "abort",
-      () => reject(new Error(`Timed out: ${label}`)),
-      { once: true },
+    return await storeReplayVideo(
+      target,
+      // `new Uint8Array(bytes)` so a Node `Buffer` is a valid `BlobPart`
+      // regardless of its backing-buffer type.
+      new Blob([new Uint8Array(bytes)], { type: contentType }),
+      contentType,
+      timeout,
     );
-  });
+  } catch (err) {
+    // A timeout (on the request or mid-answer) is reported as one, never as
+    // an ordinary refusal: a terminal caller can't tell the two apart
+    // otherwise.
+    if (timeout.aborted) {
+      throw new Error("Timed out: replay video upload");
+    }
+    throw err;
+  }
 }
 
 /**
@@ -441,7 +505,12 @@ function abortRejection(signal: AbortSignal, label: string): Promise<never> {
 export async function captureMcpAppWidgetSnapshots(params: {
   messages: ModelMessage[];
   mcpClientManager: MCPClientManager;
-  convexClient: ConvexHttpClient;
+  /**
+   * Who the widget HTML is uploaded as, and for which chat. `undefined` when
+   * there is nothing to attach the snapshots to (an eval iteration that never
+   * got an id): the snapshots are still built, just without their HTML blob.
+   */
+  uploadTarget: SnapshotUploadTarget | undefined;
   /**
    * Whether to inject the OpenAI Apps SDK `window.openai` shim into the
    * captured widget HTML. Resolved upstream from the host config
@@ -535,12 +604,11 @@ export async function captureMcpAppWidgetSnapshots(params: {
                 toolOutput: source.toolOutput,
               })
             : html;
-          const widgetHtmlBlobId = await uploadWidgetHtmlBlob(
-            params.convexClient,
-            widgetHtml,
-          );
-          if (widgetHtmlBlobId) {
-            snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
+          if (params.uploadTarget) {
+            snapshot.widgetHtmlBlobId = await uploadWidgetHtmlBlob(
+              params.uploadTarget,
+              widgetHtml,
+            );
           }
           // Stamp the flag onto the snapshot so the replay viewer can
           // distinguish "captured with shim" from "captured without"

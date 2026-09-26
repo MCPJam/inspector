@@ -1,4 +1,5 @@
 import { describeEvalIterationError } from "@/lib/eval-iteration-error";
+import { ExecutionProvenance } from "./execution-provenance";
 import { ErrorCard } from "@/components/ui/error-card";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
@@ -1230,6 +1231,14 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
+      {/* What this trial ran on, and whether that deviated from the request.
+          Above the tabs, so the Scorecard, Steps and Trace views all sit under
+          it. Nothing for a trial recorded before the record existed. */}
+      <ExecutionProvenance
+        execution={iteration.execution}
+        className={layoutMode === "full" ? "shrink-0 px-3" : undefined}
+        testIdPrefix="iteration-execution"
+      />
       {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
 
       {!hasTrace && !scorecard && !isProbe && (

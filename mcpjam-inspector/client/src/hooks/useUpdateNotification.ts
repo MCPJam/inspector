@@ -2,15 +2,23 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { UpdateStatus, FailedUpdateStatus } from "@/types/electron";
 
-function showFailure(status: FailedUpdateStatus) {
+function showFailure(status: FailedUpdateStatus, retry: () => void) {
+  const label =
+    status.action === "retry-download" ? "Retry download" : "Relaunch to retry";
+  const actionable = status.action !== "instructions";
   toast.error(
-    status.reason === "shutdown_stuck"
-      ? "Update failed. Force quit MCPJam and reopen it."
-      : "Update failed. Please reopen MCPJam and try again.",
+    actionable
+      ? status.action === "retry-download"
+        ? "Update download failed. Try downloading again."
+        : "Update download is stuck. Relaunch MCPJam to retry."
+      : status.reason === "shutdown_stuck"
+        ? "Update failed. Force quit MCPJam and reopen it."
+        : "Update failed. Quit MCPJam completely, then open it again.",
     {
       id: `desktop-update-${status.attemptId}`,
       duration: Infinity,
       closeButton: true,
+      ...(actionable ? { action: { label, onClick: retry } } : {}),
     },
   );
 }
@@ -36,23 +44,46 @@ export function useUpdateNotification() {
   const statusRef = useRef<UpdateStatus>({ kind: "idle" });
 
   const shownFailure = useRef<string | undefined>(undefined);
-  const applyStatus = useCallback((next: UpdateStatus) => {
-    statusRef.current = next;
-    if (next.kind === "idle" || next.kind === "failed")
-      setRestartRequested(false);
-    if (next.kind === "failed") {
-      const key = `${next.attemptId}:${next.reason}`;
-      if (shownFailure.current !== key) {
-        shownFailure.current = key;
-        showFailure(next);
-      }
-    }
-    setStatus(next);
+  const failureToast = useRef<string | undefined>(undefined);
+  const actionPending = useRef(false);
+  const retryUpdate = useCallback(() => {
+    const current = statusRef.current;
+    if (current.kind !== "failed" || actionPending.current) return;
+    if (current.action === "instructions") return;
+    actionPending.current = true;
+    setRestartRequested(true);
+    if (current.action === "retry-download")
+      window.electronAPI?.update?.retryDownload();
+    else window.electronAPI?.update?.relaunchToRetry();
   }, []);
 
+  const applyStatus = useCallback(
+    (next: UpdateStatus) => {
+      statusRef.current = next;
+      actionPending.current = false;
+      setRestartRequested(false);
+      if (next.kind === "failed") {
+        const key = `${next.attemptId}:${next.reason}:${next.action}`;
+        if (shownFailure.current !== key) {
+          if (failureToast.current) toast.dismiss(failureToast.current);
+          shownFailure.current = key;
+          failureToast.current = `desktop-update-${next.attemptId}`;
+          showFailure(next, retryUpdate);
+        }
+      } else if (failureToast.current) {
+        toast.dismiss(failureToast.current);
+        failureToast.current = undefined;
+        shownFailure.current = undefined;
+      }
+      setStatus(next);
+    },
+    [retryUpdate],
+  );
+
   const showUpdateError = useCallback(() => {
-    if (statusRef.current.kind === "failed") showFailure(statusRef.current);
-  }, []);
+    if (statusRef.current.kind === "failed")
+      showFailure(statusRef.current, retryUpdate);
+  }, [retryUpdate]);
 
   useEffect(() => {
     if (!window.isElectron || !window.electronAPI?.update) {
@@ -94,11 +125,9 @@ export function useUpdateNotification() {
   }, [applyStatus]);
 
   const restartAndInstall = useCallback(() => {
-    if (
-      statusRef.current.kind !== "pending" &&
-      statusRef.current.kind !== "downloaded"
-    )
+    if (statusRef.current.kind !== "downloaded" || actionPending.current)
       return;
+    actionPending.current = true;
     setRestartRequested(true);
     window.electronAPI?.update?.restartAndInstall();
   }, []);
@@ -119,6 +148,7 @@ export function useUpdateNotification() {
     status,
     restartRequested,
     showUpdateError,
+    retryUpdate,
     restartAndInstall,
     simulateUpdate,
     simulateUpdateDownloaded,
