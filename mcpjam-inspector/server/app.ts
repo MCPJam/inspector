@@ -3,6 +3,7 @@ import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
+import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -45,7 +46,7 @@ import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
-import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
@@ -70,12 +71,14 @@ import {
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import { indexingHeadersMiddleware } from "./middleware/indexing-headers.js";
 import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
+import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
@@ -147,6 +150,9 @@ export async function createHonoApp() {
   // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
   // dispatch classifies newly-added hosted models correctly. Memoized.
   startHostedModelCatalogRefresh();
+  // The revoked-session list (MJ-011). Mirror of the call in server/index.ts:
+  // loads in the background, idempotent, a no-op without the service token.
+  startRevokedSessionCache();
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
@@ -265,6 +271,10 @@ export async function createHonoApp() {
   // 1. Security headers (always applied)
   app.use("*", securityHeadersMiddleware);
 
+  // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
+  // than another line in the security headers — see indexing-headers.ts.
+  app.use("*", indexingHeadersMiddleware);
+
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
@@ -293,13 +303,10 @@ export async function createHonoApp() {
       }),
     );
   }
-  app.use(
-    "*",
-    cors({
-      origin: CORS_ORIGINS,
-      credentials: true,
-    }),
-  );
+  // Load-bearing for the header middleware above, not only for CORS. See the
+  // same mount in server/index.ts: raw-`Response` handlers only carry the
+  // headers prepared by `c.header()` because `cors()` materializes `c.res`.
+  app.use("*", cors(CORS_OPTIONS));
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
   // folder upload, which is multipart and bounded by the service caps. Audio
@@ -413,24 +420,12 @@ export async function createHonoApp() {
     createComputerUploadHandler(),
   );
 
-  // Hosted public API (v1). Same 1MB JSON cap as /api/web; the canonical
+  // Hosted public API (v1). Same 1MB JSON cap as /api/web (with the eval
+  // artifact upload carved out; see `v1BodyLimit`); the canonical
   // resource-oriented routes wrap the same core helpers and emit the v1
   // envelope. Read-only diagnostics first; mutating ops land behind the
   // X-MCPJam-Approval flow in a follow-up.
-  app.use(
-    "/api/v1/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400,
-        ),
-    }),
-  );
+  app.use("/api/v1/*", v1BodyLimit());
   app.route("/api/v1", v1Routes);
 
   // Fail the deploy, not the user's first sign-in: `WORKOS_API_BASE_URL` is a

@@ -4,7 +4,7 @@
 // skill by its (non-unique) name, reading an unreachable pinned blob as "no
 // file", and re-deriving the version list from something other than the record.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   RunPluginSnapshotError,
   assertPinnedSkillFilesReachable,
@@ -13,7 +13,10 @@ import {
   runPluginVersions,
   type RunPinnedSkill,
 } from "../run-plugin-snapshot.js";
+import { runPinnedSkillsToHarnessArtifacts } from "../run-pinned-harness-skills.js";
 import type { RunPluginServer } from "../../plugins/run-plugin-servers.js";
+import { getEffectiveSkillToolsAndPrompt } from "../../../utils/computers/effective-skill-tools.js";
+import type { PinnedSkillArtifact } from "../../../../shared/skill-types.js";
 
 const ACME = {
   pluginId: "p_acme",
@@ -315,5 +318,107 @@ describe("buildRunCapabilitySet", () => {
       "pin:a",
       "pin:b",
     ]);
+  });
+});
+
+// MJ-005 — a pinned file's URL is minted once, at run preparation, and is
+// short-lived. A read late in a long run must not depend on it.
+describe("pinned supporting files over a long run", () => {
+  const SCRIPT_URL = "https://files.example/api/storage/f-script";
+  const IMAGE_URL = "https://files.example/api/storage/f-image";
+  const IMAGE = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const PINNED = pin({
+    name: "fill-pdf",
+    aggregateHash: "agg1",
+    files: [
+      { path: "scripts/fill.py", contentHash: "f1", size: 16, url: SCRIPT_URL },
+      { path: "assets/logo.png", contentHash: "f2", size: 4, url: IMAGE_URL },
+    ],
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Serve the pinned files at preparation, then let every link lapse. */
+  async function prepareThenLapse() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === SCRIPT_URL
+        ? new Response("print('filled')\n", {
+            status: 200,
+            headers: { "content-type": "text/x-python" },
+          })
+        : new Response(IMAGE, {
+            status: 200,
+            headers: { "content-type": "image/png" },
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const downloadedPins = await runPinnedSkillsToHarnessArtifacts([PINNED]);
+    fetchMock.mockImplementation(async () => new Response("", { status: 401 }));
+    return { fetchMock, downloadedPins };
+  }
+
+  function readSkillFile(
+    downloadedPins: readonly PinnedSkillArtifact[] | undefined,
+    path: string,
+  ): Promise<string> {
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      buildRunCapabilitySet({
+        pins: [PINNED],
+        downloadedPins,
+        pluginVersions: [],
+        pluginServers: [],
+        effectiveServerIds: [],
+      }),
+    );
+    return (
+      tools.readSkillFile as unknown as {
+        execute: (input: unknown) => Promise<string>;
+      }
+    ).execute({ name: "fill-pdf", path });
+  }
+
+  it("reads a pinned file from the bytes downloaded at preparation once its link has lapsed", async () => {
+    const { fetchMock, downloadedPins } = await prepareThenLapse();
+
+    await expect(
+      readSkillFile(downloadedPins, "scripts/fill.py"),
+    ).resolves.toBe("# scripts/fill.py\n\nprint('filled')\n");
+    // Only preparation's two downloads went out.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a binary pinned file byte for byte", async () => {
+    const { downloadedPins } = await prepareThenLapse();
+
+    await expect(
+      readSkillFile(downloadedPins, "assets/logo.png"),
+    ).resolves.toBe(
+      `File "assets/logo.png" is binary (image/png, ${IMAGE.byteLength} bytes) and can't be shown as text.`,
+    );
+  });
+
+  it.each([
+    ["nothing was downloaded", undefined],
+    [
+      "the download does not line up with the pins",
+      [
+        {
+          name: "another-skill",
+          description: "d",
+          content: "x",
+          contentHash: "c",
+        },
+      ],
+    ],
+  ])("reads the link when %s", async (_case, downloadedPins) => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      readSkillFile(downloadedPins, "scripts/fill.py"),
+    ).resolves.toContain("(401)");
+    expect(fetchMock).toHaveBeenCalledWith(SCRIPT_URL, expect.anything());
   });
 });

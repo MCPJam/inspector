@@ -194,3 +194,22 @@ export interface ScenarioFinding {
   resolvedAt: number | null;
   dismissedAt: number | null;
 }
+
+/** Hand-mirrored from convex/sessionQuestions.ts. */
+export const SESSION_QUESTIONS_API = {
+  list: "sessionQuestions:list",
+  upsert: "sessionQuestions:upsert",
+  remove: "sessionQuestions:remove",
+} as const;
+export type SessionQuestion = {
+  id: string;
+  label: string;
+  question: string;
+  version: number;
+  createdAt: number;
+};
+export type SessionQuestionCatalog = {
+  questions: SessionQuestion[];
+  cap: number;
+  canEdit: boolean;
+};

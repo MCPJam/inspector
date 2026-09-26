@@ -67,7 +67,7 @@ const ALL_ROUTE_METHODS = [
 
 /**
  * Routes that correctly return a SUCCESS to a caller with no `Authorization`
- * header, and why. Both are documented as deliberately open at their mount in
+ * header, and why. Each is documented as deliberately open at its mount in
  * `../index.ts`.
  */
 const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
@@ -78,6 +78,10 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
   [
     "GET /api/web/computers/config",
     "returns only a boolean and a public URL; the client needs it pre-auth to find the terminal",
+  ],
+  [
+    "GET /api/web/flags",
+    "feature-flag values for the checked-in client allowlist only; anonymous visitors need them before sign-in, and a bearer, when sent, is verified",
   ],
 ]);
 

@@ -17,16 +17,15 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
+import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { runnerCapabilities } from "./runner-capabilities.js";
-import type {
-  RunCiMetadata,
-  RunLauncher,
-} from "../../utils/launch-context.js";
+import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
+import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -56,7 +55,7 @@ const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
  * lost. Returns null for any non-billing error so callers fall through to
  * their normal handling.
  */
-function asBillingRouteError(error: unknown): WebRouteError | null {
+export function asBillingRouteError(error: unknown): WebRouteError | null {
   if (!(error instanceof ConvexError)) {
     return null;
   }
@@ -77,7 +76,7 @@ function asBillingRouteError(error: unknown): WebRouteError | null {
     402,
     ErrorCode.BILLING_LIMIT_REACHED,
     message,
-    data as Record<string, unknown>
+    data as Record<string, unknown>,
   );
 }
 
@@ -158,6 +157,11 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
+    /**
+     * The Convex bearer the screenshot and replay uploads authenticate with.
+     * Pure pass-through to `finalizeEvalIteration`.
+     */
+    convexAuthToken?: string;
     /** Explicit harness lifecycle status; never infer it from the verdict. */
     status: IterationStatus;
     startedAt?: number;
@@ -183,7 +187,7 @@ export type SuiteRunRecorder = {
 };
 
 function isSuiteRunEnvironmentSnapshot(
-  value: unknown
+  value: unknown,
 ): value is SuiteRunEnvironmentSnapshot {
   if (!value || typeof value !== "object") {
     return false;
@@ -206,8 +210,7 @@ export const createSuiteRunRecorder = ({
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
   let runtimeAttempt:
-    | { attemptId: string; monotonicStartedAt: number }
-    | undefined;
+    { attemptId: string; monotonicStartedAt: number } | undefined;
   const iterationRuntime = new Map<
     string,
     {
@@ -226,17 +229,19 @@ export const createSuiteRunRecorder = ({
 
   const runRuntimeTelemetry = async <T>(
     operation: () => Promise<T>,
-    failureMessage: string
+    failureMessage: string,
   ): Promise<{ ok: true; value: T } | { ok: false }> => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const settled = Promise.resolve().then(operation).then(
-      (value) => ({ kind: "success" as const, value }),
-      (error) => ({ kind: "failure" as const, error })
-    );
+    const settled = Promise.resolve()
+      .then(operation)
+      .then(
+        (value) => ({ kind: "success" as const, value }),
+        (error) => ({ kind: "failure" as const, error }),
+      );
     const deadline = new Promise<{ kind: "timeout" }>((resolve) => {
       timeout = setTimeout(
         () => resolve({ kind: "timeout" }),
-        RUNTIME_TELEMETRY_TIMEOUT_MS
+        RUNTIME_TELEMETRY_TIMEOUT_MS,
       );
     });
     const result = await Promise.race([settled, deadline]);
@@ -248,9 +253,9 @@ export const createSuiteRunRecorder = ({
       failureMessage,
       result.kind === "timeout"
         ? new Error(
-            `runtime telemetry timed out after ${RUNTIME_TELEMETRY_TIMEOUT_MS}ms`
+            `runtime telemetry timed out after ${RUNTIME_TELEMETRY_TIMEOUT_MS}ms`,
           )
-        : result.error
+        : result.error,
     );
     return { ok: false };
   };
@@ -272,24 +277,21 @@ export const createSuiteRunRecorder = ({
         const currentRunResult = await runRuntimeTelemetry(
           () =>
             convexClient.query("testSuites:getTestSuiteRun" as any, { runId }),
-          "[evals] Failed to read current runtime attempt"
+          "[evals] Failed to read current runtime attempt",
         );
         if (!currentRunResult.ok) return;
         const currentRun = currentRunResult.value;
         const beginResult = await runRuntimeTelemetry(
           () =>
-            convexClient.mutation(
-              "testSuites:beginEvalRuntimeAttempt" as any,
-              {
-                runId,
-                attemptId,
-                ...(currentRun?.runtimeSummary?.attemptId
-                  ? { previousAttemptId: currentRun.runtimeSummary.attemptId }
-                  : {}),
-                ...metadata,
-              }
-            ),
-          "[evals] Failed to begin runtime telemetry"
+            convexClient.mutation("testSuites:beginEvalRuntimeAttempt" as any, {
+              runId,
+              attemptId,
+              ...(currentRun?.runtimeSummary?.attemptId
+                ? { previousAttemptId: currentRun.runtimeSummary.attemptId }
+                : {}),
+              ...metadata,
+            }),
+          "[evals] Failed to begin runtime telemetry",
         );
         if (!beginResult.ok) return;
         runtimeAttempt = { attemptId, monotonicStartedAt: performance.now() };
@@ -315,7 +317,7 @@ export const createSuiteRunRecorder = ({
         // Query all iterations for this run
         const response = await convexClient.query(
           "testSuites:getTestSuiteRunDetails" as any,
-          { runId }
+          { runId },
         );
 
         const iterations = response?.iterations || [];
@@ -348,7 +350,7 @@ export const createSuiteRunRecorder = ({
               testCaseId,
               testCaseSnapshot,
               iterationNumber,
-            }
+            },
           );
           return undefined;
         }
@@ -363,7 +365,7 @@ export const createSuiteRunRecorder = ({
           const iterationId = matchingIteration._id as string;
           const startOffsetMs = Math.max(
             0,
-            performance.now() - attempt.monotonicStartedAt
+            performance.now() - attempt.monotonicStartedAt,
           );
           trackRuntimeWrite(
             runRuntimeTelemetry(
@@ -375,10 +377,10 @@ export const createSuiteRunRecorder = ({
                     attemptId: attempt.attemptId,
                     executionType,
                     startOffsetMs,
-                  }
+                  },
                 ),
-              "[evals] Failed to record iteration runtime start"
-            )
+              "[evals] Failed to record iteration runtime start",
+            ),
           );
           iterationRuntime.set(iterationId, {
             executionType,
@@ -403,7 +405,7 @@ export const createSuiteRunRecorder = ({
 
         logger.error(
           "[evals] Failed to record iteration start:",
-          new Error(errorMessage)
+          new Error(errorMessage),
         );
         return undefined;
       }
@@ -417,7 +419,7 @@ export const createSuiteRunRecorder = ({
         if (timing) {
           const endOffsetMs = Math.max(
             timing.startOffsetMs,
-            performance.now() - runtimeAttempt.monotonicStartedAt
+            performance.now() - runtimeAttempt.monotonicStartedAt,
           );
           trackRuntimeWrite(
             runRuntimeTelemetry(
@@ -431,10 +433,10 @@ export const createSuiteRunRecorder = ({
                     executionOutcome: params.status,
                     startOffsetMs: timing.startOffsetMs,
                     endOffsetMs,
-                  }
+                  },
                 ),
-              "[evals] Failed to record iteration runtime end"
-            )
+              "[evals] Failed to record iteration runtime end",
+            ),
           );
           iterationRuntime.delete(params.iterationId);
         }
@@ -484,18 +486,18 @@ export const createSuiteRunRecorder = ({
                     attemptId: runtimeAttempt.attemptId,
                     totalElapsedMs: Math.max(
                       0,
-                      performance.now() - runtimeAttempt.monotonicStartedAt
+                      performance.now() - runtimeAttempt.monotonicStartedAt,
                     ),
                     interrupted:
                       status === "cancelled" || status === "timed_out",
-                  }
+                  },
                 ),
-              "[evals] Failed to finalize runtime telemetry"
+              "[evals] Failed to finalize runtime telemetry",
             );
           } catch (error) {
             warnRuntimeFailure(
               "[evals] Failed to finalize runtime telemetry",
-              error
+              error,
             );
           }
         }
@@ -524,7 +526,7 @@ export const createSuiteRunRecorder = ({
 
           logger.error(
             "[evals] Failed to finalize suite run:",
-            new Error(errorMessage)
+            new Error(errorMessage),
           );
         }
       } finally {
@@ -755,60 +757,57 @@ export const startSuiteRunWithRecorder = async ({
 }) => {
   let response: any;
   try {
-    response = await convexClient.mutation(
-      "testSuites:startTestSuiteRun" as any,
-      {
-        suiteId,
-        notes,
-        passCriteria,
-        replayedFromRunId,
-        useCurrentSuiteConfig,
-        ...(environmentOverride ? { environmentOverride } : {}),
-        ...(githubCheckServerOverride
-          ? { githubCheckServerOverride }
-          : {}),
-        toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
-        toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
-        iterationOverride,
-        ...(caseIds && caseIds.length ? { caseIds } : {}),
-        matchOptionsOverride,
-        ...(namedHostId ? { namedHostId } : {}),
-        ...(runGroupId ? { runGroupId } : {}),
-        ...(environmentId ? { environmentId } : {}),
-        ...(expectedEnvironmentRevision !== undefined
-          ? { expectedEnvironmentRevision }
-          : {}),
-        ...(expectedEnvironmentHostConfigId !== undefined
-          ? { expectedEnvironmentHostConfigId }
-          : {}),
-        ...(expectedEnvironmentServerIds !== undefined
-          ? { expectedEnvironmentServerIds }
-          : {}),
-        ...(source ? { source } : {}),
-        // The capability behind a hidden source. `startTestSuiteRun` refuses
-        // `source: 'benchmark'` without it, so dropping it here would fail
-        // every benchmark child at the mutation — after the claim was already
-        // leased and the MCP session already opened.
-        ...(benchmarkRunId ? { benchmarkRunId } : {}),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-        ...(sourceHash ? { sourceHash } : {}),
-        ...(skillsOverride ? { skillsOverride } : {}),
-        ...(toolDescriptionOverride
-          ? { toolDescriptionOverride }
-          : {}),
-        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
-        ...(importApprovals && importApprovals.length
-          ? { importApprovals }
-          : {}),
-        // Forwarded only when present. An older backend's `startTestSuiteRun`
-        // validator does not know these args and rejects the whole call for an
-        // unknown field, so sending `launcher: undefined` would break every
-        // launch against a deployment that predates run provenance — including
-        // self-hosted ones this Inspector talks to.
-        ...(launcher ? { launcher } : {}),
-        ...(ciMetadata ? { ciMetadata } : {}),
-        runnerCapabilities: runnerCapabilities(),
-      }
+    const mutationArgs = {
+      suiteId,
+      notes,
+      passCriteria,
+      replayedFromRunId,
+      useCurrentSuiteConfig,
+      ...(environmentOverride ? { environmentOverride } : {}),
+      ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
+      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
+      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      iterationOverride,
+      ...(caseIds && caseIds.length ? { caseIds } : {}),
+      matchOptionsOverride,
+      ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
+      ...(environmentId ? { environmentId } : {}),
+      ...(expectedEnvironmentRevision !== undefined
+        ? { expectedEnvironmentRevision }
+        : {}),
+      ...(expectedEnvironmentHostConfigId !== undefined
+        ? { expectedEnvironmentHostConfigId }
+        : {}),
+      ...(expectedEnvironmentServerIds !== undefined
+        ? { expectedEnvironmentServerIds }
+        : {}),
+      ...(source ? { source } : {}),
+      // The capability behind a hidden source. `startTestSuiteRun` refuses
+      // `source: 'benchmark'` without it, so dropping it here would fail
+      // every benchmark child at the mutation — after the claim was already
+      // leased and the MCP session already opened.
+      ...(benchmarkRunId ? { benchmarkRunId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(sourceHash ? { sourceHash } : {}),
+      ...(skillsOverride ? { skillsOverride } : {}),
+      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+      ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+      ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      // Forwarded only when present. An older backend's `startTestSuiteRun`
+      // validator does not know these args and rejects the whole call for an
+      // unknown field, so sending `launcher: undefined` would break every
+      // launch against a deployment that predates run provenance — including
+      // self-hosted ones this Inspector talks to.
+      ...(launcher ? { launcher } : {}),
+      ...(ciMetadata ? { ciMetadata } : {}),
+      runnerCapabilities: runnerCapabilities(),
+    };
+    response = await retrySuiteStartOnConflict(() =>
+      convexClient.mutation(
+        "testSuites:startTestSuiteRun" as any,
+        mutationArgs,
+      ),
     );
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
@@ -873,7 +872,12 @@ export const startSuiteRunWithRecorder = async ({
 
   // Pre-create all iterations
   try {
-    await convexClient.mutation("testSuites:precreateIterationsForRun" as any, {
+    // ACTION, not the mutation: pre-creating reserves eval iterations, which
+    // draws the org's single starter-pool row, and two suite runs starting
+    // together used to roll the loser back whole. The action retries that
+    // conflict server-side; the mutation it wraps still exists and is what
+    // older inspector builds call.
+    await convexClient.action("testSuites:startSuiteRunIterations" as any, {
       runId,
     });
   } catch (error) {
@@ -885,7 +889,7 @@ export const startSuiteRunWithRecorder = async ({
     try {
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
-        { runId, error: cause }
+        { runId, error: cause },
       );
     } catch (cleanupError) {
       logger.warn("[evals] Failed to mark setup iterations failed", {
@@ -910,11 +914,13 @@ export const startSuiteRunWithRecorder = async ({
     if (billing) {
       throw billing;
     }
+    // `cause` is logged above and recorded on the run; the response carries
+    // only the run id (MJ-020, MJ-021).
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
       "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
-      { runId, cause }
+      { runId },
     );
   }
 
@@ -925,7 +931,7 @@ export const startSuiteRunWithRecorder = async ({
   // needs before calling getToolsForAiSdk. Falling back to the raw request
   // refs is only for older backend responses without configSnapshot.
   const snapshotEnvironment = isSuiteRunEnvironmentSnapshot(
-    (response?.configSnapshot as any)?.environment
+    (response?.configSnapshot as any)?.environment,
   )
     ? ((response?.configSnapshot as any)
         .environment as SuiteRunEnvironmentSnapshot)
@@ -940,8 +946,7 @@ export const startSuiteRunWithRecorder = async ({
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
   let suiteDefaultPredicates:
-    | import("@/shared/eval-matching").Predicate[]
-    | undefined;
+    import("@/shared/eval-matching").Predicate[] | undefined;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -964,7 +969,7 @@ export const startSuiteRunWithRecorder = async ({
   }
 
   const resolvePredicatesForCase = (
-    tc: Record<string, any>
+    tc: Record<string, any>,
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
@@ -972,8 +977,7 @@ export const startSuiteRunWithRecorder = async ({
       envelope: tc.predicates as
         import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: tc.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
     });
 
   // Build config from test cases for backward compatibility
@@ -1003,22 +1007,27 @@ export const startSuiteRunWithRecorder = async ({
         ];
       }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
-        return tc.models.map((model: any) => ({
-          title: tc.title,
-          query: tc.query,
-          model: model.model,
-          provider: model.provider,
-          runs: tc.runs || 1,
-          expectedToolCalls: tc.expectedToolCalls || [],
-          isNegativeTest: tc.isNegativeTest,
-          expectedOutput: tc.expectedOutput,
-          steps: tc.steps,
-          advancedConfig: tc.advancedConfig,
-          matchOptions: tc.matchOptions,
-          successPredicates,
-          ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
-          testCaseId: tc._id,
-        }));
+        return tc.models.map((model: any) => {
+          // Saved selection behind this entry; invalid or absent ⇒ legacy.
+          const selection = readStoredModelSelection(model.selection);
+          return {
+            title: tc.title,
+            query: tc.query,
+            model: model.model,
+            provider: model.provider,
+            ...(selection ? { selection } : {}),
+            runs: tc.runs || 1,
+            expectedToolCalls: tc.expectedToolCalls || [],
+            isNegativeTest: tc.isNegativeTest,
+            expectedOutput: tc.expectedOutput,
+            steps: tc.steps,
+            advancedConfig: tc.advancedConfig,
+            matchOptions: tc.matchOptions,
+            successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
+            testCaseId: tc._id,
+          };
+        });
       }
 
       if (tc.model && tc.provider) {
@@ -1071,12 +1080,9 @@ export const startSuiteRunWithRecorder = async ({
     // either order.
     executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
       ?.executionBudgets ?? response?.executionBudgets) as
-      | ResolvedExecutionBudgets
-      | undefined,
+      ResolvedExecutionBudgets | undefined,
     githubCredentialPolicy: response?.githubCredentialPolicy as
-      | "no_customer_credentials"
-      | "suite_credentials"
-      | undefined,
+      "no_customer_credentials" | "suite_credentials" | undefined,
     /**
      * This start was a REPLAY of an existing run (idempotency key hit, or the
      * keyless fingerprint window), not a launch.
@@ -1092,9 +1098,7 @@ export const startSuiteRunWithRecorder = async ({
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
-      | Record<string, unknown>
-      | null
-      | undefined,
+      Record<string, unknown> | null | undefined,
     /**
      * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
      * `bundleHash` of every plugin version this run pinned, in pin order.
@@ -1120,8 +1124,7 @@ export const startSuiteRunWithRecorder = async ({
      * which mean the same thing here.
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
-      | { mode?: unknown }
-      | undefined,
+      { mode?: unknown } | undefined,
     /**
      * The run's FROZEN description-experiment marker, straight off its own
      * snapshot. The runner applies `{ [toolName]: description }` and stamps

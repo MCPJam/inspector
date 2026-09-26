@@ -376,8 +376,8 @@ describe("useUpgradeCheckout", () => {
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_interval_selected",
       expect.objectContaining({
-        billing_interval: "monthly",
         organization_id: "org-1",
+        billing_interval: "monthly",
       }),
     );
   });

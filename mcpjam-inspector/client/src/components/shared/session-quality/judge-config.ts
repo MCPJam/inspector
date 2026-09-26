@@ -5,17 +5,26 @@
  * drive the same `JudgesSection` UI and the same backend grader. Kept in sync
  * with the backend validator by hand, per the two-repo layout.
  *
- * The envelope currently carries `goalCompletion` and a reserved
- * `groundedness` read slot. Groundedness is not authorable while execution
- * is unwired — keep it on the type so a PATCH merge cannot drop a stored
- * slot, and so the settings card can distinguish "absent" from "present".
+ * The envelope carries `goalCompletion`, a reserved `groundedness` read slot
+ * and `rubricChecks`. Groundedness is not authorable while execution is
+ * unwired — keep it on the type so a PATCH merge cannot drop a stored slot,
+ * and so the settings card can distinguish "absent" from "present". Every
+ * writer carries the non-goal slots forward (`RESERVED_JUDGE_SLOTS`), so an
+ * edit to one slot never erases another.
  */
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 
 /** Authored goal-completion fields the settings draft may write. */
 export type GoalCompletionJudgeSlot = {
   enabled?: boolean;
   judgeModel?: string;
+  /**
+   * The saved selection behind `judgeModel` (whose credentials grade). Written
+   * together with `judgeModel` and always naming exactly it — the backend
+   * refuses a disagreeing pair; cleared whenever `judgeModel` is.
+   */
+  judgeSelection?: ModelSelection;
   threshold?: number;
   /**
    * When true, the judge fires automatically as each run completes. Default
@@ -63,14 +72,64 @@ export type GroundednessJudgeSlot = {
   severity?: "warn";
 };
 
+/**
+ * One authored rubric-check question. Booleans are never authored: every
+ * suite criterion already is one. Mirrors `rubricCheckQuestionValidator` in
+ * the backend's `convex/lib/judgeConfig.ts`, and a pass line is required.
+ */
+export type RubricCheckQuestion = {
+  id: string;
+  kind: "choice" | "score";
+  label: string;
+  instructions: string;
+  /** `choice` only: 2 to 20 options. */
+  options?: Array<{ id: string; label: string; description?: string }>;
+  /** `score` only: 2 to 10 ordered levels, lowest first. */
+  levels?: string[];
+  /** `choice`: the option ids that pass. `score`: the lowest passing level. */
+  pass: { anyOf?: string[]; minLevel?: number };
+};
+
+/**
+ * The rubric-checks slot: one typed question per suite criterion, plus the
+ * questions above, answered by a classifier with a probability each. Always
+ * advisory; it rides the goal-completion judge, so it grades exactly the
+ * trials that judge grades.
+ */
+export type RubricChecksJudgeSlot = {
+  enabled?: boolean;
+  role?: "advisory";
+  questions?: RubricCheckQuestion[];
+};
+
+/** Hand-mirrored from the backend's `convex/lib/judgeConfig.ts`. */
+export const MAX_RUBRIC_CHECK_QUESTIONS = 10;
+export const MIN_RUBRIC_CHECK_OPTIONS = 2;
+export const MAX_RUBRIC_CHECK_OPTIONS = 20;
+export const MIN_RUBRIC_CHECK_LEVELS = 2;
+export const MAX_RUBRIC_CHECK_LEVELS = 10;
+export const MAX_RUBRIC_CHECK_LABEL_LENGTH = 200;
+export const MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH = 1000;
+
 export type GoalJudgeConfig = {
   goalCompletion?: GoalCompletionJudgeSlot;
   groundedness?: GroundednessJudgeSlot;
+  rubricChecks?: RubricChecksJudgeSlot;
 };
+
+/**
+ * The slots a goal-completion edit must carry forward untouched. The backend
+ * preserves an omitted slot too, but a client that DROPS a stored one sends an
+ * envelope that looks like a deliberate clear to every other reader.
+ */
+export const RESERVED_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
 
 /** Per-item judge override (per-case in Evals). Opt-out only in V1. */
 export type GoalJudgeConfigOverride = {
   goalCompletion?: {
+    enabled?: boolean;
+  };
+  rubricChecks?: {
     enabled?: boolean;
   };
 };

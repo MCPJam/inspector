@@ -43,7 +43,7 @@ describe("ui-actions (hosted mode)", () => {
     const result = resolveUiNavigationTarget("tracing");
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toContain('"tracing" is not available in hosted mode');
+      expect(result.reason).toContain('"tracing" isn’t available in MCPJam’s hosted web app');
     }
     expect(trackMock).toHaveBeenCalledWith(
       "ui_navigation_rejected",

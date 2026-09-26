@@ -46,6 +46,7 @@ export const SWARM_FINDING_COVERAGE_NOTES = [
   "partialRead",
   "toolCatalogMissing",
   "mechanismsRejected",
+  "analysisUnavailable",
 ] as const;
 /**
  * A fact the runtime RECORDED about a session — not a model's reading of it.

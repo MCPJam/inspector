@@ -18,10 +18,11 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 | `-32600` | [Invalid request](#invalid-request) |
 | `-32601` | [Method not found](#method-not-found) |
 | `-32602` | [Invalid params](#invalid-params) |
-| `-32603` | [Internal error](#internal-error) |
+| `-32603` | [Internal error](#internal-error) / [Invalid response format](#invalid-response-format) |
 | `-32000` | [Connection closed](#connection-closed) |
 | `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
 | `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
+| `-32021` | [Missing required client capability](#missing-required-client-capability) |
 | `-32042` | [URL elicitation required](#url-elicitation-required) |
 
 ### Parse error
@@ -98,6 +99,21 @@ The server hit an unexpected error while handling the request.
 - Check the server's logs around the time of the error.
 - Retry the request once the server is healthy.
 
+### Invalid response format
+
+`-32603 — jsonrpc/invalid_response_format`
+
+The server replied, but the result was not a valid MCP tool, resource, or prompt payload.
+
+**Why this happened**
+- The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).
+
+**Next steps**
+- Inspect the result in the Traffic Log and compare it to the MCP result shape.
+- Return `{ content: [{ type: "text", text: "..." }] }` from the handler, or the matching resource/prompt result.
+
+> The `-32603` code is overloaded between a generic internal error and `invalid_response_format`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+
 ### Connection closed
 
 `-32000 — jsonrpc/connection_closed`
@@ -162,6 +178,20 @@ The server does not support any protocol version this inspector offered.
 **Next steps**
 - Update the inspector to a newer build.
 - Check the supported versions list in the server's `initialize` response.
+
+### Missing required client capability
+
+`-32021 — jsonrpc/missing_required_client_capability`
+
+The server refused the request because the client did not advertise a capability the operation requires.
+
+**Likely causes**
+- A server-initiated input request (elicitation, sampling) needs a client capability MCPJam did not declare.
+- The connection advertised a capability set the server considers insufficient for this operation.
+
+**Next steps**
+- Enable the required client capability in the connection's Client settings.
+- Check the server's documentation for which client capabilities it requires.
 
 ### URL elicitation required
 
@@ -547,7 +577,7 @@ This connection is pinned to a specific MCP protocol version that the server doe
 - Click **Change protocol version** in the error banner or toast to open the client's **MCP Protocol** tab, then set the version to **Automatic** to negotiate whatever the server supports.
 - Or pick the version the server advertises — `server/discover` (modern) or the `initialize` response (legacy) lists the supported versions.
 
-### Paginated tool / header discovery unsupported
+### Paginated tool and header discovery unsupported
 
 `sdk/paginated_tool_header_discovery_unsupported`
 
@@ -594,6 +624,19 @@ Your LLM provider rejected the API key for this request.
 - Add or update your API key under **Settings → LLM Providers**.
 - Verify the key in the provider's dashboard.
 
+### Provider not allowlisted
+
+`provider/not_allowlisted`
+
+This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. This is a setting on MCPJam's side, not a problem with your API key. Retrying or changing your key won't help.
+
+**Likely causes**
+- MCPJam's hosted gateway does not have this model's provider on its provider allowlist.
+
+**Next steps**
+- Choose a model from a different provider.
+- Add your own key for this provider under **Settings → LLM Providers** (BYOK) to run the model on your key instead of MCPJam's gateway.
+
 ### Provider quota
 
 `provider/quota`
@@ -627,12 +670,19 @@ A frontier model was selected but the request requires a signed-in account.
 
 ### Out of MCPJam credits
 
-`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit`
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
 
-MCPJam refused the call before it reached a provider, because the account's own
-allowance is spent. Which allowance depends on the plan: free accounts share a
-daily bucket per organization, paid plans spend a monthly allowance that renews
-with the billing period.
+MCPJam refused the call before it reached a provider. For the daily, monthly,
+and general codes, the account's own allowance is spent.
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. Which allowance depends on the plan: free accounts
+share a daily bucket per organization, paid plans spend a monthly allowance that
+renews with the billing period.
+
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. MCPJam reserves a request's worst-case cost before
+it runs, so a cheaper model or a shorter conversation can fit where this one did
+not.
 
 **Next steps**
 - **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
@@ -650,6 +700,54 @@ When credits run out during a Swarm or Eval run, blocked work stops and you rece
   turns are always billed to MCPJam and have no BYOK path, so adding a key does
   not lift this limit for a swarm.
 </Warning>
+
+### Provider failed fallback not permitted
+
+`provider/fallback_prohibited`
+
+The model's provider failed and the saved model selection does not allow a
+fallback provider, so the request stopped instead of running somewhere other
+than where it was asked to. Evals, swarms and judges default to no fallback, so
+a result never silently comes from a different provider than the one recorded.
+
+**Next steps**
+- Retry — the provider's failure may be temporary.
+- Pick a different model, or a model on a connection you control.
+
+### MCPJam platform budget
+
+`provider/mcpjam_platform_budget`
+
+The shared free allowance is exhausted or temporarily paused. This limit applies across free usage, not just your account, so it can appear even when your own allowance is untouched.
+
+**Next steps**
+- Wait until the reset time shown in the error, if one is present.
+- Use purchased credits, or add your own API key under **Settings → LLM Providers** for chat.
+
+### Account suspended
+
+`account/suspended`
+
+MCPJam has suspended this account, so billed requests are refused.
+
+**Next steps**
+- Contact [founders@mcpjam.com](mailto:founders@mcpjam.com) for support.
+
+### Server rate limited
+
+`server/rate_limited`
+
+The MCP server rejected the request with HTTP 429 (too many requests). This is the server's own limit, not your LLM provider's — see [Provider quota](#provider-quota) for that case.
+
+**Likely causes**
+- The server enforces its own per-client rate limit.
+- An upstream API the server calls is throttling it.
+- A burst of tool calls exceeded what the server allows.
+
+**Next steps**
+- Wait for the server's limit window to reset, then retry.
+- Reduce concurrency or the number of tool calls in the run.
+- Check the server's own rate-limit documentation or logs.
 
 ---
 
