@@ -2261,6 +2261,7 @@ describe("POST /api/mcp/chat-v2", () => {
             projectId: "project-1",
             providerKey: "custom:local-one",
             model: "custom:local-one:m-1",
+            modelWorkload: { purpose: "chat", hasTools: expect.any(Boolean), hasUserImages: true },
           });
           return Response.json({
             ok: true,
@@ -2290,7 +2291,7 @@ describe("POST /api/mcp/chat-v2", () => {
 
       try {
         const res = await postAuthenticatedJson({
-          messages: [{ role: "user", content: "Hello" }],
+          messages: [{ role: "user", content: [{ type: "image", image: "data:image/png;base64,aA==" }] }],
           model: {
             id: "custom:local-one:m-1",
             provider: "custom",

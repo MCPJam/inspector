@@ -190,6 +190,17 @@ describe("buildEvalsUiTools", () => {
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
+  it("ui_generate_eval_tests forwards the environment a mixed suite generates for", async () => {
+    await getTool("ui_generate_eval_tests").execute({
+      suite: "Asana smoke",
+      environment: "Claude · openai/gpt-5",
+    });
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "generateEvalTests",
+      payload: { suite: "Asana smoke", environment: "Claude · openai/gpt-5" },
+    });
+  });
+
   it("ui_delete_eval_suite dispatches deleteEvalSuite and requires 'suite'", async () => {
     await getTool("ui_delete_eval_suite").execute({ suite: "Asana smoke" });
     expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({

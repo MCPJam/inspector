@@ -21,6 +21,7 @@ import { getCanonicalModelId } from "@/shared/types";
 import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
 import {
   getHarnessAdapter,
   type HarnessId,
@@ -61,14 +62,12 @@ import {
  * ignores the id and picks its own model while the session, the trace and the
  * eval metadata all record the id as the model that ran.
  *
- * A `false` here means DIFFERENT things for the two arms, and callers have to
- * honour the difference. For a brokered harness it means "the emulated engine
- * can run this instead" — a real fallback, since that engine honours org BYOK.
- * For an external-account harness there is NO such fallback: the emulated
- * engine cannot run a sentinel at all, and running the host's ordinary id under
- * the runtime's name is precisely the mis-attribution this rule exists to stop.
- * `assistant-turn` therefore THROWS on this arm instead of degrading; see the
- * note at its dispatch.
+ * A `false` here is a refusal on BOTH arms. There is no fallback to the
+ * emulated engine: a turn asked to run a harness either runs that harness or
+ * fails with the pre-flight's reason (`assistant-turn` throws it, via
+ * {@link harnessModelRefusal}). Running a different engine under the harness's
+ * name is the mis-attribution this rule exists to stop, whichever arm it
+ * arrives through.
  */
 export function harnessModelEligibleForRuntime(args: {
   adapter: HarnessRuntimeAdapter;
@@ -78,27 +77,84 @@ export function harnessModelEligibleForRuntime(args: {
   provider?: string;
   /** The picker's own-provider stamp; see `isHostedModelDefinition`. */
   hosted?: boolean;
+  /** What the turn is for — decides whether an `unknown` (unverified) pair
+   *  runs. Defaults to the strict reading (`eval`). */
+  purpose?: HarnessModelPurpose;
 }): boolean {
-  if (args.adapter.modelAccess === "external-account") {
-    return (
-      externalAccountHostModelRefusalReason({
-        harnessId: args.adapter.id,
-        modelId: args.modelId,
-      }) === undefined
-    );
-  }
-  if (
-    !isHostedModelDefinition({
-      id: args.modelId,
-      provider: args.provider,
-      hosted: args.hosted,
-    })
-  ) {
-    return false;
-  }
-  return args.adapter.supportsModel(
-    getCanonicalModelId(args.modelId, args.provider),
+  return (
+    harnessModelRefusal({
+      adapter: args.adapter,
+      model: { id: args.modelId, provider: args.provider, hosted: args.hosted },
+      purpose: args.purpose ?? "eval",
+    }).refusal === undefined
   );
+}
+
+/**
+ * The harness-model purpose a turn's `sourceType` implies. Only Playground
+ * chat (`direct`) may run an unverified harness × model pair; swarms, evals and
+ * scenarios — and anything unlabelled — take the strict reading.
+ */
+export function harnessModelPurposeForSourceType(
+  sourceType: string | undefined,
+): HarnessModelPurpose {
+  if (sourceType === "direct") return "chat";
+  if (sourceType === "swarm") return "swarm";
+  return "eval";
+}
+
+/**
+ * The MODEL rules of the pre-flight, as a value both the pre-flight and the
+ * dispatch read — so the refusal a turn throws is word-for-word the refusal the
+ * pre-flight reports.
+ *
+ *  - external-account harness: the host must carry the runtime's sentinel
+ *    ({@link externalAccountHostModelRefusalReason}); nothing else applies.
+ *  - brokered harness: the model must be MCPJam-provided (`model-not-hosted`),
+ *    and the harness-model evidence table at the adapter's pinned runtime
+ *    version must admit it for `purpose`: `unsupported` is refused
+ *    (`model-unsupported`); `unknown` is refused for evals and swarms
+ *    (`model-unverified`, "not verified for <harness> <version>") and allowed
+ *    in Playground chat, where the same sentence comes back as `warning`.
+ */
+export function harnessModelRefusal(args: {
+  adapter: HarnessRuntimeAdapter;
+  model: { id: string; provider?: string; hosted?: boolean };
+  /** See `hostModelId` on {@link checkHarnessRuntimeAvailable}. */
+  hostModelId?: string;
+  purpose: HarnessModelPurpose;
+}): {
+  refusal?: { kind: HarnessUnavailableKind; reason: string };
+  warning?: string;
+} {
+  const { adapter } = args;
+  if (adapter.modelAccess === "external-account") {
+    const reason = externalAccountHostModelRefusalReason({
+      harnessId: adapter.id,
+      modelId: args.hostModelId ?? args.model.id,
+    });
+    return reason ? { refusal: { kind: "model-unsupported", reason } } : {};
+  }
+  const name = adapter.displayName;
+  if (!isHostedModelDefinition(args.model)) {
+    return {
+      refusal: {
+        kind: "model-not-hosted",
+        reason:
+          `the ${name} harness only runs MCPJam-provided models — pick one on ` +
+          "this host to run the real runtime",
+      },
+    };
+  }
+  const verdict = adapter.modelSupport(
+    getCanonicalModelId(args.model.id, args.model.provider),
+  );
+  if (verdict.status === "supported") return {};
+  if (verdict.status === "unsupported") {
+    return { refusal: { kind: "model-unsupported", reason: verdict.reason } };
+  }
+  if (args.purpose === "chat") return { warning: verdict.reason };
+  return { refusal: { kind: "model-unverified", reason: verdict.reason } };
 }
 
 /**
@@ -208,10 +264,15 @@ export type HarnessUnavailableKind =
   | "computers-unconfigured"
   | "tool-approval"
   | "model-not-hosted"
-  | "model-unsupported";
+  | "model-unsupported"
+  /** The evidence table has not verified this model on the harness's runtime
+   *  version. Refused for evals and swarms; chat runs it with a warning. */
+  | "model-unverified";
 
 export type HarnessAvailability =
-  | { ok: true }
+  /** `warning`: the turn may run, but the reader should be told something —
+   *  today only an unverified harness × model pair in Playground chat. */
+  | { ok: true; warning?: string }
   | { ok: false; kind: HarnessUnavailableKind; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
@@ -287,6 +348,13 @@ export function checkHarnessRuntimeAvailable(args: {
    * chokepoint — rather than duplicated here.
    */
   localExecution?: boolean;
+  /**
+   * What the turn is for. Decides what an `unknown` harness × model verdict
+   * means: refused for `eval` / `swarm` (results someone will compare), run
+   * with a `warning` for Playground `chat`. Defaults to `eval` — the strict
+   * reading — so a caller that forgets to say is never the lenient one.
+   */
+  purpose?: HarnessModelPurpose;
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
@@ -376,56 +444,29 @@ export function checkHarnessRuntimeAvailable(args: {
   // are questions about a value nothing consumes. Answering them would refuse
   // every Cursor host — its own catalog model is the `cursor/auto` sentinel,
   // which is deliberately not an MCPJam-hosted model. They are replaced by one
-  // rule of their own, immediately below, rather than by nothing.
-  const canonicalModelId = getCanonicalModelId(
-    args.model.id,
-    args.model.provider,
-  );
-
-  // …and here is that replacement for an external-account host: its model must
-  // be the runtime's own sentinel. Same principle as the two rules below —
-  // "never report one runtime's answer under another model's name" — applied to
-  // the arm where the runtime, not MCPJam, does the choosing. The condition
-  // itself lives in `externalAccountHostModelRefusalReason` because the
-  // DISPATCH has to reach the identical verdict, and act on it differently.
+  // rule of their own rather than by nothing: the model must be the runtime's
+  // own sentinel, held to the HOST's configured id (falling back to the turn's
+  // model only when the host pinned none — nothing consumes the turn's model on
+  // this arm, so validating it would let a request satisfy the rule by sending
+  // `cursor/auto` in the body while the host carried an ordinary id).
   //
-  // Held to the HOST's configured id, falling back to the turn's model only
-  // when the host pinned none: nothing consumes the turn's model on this arm,
-  // so validating it would let a request satisfy the rule by sending
-  // `cursor/auto` in the body while the host carried an ordinary id.
-  const externalAccountRefusal = externalAccountHostModelRefusalReason({
-    harnessId: args.harnessId,
-    modelId: args.hostModelId ?? args.model.id,
+  // The brokered rules: MCPJam-provided (the harness authenticates with the
+  // MCPJam gateway credential, not org BYOK), then the harness-model evidence
+  // table at the adapter's pinned runtime version — so a model the runtime
+  // would silently swap for its own default, or run without tools, is refused
+  // rather than degraded to emulated. All of it lives in `harnessModelRefusal`
+  // because the DISPATCH (`assistant-turn`) must reach the identical verdict.
+  const modelVerdict = harnessModelRefusal({
+    adapter,
+    model: args.model,
+    ...(args.hostModelId !== undefined ? { hostModelId: args.hostModelId } : {}),
+    purpose: args.purpose ?? "eval",
   });
-  if (externalAccountRefusal) {
-    return {
-      ok: false,
-      kind: "model-unsupported",
-      reason: externalAccountRefusal,
-    };
+  if (modelVerdict.refusal) {
+    return { ok: false, ...modelVerdict.refusal };
   }
-
-  if (brokered && !isHostedModelDefinition(args.model)) {
-    return {
-      ok: false,
-      kind: "model-not-hosted",
-      reason:
-        `the ${name} harness only runs MCPJam-provided models — pick one on ` +
-        "this host to run the real runtime",
-    };
-  }
-
-  // Runtime model support: even an MCPJam-provided model may not be one this
-  // runtime can run (e.g. a non-gpt-5 model on Codex). Reject it rather than let
-  // the runtime silently substitute its own default model.
-  if (brokered && !adapter.supportsModel(canonicalModelId)) {
-    return {
-      ok: false,
-      kind: "model-unsupported",
-      reason:
-        `the ${name} harness can't run this host's model — pick a ` +
-        `${name}-compatible model to run the real runtime`,
-    };
+  if (modelVerdict.warning) {
+    return { ok: true, warning: modelVerdict.warning };
   }
 
   return { ok: true };
