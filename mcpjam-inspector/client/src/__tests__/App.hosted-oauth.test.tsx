@@ -690,6 +690,27 @@ describe("App hosted OAuth callback handling", () => {
     },
   );
 
+  it("reloads once instead of erroring when a guest's user row disappears", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+    sessionStorage.clear();
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser" ? null : undefined,
+    );
+
+    const first = render(<App />);
+    expect(screen.queryByTestId("user-setup-error")).not.toBeInTheDocument();
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    render(<App />);
+    expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it("shows loading before any hosted authorize CTA can render", async () => {
     const view = render(<App />);
 

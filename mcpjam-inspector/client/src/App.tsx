@@ -484,6 +484,8 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
   );
 }
 
+const GUEST_ROW_RELOAD_KEY = "mcpjam:guest-row-reload";
+
 function UserSetupError() {
   return (
     <div
@@ -2842,6 +2844,35 @@ export default function App() {
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
+  // A guest whose row vanished was most likely promoted in another tab; a
+  // reload picks up the shared AuthKit session. Once per tab to avoid loops.
+  const [guestReloadUsed] = useState(() => {
+    try {
+      return sessionStorage.getItem(GUEST_ROW_RELOAD_KEY) !== null;
+    } catch {
+      return true;
+    }
+  });
+  const shouldReloadForMissingGuest =
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    !workOsUser &&
+    !isWorkOsLoading &&
+    currentUser === null &&
+    !isEnsuringUser &&
+    !guestReloadUsed;
+  useEffect(() => {
+    try {
+      if (shouldReloadForMissingGuest) {
+        sessionStorage.setItem(GUEST_ROW_RELOAD_KEY, "1");
+        window.location.reload();
+      } else if (currentUser) {
+        sessionStorage.removeItem(GUEST_ROW_RELOAD_KEY);
+      }
+    } catch {
+      // Storage unavailable: fall through to the setup error.
+    }
+  }, [shouldReloadForMissingGuest, currentUser]);
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -5428,7 +5459,10 @@ export default function App() {
     (currentUser === undefined ||
       // Session revocation can return a null user before Convex's auth state
       // changes or WorkOS finishes navigating away. That is expected at logout.
-      (currentUser === null && (isEnsuringUser || isSignOutInProgress())))
+      (currentUser === null &&
+        (isEnsuringUser ||
+          isSignOutInProgress() ||
+          shouldReloadForMissingGuest)))
   ) {
     return <LoadingScreen />;
   }
