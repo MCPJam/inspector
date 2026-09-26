@@ -861,6 +861,52 @@ describe("eval runner reads saved model selections", () => {
       fallback: { provider: "none", model: "none" },
     };
 
+    it("admits the prepared toolset before a local eval provider call", async () => {
+      preparedToolsOverride.current = {
+        search: {
+          description: "Search",
+          inputSchema: { type: "object", properties: {} },
+        },
+      };
+      const admissions: unknown[] = [];
+      fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+        if (url.endsWith("/stream/org/resolve")) {
+          const request = JSON.parse(String(init.body));
+          if (request.modelWorkload) {
+            admissions.push(request.modelWorkload);
+            expect(streamTextMock).not.toHaveBeenCalled();
+            return Response.json(
+              {
+                ok: false,
+                code: "capability_missing",
+                error: "tools unsupported",
+              },
+              { status: 400 },
+            );
+          }
+          return Response.json({
+            ok: true,
+            runtimeLocation: "local",
+            provider: {
+              providerKey: "ollama",
+              baseUrl: "http://localhost:11434",
+              modelIds: ["llama3"],
+            },
+          });
+        }
+        return Response.json({ ok: true });
+      });
+      await run(
+        { model: "llama3", provider: "ollama", selection: ORG_OLLAMA_LOCAL },
+        { orgModelConfigTarget: { projectId: "project-local-admission" } },
+      );
+      expect(admissions).toEqual([
+        { purpose: "evalTarget", hasTools: true, hasUserImages: false },
+      ]);
+      expect(streamTextMock).not.toHaveBeenCalled();
+      expect(requestTo("/stream/org/local-usage")).toBeNull();
+    });
+
     it("posts /stream/org/local-usage naming the iteration, with the selection and its record", async () => {
       fetchMock.mockImplementation(async (url: string) =>
         url === "https://example.convex.site/stream/org/resolve"

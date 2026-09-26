@@ -14,7 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { simulateReadableStream } from "ai";
+import { jsonSchema, simulateReadableStream } from "ai";
 import type { ModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -292,6 +292,12 @@ async function runLocalOrgTurn(options: { abort?: boolean } = {}) {
     attribution: { journeyRunId: "journey-run-1" },
     modelSelection: ORG_OLLAMA,
     settings: { temperature: 0.2 },
+    tools: {
+      search: { inputSchema: jsonSchema({ type: "object", properties: {} }) },
+    },
+    messages: [
+      { role: "user", content: [{ type: "image", image: "private-image" }] },
+    ],
   });
   expect(rt.modelSource).toBe("local_byok");
   const controller = new AbortController();
@@ -327,6 +333,33 @@ async function runLocalOrgTurn(options: { abort?: boolean } = {}) {
 }
 
 describe("local-runtime org turn → /stream/org/local-usage", () => {
+  it("sends the effective swarm workload before running locally", async () => {
+    await runLocalOrgTurn();
+    const call = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/stream/org/resolve"),
+    );
+    const body = JSON.parse(String((call?.[1] as RequestInit).body));
+    expect(body.modelWorkload).toEqual({
+      purpose: "evalTarget",
+      hasTools: true,
+      hasUserImages: true,
+    });
+    expect(body.modelSelection).toEqual(ORG_OLLAMA);
+    expect(JSON.stringify(body)).not.toContain("private-image");
+  });
+
+  it("never dispatches a local turn when admission refuses its workload", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json(
+        { ok: false, code: "capability_missing", error: "tools unsupported" },
+        { status: 400 },
+      ),
+    );
+    await expect(runLocalOrgTurn()).rejects.toThrow("tools unsupported");
+    expect(modelCalls).toHaveLength(0);
+    expect(localUsageBodies()).toHaveLength(0);
+  });
+
   it("ok: the body carries the selection and a closed execution record", async () => {
     await runLocalOrgTurn();
     // The saved temperature reached the provider call.

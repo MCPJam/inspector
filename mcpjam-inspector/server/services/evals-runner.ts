@@ -1,3 +1,4 @@
+import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
@@ -5065,6 +5066,29 @@ const runLocalIteration = async ({
         : {}),
       ...(orgLocalUsage
         ? {
+            beforeModelCall: async (workload: {
+              tools: ToolSet;
+              messages: ModelMessage[];
+            }) => {
+              const admitted = await resolveOrgProviderRuntimeForTarget(
+                { projectId: orgLocalUsage.projectId },
+                orgLocalUsage.providerKey,
+                String(modelDefinition.id),
+                { bearerToken: convexAuthToken },
+                {
+                  modelSelection: orgLocalUsage.modelSelection,
+                  modelWorkload: modelWorkloadFor({
+                    sourceType: "eval",
+                    ...workload,
+                  }),
+                },
+              );
+              if (admitted.runtimeLocation !== "local") {
+                throw new Error(
+                  "Organization runtime changed before the eval turn. Restart the run.",
+                );
+              }
+            },
             onModelCallSettled: (event: LocalModelCallSettled) =>
               postEvalOrgLocalUsage({
                 context: orgLocalUsage,
