@@ -21,7 +21,6 @@ import {
   convexAttachSkillFiles,
   convexCreateSkill,
   convexDeleteSkill,
-  convexGenerateSkillFileUploadUrl,
   convexGetSkill,
   convexGetSkillByName,
   convexGetSkillFileUrl,
@@ -276,15 +275,6 @@ export function promoteCloudSkill(
 // ── supporting files (v2) ──────────────────────────────────────────────────
 
 export type { CloudSkillFileMeta };
-
-export function generateCloudSkillFileUploadUrl(
-  ctx: CloudSkillsContext,
-  skillId: string,
-): Promise<{ uploadUrl: string }> {
-  return run(() =>
-    convexGenerateSkillFileUploadUrl(ctx.authHeader, ctx.projectId, skillId),
-  );
-}
 
 export function attachCloudSkillFiles(
   ctx: CloudSkillsContext,

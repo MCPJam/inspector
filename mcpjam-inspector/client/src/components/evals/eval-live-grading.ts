@@ -34,6 +34,7 @@ import {
   isPinnedTurn,
   type PromptTurn,
 } from "@/shared/steps";
+import { startsUserTurn } from "@/shared/user-context-message";
 import { computeIterationPassed } from "./pass-criteria";
 import type { EvalIteration } from "./types";
 
@@ -99,7 +100,8 @@ export function extractActualToolCalls(messages: UIMessage[]): LiveToolCall[] {
  * the runner builds `toolsCalledByPrompt` (one bucket per model turn) so per-turn
  * grading sees only the calls made in response to that turn's prompt — never a
  * call from an earlier or later turn. Tool calls before the first user message
- * (unusual in a Playground thread) are ignored.
+ * (unusual in a Playground thread) are ignored, and so is the context a user
+ * adds alongside a prompt, which opens no turn (`startsUserTurn`).
  */
 export function extractActualToolCallsByTurn(
   messages: UIMessage[],
@@ -108,6 +110,7 @@ export function extractActualToolCallsByTurn(
   let current: LiveToolCall[] | null = null;
   for (const message of messages) {
     if (message.role === "user") {
+      if (!startsUserTurn(message)) continue;
       current = [];
       turns.push(current);
       continue;

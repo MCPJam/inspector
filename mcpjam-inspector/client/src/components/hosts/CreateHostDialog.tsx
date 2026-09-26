@@ -15,6 +15,10 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
+import {
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+  useCanManageProjectClients,
+} from "@/hooks/useProjects";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
@@ -58,6 +62,10 @@ export function CreateHostDialog({
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
+  // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
+  const { canManage: canManageClients, isLoading: roleLoading } =
+    useCanManageProjectClients({ isAuthenticated, projectId });
+  const adminOnly = !roleLoading && !canManageClients;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
@@ -111,6 +119,7 @@ export function CreateHostDialog({
       ? "Selected client template is unavailable."
       : null;
   const canCreate =
+    canManageClients &&
     Boolean(name.trim()) &&
     !isSaving &&
     catalogState.status === "live" &&
@@ -138,6 +147,7 @@ export function CreateHostDialog({
   };
 
   const handleCreate = async () => {
+    if (!canManageClients) return;
     const trimmed = name.trim();
     if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
       if (trimmed && catalogState.status !== "loading") {
@@ -235,7 +245,11 @@ export function CreateHostDialog({
                 );
               })}
             </div>
-            {templatesUnavailableMessage && (
+            {adminOnly ? (
+              <p className="text-xs text-muted-foreground">
+                {PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE}
+              </p>
+            ) : templatesUnavailableMessage && (
               <p className="text-xs text-muted-foreground">
                 {templatesUnavailableMessage}
               </p>

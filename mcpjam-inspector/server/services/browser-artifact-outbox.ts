@@ -46,6 +46,7 @@ import type {
 import { logger } from "../utils/logger.js";
 import { writeUntilAcknowledged } from "../utils/acknowledged-write.js";
 import { uploadVideoBlob } from "../utils/mcp-app-widget-capture.js";
+import type { SnapshotUploadTarget } from "../utils/snapshot-upload-target.js";
 import type { BrowserSessionContext } from "./browser-session-context.js";
 import {
   serializeBrowserStepsForBackend,
@@ -121,6 +122,14 @@ export function createBrowserArtifactOutbox(args: {
 }): BrowserArtifactOutbox {
   const { chatSessionId, convexAuthToken, scenarioId, accessVersion, logScope } =
     args;
+  // Screenshots and the replay upload as the session's own identity, scoped
+  // to this chat and, for a hosted scenario, its grant (MJ-006).
+  const uploadTarget: SnapshotUploadTarget = {
+    convexAuthToken,
+    chatSessionId,
+    ...(scenarioId !== undefined ? { scenarioId } : {}),
+    ...(accessVersion !== undefined ? { accessVersion } : {}),
+  };
 
   // Both keyed by promptIndex so repeat takes for the same turn merge instead of
   // producing two writes that would each restamp the same rows.
@@ -205,16 +214,14 @@ export function createBrowserArtifactOutbox(args: {
    * (a failed upload drops the blob id and KEEPS the row), so a throw here is a
    * systemic failure about one record, not a lost turn.
    */
-  const serializePending = async (
-    convexClient: ConvexHttpClient,
-  ): Promise<void> => {
+  const serializePending = async (): Promise<void> => {
     for (const bucket of [...raw.values()]) {
       while (bucket.observations.length > 0) {
         const obs = bucket.observations[0]!;
         try {
           const [serialized] = await serializeRenderObservationsForBackend(
             [obs],
-            convexClient,
+            uploadTarget,
           );
           bucket.observations.shift();
           if (serialized) {
@@ -240,7 +247,7 @@ export function createBrowserArtifactOutbox(args: {
         try {
           const [serialized] = await serializeBrowserStepsForBackend(
             [step],
-            convexClient,
+            uploadTarget,
           );
           bucket.steps.shift();
           if (serialized) {
@@ -295,10 +302,10 @@ export function createBrowserArtifactOutbox(args: {
 
     async stageVideo(bytes, options) {
       if (videoAttached || stagedVideoBlobId || bytes.length === 0) return;
-      const convexClient = getClient();
-      if (!convexClient) return;
+      // No client means nothing can attach the video either.
+      if (!getClient()) return;
       try {
-        stagedVideoBlobId = await uploadVideoBlob(convexClient, bytes, {
+        stagedVideoBlobId = await uploadVideoBlob(uploadTarget, bytes, {
           ...(options?.mime ? { contentType: options.mime } : {}),
         });
         // Held beside the blob id and written with it, never on its own:
@@ -306,10 +313,10 @@ export function createBrowserArtifactOutbox(args: {
         // and an fps under an empty player.
         stagedVideoMeta = stagedVideoBlobId ? options?.meta : undefined;
         if (stagedVideoBlobId === undefined) {
-          // `uploadVideoBlob` also returns undefined WITHOUT throwing — an
-          // unusable upload URL, or a response carrying no storageId. Staging
-          // happens once per session, so this loss is permanent; say so rather
-          // than letting the terminal report a bare `videoAttached: false`.
+          // `uploadVideoBlob` may also return undefined WITHOUT throwing.
+          // Staging happens once per session, so this loss is permanent; say
+          // so rather than letting the terminal report a bare
+          // `videoAttached: false`.
           logger.warn(
             `[${logScope}] replay video upload returned no storage id; dropping it`,
             { chatSessionId, bytes: bytes.length },
@@ -336,7 +343,7 @@ export function createBrowserArtifactOutbox(args: {
         };
       }
 
-      await serializePending(convexClient);
+      await serializePending();
 
       const auth = {
         ...(scenarioId !== undefined ? { scenarioId } : {}),

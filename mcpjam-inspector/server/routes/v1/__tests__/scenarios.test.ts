@@ -64,7 +64,7 @@ function call(method: "PUT" | "DELETE", body?: unknown, query = "") {
             headers: { "content-type": "application/json" },
           }
         : {}),
-    }
+    },
   );
 }
 
@@ -111,7 +111,7 @@ describe("mounted behind the v1 router", () => {
 
     const res = await app.request(
       `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
-      { method: "PUT" }
+      { method: "PUT" },
     );
     expect(res.status).toBe(401);
     // And it never reached the handler.
@@ -132,12 +132,12 @@ describe("mounted behind the v1 router", () => {
 
     const res = await app.request(
       `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
-      { method: "PUT", headers: { Authorization: "Bearer some-jwt" } }
+      { method: "PUT", headers: { Authorization: "Bearer some-jwt" } },
     );
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledWith(
       "scenarios:publishEnvironmentScenario",
-      { environmentId: ENV }
+      { environmentId: ENV },
     );
   });
 });
@@ -176,7 +176,7 @@ describe("PUT .../scenario", () => {
     // One mutation, overrides included — never publish-then-adjust, which
     // would leave the scenario briefly live in the default mode.
     mutationMock.mockResolvedValue(
-      published({ name: "Beta run", mode: "invited_only" })
+      published({ name: "Beta run", mode: "invited_only" }),
     );
 
     const res = await call("PUT", {
@@ -192,7 +192,7 @@ describe("PUT .../scenario", () => {
         name: "Beta run",
         description: "Invited testers only",
         mode: "invited_only",
-      }
+      },
     );
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.mode).toBe("invited_only");
@@ -223,7 +223,7 @@ describe("PUT .../scenario", () => {
     const res = await call("PUT");
     expect(res.status).toBe(200);
     expect((await res.json()) as Record<string, unknown>).not.toHaveProperty(
-      "overridesIgnored"
+      "overridesIgnored",
     );
   });
 
@@ -249,7 +249,7 @@ describe("PUT .../scenario", () => {
       {
         projectId: PROJECT,
         environmentId: ENV,
-      }
+      },
     );
   });
 
@@ -267,8 +267,8 @@ describe("PUT .../scenario", () => {
     mutationMock.mockRejectedValue(
       convexError(
         "FEATURE_UNAVAILABLE",
-        "User testing is not currently available for your organization."
-      )
+        "User testing is not currently available for your organization.",
+      ),
     );
 
     const res = await call("PUT");
@@ -279,7 +279,7 @@ describe("PUT .../scenario", () => {
     // request. This request is fine; the server refuses to authorize it.
     expect(body.code).toBe("FORBIDDEN");
     expect(body.message).toBe(
-      "User testing is not currently available for your organization."
+      "User testing is not currently available for your organization.",
     );
   });
 
@@ -291,8 +291,8 @@ describe("PUT .../scenario", () => {
     mutationMock.mockRejectedValue(
       convexError(
         "SIGN_IN_REQUIRED",
-        "Sign in to use User testing — it's off for guests."
-      )
+        "Sign in to use User testing — it's off for guests.",
+      ),
     );
 
     const res = await call("PUT");
@@ -302,7 +302,7 @@ describe("PUT .../scenario", () => {
     // Forwarded verbatim — it names the surface, and rewriting it in the
     // mapper would put that copy in two places.
     expect(body.message).toBe(
-      "Sign in to use User testing — it's off for guests."
+      "Sign in to use User testing — it's off for guests.",
     );
   });
 
@@ -310,15 +310,15 @@ describe("PUT .../scenario", () => {
     mutationMock.mockRejectedValue(
       convexError(
         "FORBIDDEN",
-        "Publishing an environment scenario requires project admin (shared execution config)."
-      )
+        "Publishing an environment scenario requires project admin (shared execution config).",
+      ),
     );
     expect((await call("PUT")).status).toBe(403);
   });
 
   it("surfaces an archived environment as 409", async () => {
     mutationMock.mockRejectedValue(
-      convexError("CONFLICT", 'Environment "Checkout" is archived.')
+      convexError("CONFLICT", 'Environment "Checkout" is archived.'),
     );
     expect((await call("PUT")).status).toBe(409);
   });
@@ -348,22 +348,44 @@ describe("DELETE .../scenario", () => {
     });
   });
 
-  // An environment may back several studies, so "the scenario of this
-  // environment" stops naming one thing. `?scenarioId=` is how a caller says
-  // which; the backend refuses to guess rather than deleting whichever row an
-  // index yields first, so what reaches it has to be exactly what was asked.
-  it("names which study to take down when asked to", async () => {
+  // An environment may back several studies, so "the study of this
+  // environment" stops naming one thing. The query parameter is how a caller
+  // says which; the backend refuses to guess rather than deleting whichever
+  // row an index yields first, so what reaches it has to be exactly what was
+  // asked.
+  //
+  // BOTH spellings are read, on both paths. This parameter is how a caller
+  // names a study they already hold the id of, and refusing the spelling they
+  // have would make the rename cost them a lookup — the one place in this
+  // rename where meeting the caller half way is right rather than ambiguous,
+  // because the two names cannot disagree about which row they mean.
+  it.each([
+    ["studyId", "?studyId=cb_2"],
+    ["scenarioId", "?scenarioId=cb_2"],
+  ])("names which study to take down, given %s", async (_name, query) => {
     mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_2" });
 
-    await call("DELETE", undefined, "?scenarioId=cb_2");
+    await call("DELETE", undefined, query);
 
     expect(mutationMock).toHaveBeenCalledWith(
       "scenarios:unpublishEnvironmentScenario",
-      { environmentId: ENV, scenarioId: "cb_2" }
+      // Stored under its stored name whichever spelling addressed it.
+      { environmentId: ENV, scenarioId: "cb_2" },
     );
   });
 
-  it("sends no scenarioId at all when none was given", async () => {
+  it("prefers the canonical spelling when a caller sends both", async () => {
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_2" });
+
+    await call("DELETE", undefined, "?studyId=cb_2&scenarioId=cb_9");
+
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV, scenarioId: "cb_2" },
+    );
+  });
+
+  it("sends no study id at all when none was given", async () => {
     // Not `undefined`, not "": the single-study contract is the ABSENCE of the
     // key, and an empty one would be an id that matches nothing.
     mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_1" });
@@ -371,15 +393,17 @@ describe("DELETE .../scenario", () => {
     await call("DELETE");
     expect(mutationMock).toHaveBeenCalledWith(
       "scenarios:unpublishEnvironmentScenario",
-      { environmentId: ENV }
+      { environmentId: ENV },
     );
 
-    mutationMock.mockClear();
-    await call("DELETE", undefined, "?scenarioId=");
-    expect(mutationMock).toHaveBeenCalledWith(
-      "scenarios:unpublishEnvironmentScenario",
-      { environmentId: ENV }
-    );
+    for (const query of ["?scenarioId=", "?studyId="]) {
+      mutationMock.mockClear();
+      await call("DELETE", undefined, query);
+      expect(mutationMock, query).toHaveBeenCalledWith(
+        "scenarios:unpublishEnvironmentScenario",
+        { environmentId: ENV },
+      );
+    }
   });
 
   it("enforces the same cross-project preflight as publish", async () => {
@@ -391,7 +415,7 @@ describe("DELETE .../scenario", () => {
       {
         projectId: PROJECT,
         environmentId: ENV,
-      }
+      },
     );
   });
 });

@@ -5,12 +5,17 @@
  * reads one numbered 01–06 layout on both pages. Here the suite's rules are
  * inherited — read-only, switchable off by standard-check family — and the
  * case's own rules are edited in place. The judge row is the case's
- * judge-skipped flag. Match options and the judge cards are the suite's and
- * stay on its page.
+ * judge-skipped flag. Match options and the judge cards are edited on the
+ * suite's page; the match rows here read the case's own resolved options,
+ * because those are the ones its iterations are graded with.
  */
 
 import { Button } from "@mcpjam/design-system/button";
-import type { CasePredicates, Predicate } from "@/shared/eval-matching";
+import type {
+  CasePredicates,
+  EvalMatchOptions,
+  Predicate,
+} from "@/shared/eval-matching";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { SuiteScorerTable } from "@/components/evals/suite-scorer-table";
 import {
@@ -25,6 +30,7 @@ export function CaseChecksPage({
   predicates,
   suppressedSuiteStandardCheckIds,
   suitePredicates,
+  matchOptions,
   suiteJudgeConfig,
   onChecksChange,
   capabilities,
@@ -37,6 +43,12 @@ export function CaseChecksPage({
   predicates?: CasePredicates;
   suppressedSuiteStandardCheckIds?: string[];
   suitePredicates: Predicate[];
+  /**
+   * The case's match options, resolved over the suite's defaults. Absent, the
+   * match rows would describe the built-in defaults, which a case that
+   * overrides them is not graded with.
+   */
+  matchOptions?: EvalMatchOptions;
   /** Read only here: the judge row shows the suite's threshold and role. */
   suiteJudgeConfig?: EvalJudgeConfig;
   onChecksChange: (next: StandardCheckDraft) => void;
@@ -82,6 +94,7 @@ export function CaseChecksPage({
             judgeSkipped,
             onJudgeSkippedChange,
           }}
+          matchOptions={matchOptions}
           judgeConfig={suiteJudgeConfig}
           capabilities={capabilities}
           passOrFailHint={PASS_OR_FAIL_HINT}

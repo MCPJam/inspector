@@ -1,14 +1,15 @@
 /**
  * playground-helpers.ts
  *
- * Helper functions for the UI Playground, including
- * message injection for deterministic tool executions.
+ * Helper functions for the UI Playground, including the chat messages for a
+ * tool the user runs by hand.
  */
 
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
-import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import { buildToolRunContextMessage } from "@/shared/user-context-message";
 import { hasMcpToolResultImageCandidate } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import {
   getMcpToolResultImageRenderPlacement,
@@ -40,10 +41,30 @@ function readServerIdFromToolMeta(
 }
 
 /**
+ * The result fields a model-issued call of this tool leaves out of what the
+ * model reads: an MCP App's `_meta` and `structuredContent`, an OpenAI app's
+ * `structuredContent` (as the SDK's tool converter does).
+ */
+function modelHiddenResultFields(uiType: UIType | null): string[] {
+  switch (uiType) {
+    case UIType.MCP_APPS:
+    case UIType.OPENAI_SDK_AND_MCP_APPS:
+      return ["_meta", "structuredContent"];
+    case UIType.OPENAI_SDK:
+      return ["structuredContent"];
+    default:
+      return [];
+  }
+}
+
+/**
  * Create messages for a deterministic tool execution.
- * Injects a user message describing the execution and an assistant
- * message with the tool call result.
- * Includes invocation status message (ChatGPT-style "Invoked [toolName]").
+ *
+ * The user message tells the model what the user ran, with which arguments,
+ * and what it returned (MJ-009; see `shared/user-context-message.ts`). The
+ * assistant message renders the run in the chat — the invocation status
+ * ("Invoked [toolName]"), the tool part its widget renders from, and a text
+ * tool's output.
  */
 export function createDeterministicToolMessages(
   toolName: string,
@@ -145,17 +166,16 @@ export function createDeterministicToolMessages(
   }
 
   const messages: UIMessage[] = [
-    // User message showing the deterministic execution request
-    {
-      id: `user-${toolCallId}`,
-      role: "user",
-      parts: [
-        {
-          type: "text",
-          text: `Execute \`${toolName}\``,
-        },
-      ],
-    },
+    buildToolRunContextMessage({
+      toolCallId,
+      toolName,
+      params,
+      result,
+      ...(state === "output-error"
+        ? { errorText: options?.errorText ?? "Unknown error" }
+        : {}),
+      omitResultFields: modelHiddenResultFields(uiType),
+    }),
     // Assistant message with invocation status and dynamic tool result
     {
       id: `assistant-${toolCallId}`,

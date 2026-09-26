@@ -5,6 +5,9 @@
  * finalizes once every requested suite has settled. Directory readiness is
  * deliberately absent — it grades publisher policy and must never enter the
  * conformance score or CI verdict.
+ *
+ * Every suite dials through the hosted egress guard no matter which caller
+ * started the run: see {@link guardPersistedConformanceTransport}.
  */
 
 import {
@@ -18,6 +21,14 @@ import {
 import { createConvexClient } from "./evals/route-helpers.js";
 import { reconcileHeadlessOAuthScope } from "./conformance-oauth-headless-scope.js";
 import { logger } from "../utils/logger.js";
+import { redactHostedTransportFailures } from "../utils/hosted-transport-failure-redaction.js";
+import { HOSTED_TRANSPORT_FAILURE_DETAIL } from "../utils/hosted-doctor-redaction.js";
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+  assertAllowedHostedTargetUrl,
+} from "../utils/hosted-egress-guard.js";
+import { createConformanceFetch } from "../routes/shared/conformance.js";
 
 export type ConformanceRunSource =
   | "ui"
@@ -31,7 +42,13 @@ export type ConformanceRunSource =
 export type ExecutePersistedConformanceArgs = {
   convexToken: string;
   projectId: string;
-  server: MCPServerConfig;
+  /**
+   * The target. A `baseFetch` (or `fetchFn`) on it is the transport every
+   * suite dials through, and it is honored as given; when neither is present
+   * the run is put behind the hosted conformance guard anyway — see
+   * {@link guardPersistedConformanceTransport}.
+   */
+  server: MCPServerConfig & { fetchFn?: typeof fetch };
   suites?: ConformanceSuiteKind[];
   source: ConformanceRunSource;
   /**
@@ -267,6 +284,105 @@ function prepareReportForPersistence(
   return redactConformanceReportForSharing(scoped);
 }
 
+/**
+ * Put every suite of a persisted run behind the hosted egress guard, whoever
+ * the caller was.
+ *
+ * WHY HERE. This executor is the one door every persisted run walks through —
+ * the public `/v1` start route, the GitHub checks worker and the benchmark
+ * worker — and the target of each is a URL somebody else chose: a saved
+ * server, a sandbox running a pull request's code, a benchmarked connector.
+ * Leaving the guard to each caller is how two of the three came to pass a bare
+ * `{ url }`, which the suites dialled through the global fetch: no address
+ * classification, and redirects followed wherever they led (pentest finding
+ * MJ-001's shape, on a route the doctor fix never touched). A caller that
+ * forgets now gets the guard anyway.
+ *
+ * A DELIBERATE TRANSPORT STILL WINS. A `baseFetch`/`fetchFn` on the server
+ * config, or a `fetchFn` on the OAuth config, is used as given — the same rule
+ * as `createAuthorizedManager`'s per-server `baseFetch`. The defaults are the
+ * transports the hosted conformance routes already dial through, and both are
+ * plain `fetch` outside hosted mode, where reaching localhost is the point.
+ *
+ * EVERY transport is then wrapped by {@link redactHostedTransportFailures}, so
+ * a refused or failed dial reaches the persisted report as a verdict or one
+ * uniform sentence, never as the resolved address, socket error or TLS text
+ * the report is read back with. Also a no-op outside hosted mode.
+ */
+export function guardPersistedConformanceTransport(args: {
+  server: ExecutePersistedConformanceArgs["server"];
+  oauth?: OAuthConformanceConfig;
+}): {
+  server: ExecutePersistedConformanceArgs["server"];
+  oauth?: OAuthConformanceConfig;
+} {
+  // `baseFetch` is the transport the MCP client dials through in every suite;
+  // `fetchFn` is what the protocol suite's raw probes use. Either one alone
+  // stands in for both, so a caller that set one did not leave the other open.
+  // Read structurally: `baseFetch` exists only on the HTTP member of the union.
+  const declared = args.server as {
+    baseFetch?: typeof fetch;
+    fetchFn?: typeof fetch;
+  };
+  const transport =
+    declared.baseFetch ??
+    declared.fetchFn ??
+    createConformanceFetch("MCP server");
+  const probes = declared.fetchFn ?? transport;
+  const server = {
+    ...args.server,
+    baseFetch: redactHostedTransportFailures(transport),
+    fetchFn: redactHostedTransportFailures(probes),
+  };
+  if (!args.oauth) return { server };
+  return {
+    server,
+    oauth: {
+      ...args.oauth,
+      // The OAuth suite dials URLs it DISCOVERS — metadata, authorization,
+      // token and registration endpoints all come out of the target's own
+      // documents — so it needs the guard as much as the target itself does.
+      fetchFn: redactHostedTransportFailures(
+        args.oauth.fetchFn ?? createConformanceFetch("OAuth endpoint")
+      ),
+    },
+  };
+}
+
+/**
+ * The reason a hosted run must not dial `server` at all, or `null` to proceed.
+ *
+ * The transport guard above decides each request as it is made, and that is
+ * enough for everything that goes through a fetch. It is not enough for the
+ * protocol suite's localhost host-header checks, which open raw `node:http`
+ * sockets — `fetch` cannot set `Host` — whenever the TARGET is a loopback
+ * name. The `/v1` start route refuses such a target before it gets here; the
+ * workers did not ask. So the executor judges the starting URL itself, with the
+ * same check the routes use, and a target it refuses is never handed to a
+ * suite. No-op outside hosted mode, where reaching localhost is the point.
+ *
+ * The verdict is what gets persisted, so it follows the transport's rules: a
+ * refusal keeps its wording (which names the host, never what it resolved
+ * to), and a resolver failure becomes the uniform connection message rather
+ * than the resolver's own text.
+ */
+export async function persistedConformanceTargetRefusal(
+  server: ExecutePersistedConformanceArgs["server"]
+): Promise<string | null> {
+  const url = (server as { url?: string | URL }).url;
+  if (url === undefined) return null;
+  try {
+    await assertAllowedHostedTargetUrl(String(url), "Server URL");
+    return null;
+  } catch (error) {
+    if (error instanceof BlockedEgressTargetError) return error.message;
+    if (error instanceof EgressResolutionError) {
+      return HOSTED_TRANSPORT_FAILURE_DETAIL;
+    }
+    throw error;
+  }
+}
+
 export async function executePersistedConformanceRun(
   args: ExecutePersistedConformanceArgs
 ): Promise<ExecutePersistedConformanceResult> {
@@ -350,14 +466,19 @@ export async function executePersistedConformanceRun(
   (heartbeat as unknown as { unref?: () => void }).unref?.();
 
   try {
+    const refusal = await persistedConformanceTargetRefusal(args.server);
+    const guarded = guardPersistedConformanceTransport({
+      server: args.server,
+      oauth: args.oauth,
+    });
     const report =
-      executionSuites.length > 0
+      executionSuites.length > 0 && refusal === null
         ? await runConformance({
-            server: args.server,
+            server: guarded.server,
             suites: executionSuites,
             protocolVersion: args.protocolVersion as never,
             engineVersion: args.engineVersion,
-            ...(args.oauth ? { oauth: args.oauth } : {}),
+            ...(guarded.oauth ? { oauth: guarded.oauth } : {}),
             onProgress: async (event) => {
               if (event.status === "running") return;
               const body = prepareReportForPersistence(
@@ -425,6 +546,29 @@ export async function executePersistedConformanceRun(
             },
           })
         : null;
+
+    if (refusal !== null) {
+      // Nothing was dialled, so every suite that would have run records the
+      // refusal as its could-not-run reason: the run finalizes with an honest
+      // verdict instead of three suites' worth of refused requests.
+      for (const suiteKind of executionSuites) {
+        const body = prepareReportForPersistence(
+          suiteKind,
+          syntheticIncompleteReport(suiteKind, refusal),
+          args.oauthHeadlessCheckIds
+        );
+        await client.action(
+          "conformanceRuns:upsertReportAction" as never,
+          {
+            runId: started.runId,
+            suiteKind,
+            report: body,
+            status: "failed",
+            durationMs: body.durationMs,
+          } as never
+        );
+      }
+    }
 
     if (unsupportedOAuth) {
       const body = prepareReportForPersistence(
