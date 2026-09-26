@@ -1,3 +1,4 @@
+import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import {
   discoverAuthorizationServerMetadata,
@@ -85,7 +86,7 @@ const dialTokenEndpoint: typeof fetch = (input, init) => {
   return fetch(input, {
     ...init,
     redirect: "error",
-    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+    signal: withLocalCheckSignal(AbortSignal.timeout(REFRESH_TIMEOUT_MS)),
   });
 };
 
@@ -111,7 +112,7 @@ const dialDiscovery: typeof fetch = async (input, init) => {
       ...init,
       headers,
       redirect: "manual",
-      signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      signal: withLocalCheckSignal(AbortSignal.timeout(REFRESH_TIMEOUT_MS)),
     });
 
     const location =

@@ -202,7 +202,7 @@ export type DriveLocalEvalTurnParams = {
   beforeModelCall?: (workload: {
     tools: ToolSet;
     messages: ModelMessage[];
-  }) => Promise<void>;
+  }) => Promise<ReturnType<typeof createLlmModel>>;
   toolPolicyGate?: ToolPolicyGate | null;
   extractToolCalls: (params: {
     steps?: ReadonlyArray<any>;
@@ -371,7 +371,7 @@ export async function driveLocalEvalTurn(
   const toolsForTurn = toolPolicyGate
     ? toolPolicyGate.wrap(mergedTools)
     : mergedTools;
-  await params.beforeModelCall?.({
+  const admittedModel = await params.beforeModelCall?.({
     tools: toolsForTurn,
     messages: acc.activePromptInputMessages,
   });
@@ -382,7 +382,7 @@ export async function driveLocalEvalTurn(
   // remaining allowance spent on a turn that was never coming back.
   const turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
   const handle = runDirectChatTurn({
-    llmModel,
+    llmModel: admittedModel ?? llmModel,
     modelId: test.model,
     messageHistory: acc.activePromptInputMessages,
     traceStartedAt: runStartedAt,

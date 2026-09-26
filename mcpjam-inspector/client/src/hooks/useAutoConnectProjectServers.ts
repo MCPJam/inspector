@@ -1,3 +1,4 @@
+import { serverCheckQueue, loadServerOrder } from "@/lib/server-check-queue";
 import { useEffect, useMemo, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
@@ -154,6 +155,7 @@ export function useAutoConnectProjectServers({
   hostScopeKey,
   serverNames,
   suspendAutoConnect = false,
+  catalogLoaded = true,
 }: {
   projectId: string | null;
   /**
@@ -166,6 +168,8 @@ export function useAutoConnectProjectServers({
   hostScopeKey: string | null;
   /** Every server in the project catalog, by runtime name. */
   serverNames: ReadonlyArray<string>;
+  /** True only after the project catalog query has returned, including an empty result. */
+  catalogLoaded?: boolean;
   /**
    * Ignore host transitions while a blocking flow, such as first-run
    * onboarding, owns the screen. Those transitions come from hydration and
@@ -180,6 +184,14 @@ export function useAutoConnectProjectServers({
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
+  useEffect(() => {
+    if (!projectId) return;
+    if (!suspendAutoConnect && hostScopeKey != null) serverCheckQueue.setScope(projectId, hostScopeKey);
+    const order = loadServerOrder(sharedAppState.activeProjectId) ?? serverNames;
+    serverCheckQueue.setOrder(projectId, [...order]);
+    if (catalogLoaded) serverCheckQueue.keepServers(projectId, [...serverNames]);
+    serverCheckQueue.setAutomaticEnabled(projectId, enabled);
+  }, [projectId, enabled, serverNames, sharedAppState.activeProjectId, hostScopeKey, suspendAutoConnect, catalogLoaded]);
   // Stable key for the catalog, so reordering never looks like a change.
   const catalogNamesKey = useMemo(
     () => serverNames.slice().sort().join("\0"),
@@ -281,6 +293,7 @@ export function useAutoConnectProjectServers({
       reconnectingToastMessage(connectedNow.length),
     );
 
+    serverCheckQueue.markAutomatic(projectId, connectedNow);
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
@@ -348,6 +361,7 @@ export function useAutoConnectProjectServers({
       markAttempted(projectId, scopeKey, `srv:${name}`);
     }
 
+    serverCheckQueue.markAutomatic(projectId, fresh);
     let cancelled = false;
     ensureServersReady(fresh).then(
       (result) => {

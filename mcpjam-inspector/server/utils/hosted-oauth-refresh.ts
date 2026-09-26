@@ -1,3 +1,4 @@
+import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import { createHash } from "node:crypto";
 import { describeError, type UnauthorizedRefreshHandler } from "@mcpjam/sdk";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
@@ -219,6 +220,7 @@ export async function forceRefreshHostedOAuthAccessToken(
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/oauth/force-refresh`, {
+      signal: withLocalCheckSignal(),
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -371,7 +373,7 @@ async function importRefreshedTokens(
     // Bounded: a Convex that accepts the connection but never answers would
     // otherwise hang the connect that already holds a working token. A
     // timeout lands in the caller's warning path, which is the right outcome.
-    signal: AbortSignal.timeout(15_000),
+    signal: withLocalCheckSignal(AbortSignal.timeout(15_000)),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${bearerToken}`,

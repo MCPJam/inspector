@@ -469,14 +469,30 @@ function expectLogsProjected(body: any) {
 const originalFetch = global.fetch;
 const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 const originalHostedMode = process.env.VITE_MCPJAM_HOSTED_MODE;
+const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
 
 beforeEach(() => {
   vi.clearAllMocks();
   validateGuestTokenMock.mockResolvedValue({ valid: false });
   serverUrlRef.current = SERVER_URL;
   process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+  process.env.INSPECTOR_SERVICE_TOKEN = "test-inspector-service-token";
+  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === "https://example.convex.site/internal/server-check-queue") {
+      expect(new Headers(init?.headers).get("x-inspector-service-token")).toBe(
+        "test-inspector-service-token",
+      );
+      const { operation, requestId } = JSON.parse(String(init?.body));
+      expect(["admit", "poll", "renew", "release"]).toContain(operation);
+      expect(requestId).toEqual(expect.any(String));
+      return json({
+        state: operation === "release" ? "released" : "active",
+        expiresAt: Date.now() + 30_000,
+        active: operation === "release" ? 0 : 1,
+        waiting: 0,
+      });
+    }
     if (url.endsWith("/web/authorize")) {
       return authorizeResponse(serverUrlRef.current);
     }
@@ -489,6 +505,8 @@ beforeEach(() => {
 
 afterAll(() => {
   global.fetch = originalFetch;
+  if (originalServiceToken === undefined) delete process.env.INSPECTOR_SERVICE_TOKEN;
+  else process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
   if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
   else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
   if (originalHostedMode === undefined) {

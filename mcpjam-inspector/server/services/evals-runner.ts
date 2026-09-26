@@ -1,3 +1,7 @@
+import {
+  assertOrgModelAllowed,
+  buildOrgModelFromResolvedConfig,
+} from "@mcpjam/sdk/model-factory";
 import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -190,6 +194,7 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
+import { failCommittedQuickRun } from "./evals/quick-run-environment.js";
 import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
   buildIterationFinishParams,
@@ -587,6 +592,14 @@ function scoreMatchOptionsFor(
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
+  /**
+   * An ENVIRONMENT quick run's committed iteration ids, one per attempt, in
+   * attempt order. The backend reserved, inserted and pinned every one of
+   * them before this runner was called; the runner executes exactly these
+   * rows and never creates one of its own. Quick runs only (`runId` null,
+   * one test).
+   */
+  committedQuickRunIterationIds?: string[];
   /**
    * The run's FROZEN grading-engine position, read from
    * `configSnapshot.gradingEngine` at run start and threaded to every
@@ -1741,6 +1754,35 @@ function snapshotWithStepsForConvex(
         ? promptTurnsToSteps(promptTurns as PromptTurn[])
         : undefined;
   return resolvedSteps ? { ...rest, steps: resolvedSteps } : rest;
+}
+
+/**
+ * The case snapshot an ENVIRONMENT quick run commits for its attempts — the
+ * same fields the legacy path writes when it pre-creates rows, in the Convex
+ * wire shape. The backend replaces the model/provider attribution with the
+ * environment's; everything else is the case content that runs.
+ */
+export function buildQuickRunCommitSnapshot(
+  test: EvalTestCase,
+): Record<string, unknown> {
+  const resolvedTest = resolveEvalTestCase(test);
+  return sanitizeForConvexTransport(
+    snapshotWithStepsForConvex({
+      title: test.title,
+      query: resolvedTest.query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls: resolvedTest.expectedToolCalls,
+      isNegativeTest: test.isNegativeTest,
+      expectedOutput: resolvedTest.expectedOutput,
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
+      steps: resolveSteps(test),
+      advancedConfig: resolvedTest.advancedConfig,
+      matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
+    }),
+  ) as Record<string, unknown>;
 }
 
 // Helper to create iteration directly (for quick runs without a recorder)
@@ -2929,6 +2971,19 @@ const executeTestCase = async (params: {
   abortRun?: (error: EvalRunStoppedError) => void;
   creditStop?: { exhausted: boolean };
   compareRunId?: string;
+  /**
+   * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
+   * attempt `i` runs on `committedIterationIds[i]`; the count must equal the
+   * case's attempts, and no row is ever created here — a mismatch fails the
+   * case before any model or tool call instead of creating an unpinned row.
+   */
+  committedIterationIds?: string[];
+  /**
+   * Told the attempt index each time an attempt takes ownership of its
+   * committed row (see `executeCommittedTestCase`). An entered attempt
+   * finalizes its own row; the rest are settled by the wrapper.
+   */
+  onCommittedAttemptEntered?: (runIndex: number) => void;
   /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
   toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
@@ -2994,6 +3049,8 @@ const executeTestCase = async (params: {
     abortSignal,
     abortRun,
     compareRunId,
+    committedIterationIds,
+    onCommittedAttemptEntered,
     toolDescriptionOverride,
     emit,
     injectOpenAiCompat,
@@ -3019,6 +3076,18 @@ const executeTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
+  /**
+   * An ENVIRONMENT quick run's committed rows are checked against the attempt
+   * count before anything runs: more attempts than committed rows would need a
+   * row nobody reserved or pinned, fewer would leave committed rows unrun.
+   */
+  const assertCommittedAttempts = (attempts: number) => {
+    if (committedIterationIds && committedIterationIds.length !== attempts) {
+      throw new Error(
+        `This quick run committed ${committedIterationIds.length} attempt(s) but the case asks for ${attempts}; it was not executed.`,
+      );
+    }
+  };
 
   // Normalize legacy `widget_probe` rows into a single model-free pinned turn
   // so the unified engine sees one shape. No-op for already-pinned / prompt
@@ -3163,11 +3232,17 @@ const executeTestCase = async (params: {
   ) {
     const outcomes: EvalIterationOutcome[] = [];
     const pinnedRuns = Math.max(1, Math.floor(normalizedTest.runs || 1));
+    assertCommittedAttempts(pinnedRuns);
     for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
       if (abortSignal?.aborted) break;
+      const committedIterationId = committedIterationIds?.[runIndex];
+      onCommittedAttemptEntered?.(runIndex);
       const modelFreeParams = {
         test: normalizedTest,
         runIndex,
+        ...(committedIterationId
+          ? { precreatedIterationId: committedIterationId }
+          : {}),
         budgets,
         tools,
         selectedServers,
@@ -3219,7 +3294,7 @@ const executeTestCase = async (params: {
               onIterationStarted,
               ...(streaming ? { emit: emit! } : {}),
             }),
-          undefined,
+          committedIterationId,
           runIndex,
           normalizedTest,
         ),
@@ -3227,6 +3302,8 @@ const executeTestCase = async (params: {
     }
     return outcomes;
   }
+
+  assertCommittedAttempts(test.runs);
 
   // THE HOST'S MODEL WINS on an external-account harness, exactly as it does on
   // the chat rails. Resolved here rather than at either iteration runner so
@@ -3352,7 +3429,11 @@ const executeTestCase = async (params: {
   // quick-run paths with runs > 1 so the iteration history shows every row
   // immediately, not one-at-a-time as the loop progresses.
   const shouldPrecreateIterations =
-    recorder == null && runId == null && test.runs > 1;
+    recorder == null &&
+    runId == null &&
+    test.runs > 1 &&
+    // An environment quick run's rows are already committed.
+    !committedIterationIds;
   const precreatedIterationIds: (string | undefined)[] = [];
   if (shouldPrecreateIterations) {
     const resolvedTestForPrecreate = resolveEvalTestCase(test);
@@ -3396,6 +3477,10 @@ const executeTestCase = async (params: {
   }
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    // A stopped run leaves this and every later committed attempt unentered;
+    // `executeCommittedTestCase` settles their rows.
+    if (committedIterationIds && abortSignal?.aborted) break;
+    onCommittedAttemptEntered?.(runIndex);
     if (creditStop.exhausted) {
       // Only untouched rows are skipped. Completed evidence remains intact.
       const iterationId = await findIterationIdForTimeout({
@@ -3403,7 +3488,8 @@ const executeTestCase = async (params: {
         runId,
         test,
         runIndex,
-        precreatedIterationId: precreatedIterationIds[runIndex],
+        precreatedIterationId:
+          committedIterationIds?.[runIndex] ?? precreatedIterationIds[runIndex],
       });
       if (iterationId) {
         await convexClient.action("testSuites:updateTestIteration" as any, {
@@ -3418,9 +3504,11 @@ const executeTestCase = async (params: {
       }
       continue;
     }
-    const precreatedIterationId = shouldPrecreateIterations
-      ? precreatedIterationIds[runIndex]
-      : undefined;
+    const precreatedIterationId = committedIterationIds
+      ? committedIterationIds[runIndex]
+      : shouldPrecreateIterations
+        ? precreatedIterationIds[runIndex]
+        : undefined;
     if (isJamModel) {
       const backendParams = {
         test,
@@ -3635,17 +3723,65 @@ const executeTestCase = async (params: {
   return outcomes;
 };
 
+/**
+ * `executeTestCase` for an ENVIRONMENT quick run's committed rows: every
+ * committed row whose attempt never took ownership of it is finalized, so
+ * none is left running. A run that was stopped first finalizes it as stopped;
+ * a setup failure (the model setup threw, the attempt count did not match)
+ * finalizes it `setup_failed` with the error, never as a user cancel. An
+ * attempt that DID take its row finalizes it itself (outcome, timeout or
+ * cancel), and is never touched here, so this cannot race a legitimate
+ * finalize.
+ */
+async function executeCommittedTestCase(
+  params: Parameters<typeof executeTestCase>[0],
+): ReturnType<typeof executeTestCase> {
+  const committed = params.committedIterationIds;
+  if (!committed) return executeTestCase(params);
+  const entered = new Set<number>();
+  let failure: { error: unknown } | undefined;
+  try {
+    return await executeTestCase({
+      ...params,
+      onCommittedAttemptEntered: (runIndex) => entered.add(runIndex),
+    });
+  } catch (error) {
+    failure = { error };
+    throw error;
+  } finally {
+    const unentered = committed.filter((_, index) => !entered.has(index));
+    if (failure && !params.abortSignal?.aborted) {
+      await failCommittedQuickRun(
+        params.convexClient,
+        unentered,
+        failure.error instanceof Error
+          ? failure.error.message
+          : String(failure.error),
+      );
+    } else {
+      for (const iterationId of unentered) {
+        await markIterationStopped({
+          convexClient: params.convexClient,
+          iterationId,
+          abortSignal: params.abortSignal,
+        });
+      }
+    }
+  }
+}
+
 // Thin batch wrapper (no `emit`) — preserves the call site in
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
-) => executeTestCase(params);
+) => executeCommittedTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
   gradingMode,
   executionBudgets,
   suiteId,
   runId,
+  committedQuickRunIterationIds,
   config,
   modelApiKeys,
   orgModelConfig,
@@ -3693,6 +3829,13 @@ export const runEvalSuiteWithAiSdk = async ({
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
+  }
+  if (committedQuickRunIterationIds && (runId !== null || tests.length !== 1)) {
+    // Committed rows belong to ONE quick-run case; anything else is a caller
+    // bug, refused before a single attempt runs.
+    throw new Error(
+      "Committed quick-run iterations apply to a single-case quick run only",
+    );
   }
 
   if (
@@ -3959,6 +4102,9 @@ export const runEvalSuiteWithAiSdk = async ({
         convexClient,
         testCaseId,
         compareRunId,
+        ...(committedQuickRunIterationIds
+          ? { committedIterationIds: committedQuickRunIterationIds }
+          : {}),
         ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         suiteId,
         runId,
@@ -5088,6 +5234,10 @@ const runLocalIteration = async ({
                   "Organization runtime changed before the eval turn. Restart the run.",
                 );
               }
+              // Execute the config this admission returned, including rotations
+              // and endpoint changes since the iteration's initial setup.
+              assertOrgModelAllowed(admitted.provider, String(modelDefinition.id));
+              return buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id));
             },
             onModelCallSettled: (event: LocalModelCallSettled) =>
               postEvalOrgLocalUsage({
@@ -7074,4 +7224,4 @@ export const streamTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit"> & {
     emit: StreamEmit;
   },
-) => executeTestCase(params);
+) => executeCommittedTestCase(params);
