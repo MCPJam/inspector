@@ -101,3 +101,37 @@ describe("ThreadCard feedback line", () => {
     expect(screen.getByText("Asked what server can do")).toBeInTheDocument();
   });
 });
+
+/**
+ * #5188: a swarm session refused before it recorded a message has no preview,
+ * so without a mark its row read like any other session.
+ */
+describe("ThreadCard for a swarm session that never ran", () => {
+  it("marks it as not run", () => {
+    renderCard(
+      thread(null, {
+        sourceType: "swarm",
+        messageCount: 0,
+        firstMessagePreview: "",
+        neverRan: true,
+      }),
+    );
+    expect(screen.getByTestId("swarm-session-never-ran-tag")).toHaveTextContent(
+      "Didn't run",
+    );
+  });
+
+  it("leaves a session that ran unmarked", () => {
+    renderCard(thread(null, { sourceType: "swarm", neverRan: false }));
+    expect(
+      screen.queryByTestId("swarm-session-never-ran-tag"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves non-swarm sessions unmarked whatever they carry", () => {
+    renderCard(thread(null, { messageCount: 0, runAttemptStatus: "failed" }));
+    expect(
+      screen.queryByTestId("swarm-session-never-ran-tag"),
+    ).not.toBeInTheDocument();
+  });
+});

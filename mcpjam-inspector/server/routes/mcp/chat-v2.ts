@@ -1,3 +1,4 @@
+import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
@@ -2291,6 +2292,13 @@ chatV2.post("/", async (c) => {
                 scenarioId: bodyScenarioId,
                 accessVersion: bodyAccessVersion,
                 serverIds: hostConfigServerIds,
+              },
+              {
+                modelWorkload: modelWorkloadFor({
+                  sourceType: chatSessionSourceType,
+                  tools: allTools,
+                  messages: modelMessages,
+                }),
               },
             )
           : { runtimeLocation: "cloud", providerKey };
