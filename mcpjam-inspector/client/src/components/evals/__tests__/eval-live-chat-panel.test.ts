@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { UIMessage } from "ai";
 import { messagesToCapturedTurns } from "../eval-live-chat-panel";
+import {
+  buildSkillContextMessages,
+  buildToolRunContextMessage,
+} from "@/shared/user-context-message";
 
 function userMsg(id: string, text: string): UIMessage {
   return { id, role: "user", parts: [{ type: "text", text }] } as UIMessage;
@@ -68,6 +72,32 @@ describe("messagesToCapturedTurns", () => {
     ]);
     expect(turns).toHaveLength(1);
     expect(turns[0].expectedToolCalls).toEqual([]);
+  });
+
+  it("does not turn the context the user added into prompts", () => {
+    const [skill] = buildSkillContextMessages([
+      { name: "brand", content: "Use the brand colors." },
+    ]);
+    const turns = messagesToCapturedTurns([
+      skill as UIMessage,
+      userMsg("u1", "Show me a redbull"),
+      assistantToolMsg("a1", "search-products", { q: "redbull" }),
+      buildToolRunContextMessage({
+        toolCallId: "run-1",
+        toolName: "view-cart",
+        params: {},
+        result: "empty",
+      }) as UIMessage,
+      assistantToolMsg("a2", "view-cart", {}),
+    ]);
+
+    expect(turns.map((turn) => turn.prompt)).toEqual([
+      "Show me a redbull",
+      "Execute `view-cart`",
+    ]);
+    expect(turns[1].expectedToolCalls.map((t) => t.toolName)).toEqual([
+      "view-cart",
+    ]);
   });
 });
 

@@ -63,3 +63,71 @@ it("submits and remembers comprehensive read/write settings only on confirmation
   expect(screen.getByRole("radio", { name: /Comprehensive/ })).toBeChecked();
   expect(screen.getByRole("radio", { name: /Read and write/ })).toBeChecked();
 });
+
+it("requires a mixed suite to pick the environment it generates for", async () => {
+  const onGenerate = vi.fn();
+  const user = userEvent.setup();
+  const choices = [
+    {
+      environmentId: "env-a",
+      hostName: "Claude",
+      modelId: "opus",
+      serverNames: ["billing"],
+      pluginVersionCount: 0,
+    },
+    {
+      environmentId: "env-b",
+      name: "Search box",
+      hostName: "Cursor",
+      serverNames: ["search"],
+      pluginVersionCount: 1,
+    },
+  ];
+  const view = renderWithProviders(
+    <GenerateCasesDialog
+      suiteId="s"
+      environmentChoices={choices}
+      onGenerate={onGenerate}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("search + 1 plugin")).toBeVisible();
+  const generate = screen.getByRole("button", { name: "Generate cases" });
+  expect(generate).toBeDisabled();
+  await user.click(screen.getByRole("radio", { name: /Search box/ }));
+  await user.click(generate);
+  expect(onGenerate).toHaveBeenCalledWith(
+    expect.objectContaining({ environmentId: "env-b" }),
+  );
+  expect(loadGenerateConfig("s").environmentId).toBe("env-b");
+
+  // The pick is remembered for the next batch.
+  view.unmount();
+  renderWithProviders(
+    <GenerateCasesDialog
+      suiteId="s"
+      environmentChoices={choices}
+      onGenerate={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("radio", { name: /Search box/ })).toBeChecked();
+  expect(
+    screen.getByRole("button", { name: "Generate cases" }),
+  ).not.toBeDisabled();
+});
+
+it("sends no environment for a suite with nothing to pick", async () => {
+  const onGenerate = vi.fn();
+  renderWithProviders(
+    <GenerateCasesDialog
+      suiteId="s"
+      onGenerate={onGenerate}
+      onClose={vi.fn()}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Generate cases" }));
+  expect(onGenerate.mock.calls[0][0]).not.toHaveProperty("environmentId");
+});

@@ -2,6 +2,11 @@ import { PostHog } from "posthog-node";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
+import {
+  CLIENT_FEATURE_FLAG_KEYS,
+  pickClientFeatureFlags,
+  type ClientFeatureFlagValues,
+} from "../../shared/client-feature-flags.js";
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
@@ -29,8 +34,10 @@ import { HOSTED_MODE } from "../config.js";
  */
 
 // Public project token — same one shipped in the client bundle
-// (client/src/lib/PosthogUtils.ts); it can only ingest, not read.
-const POSTHOG_PROJECT_KEY = "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+// (client/src/lib/PosthogUtils.ts); it can only ingest, not read. The /relay
+// proxy forwards requests for this project only.
+export const POSTHOG_PROJECT_KEY =
+  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for
@@ -180,6 +187,28 @@ export async function evaluateBrowserRollout(
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * Values for the flags the web client reads, for `GET /api/web/flags`
+ * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure
+ * events are sent, and any failure yields `{}` so the client keeps its own
+ * fallback instead of failing the page.
+ */
+export async function evaluateClientFeatureFlags(
+  distinctId: string,
+  personProperties: Record<string, string>,
+): Promise<ClientFeatureFlagValues> {
+  if (!distinctId) return {};
+  try {
+    const values = await getClient(true)?.getAllFlags(distinctId, {
+      flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
+      personProperties,
+    });
+    return pickClientFeatureFlags(values);
+  } catch {
+    return {};
   }
 }
 

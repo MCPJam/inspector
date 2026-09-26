@@ -29,7 +29,16 @@ import {
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { redactHostedDoctorTransportDetail } from "../../utils/hosted-doctor-redaction.js";
+import {
+  projectHostedValidateInitInfo,
+  redactHostedDoctorTransportDetail,
+} from "../../utils/hosted-doctor-redaction.js";
+import {
+  describeHostedConnectFailure,
+  projectHostedConnectFailureDetails,
+  projectHostedConnectFailureLogs,
+  redactNormalizedError,
+} from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
@@ -42,9 +51,49 @@ servers.post("/validate", async (c) =>
     c,
     projectServerSchema,
     (manager, body) => validateServerCore(c, manager, body),
-    { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
-  )
+    {
+      timeoutMs: WEB_CONNECT_TIMEOUT_MS,
+      ...(HOSTED_MODE
+        ? {
+            redactFailure: redactHostedValidateFailure,
+            redactSuccessLogs: projectHostedConnectFailureLogs,
+          }
+        : {}),
+    },
+  ),
 );
+
+/**
+ * A failed hosted validate reports the target's status line instead of its
+ * answer, and its details and the log envelope sent with it are reduced the
+ * same way (MJ-001).
+ * A failure this server authored — authorization, the target check — is
+ * already worded for the caller and keeps its message.
+ */
+function redactHostedValidateFailure(
+  routeError: WebRouteError,
+  error: unknown,
+  logs: Record<string, unknown> | undefined,
+) {
+  const projectedLogs = projectHostedConnectFailureLogs(logs);
+  if (error instanceof WebRouteError) {
+    return { routeError, logs: projectedLogs };
+  }
+  const failure = describeHostedConnectFailure(error, logs);
+  if (failure.blockedTarget) {
+    routeError.status = 400;
+    routeError.code = ErrorCode.VALIDATION_ERROR;
+  }
+  routeError.message = failure.message;
+  routeError.details = projectHostedConnectFailureDetails(routeError.details);
+  if (routeError.normalized) {
+    routeError.normalized = redactNormalizedError(
+      routeError.normalized,
+      failure.message,
+    );
+  }
+  return { routeError, logs: projectedLogs };
+}
 
 /**
  * Connect-and-inspect core shared by POST /api/web/servers/validate and the
@@ -60,6 +109,13 @@ export async function validateServerCore(
   manager: any,
   body: { projectId: string; serverId: string }
 ) {
+  // The doctor's target check, so a stored URL the hosted inspector will not
+  // dial is answered as the caller's to fix (400) rather than as a failed
+  // connection. A no-op outside hosted mode.
+  const configuredUrl = manager.getServerConfig?.(body.serverId)?.url;
+  if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
+    await assertHostedServerTarget(String(configuredUrl));
+  }
   await manager.getToolsForAiSdk([body.serverId]);
   const snapshot = await exportSingleServerForInspection(
     manager,
@@ -77,8 +133,15 @@ export async function validateServerCore(
     });
   });
   // Same success envelope as the local /api/mcp/connect path so the inspector
-  // client's `storeInitInfo` takes one code path on both surfaces.
-  return buildConnectSuccessEnvelope(manager, body.serverId);
+  // client's `storeInitInfo` takes one code path on both surfaces. Hosted, its
+  // initialization info is projected (MJ-001).
+  const envelope = buildConnectSuccessEnvelope(manager, body.serverId);
+  return HOSTED_MODE
+    ? {
+        ...envelope,
+        initInfo: projectHostedValidateInitInfo(envelope.initInfo),
+      }
+    : envelope;
 }
 
 async function persistHostedConnectInspection(
@@ -157,7 +220,11 @@ servers.post("/doctor", async (c) => {
 
   try {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
-    rpcCollector = createHostedRpcLogCollector(rawBody);
+    // A hosted doctor response carries only its projected envelope (MJ-001),
+    // so the connection's JSON-RPC frames are not collected for it.
+    rpcCollector = HOSTED_MODE
+      ? undefined
+      : createHostedRpcLogCollector(rawBody);
     const timeoutMs = WEB_CONNECT_TIMEOUT_MS;
     const result = await runHostedDoctor(
       c,
@@ -180,11 +247,11 @@ servers.post("/doctor", async (c) => {
 export default servers;
 
 /**
- * Refuse a doctor target the hosted inspector must not dial, mapping the two
- * guard outcomes the way the conformance routes do: a blocked address is the
- * caller's problem (400), a resolver failure is ours (503).
+ * Refuse a doctor or validate target the hosted inspector must not dial,
+ * mapping the two guard outcomes the way the conformance routes do: a blocked
+ * address is the caller's problem (400), a resolver failure is ours (503).
  */
-async function assertHostedDoctorTarget(url: string): Promise<void> {
+async function assertHostedServerTarget(url: string): Promise<void> {
   try {
     await assertAllowedHostedTargetUrl(url, "Server URL");
   } catch (error) {
@@ -229,7 +296,7 @@ export async function runHostedDoctor(
   // conformance routes make, and a no-op outside hosted mode. This is the
   // caller-facing refusal: a stored URL that is already a private address gets
   // a 400 naming the host they typed, rather than a transport error.
-  await assertHostedDoctorTarget(config.url);
+  await assertHostedServerTarget(config.url);
 
   // THE DOCTOR'S TWO LEGS, NOW ON ONE TRANSPORT.
   //

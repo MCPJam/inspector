@@ -18,6 +18,12 @@ export interface HostedOAuthTokensResult {
 export interface FetchHostedOAuthTokensRequest {
   projectId: string;
   serverId: string;
+  /**
+   * Which connection's tokens to reveal. Absent resolves the default, which is
+   * why a multi-account server used to show exactly one pair however many
+   * accounts were connected.
+   */
+  connectionId?: string;
 }
 
 export async function fetchHostedOAuthTokens(
