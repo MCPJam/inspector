@@ -1581,7 +1581,7 @@ function ProjectRunTableRow({
           ) : row.summary ? (
             <span className="flex flex-col leading-tight">
               <span>
-                {Math.round(row.summary.passRate)}%{" "}
+                {Math.round(row.summary.passRate * 100)}%{" "}
                 <span className="text-[10px]">
                   ({row.summary.passed}/{row.summary.total})
                 </span>

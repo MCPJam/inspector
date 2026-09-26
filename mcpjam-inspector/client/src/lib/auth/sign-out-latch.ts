@@ -42,13 +42,15 @@
 export const SIGN_OUT_SUPPRESSION_WINDOW_MS = 10_000;
 
 /**
- * How long the Electron sign-out waits for its logout request before it
+ * How long sign-out waits for its logout request before it
  * navigates anyway.
  *
- * INVARIANT: must stay BELOW `SIGN_OUT_SUPPRESSION_WINDOW_MS`.
+ * INVARIANT: must stay BELOW `SIGN_OUT_SUPPRESSION_WINDOW_MS` — and so must
+ * this plus `SIGN_OUT_REVOKE_TOKEN_TIMEOUT_MS` (`revoke-session.ts`), because
+ * a sign-out first waits, bounded, for the token it revokes the session with.
  *
- * The Electron path cannot let authkit navigate for it — WorkOS only redirects
- * to a URI its dashboard allowlists — so it calls `signOut({navigate: false})`,
+ * Keep the app loading screen visible (and avoid Electron callback restrictions)
+ * by calling `signOut({navigate: false})`,
  * waits for the promise, and navigates itself. That promise settles when the
  * logout `fetch` does, and NOTHING else moves the page. A request that hangs
  * past the suppression window therefore leaves the latch expired while the

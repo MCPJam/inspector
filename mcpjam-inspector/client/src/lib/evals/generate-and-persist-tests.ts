@@ -155,6 +155,11 @@ function defaultEvalModels(): Array<{ model: string; provider: string }> {
 }
 
 export type GenerateAndPersistEvalTestsOptions = {
+  /**
+   * Environment suites: generate against this environment's eval server set
+   * instead of `serverIds` (resolved server-side, plugin servers included).
+   */
+  environmentId?: string;
   convex: ConvexReactClient;
   getAccessToken: () => Promise<string | undefined | null>;
   projectId: string | null | undefined;
@@ -223,6 +228,7 @@ export async function generateAndPersistEvalTests(
     listExistingCases,
     serverAttachment,
     generationOptions,
+    environmentId,
   } = options;
 
   let existingList: Array<Record<string, unknown>> = [];
@@ -262,7 +268,9 @@ export async function generateAndPersistEvalTests(
 
   const result = await generateEvalTests({
     projectId: isDirectGuest ? null : projectId,
-    serverIds,
+    // An environment's servers are resolved server-side.
+    serverIds: environmentId ? [] : serverIds,
+    ...(environmentId ? { environmentId } : {}),
     convexAuthToken: accessToken,
     ...(serverAttachment ? { serverAttachment } : {}),
     ...(generationOptions ? { generationOptions } : {}),

@@ -82,4 +82,77 @@ describe("guest-session 5xx diagnosability", () => {
     expect(body.code).toBe("INTERNAL_ERROR");
     expect(typeof body.message).toBe("string");
   });
+
+  // A self-hosted install makes this 503 on the user's machine, so the body is
+  // the only way the cause reaches the browser's error report — and on hosted
+  // that body goes to any browser, so only closed values may be in it.
+  describe("failure details on the 503", () => {
+    async function postGuestSession(ip: string) {
+      const app = new Hono();
+      app.route("/guest-session", guestSession);
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": ip },
+      });
+      return { res, body: (await res.json()) as Record<string, unknown> };
+    }
+
+    it("names an upstream non-ok status and keeps the message", async () => {
+      const { res, body } = await postGuestSession("203.0.113.203");
+
+      expect(res.status).toBe(503);
+      expect(body.message).toBe(
+        "Unable to obtain a guest session right now. Please try again.",
+      );
+      expect(body.details).toEqual({
+        reason: "upstream_status",
+        upstreamStatus: 500,
+      });
+    });
+
+    it("names a relay network failure without leaking the host", async () => {
+      // Self-hosted: relays to the hosted Inspector instead of Convex.
+      process.env.NODE_ENV = "production";
+      global.fetch = vi.fn().mockRejectedValue(
+        new TypeError("fetch failed", {
+          cause: Object.assign(
+            new Error("getaddrinfo ENOTFOUND app.mcpjam.com"),
+            { code: "ENOTFOUND" },
+          ),
+        }),
+      );
+
+      const { res, body } = await postGuestSession("203.0.113.204");
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://app.mcpjam.com/api/web/guest-session",
+        expect.anything(),
+      );
+      expect(res.status).toBe(503);
+      expect(body.details).toEqual({
+        reason: "network",
+        networkCode: "ENOTFOUND",
+      });
+      const raw = JSON.stringify(body);
+      expect(raw).not.toContain("app.mcpjam.com");
+      expect(raw).not.toContain("getaddrinfo");
+    });
+
+    it("names a relay timeout", async () => {
+      process.env.NODE_ENV = "production";
+      global.fetch = vi
+        .fn()
+        .mockRejectedValue(
+          new DOMException(
+            "The operation was aborted due to timeout",
+            "TimeoutError",
+          ),
+        );
+
+      const { res, body } = await postGuestSession("203.0.113.205");
+
+      expect(res.status).toBe(503);
+      expect(body.details).toEqual({ reason: "timeout" });
+    });
+  });
 });
