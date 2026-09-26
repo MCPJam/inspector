@@ -2532,8 +2532,14 @@ export async function prepareEvalRun(
     });
   }
 
+  // A GitHub check runs an environment against the PR's temporary server:
+  // the backend keeps the environment's client, model, skills and image and
+  // replaces only its servers (`githubCheckServerOverride`), so the manager
+  // holds that server, never the environment's own.
+  const githubCheckEnvironmentLaunch =
+    Boolean(environmentLaunch) && provenance.source === "github_check";
   const resolvedServerIds = resolveServerIdsOrThrow(
-    environmentLaunch
+    environmentLaunch && !githubCheckEnvironmentLaunch
       ? environmentServerRefsForManager(environmentLaunch, clientManager)
       : serverIds,
     clientManager,
