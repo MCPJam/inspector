@@ -1,17 +1,24 @@
 /**
- * Shared chrome for the two suite judge slots.
+ * Shared chrome for the suite judge slots.
  *
  * Goal completion authors model, threshold, rubric, agreement and the gate.
  * Groundedness displays stored run evidence — or an honest not-yet-run state —
- * and mounts no configuration controls. The selected judge's own template and
- * calibration come from C1 capabilities; an older backend leaves those null
- * rather than copying goal completion's identity onto groundedness.
+ * and mounts no configuration controls. Rubric checks show what each trial is
+ * asked and edit the authored questions (`RubricChecksJudgeCard`). The
+ * selected judge's own template and calibration come from C1 capabilities; an
+ * older backend leaves those null rather than copying goal completion's
+ * identity onto another slot.
  */
 
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { JudgesSection } from "./judges-section";
+import { RubricChecksJudgeCard } from "./rubric-checks-judge-card";
 import type { JudgeSlot } from "./suite-scorer-table-model";
-import type { EvalJudgeConfig, EvalSuiteRun } from "./types";
+import type {
+  EvalJudgeConfig,
+  EvalJudgeRubricCriterion,
+  EvalSuiteRun,
+} from "./types";
 import type { ModelDefinition } from "@/shared/types";
 
 export const GROUNDEDNESS_UNAVAILABLE_COPY =
@@ -31,6 +38,8 @@ export function SuiteJudgeCard({
   judgeAccessory,
   rubricEditor,
   groundednessEvidence,
+  criteria = [],
+  goalJudgeOff = false,
 }: {
   slot: JudgeSlot;
   judgeConfig: EvalJudgeConfig | undefined;
@@ -40,7 +49,22 @@ export function SuiteJudgeCard({
   judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
   groundednessEvidence?: GroundednessRunEvidence;
+  /** Rubric checks only: the suite's criteria, each asked as a yes or no. */
+  criteria?: readonly EvalJudgeRubricCriterion[];
+  /** Rubric checks only: they ride the goal judge, so its Off pauses them. */
+  goalJudgeOff?: boolean;
 }) {
+  if (slot === "rubricChecks") {
+    return (
+      <RubricChecksJudgeCard
+        judgeConfig={judgeConfig}
+        onJudgeConfigChange={onJudgeConfigChange}
+        judgesCapabilities={judgesCapabilities}
+        criteria={criteria}
+        goalJudgeOff={goalJudgeOff}
+      />
+    );
+  }
   if (slot === "groundedness") {
     return (
       <GroundednessJudgeCard

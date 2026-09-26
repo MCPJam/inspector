@@ -336,7 +336,7 @@ describe("SessionsPanel — rows and detail", () => {
 
     expect(screen.getByText("No sessions yet")).toBeInTheDocument();
     expect(
-      screen.getByText(/Chat in the Playground, share a scenario/)
+      screen.getByText(/Chat in the Playground, share a study/)
     ).toBeInTheDocument();
   });
 });

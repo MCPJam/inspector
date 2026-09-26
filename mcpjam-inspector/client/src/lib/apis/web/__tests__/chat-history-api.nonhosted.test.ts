@@ -9,7 +9,6 @@ vi.mock("@/lib/session-token", () => ({
 import {
   chatHistoryAction,
   createChatHistoryWidgetSnapshot,
-  generateWidgetSnapshotUploadUrl,
   getChatHistoryDetail,
   listChatHistory,
 } from "../chat-history-api";
@@ -97,24 +96,6 @@ describe("chat history API in non-hosted mode", () => {
       "/api/web/chat-history/detail?chatSessionId=chat-session-1",
       expect.objectContaining({ signal: controller.signal }),
     );
-  });
-
-  it("does not preempt authFetch's bearer when generating a widget snapshot upload URL", async () => {
-    mockAuthFetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({ ok: true, uploadUrl: "https://upload.test" }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
-    );
-
-    await generateWidgetSnapshotUploadUrl({ chatSessionId: "chat-session-1" });
-
-    const headers = mockAuthFetch.mock.calls[0]?.[1]?.headers as Headers;
-    expect(headers.get("Authorization")).toBeNull();
-    expect(headers.get("Content-Type")).toBe("application/json");
   });
 
   it("does not preempt authFetch's bearer when creating a widget snapshot", async () => {
