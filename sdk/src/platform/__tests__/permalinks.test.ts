@@ -467,6 +467,11 @@ describe("the route registry is the type list", () => {
       chat_session: `/sessions?session=id-1&project=${PROJECT}`,
       playground_conversation: `/playground?conversation=id-1&project=${PROJECT}`,
       conformance_run: `/conformance/runs/id-1?project=${PROJECT}`,
+      goal_run: `/swarms/id-1?project=${PROJECT}`,
+      study: `/user-testing/id-1?project=${PROJECT}`,
+      // The pre-rename keys, resolving to the SAME paths. A permalink minted
+      // before the rename has to keep working, and both are in the table for
+      // exactly that reason.
       journey_run: `/swarms/id-1?project=${PROJECT}`,
       user_testing_scenario: `/user-testing/id-1?project=${PROJECT}`,
       organization: "/organizations/id-1",

@@ -18,11 +18,12 @@ import {
   runContextKey,
 } from "../evals/helpers";
 import {
-  buildSuiteMetricStripData,
+  buildSuiteMetricStripDataFromMetrics,
   formatCompactNumber,
   formatDurationMs,
 } from "../evals/metric-strip-data";
-import type { EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import type { RunMetrics, RunMetricsByRun } from "../evals/run-metrics";
+import type { EvalSuite, EvalSuiteRun } from "../evals/types";
 import { launchRuns } from "./run-results-matrix-model";
 import {
   deltaOf,
@@ -228,20 +229,25 @@ type RowMeasurements = {
 
 function measureRun(
   run: EvalSuiteRun,
-  trials: readonly EvalIteration[],
+  runMetrics: RunMetrics | undefined,
 ): RowMeasurements {
   const settled = isSettled(run);
-  // A run in flight has partial totals, and a run whose trials are not all on
-  // the page has partial evidence. Neither may be presented as final.
+  const trialCount = runMetrics?.iterationCount ?? 0;
+  // A run in flight has partial totals, and a run whose trials are not all
+  // measured has partial evidence. Neither may be presented as final.
   const complete =
     settled &&
-    trials.length > 0 &&
-    (!run.summary || trials.length === run.summary.total);
-  // `buildSuiteMetricStripData` withholds an `inconclusive` run: its counts are
-  // exactly the evidence the backend judged insufficient.
-  const metrics = complete
-    ? (buildSuiteMetricStripData([run], [...trials])?.latest ?? null)
-    : null;
+    trialCount > 0 &&
+    (!run.summary || trialCount === run.summary.total);
+  // The strip builder withholds an `inconclusive` run: its counts are exactly
+  // the evidence the backend judged insufficient.
+  const metrics =
+    complete && runMetrics
+      ? (buildSuiteMetricStripDataFromMetrics(
+          [run],
+          new Map([[run._id, runMetrics]]),
+        )?.latest ?? null)
+      : null;
 
   // The stamped summary is authoritative the moment the run settles — it does
   // not wait on loaded trials the way the derived metrics do.
@@ -261,47 +267,29 @@ function measureRun(
         : null,
     latencyP50: metrics?.latencyP50 ?? null,
     latencyP95: metrics?.latencyP95 ?? null,
-    totalTokens: complete
-      ? trials.reduce((sum, trial) => sum + (trial.tokensUsed ?? 0), 0)
-      : null,
+    totalTokens: complete ? (runMetrics?.tokensTotal ?? 0) : null,
     complete,
     hasMetrics: metrics != null,
   };
 }
 
-function indexIterations(
-  iterations: readonly EvalIteration[],
-): Map<string, EvalIteration[]> {
-  // Built ONCE. `iterations` is every trial in the suite and is unbounded, so
-  // a per-run `.filter` here is quadratic on exactly the suites that need this
-  // page most.
-  const byRun = new Map<string, EvalIteration[]>();
-  for (const iteration of iterations) {
-    if (!iteration.suiteRunId) continue;
-    const rows = byRun.get(iteration.suiteRunId);
-    if (rows) rows.push(iteration);
-    else byRun.set(iteration.suiteRunId, [iteration]);
-  }
-  return byRun;
-}
-
 export function buildRunCompareLanes({
   currentRun,
   runs,
-  iterations,
+  metricsByRun,
   hostNamesById,
   passThreshold,
 }: {
   currentRun: EvalSuiteRun;
   runs: readonly EvalSuiteRun[];
-  iterations: readonly EvalIteration[];
+  /** One metrics object per run — see `evals/run-metrics.ts`. */
+  metricsByRun: RunMetricsByRun;
   hostNamesById?: ReadonlyMap<string, string | null>;
   passThreshold: number | null;
 }): { header: RunCompareHeader; lanes: RunCompareLane[] } {
   const all = runs.some((run) => run._id === currentRun._id)
     ? [...runs]
     : [...runs, currentRun];
-  const trialsByRun = indexIterations(iterations);
   const currentLaunchIds = new Set(
     launchRuns(currentRun, all).map((run) => run._id),
   );
@@ -321,7 +309,7 @@ export function buildRunCompareLanes({
     );
     const measured = ordered.map((run) => ({
       run,
-      measurements: measureRun(run, trialsByRun.get(run._id) ?? []),
+      measurements: measureRun(run, metricsByRun.get(run._id)),
     }));
 
     const rows: RunCompareRow[] = measured.map((entry, index) => {

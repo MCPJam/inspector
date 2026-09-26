@@ -1,12 +1,10 @@
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
-import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
 import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
-import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Public Evaluate experience. Reuses the shared eval data and mutation layer;
  * legacy Evaluate remains available separately behind evaluate-enabled.
@@ -52,9 +50,12 @@ import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
-  aggregateSuite,
+  environmentTargetLabel,
   formatRunId,
+  generationEnvironmentTarget,
   getEffectiveSuiteServers,
+  resolveGenerationEnvironmentRequest,
+  suiteEnvironmentTargets,
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
@@ -69,6 +70,8 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
@@ -221,6 +224,8 @@ function EvaluateTabContent({
     suiteId: string;
     environmentIds: string[] | null;
   }) => Promise<unknown>;
+  // `createSuiteWithEnvironments`: an environment suite is created in one call.
+  const environmentCapabilities = useEnvironmentCapabilities(projectId);
 
   // Prepared cases belong to the server review draft, not persisted test suites.
   const isPreparedCaseEdit =
@@ -359,22 +364,13 @@ function EvaluateTabContent({
     projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
+    perRunMetrics: true,
   });
 
   const selectedSuite = queries.selectedSuite;
   const suiteDetails = queries.suiteDetails;
-  const activeIterations = queries.activeIterations;
-  const sortedIterations = queries.sortedIterations;
   const runsForSelectedSuite = queries.runsForSelectedSuite;
-
-  const suiteAggregate = useMemo(() => {
-    if (!selectedSuite || !suiteDetails) return null;
-    return aggregateSuite(
-      selectedSuite,
-      suiteDetails.testCases,
-      activeIterations,
-    );
-  }, [selectedSuite, suiteDetails, activeIterations]);
+  const metricsByRun = queries.metricsByRun;
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
     [],
@@ -395,11 +391,29 @@ function EvaluateTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
+    // Missing from the overview is not yet proof the suite is gone — not
+    // until the suite's OWN query has answered. "Promote to test case" into a
+    // NEW suite creates it in an action, whose result can reach this client
+    // before the overview subscription's update does; and the promote dialog
+    // holds that same subscription (same args), so this page can mount on a
+    // cached overview older than the suite it was just sent to. Bouncing on
+    // that landed the promoter on the list instead of their case.
+    //
+    // The per-suite query is a fresh subscription for a suite nobody has
+    // opened yet, and Convex applies every subscription's update in one
+    // consistent transition — so once it answers, the overview has caught up
+    // too. (A one-shot `convex.query` would not do: it returns the cached
+    // overview when there is one, which is exactly the stale answer.) For a
+    // suite that really is gone it answers `[]`, and the bounce proceeds.
+    if (queries.isSuiteDetailsLoading) {
+      return;
+    }
     if (!selectedSuiteEntry) {
       navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
     }
   }, [
     overviewQueries.isOverviewLoading,
+    queries.isSuiteDetailsLoading,
     route,
     selectedSuiteEntry,
     selectedSuiteId,
@@ -498,6 +512,8 @@ function EvaluateTabContent({
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
         previewedHostId,
+        environmentSuites:
+          environmentCapabilities?.createSuiteWithEnvironments === true,
         // Stay in Evaluate. The default lands on `/evals/...`, which dropped
         // the reader into the shipped tab's copy of the suite they just made.
         navigate: navigatePlaygroundEvalsRoute,
@@ -516,6 +532,7 @@ function EvaluateTabContent({
     connectedServerNames,
     existingQuickstartSuiteId,
     previewedHostId,
+    environmentCapabilities,
   ]);
 
   const showQuickstart = Boolean(handleConnect);
@@ -533,46 +550,14 @@ function EvaluateTabContent({
       }
 
       try {
-        const createdSuite = await mutations.createTestSuiteMutation({
+        const createdSuite = await createSuiteFromPayload({
           projectId,
-          name: payload.name,
-          // environment.servers is left empty: hosts own server selection
-          // now, and the runner derives the per-run server set from each
-          // attachment's snapshot. Suites with zero attachments are valid
-          // skeletons — they just can't run until a host is attached.
-          environment: { servers: [] },
-          ...(payload.hostAttachments && payload.hostAttachments.length > 0
-            ? { hostAttachments: payload.hostAttachments }
-            : {}),
-          ...(payload.serverAttachmentId
-            ? { serverAttachmentId: payload.serverAttachmentId }
-            : {}),
+          payload,
+          createTestSuite: mutations.createTestSuiteMutation,
+          setSuiteEnvironments,
+          oneCall:
+            environmentCapabilities?.createSuiteWithEnvironments === true,
         });
-
-        if (!createdSuite?._id) {
-          throw new Error("Suite was created without an id");
-        }
-
-        // `createTestSuite` cannot take environments, so a suite born in
-        // environment mode needs a second call. The create page already resolved
-        // these ids and sent the matching clients as legacy rollback data, so a
-        // failure here leaves a runnable legacy suite the header can convert —
-        // worth a toast, not worth discarding the suite.
-        if (payload.environmentIds && payload.environmentIds.length > 0) {
-          try {
-            await setSuiteEnvironments({
-              suiteId: createdSuite._id,
-              environmentIds: payload.environmentIds,
-            });
-          } catch (error) {
-            toast.error(
-              getBillingErrorMessage(
-                error,
-                "Suite created, but attaching its environments failed",
-              ),
-            );
-          }
-        }
 
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
@@ -584,7 +569,12 @@ function EvaluateTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
+    [
+      mutations.createTestSuiteMutation,
+      projectId,
+      setSuiteEnvironments,
+      environmentCapabilities,
+    ],
   );
 
   const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
@@ -614,28 +604,9 @@ function EvaluateTabContent({
     async (
       suite: EvalSuite,
       refinement?: string,
-      stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
       options?: GenerationOptions,
+      environmentId?: string,
     ) => {
-      const suiteServers = getEffectiveSuiteServers(suite);
-      if (suiteServers.length === 0) {
-        if (stageCase)
-          throw new Error("Attach servers before generating cases.");
-        return;
-      }
-      // Scope generation by the suite's saved server attachment when present.
-      // Backend uses this to (a) require per-server cases AND at least one
-      // cross-server case when the attachment spans ≥2 servers, and (b) put
-      // the attachment name on each generated case so failures are
-      // attributable to a specific suite scope rather than "any server".
-      const suiteAttachment = suite.serverAttachment;
-      const serverAttachment = suiteAttachment
-        ? {
-            id: suiteAttachment._id,
-            name: suiteAttachment.name,
-            resolvedServerNames: suiteAttachment.resolvedServerNames,
-          }
-        : undefined;
       // A confirmed batch keeps its options on retries. Legacy callers without
       // explicit options continue using the suite's persisted configuration.
       const generateConfig = loadGenerateConfig(suite._id);
@@ -649,15 +620,47 @@ function EvaluateTabContent({
           : refinement?.trim()
             ? { refinement: refinement.trim() }
             : undefined);
+      // An ENVIRONMENT suite generates against ONE environment's servers
+      // (its group plus pinned plugins), resolved server-side. Its legacy
+      // server fields are not what its runs connect, and a union across
+      // environments that differ would write cases no single run can meet.
+      const environmentTarget = generationEnvironmentTarget(
+        suite,
+        environmentId ?? generateConfig.environmentId,
+      );
+      if (environmentTarget.kind === "none") {
+        toast.error(environmentTarget.reason);
+        return;
+      }
+      if (environmentTarget.kind === "choose") {
+        toast.error(
+          "This suite’s environments connect different servers. Choose the one to generate from in Generate.",
+        );
+        return;
+      }
+      if (environmentTarget.kind === "environment") {
+        await handlers.handleGenerateTests(suite._id, [], {
+          environmentId: environmentTarget.environmentId,
+          ...(generationOptions ? { generationOptions } : {}),
+        });
+        return;
+      }
+      const suiteServers = getEffectiveSuiteServers(suite);
+      if (suiteServers.length === 0) return;
+      // Scope generation by the suite's saved server attachment when present.
+      // Backend uses this to (a) require per-server cases AND at least one
+      // cross-server case when the attachment spans ≥2 servers, and (b) put
+      // the attachment name on each generated case so failures are
+      // attributable to a specific suite scope rather than "any server".
+      const suiteAttachment = suite.serverAttachment;
+      const serverAttachment = suiteAttachment
+        ? {
+            id: suiteAttachment._id,
+            name: suiteAttachment.name,
+            resolvedServerNames: suiteAttachment.resolvedServerNames,
+          }
+        : undefined;
       await handlers.handleGenerateTests(suite._id, suiteServers, {
-        ...(stageCase
-          ? {
-              stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(
-                  normalizeGeneratedDraft(input, suite.defaultPredicates),
-                ),
-            }
-          : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
@@ -681,7 +684,16 @@ function EvaluateTabContent({
             selectedSuite,
             suiteDetails?.testCases ?? [],
             runsForSelectedSuite,
-            suiteDetails?.iterations ?? [],
+            // Iterations are not loaded suite-wide here; count the listed
+            // runs' from their metrics (or summaries, while those load).
+            runsForSelectedSuite.reduce(
+              (sum, run) =>
+                sum +
+                (metricsByRun.get(run._id)?.iterationCount ??
+                  run.summary?.total ??
+                  0),
+              0,
+            ),
           ),
         run: async () => {
           if (evalRunsDisabledReason) throw new Error(evalRunsDisabledReason);
@@ -700,8 +712,6 @@ function EvaluateTabContent({
             );
           return result;
         },
-        generate: (instructions, stage, options) =>
-          generateTestsForSuite(selectedSuite, instructions, stage, options),
         save: (input) => mutations.createTestCaseMutation(input as any),
       },
     );
@@ -709,12 +719,12 @@ function EvaluateTabContent({
     projectId,
     selectedSuite,
     suiteDetails,
-    generateTestsForSuite,
     mutations.createTestCaseMutation,
     isLoading,
     isAuthenticated,
     isDirectGuest,
     runsForSelectedSuite,
+    metricsByRun,
     evalRunsDisabledReason,
     handleRerunWithQuota,
   ]);
@@ -738,6 +748,21 @@ function EvaluateTabContent({
   );
 
   const generateState = useMemo(() => {
+    // Environment suites: servers resolve server-side from the environment,
+    // so neither the legacy list nor the browser's connections gate this.
+    const environmentTarget = selectedSuite
+      ? generationEnvironmentTarget(selectedSuite)
+      : null;
+    if (environmentTarget?.kind === "none") {
+      return { canGenerate: false, disabledReason: environmentTarget.reason };
+    }
+    if (environmentTarget && environmentTarget.kind !== "legacy") {
+      return {
+        canGenerate: true,
+        disabledReason:
+          "Generate suggested cases from this suite’s environment servers. Open a case to run it when you are ready.",
+      };
+    }
     const suiteServers = selectedSuite
       ? getEffectiveSuiteServers(selectedSuite)
       : [];
@@ -818,16 +843,19 @@ function EvaluateTabContent({
   // added without deciding. An agent command is a second door into the same
   // mutations the buttons call, and it passes none of the rendered controls
   // the CI-owned lock lives in — so a lock that only hides affordances is no
-  // lock at all here. `case.create` (generate) and `suite.delete` are both in
-  // the platform's locked set: an agent pointed at a CI-owned suite gets a
-  // `409`, which is the same offer-then-refuse this whole change removes.
+  // lock at all here. `case.create` (generate) is in the platform's locked
+  // set: an agent pointed at a CI-owned suite gets a `409`, which is the same
+  // offer-then-refuse this whole change removes.
   //
-  // `"read"` is not "harmless" — it is "writes no configuration". Running and
-  // cancelling stay readable on a CI-owned suite, because running one from the
-  // app is exactly what locking edits rather than the suite exists to keep.
+  // THE TWO WORDS ARE THE RULE, not a severity ranking. `"edit_config"` writes
+  // the configuration a CI-owned suite's file (or SDK report) owns, and is the
+  // only thing ownership refuses. `"lifecycle"` covers running, cancelling and
+  // DELETING — none of them edits what the suite is, and all three stay
+  // available on a CI-owned suite. Spelling delete `"write"` here is what made
+  // the agent surface refuse the one cleanup path that issue #5381 needed.
   const resolveSuiteEntry = (
     raw: unknown,
-    intent: "read" | "write",
+    intent: "edit_config" | "lifecycle",
   ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
@@ -847,12 +875,12 @@ function EvaluateTabContent({
     });
     if (matches.length === 1) {
       const entry = matches[0];
-      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+      if (intent === "edit_config" && isCiOwnedSuite(entry.suite)) {
         throw createInspectorCommandClientError(
           "invalid_request",
           `Suite "${suiteDisplayName(
             entry.suite,
-          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running and deleting it are still available.`,
         );
       }
       return entry;
@@ -939,7 +967,7 @@ function EvaluateTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "read");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -992,8 +1020,24 @@ function EvaluateTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
-        if (getEffectiveSuiteServers(entry.suite).length === 0) {
+        const entry = resolveSuiteEntry(payload.suite, "edit_config");
+        const environment = resolveGenerationEnvironmentRequest(
+          entry.suite,
+          payload.environment,
+          loadGenerateConfig(entry.suite._id).environmentId,
+        );
+        if ("error" in environment) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `Suite "${suiteDisplayName(entry.suite)}" can't generate cases: ${
+              environment.error
+            }`,
+          );
+        }
+        if (
+          !environment.environmentId &&
+          getEffectiveSuiteServers(entry.suite).length === 0
+        ) {
           throw createInspectorCommandClientError(
             "invalid_request",
             `Suite "${suiteDisplayName(
@@ -1017,7 +1061,14 @@ function EvaluateTabContent({
         // kickoff (synchronous) and cleared when it settles, so a second
         // concurrent call can't double-bill before React state commits.
         agentGenerateInFlightRef.current.add(generateSuiteId);
-        void Promise.resolve(generateTestsForSuite(entry.suite)).finally(() => {
+        void Promise.resolve(
+          generateTestsForSuite(
+            entry.suite,
+            undefined,
+            undefined,
+            environment.environmentId,
+          ),
+        ).finally(() => {
           agentGenerateInFlightRef.current.delete(generateSuiteId);
         });
         return {
@@ -1030,7 +1081,7 @@ function EvaluateTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite, "write");
+        const entry = resolveSuiteEntry(payload.suite, "lifecycle");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -1092,6 +1143,19 @@ function EvaluateTabContent({
               name: suiteDisplayName(selectedSuite),
               caseCount: suiteDetails?.testCases.length ?? null,
               servers: getEffectiveSuiteServers(selectedSuite),
+              // Names the agent can pass as ui_generate_eval_tests'
+              // `environment` when they connect different servers.
+              ...(suiteEnvironmentTargets(selectedSuite)
+                ? {
+                    environments: suiteEnvironmentTargets(selectedSuite)!.map(
+                      (target) => ({
+                        id: target.environmentId,
+                        name: environmentTargetLabel(target),
+                        servers: target.serverNames,
+                      }),
+                    ),
+                  }
+                : {}),
             }
           : null,
         totalSuites: visibleSuites.length,
@@ -1208,7 +1272,11 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Test Suite Evaluators"
+        ? route.fromCaseChecks
+          ? (suiteDetails?.testCases.find(
+              (testCase) => testCase._id === route.fromCaseChecks,
+            )?.title ?? "Test case")
+          : "Test Suite Evaluators"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1288,6 +1356,8 @@ function EvaluateTabContent({
               projectId,
               server: preparedServer,
               mutate: (name, args) => convex.mutation(name as any, args),
+              environmentSuites:
+                environmentCapabilities?.createSuiteWithEnvironments === true,
             });
             for (const suite of suites) {
               const launch = await handlers.handleRerun(suite, {
@@ -1411,15 +1481,11 @@ function EvaluateTabContent({
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
             /*
-             * Role AND ownership. `suite.delete` is CI-locked, so offering the
-             * trash on a CI-owned suite is offering a `409`. Answered from the
-             * suite ROW rather than capabilities: this is a grid, and asking
-             * the backend per card would be one query per suite for a question
-             * the row already carries in full.
+             * Role alone. `suite.delete` left the backend's CI-locked set —
+             * deleting a CI-owned suite says what this workspace keeps, not
+             * what CI runs — so ownership no longer has a second vote here.
              */
-            canDeleteSuite={(suite) =>
-              canDeleteArtifact(suite.createdBy) && !isCiOwnedSuite(suite)
-            }
+            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
@@ -1442,11 +1508,13 @@ function EvaluateTabContent({
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
-          iterations={activeIterations}
-          allIterations={sortedIterations}
+          metricsByRun={metricsByRun}
+          metricsLoading={queries.isRunMetricsLoading}
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
-          aggregate={suiteAggregate}
+          // A suite-wide aggregate needs every iteration; Evaluate reads
+          // per-run metrics instead, and nothing it mounts reads this.
+          aggregate={null}
           /*
            * The suite's configuration lives in a repository (a committed suite
            * file, or SDK ingest), so this surface offers no edits for it.
@@ -1558,7 +1626,18 @@ function EvaluateTabContent({
             }
             detailCrumb={
               route.type === "suite-edit" && route.fromCaseChecks
-                ? { label: "Test Suite Evaluators" }
+                ? [
+                    {
+                      label: "Test Case Evaluators",
+                      onClick: () =>
+                        playgroundNavigation.toTestEdit(
+                          route.suiteId,
+                          route.fromCaseChecks!,
+                          { checks: true },
+                        ),
+                    },
+                    { label: "Test Suite Evaluators" },
+                  ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
                   : undefined
@@ -1569,7 +1648,6 @@ function EvaluateTabContent({
                     playgroundNavigation.toTestEdit(
                       route.suiteId,
                       route.fromCaseChecks!,
-                      { checks: true },
                     )
                 : route.type === "test-edit" && route.checks
                   ? () =>
@@ -1604,17 +1682,15 @@ function EvaluateTabContent({
                     : undefined
             }
           >
-            {route.type === "suite-edit" && route.fromCaseChecks
-              ? "Test Case Evaluators"
-              : route.type === "eval-server"
-                ? evalServer?.name
-                : route.type === "test-edit" && route.fromEvalServer
-                  ? (previewCaseTitleFromDraft(
-                      route.fromEvalServer,
-                      route.suiteId,
-                      route.testId,
-                    ) ?? nestedPageLabel)
-                  : renderPlaygroundBreadcrumb()}
+            {route.type === "eval-server"
+              ? evalServer?.name
+              : route.type === "test-edit" && route.fromEvalServer
+                ? (previewCaseTitleFromDraft(
+                    route.fromEvalServer,
+                    route.suiteId,
+                    route.testId,
+                  ) ?? nestedPageLabel)
+                : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }
