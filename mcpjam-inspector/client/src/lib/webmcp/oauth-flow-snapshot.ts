@@ -30,7 +30,10 @@ import { extractOauthErrorCode } from "./oauth-error-code";
 
 /**
  * The two steps where the Continue button (and `ui_advance_oauth_flow`) hand
- * off to the human sign-in popup instead of advancing the machine.
+ * off to the human sign-in popup instead of advancing the machine. The third
+ * hand-off, a token_request whose code the AS rejected, depends on
+ * `authorizationCode`, which the view omits, so the call site passes it as
+ * `awaitingReauthorization`.
  */
 export function isAwaitingHumanAuthorization(step: OAuthFlowStep): boolean {
   return step === "generate_pkce_parameters" || step === "authorization_request";
@@ -70,6 +73,11 @@ export interface OAuthFlowSnapshotInput {
   customHeaderCount: number;
   hasAccessToken: boolean;
   hasRefreshToken: boolean;
+  /**
+   * The AS rejected the code: Continue now signs in again rather than
+   * advancing. Computed at the call site from the full state.
+   */
+  awaitingReauthorization: boolean;
   serverConnected: boolean;
   readyToApplyTokens: boolean;
   /** Pre-stripped via `toSafeSequenceSteps`. */
@@ -155,9 +163,9 @@ export function buildOAuthFlowSnapshot(
       stepIndex: stepIndex === Number.MAX_SAFE_INTEGER ? null : stepIndex,
       isInitiatingAuth: view.isInitiatingAuth,
       complete: view.currentStep === "complete",
-      awaitingHumanAuthorization: isAwaitingHumanAuthorization(
-        view.currentStep,
-      ),
+      awaitingHumanAuthorization:
+        isAwaitingHumanAuthorization(view.currentStep) ||
+        input.awaitingReauthorization,
       steps: toSafeSequenceSteps(input.steps),
     },
     tokens: {

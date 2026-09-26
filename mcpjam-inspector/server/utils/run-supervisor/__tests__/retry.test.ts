@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 
 import {
   CONTROL_PLANE_WRITE_RETRY_POLICY,
@@ -213,6 +214,47 @@ describe("classifyRetry — one fixture per class", () => {
 });
 
 describe("retryAfterMsOf — units", () => {
+  it.each([
+    ["30", 30_000],
+    ["Mon, 21 Sep 2026 12:00:45 GMT", 45_000],
+    ["0", 0],
+    ["", undefined],
+    ["soon", undefined],
+    ["-5", undefined],
+  ])(
+    "reads SDK HTTP error Retry-After %j without guessing",
+    (raw, expected) => {
+      const error = new SdkHttpError(
+        SdkErrorCode.ClientHttpNotImplemented,
+        "upstream throttled",
+        { status: 429, retryAfter: raw },
+      );
+      const now = () => Date.parse("2026-09-21T12:00:00Z");
+
+      expect(retryAfterMsOf(error, now)).toBe(expected);
+    },
+  );
+
+  it("carries the SDK wire wait into retry classification", () => {
+    const error = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "upstream throttled",
+      { status: 429, retryAfter: "30" },
+    );
+    expect(classifyRetry(error)).toEqual({
+      class: "rate_limited",
+      retryAfterMs: 30_000,
+    });
+  });
+
+  it("ignores non-string SDK wire metadata and retains normalized-ms precedence", () => {
+    expect(retryAfterMsOf({ data: { retryAfter: 30 } })).toBeUndefined();
+    expect(retryAfterMsOf({ data: null })).toBeUndefined();
+    expect(
+      retryAfterMsOf({ retryAfterMs: 500, data: { retryAfter: "30" } }),
+    ).toBe(500);
+  });
+
   it("reads retryAfterMs and retryAfter as milliseconds", () => {
     expect(retryAfterMsOf({ retryAfterMs: 30_000 })).toBe(30_000);
     // The swarm agent's JSON envelope: `"retryAfter":9259503` alongside "Try
@@ -422,22 +464,53 @@ describe("withRetry — what it retries", () => {
     expect(told.waits).toEqual([500]);
   });
 
-  it("clamps Retry-After into [base, max]", async () => {
-    // A control plane cannot talk a caller into a wait outside its own policy.
+  it("keeps a minimum wait without shortening the server's Retry-After", async () => {
     const low = harness();
     await withRetry(
       makeFailThenSucceed(() => httpError(503, { retryAfterMs: 1 })),
       low.policy,
     );
     expect(low.waits).toEqual([low.policy.baseDelayMs]);
-
-    const high = harness();
-    await withRetry(
-      makeFailThenSucceed(() => httpError(503, { retryAfterMs: 10 * 60_000 })),
-      high.policy,
-    );
-    expect(high.waits).toEqual([high.policy.maxDelayMs]);
   });
+
+  it.each([429, 503])(
+    "honors HTTP %s Retry-After above the backoff cap when the budget fits",
+    async (status) => {
+      const h = harness();
+      const op = vi.fn(
+        makeFailThenSucceed(
+          () =>
+            new SdkHttpError(
+              SdkErrorCode.ClientHttpNotImplemented,
+              "slow down",
+              {
+                status,
+                retryAfter: "5",
+              },
+            ),
+        ),
+      );
+
+      await withRetry(op, h.policy);
+
+      expect(h.waits).toEqual([5_000]);
+      expect(op).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([429, 503])(
+    "does not retry HTTP %s early when Retry-After exceeds the remaining budget",
+    async (status) => {
+      const h = harness();
+      const error = httpError(status, { retryAfterMs: 10 * 60_000 });
+      const op = vi.fn(makeFailThenSucceed(() => error));
+
+      await expect(withRetry(op, h.policy)).rejects.toBe(error);
+
+      expect(h.waits).toEqual([]);
+      expect(op).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe("withRetry — budgets", () => {

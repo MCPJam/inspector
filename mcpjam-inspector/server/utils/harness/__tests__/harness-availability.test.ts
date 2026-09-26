@@ -677,3 +677,73 @@ describe("harnessToolApprovalRefusalReason", () => {
     ).toBeUndefined();
   });
 });
+
+describe("version-keyed model support (evidence table)", () => {
+  it("refuses gpt-5.6-luna on Claude Code as model-unsupported", () => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({ model: { id: "openai/gpt-5.6-luna", provider: "openai" } }),
+    );
+    expect(r).toEqual({
+      ok: false,
+      kind: "model-unsupported",
+      reason:
+        "the Claude Code harness can't run this host's model — pick a " +
+        "Claude Code-compatible model to run the real runtime",
+    });
+  });
+
+  it("refuses an unverified pair for evals and swarms, naming the version", () => {
+    setFullyAvailable();
+    for (const purpose of [undefined, "eval", "swarm"] as const) {
+      const r = checkHarnessRuntimeAvailable(
+        args({
+          model: { id: "anthropic/claude-fable-5", provider: "anthropic" },
+          ...(purpose ? { purpose } : {}),
+        }),
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.kind).toBe("model-unverified");
+        expect(r.reason).toMatch(/^not verified for claude-code \d+\.\d+\.\d+$/);
+      }
+    }
+  });
+
+  it("admits an unverified pair in Playground chat with the reason as a warning", () => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({
+        model: { id: "anthropic/claude-fable-5", provider: "anthropic" },
+        purpose: "chat",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.warning).toMatch(/^not verified for claude-code /);
+    }
+  });
+
+  it("never admits an unsupported pair, even in chat", () => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({
+        harnessId: "codex",
+        model: { id: "openai/gpt-5.6-luna", provider: "openai" },
+        purpose: "chat",
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.kind).toBe("model-unsupported");
+  });
+
+  it("dispatch eligibility follows the same purpose rule", () => {
+    setFullyAvailable();
+    const adapter = getHarnessAdapter("claude-code");
+    const model = { modelId: "anthropic/claude-fable-5", provider: "anthropic" };
+    expect(harnessModelEligibleForRuntime({ adapter, ...model })).toBe(false);
+    expect(
+      harnessModelEligibleForRuntime({ adapter, ...model, purpose: "chat" }),
+    ).toBe(true);
+  });
+});
