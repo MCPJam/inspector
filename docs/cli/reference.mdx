@@ -997,6 +997,96 @@ Cancelling is idempotent — calling it twice on the same request is safe. Use t
 
 ---
 
+## `browser` commands
+
+Drive this machine's browser through the local Inspector. See the [browser guide](/cli/browser) for the full workflow.
+
+All `browser` commands except `consent` accept these shared flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--inspector-url <url>` | `http://localhost:6274` | Local Inspector base URL. `http://` is allowed for loopback only. |
+| `--project <id>` | `default` | Local project key whose browser to drive. |
+| `--session <id>` | last opened | Browser session id. |
+| `--consent <token>` | stored / env | Local computer consent capability. |
+| `--client-id <id>` | `mcpjam-cli` | How this client appears in the session trace. |
+
+### `browser consent`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--token <token>` | Yes | The capability the Inspector showed once. |
+
+### `browser open`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--profile <profile>` | `persistent` | `persistent` or `ephemeral`. |
+| `--attach <mode>` | `prefer` | `prefer`, `never`, or `require`. |
+| `--mode <mode>` | `allow_all` | Session policy: `allow_all`, `read_only`, or `allowlist`. |
+| `--origin <origin...>` | | Origins this session may visit (allowlist mode). |
+| `--tool <op...>` | | Operations this session may use (allowlist mode). |
+| `--observe <mode>` | | Initial observation: `a11y`, `screenshot`, or `none`. |
+| `--out-dir <dir>` | system temp | Where to write an initial screenshot. |
+| `--run-key <key>` | | Names an ephemeral run so two runs never share a profile. |
+| `--no-screenshots` | | Keep a ledger without pictures for this session. |
+
+### `browser observe`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode <mode>` | `a11y` | `a11y`, `screenshot`, `text`, `dom`, `console`, `url`, or `page_tools`. |
+| `--root-ref <ref>` | | Scope an a11y tree to a ref. |
+| `--root-selector <selector>` | | Scope an a11y tree to a CSS selector. |
+| `--filter <filter>` | | `interactive` or `all`. |
+| `--tab <tabId>` | | Which tab to observe. |
+| `--out-dir <dir>` | system temp | Where to write a screenshot. |
+| `--inline` | | Return screenshot bytes instead of a file path. |
+
+### `browser navigate`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--new-tab` | | Open in a new tab. |
+| `--tab <tabId>` | | Which tab to navigate. |
+| `--command-id <id>` | | Idempotency key for safe retries. |
+| `--observe-after <mode>` | `a11y` | `a11y`, `screenshot`, or `none`. |
+
+### `browser act`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--verb <verb>` | Yes | | `click`, `type`, `press`, `scroll`, `hover`, `drag`, `select`, `close_tab`, or `activate_tab`. |
+| `--ref <ref>` | One of | | Target a ref from the last a11y observation. |
+| `--selector <selector>` | One of | | Target a CSS selector. |
+| `--x <x>` / `--y <y>` | One of | | Target coordinates in the 1024×768 viewport. |
+| `--value <value>` | | | Text to type, key to press, or option to select. |
+| `--expected-state <token>` | | | Refuse if the page has moved since this state token. |
+| `--tab <tabId>` | | | Which tab to act on. |
+| `--command-id <id>` | | | Idempotency key for safe retries. |
+| `--observe-after <mode>` | | `a11y` | `a11y`, `screenshot`, or `none`. |
+| `--out-dir <dir>` | | system temp | Where to write a screenshot. |
+
+### `browser note`
+
+No additional flags beyond the shared ones. Takes a positional `<text>` argument.
+
+### `browser trace`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--after-seq <seq>` | | Only rows after this sequence number. |
+| `--command-id <id>` | | Find one command's row by its id. |
+| `--limit <n>` | `100` | How many rows to return. |
+
+### `browser close`
+
+| Flag | Description |
+|------|-------------|
+| `--terminate` | Close the browser itself, not just this participant. |
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`
