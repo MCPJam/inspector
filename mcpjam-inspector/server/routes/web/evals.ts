@@ -395,10 +395,12 @@ evals.post("/run-test-case", async (c) => {
   return withEphemeralConnection(
     c,
     hostedRunTestCaseSchema,
-    (manager, body) =>
+    async (manager, body) =>
       runEvalTestCaseWithManager(manager, {
         ...body,
-        convexAuthToken: assertBearerToken(c),
+        // The DELEGATED JWT: the run's Convex calls use this bearer, and an
+        // `sk_` API key 401s Convex's query and action surfaces.
+        convexAuthToken: await getConvexBearerForRequest(c),
         ...(preflightEnvironment
           ? { resolvedEnvironment: preflightEnvironment }
           : {}),
@@ -552,6 +554,10 @@ evals.post("/stream-test-case", async (c) => {
     },
   );
 
+  // The DELEGATED JWT for the run's own Convex calls (see run-test-case); the
+  // manager above authorizes the raw bearer itself.
+  const convexAuthToken = await getConvexBearerForRequest(c);
+
   try {
     const stream = await streamEvalTestCaseWithManager(
       manager,
@@ -559,7 +565,7 @@ evals.post("/stream-test-case", async (c) => {
         ...(body as z.infer<typeof hostedRunTestCaseSchema> & {
           serverIds: string[];
         }),
-        convexAuthToken: bearerToken,
+        convexAuthToken,
         ...(preflightEnvironment
           ? { resolvedEnvironment: preflightEnvironment }
           : {}),
@@ -589,10 +595,11 @@ evals.post("/generate-tests", async (c) => {
   return withEphemeralConnection(
     c,
     hostedGenerateTestsSchema,
-    (manager, body) =>
+    async (manager, body) =>
       generateEvalTestsWithManager(manager, {
         ...body,
-        convexAuthToken: assertBearerToken(c),
+        // Delegated JWT — see the run-test-case route.
+        convexAuthToken: await getConvexBearerForRequest(c),
         ...(preflightEnvironment
           ? { resolvedEnvironment: preflightEnvironment }
           : {}),
@@ -611,10 +618,11 @@ evals.post("/generate-negative-tests", async (c) => {
   return withEphemeralConnection(
     c,
     hostedGenerateNegativeTestsSchema,
-    (manager, body) =>
+    async (manager, body) =>
       generateNegativeEvalTestsWithManager(manager, {
         ...body,
-        convexAuthToken: assertBearerToken(c),
+        // Delegated JWT — see the run-test-case route.
+        convexAuthToken: await getConvexBearerForRequest(c),
         ...(preflightEnvironment
           ? { resolvedEnvironment: preflightEnvironment }
           : {}),

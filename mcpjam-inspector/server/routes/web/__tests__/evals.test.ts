@@ -23,7 +23,10 @@ const {
   generateNegativeEvalTestsWithManagerMock,
   managerConfigsMock,
   disconnectAllServersMock,
+  delegatedBearer,
 } = vi.hoisted(() => ({
+  // Set by a test to stand in for the delegated JWT an `sk_` key exchanges to.
+  delegatedBearer: { value: undefined as string | undefined },
   environmentQueryMock: vi.fn(),
   runEvalsWithManagerMock: vi.fn(),
   prepareEvalRunMock: vi.fn(),
@@ -46,6 +49,18 @@ vi.mock("@mcpjam/sdk", async () => {
         disconnectAllServers: disconnectAllServersMock,
       };
     }),
+  };
+});
+
+vi.mock("../../../utils/v1-convex-token.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/v1-convex-token.js")
+  >("../../../utils/v1-convex-token.js");
+  return {
+    ...actual,
+    getConvexBearerForRequest: async (
+      ...args: Parameters<typeof actual.getConvexBearerForRequest>
+    ) => delegatedBearer.value ?? actual.getConvexBearerForRequest(...args),
   };
 });
 
@@ -332,6 +347,7 @@ describe("web routes — evals", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delegatedBearer.value = undefined;
     if (testGuestKeyDir) {
       rmSync(testGuestKeyDir, { recursive: true, force: true });
       testGuestKeyDir = null;
@@ -946,6 +962,47 @@ describe("web routes — evals", () => {
         "env-srv",
       ]);
     });
+
+    it.each([
+      ["/api/web/evals/run-test-case", runEvalTestCaseWithManagerMock],
+      ["/api/web/evals/generate-tests", generateEvalTestsWithManagerMock],
+      [
+        "/api/web/evals/generate-negative-tests",
+        generateNegativeEvalTestsWithManagerMock,
+      ],
+      ["/api/web/evals/stream-test-case", streamEvalTestCaseWithManagerMock],
+    ])(
+      "%s hands the run the delegated JWT, not the raw bearer",
+      async (path, handlerMock) => {
+        delegatedBearer.value = "delegated-jwt";
+        environmentQueryMock.mockResolvedValueOnce(resolvedEnvironment);
+        handlerMock.mockResolvedValueOnce(
+          handlerMock === streamEvalTestCaseWithManagerMock
+            ? new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              })
+            : { success: true, tests: [], iteration: { _id: "iter-1" } },
+        );
+        const { app, token } = createEvalsTestApp();
+        const response = await postJson(
+          app,
+          path,
+          {
+            projectId: "project-1",
+            serverIds: [],
+            testCaseId: "test-case-1",
+            environmentId: "env-1",
+          },
+          token,
+        );
+        expect(response.status).toBe(200);
+        expect(handlerMock.mock.calls[0]?.[1]).toEqual(
+          expect.objectContaining({ convexAuthToken: "delegated-jwt" }),
+        );
+      },
+    );
 
     it("refuses a client configuration override before resolving anything", async () => {
       const { app, token } = createEvalsTestApp();
