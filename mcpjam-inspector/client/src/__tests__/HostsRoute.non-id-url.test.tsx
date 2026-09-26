@@ -27,6 +27,7 @@ const {
   mockPreviewed,
   mockSetPreviewedHostId,
   mockSetHostsTabSelectedHostId,
+  mockClientsRole,
 } = vi.hoisted(() => ({
   mockRouteContext: {
     convexProjectId: "project-1" as string | null,
@@ -54,6 +55,8 @@ const {
   mockPreviewed: { value: null as string | null },
   mockSetPreviewedHostId: vi.fn(),
   mockSetHostsTabSelectedHostId: vi.fn(),
+  // Creating clients is project-admin only; admin unless a case opts out.
+  mockClientsRole: { canManage: true, isLoading: false },
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -94,6 +97,11 @@ vi.mock("../hooks/useClients", async (importOriginal) => {
     }),
   };
 });
+
+vi.mock("../hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useProjects")>()),
+  useCanManageProjectClients: () => mockClientsRole,
+}));
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
@@ -176,6 +184,8 @@ beforeEach(() => {
   mockCreateHost.mockReset();
   mockFeatureFlags.claudeCode = undefined;
   mockFeatureFlags.codex = undefined;
+  mockClientsRole.canManage = true;
+  mockClientsRole.isLoading = false;
 });
 
 afterEach(() => {
@@ -199,6 +209,42 @@ describe("HostsRoute — a URL segment that is not a Convex host id", () => {
     // The bounce lands on a list that looks unchanged, so the toast is the only
     // thing telling the user why their link did nothing.
     expect(toast.error).toHaveBeenCalledWith("Codex is not available yet.");
+  });
+
+  it("tells a member only project admins can create clients", async () => {
+    mockHostList.hosts = [];
+    mockFeatureFlags.codex = true;
+    mockClientsRole.canManage = false;
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Only project admins can create clients.",
+    );
+  });
+
+  it("waits for the viewer's role before creating from a verify URL", async () => {
+    mockHostList.hosts = [];
+    mockFeatureFlags.codex = true;
+    mockClientsRole.isLoading = true;
+    mockCreateHost.mockResolvedValue({ hostId: CONVEX_HOST_ID });
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+
+    mockClientsRole.isLoading = false;
+    rerender(<HostsRoute />);
+
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
   });
 
   it("opens a gated host the account already has", async () => {

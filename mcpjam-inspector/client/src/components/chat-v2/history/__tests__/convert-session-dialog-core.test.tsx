@@ -874,6 +874,30 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.queryByText(/server group is missing servers/i)).toBeNull();
   });
 
+  it("does not call a server the pinned group carries missing from the environment", async () => {
+    // The report: "Suite for matching UT" read "ChatGPT · Excalidraw (App)"
+    // and, right under it, "recorded environment is missing these servers:
+    // Excalidraw (App)". A group-backed suite leaves `environment.servers`
+    // empty, and the import gate now counts the group (mcpjam-backend#1635).
+    mocks.useQuery.mockReturnValue([
+      suiteEntry({
+        _id: "suite-grouped",
+        name: "Suite for matching UT",
+        environment: { servers: [] },
+        serverAttachment: serverGroup("Excalidraw"),
+        hostAttachments: [hostAttachment("ChatGPT")],
+      }),
+    ]);
+    renderCore();
+
+    expect(
+      screen.getByTestId("promote-existing-suite-summary").textContent,
+    ).toBe("ChatGPT · Excalidraw");
+    expect(screen.queryByText(/recorded environment is missing/i)).toBeNull();
+    expect(screen.queryByText(/record these servers on the suite/i)).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
   it("drops a missing-servers opt-in when the suite it was ticked for changes", async () => {
     // The box records a decision about ONE suite's environment. Carrying the
     // tick across a suite change would let a submit patch the new suite on a

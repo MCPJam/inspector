@@ -34,6 +34,7 @@ import type { UpgradeWebSocket } from "hono/ws";
 import WebSocket from "ws";
 import { verifyComputerBrowserToken } from "../../utils/computers/browser-token.js";
 import {
+  computerUnavailableError,
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
 } from "../../utils/computers/control-plane-client.js";
@@ -314,7 +315,7 @@ export function createComputerBrowserStreamWsHandler(
         const info = await sandboxInfo(target);
         if (!info.ok) {
           rejectCode = CLOSE_UNAVAILABLE;
-          rejectMessage = `Computer unavailable: ${info.error}`;
+          rejectMessage = computerUnavailableError(info, "sandbox-info");
         } else if (
           info.value.ownerUserId !== claims.userId ||
           info.value.projectId !== claims.projectId

@@ -105,6 +105,50 @@ describe("resolveOrgModelConfig", () => {
     ).toBe("Bearer user-b");
   });
 
+  it("does not reuse a runtime admission across tools, images or unattended purpose", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json({
+          ok: true,
+          runtimeLocation: "cloud",
+          providerKey: "ollama",
+        }),
+      );
+    const summaries = [
+      { purpose: "chat" as const, hasTools: false, hasUserImages: false },
+      { purpose: "chat" as const, hasTools: true, hasUserImages: false },
+      { purpose: "evalTarget" as const, hasTools: true, hasUserImages: false },
+      { purpose: "evalTarget" as const, hasTools: true, hasUserImages: true },
+    ];
+    // Return a fresh body for each network request.
+    fetchMock.mockImplementation(async () =>
+      Response.json({
+        ok: true,
+        runtimeLocation: "cloud",
+        providerKey: "ollama",
+      }),
+    );
+    for (const modelWorkload of summaries) {
+      for (let repeat = 0; repeat < 2; repeat++) {
+        await resolveOrgProviderRuntimeForTarget(
+          { projectId: "workload-cache" },
+          "ollama",
+          "llama3",
+          { bearerToken: "user" },
+          { modelWorkload },
+        );
+      }
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(
+      fetchMock.mock.calls.map(
+        ([, init]) => JSON.parse(String(init?.body)).modelWorkload,
+      ),
+    ).toEqual(summaries);
+  });
+
   it("does not populate shared model caches during GitHub execution", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example/";
     process.env.INSPECTOR_SERVICE_TOKEN = "service-token";

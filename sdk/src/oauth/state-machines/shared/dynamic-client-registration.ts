@@ -17,6 +17,29 @@ const CREDENTIAL_FIELD_NAMES = new Set([
   "refresh_token",
 ]);
 
+/**
+ * Rejection message for an authorization server that advertises no
+ * `registration_endpoint` when no pre-registered client is configured to fall
+ * back to. Every era's machine writes it verbatim.
+ *
+ * A constant rather than four literals because consumers match on the exact
+ * text: the inspector keeps this failure out of its own error reporting (the
+ * server under test simply does not offer DCR, which is not an MCPJam fault),
+ * and a rephrasing on one side would silently break that match.
+ */
+export const REGISTRATION_ENDPOINT_MISSING_NO_FALLBACK_CLIENT =
+  "Authorization server metadata does not include a registration_endpoint. " +
+  "Configure a pre-registered client or use a different registration strategy.";
+
+/**
+ * Rejection message for the same missing `registration_endpoint` under strict
+ * conformance, where DCR is required and no pre-registered fallback is tried.
+ * Exported for the same reason as the constant above.
+ */
+export const REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE =
+  "Authorization server metadata does not include a registration_endpoint " +
+  "required for DCR conformance.";
+
 export interface DynamicClientRegistrationRequestInput {
   registrationEndpoint: string;
   redirectUri: string;
