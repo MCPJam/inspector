@@ -389,6 +389,10 @@ describe("useOnboarding", () => {
     expect(result.current.phase).toBe("connect_error");
     expect(result.current.isGuidedPostConnect).toBe(false);
     expect(result.current.isFirstRunUnfinished).toBe(true);
+    const errorCapture = mockState.track.mock.calls.find(
+      ([event]) => event === "onboarding_connect_excalidraw_error"
+    );
+    expect(errorCapture?.[1]).not.toHaveProperty("error");
   });
 
   it("keeps a resumed run unfinished while the guided connect is still hanging", () => {

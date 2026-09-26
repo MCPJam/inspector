@@ -27,6 +27,13 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import {
+  trackFirstRunConnectionFailed,
+  trackFirstRunOnboardingEntered,
+  trackFirstRunOnboardingScreenViewed,
+  trackFirstRunSetupLater,
+  type FirstRunOnboardingScreen,
+} from "@/lib/first-run-onboarding-analytics";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 5_500;
@@ -66,6 +73,22 @@ export interface FirstRunServerDraft {
   transport: "http" | "stdio";
   urlOrCommand: string;
   authentication: "auto" | "oauth" | "none";
+}
+
+function analyticsScreenForStep(
+  step: FirstRunOverlayStep,
+  connectionState: FirstRunConnectionState,
+): FirstRunOnboardingScreen {
+  if (step === "choose") return "server_choice";
+  if (step === "connected") return "connected";
+  if (step === "demo-failed") return "demo_failure";
+  if (step === "server-details") return "personal_server_details";
+  if (step === "connecting") {
+    if (connectionState.status === "preparing") return "project_preparing";
+    if (connectionState.status === "loading-tools") return "loading_tools";
+    return "connecting";
+  }
+  return "welcome";
 }
 
 interface FirstRunOnboardingOverlayProps {
@@ -115,6 +138,8 @@ export function FirstRunOnboardingOverlay({
   );
   const [serverAuthentication, setServerAuthentication] =
     useState<FirstRunServerDraft["authentication"]>("auto");
+  const wasOpenRef = useRef(false);
+  const lastTrackedScreenRef = useRef<FirstRunOnboardingScreen | null>(null);
 
   useEffect(() => {
     if (open && step === "welcome") onWelcomeShown();
@@ -134,6 +159,7 @@ export function FirstRunOnboardingOverlay({
       event.preventDefault();
       const trimmedUrlOrCommand = serverUrlOrCommand.trim();
       if (!trimmedUrlOrCommand) {
+        trackFirstRunConnectionFailed({ serverKind: "personal" }, "validation");
         setServerUrlError("Enter a server URL or command.");
         return;
       }
@@ -161,6 +187,14 @@ export function FirstRunOnboardingOverlay({
       event.preventDefault();
       const trimmedUrlOrCommand = serverUrlOrCommand.trim();
       if (!trimmedUrlOrCommand) {
+        trackFirstRunConnectionFailed(
+          {
+            serverKind: "personal",
+            transport: serverTransport,
+            authentication: serverAuthentication,
+          },
+          "validation",
+        );
         setServerUrlError("Enter a server URL or command.");
         return;
       }
@@ -201,6 +235,29 @@ export function FirstRunOnboardingOverlay({
       );
     }
   }, [connectionState, open]);
+
+  useEffect(() => {
+    if (!open) {
+      wasOpenRef.current = false;
+      lastTrackedScreenRef.current = null;
+      return;
+    }
+
+    const screen = analyticsScreenForStep(step, connectionState);
+    if (!wasOpenRef.current) {
+      trackFirstRunOnboardingEntered(screen);
+      wasOpenRef.current = true;
+    }
+    if (lastTrackedScreenRef.current !== screen) {
+      trackFirstRunOnboardingScreenViewed(screen);
+      lastTrackedScreenRef.current = screen;
+    }
+  }, [connectionState, open, step]);
+
+  const setUpLater = useCallback(() => {
+    trackFirstRunSetupLater();
+    onSkip();
+  }, [onSkip]);
 
   useEffect(() => {
     if (!open || step !== "welcome" || prefersReducedMotion) return;
@@ -392,7 +449,7 @@ export function FirstRunOnboardingOverlay({
                 type="button"
                 variant="ghost"
                 className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                onClick={onSkip}
+                onClick={setUpLater}
               >
                 Set up later
               </Button>
