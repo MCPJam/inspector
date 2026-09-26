@@ -287,3 +287,10 @@ vi.mock("@/components/billing/SharedSettingsGate", () => ({
     <>{children}</>
   ),
 }));
+
+// The clients pill keeps the New Client dialog mounted so "Add clients" can
+// open it in place; it needs the preferences store these tests do not provide.
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
+}));

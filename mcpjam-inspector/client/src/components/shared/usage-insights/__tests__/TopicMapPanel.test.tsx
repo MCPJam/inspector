@@ -468,8 +468,8 @@ describe("TopicMapPanel", () => {
   // spread into the Convex payload, throwing "Converting circular structure to
   // JSON" so the rebuild never ran.
   //
-  // Voluntary re-analysis is gated off here (#5277): the one place to ask for
-  // it is the freshness chip's popover. What survives in the panel is the
+  // Voluntary re-analysis is gated off here (#5277): analysis runs on its own
+  // as sessions settle. What survives in the panel is the
   // failed-analysis retry in the map header; the `snapshot: null` empty state
   // has no analysis to read a failure from, so it offers nothing.
   it("offers no rebuild from an empty state that has not failed", () => {

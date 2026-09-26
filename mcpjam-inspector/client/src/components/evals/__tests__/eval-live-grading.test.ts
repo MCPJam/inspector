@@ -6,6 +6,7 @@ import {
   extractActualToolCallsByTurn,
   gradeLiveToolCalls,
 } from "../eval-live-grading";
+import { buildSkillContextMessages } from "@/shared/user-context-message";
 
 function userTurn(prompt: string, expectedToolCalls: PromptTurn["expectedToolCalls"]): PromptTurn {
   return { id: prompt, prompt, expectedToolCalls };
@@ -150,6 +151,20 @@ describe("extractActualToolCallsByTurn", () => {
       userText("u1", "turn 1"),
     ]);
     expect(buckets).toEqual([[]]);
+  });
+
+  it("opens no turn for the context a user adds alongside a prompt", () => {
+    const [skill] = buildSkillContextMessages([
+      { name: "brand", content: "Use the brand colors." },
+    ]);
+    const buckets = extractActualToolCallsByTurn([
+      userText("u1", "turn 1"),
+      skill as UIMessage,
+      assistantWithTool("search-products", { query: "x" }),
+    ]);
+    expect(buckets).toEqual([
+      [{ toolName: "search-products", arguments: { query: "x" } }],
+    ]);
   });
 });
 

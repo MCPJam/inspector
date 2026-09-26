@@ -47,7 +47,7 @@ export function ScenarioPreviewPane({
   mcpProfile,
   remountKey = "",
   emptyTitle = "No share link yet",
-  emptyBody = "Publish this scenario to get a share link, then come back here to preview it.",
+  emptyBody = "Publish this study to get a share link, then come back here to preview it.",
 }: {
   publishLink: string | null;
   mcpProfile: HostConfigMcpProfileV1 | undefined;
@@ -74,7 +74,7 @@ export function ScenarioPreviewPane({
     return (
       <PreviewEmptyState
         title="Preview isn't available here"
-        body="This build serves share links from another origin, so the scenario can't be embedded. Open it in a new tab instead."
+        body="This build serves share links from another origin, so the study can't be embedded. Open it in a new tab instead."
         link={publishLink}
       />
     );
@@ -123,7 +123,7 @@ function PreviewFrame({
     return (
       <PreviewEmptyState
         title="This flow can't finish inside the preview"
-        body="The preview navigated away from the scenario — an OAuth sign-in does this. Open it in a real browser tab to complete the flow."
+        body="The preview navigated away from the study. An OAuth sign-in does this. Open it in a real browser tab to complete the flow."
         link={link}
         onRetry={() => setNavigatedAway(false)}
       />
@@ -141,15 +141,15 @@ function PreviewFrame({
         ref={frameRef}
         src={src}
         onLoad={handleLoad}
-        title="Scenario preview"
+        title="Study preview"
         data-testid="user-testing-preview-frame"
         className="size-full flex-1 border-0 bg-background"
         allow={previewIframeAllow(mcpProfile)}
       />
       {/* Not a faithful guest run: the frame shares the dashboard's login. */}
       <p className="shrink-0 border-t border-border/40 px-3 py-1.5 text-[10px] text-muted-foreground">
-        Previewing as you, signed in — a tester opening this link gets the
-        guest experience, which can differ.
+        Previewing as you, signed in. A tester opening this link gets the guest
+        experience, which can differ.
       </p>
     </div>
   );

@@ -14,7 +14,11 @@
  *     answers as, which is why the list is templated rather than inferred in
  *     the browser.
  */
-import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../../config.js";
+import {
+  CORS_ORIGINS,
+  HOSTED_MODE,
+  MCPJAM_HOSTED_ORIGIN,
+} from "../../../config.js";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled.js";
 import { RECORDER_SHIM_JS } from "./recorder-shim.js";
 
@@ -57,6 +61,44 @@ export function sandboxProxyHostOriginPatterns(): string[] {
   return Array.from(patterns);
 }
 
+/**
+ * Loopback sources in the `frame-src` of the document's own CSP (the `<meta>`
+ * in sandbox-proxy.html). A local inspector keeps them; a hosted deploy serves
+ * the document without them (MJ-014). `*` already admits every network origin,
+ * so this changes nothing a hosted widget may frame.
+ */
+export const SANDBOX_PROXY_LOCAL_FRAME_SOURCES = [
+  "http://localhost:*",
+  "https://localhost:*",
+  "http://127.0.0.1:*",
+  "https://127.0.0.1:*",
+];
+
+const META_CSP_PATTERN =
+  /(http-equiv="Content-Security-Policy"\s+content=")([^"]*)(")/;
+
+/**
+ * `html` with the loopback sources removed from the `frame-src` directive of
+ * its `<meta>` CSP. Only that one attribute is touched: the document's scripts
+ * build CSPs of their own for the inner view, and those are not this policy.
+ */
+export function withoutLocalFrameSources(html: string): string {
+  return html.replace(
+    META_CSP_PATTERN,
+    (_match, open: string, policy: string, close: string) => {
+      const directives = policy.split(";").map((directive) => {
+        const tokens = directive.trim().split(/\s+/);
+        if (tokens[0] !== "frame-src") return directive;
+        const kept = tokens.filter(
+          (token) => !SANDBOX_PROXY_LOCAL_FRAME_SOURCES.includes(token),
+        );
+        return `${directive.startsWith(" ") ? " " : ""}${kept.join(" ")}`;
+      });
+      return `${open}${directives.join(";")}${close}`;
+    },
+  );
+}
+
 /** The `Content-Security-Policy` the proxy route sends. */
 export function buildSandboxProxyFrameAncestors(
   patterns: string[] = sandboxProxyHostOriginPatterns(),
@@ -79,12 +121,13 @@ let rendered: string | null = null;
  */
 export function renderSandboxProxyHtml(): string {
   if (rendered !== null) return rendered;
-  rendered = MCP_APPS_SANDBOX_PROXY_HTML.replace(
+  const html = MCP_APPS_SANDBOX_PROXY_HTML.replace(
     '"__MCPJAM_RECORDER_SHIM__"',
     () => JSON.stringify(RECORDER_SHIM_JS),
   ).replace('"__MCPJAM_HOST_ORIGINS__"', () =>
     JSON.stringify(sandboxProxyHostOriginPatterns()),
   );
+  rendered = HOSTED_MODE ? withoutLocalFrameSources(html) : html;
   return rendered;
 }
 

@@ -119,6 +119,36 @@ refused everywhere, including locally. If you see the message naming a
 "link-local or cloud-metadata host", something is pointing discovery at an
 instance-metadata endpoint rather than at an authorization server.
 
+### "Saved credentials were not sent" (403 on connect)
+
+If a connection fails with a message like:
+
+> "my-server" was not connected. Its saved credentials were entered for `https://old.example.com`, and it now points at `https://new.example.com`. Re-enter the credentials for the new address to connect.
+
+This means the server's URL was changed to a **different origin** (scheme, host, or port) after credentials were saved, and MCPJam refused to send those credentials to the new destination.
+
+When this error occurs, MCPJam automatically opens the server's **Configuration** panel so you can re-enter the credentials immediately.
+
+**Solution:** Re-enter the server's credentials for the current URL.
+
+1. In the **Connection overrides** or **Environment variables** section of the configuration panel, reveal and re-enter the credentials.
+2. Save the server. The new credentials are now bound to the current origin.
+
+If you see this error and did not intentionally change the server's URL, check the **Destination history** in the server detail panel to see when the origin changed and who made the edit.
+
+### "Credential export policy" (403 on connect)
+
+If a connection fails with a message like:
+
+> "my-server" uses saved credentials that your organization keeps inside MCPJam-hosted connections. Connect it from MCPJam in the browser, or ask an organization admin to change the credential export policy.
+
+This means your organization has a credential export policy that prevents saved credentials from being used outside MCPJam-hosted connections. Re-authorizing will not help — the policy applies to the credential itself, not to your session.
+
+**Solutions:**
+
+- **Connect from MCPJam in the browser** — open the server from [app.mcpjam.com](https://app.mcpjam.com) instead of a local inspector or CLI.
+- **Ask an organization admin to change the policy** — an admin can update the credential export policy in the organization settings to allow credentials to be used from outside hosted connections.
+
 ### Getting 401 Unauthorized errors
 
 If you're seeing **401 Unauthorized** errors when trying to connect to your server, this typically means the server requires authentication that hasn't been set up yet.
@@ -206,6 +236,16 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Proc
 ### App crashes after an automatic update
 
 The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
+
+### Update button does nothing after a download completes
+
+If you click **Update** and nothing happens — or the app refuses to quit after a download finishes — this was a known bug fixed in 3.8.1. The app was continuing to check for updates even after a build was already staged, which caused the system to forget the staged build. After that, both the Update button and quitting were silently refused.
+
+The fix is included in 3.8.1 and later. If you are on an affected version:
+
+- **Quitting:** quit normally (Cmd+Q / Alt+F4). The app now always completes the quit even if the install fails.
+- **Update button stuck:** click **Update** once. If the staged build has gone missing, the app relaunches automatically, re-downloads the update, and installs it without a second click.
+- **If neither works:** use the **Reset app data and quit** option in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
 
 ## Getting Help
 

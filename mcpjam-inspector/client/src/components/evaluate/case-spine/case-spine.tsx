@@ -73,6 +73,7 @@ import {
 import { ActionRow } from "./action-row";
 import { SpineCheckRow } from "./spine-check-row";
 import {
+  canRemoveAction,
   deleteActionPlan,
   moveActionBlock,
   removeActionWithChecks,
@@ -374,8 +375,7 @@ export function CaseSpine({
   };
 
   const requestRemoveAction = (stepId: string) => {
-    if (readOnly || steps.find((step) => step.id === stepId)?.kind === "prompt")
-      return;
+    if (readOnly || !canRemoveAction(steps, stepId)) return;
     const plan = deleteActionPlan(steps, stepId);
     if (!plan.needsConfirm) {
       onStepsChange(removeStepById(steps, stepId));
@@ -485,6 +485,7 @@ export function CaseSpine({
             onMove={(dir) =>
               onStepsChange(moveActionBlock(steps, action.step.id, dir))
             }
+            canRemove={canRemoveAction(steps, action.step.id)}
             onRemove={() => requestRemoveAction(action.step.id)}
             onHover={onHoverStep}
             onSelect={
@@ -721,10 +722,7 @@ export function CaseSpine({
 }
 
 function cnBorder(extra: string | undefined): string {
-  return [
-    "resize-none bg-background font-mono text-sm leading-relaxed",
-    extra ?? "",
-  ]
+  return ["resize-none bg-background text-foreground", extra ?? ""]
     .filter(Boolean)
     .join(" ");
 }
