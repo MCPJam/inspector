@@ -301,6 +301,18 @@ export type RequestEventMap = {
     reasons: string[];
     targetKind: "adhoc" | "host" | "environment" | "scenario";
   };
+  /**
+   * A Playground chat turn on a harness host is running a model the harness
+   * × model evidence table has not verified for the harness's runtime version
+   * (`shared/harness-model-support.ts`). Chat runs it (evals and swarms refuse
+   * it); this makes "which unverified pairs are people actually running" a
+   * query rather than a grep.
+   */
+  "chat.harness_model_unverified": {
+    harness: string;
+    modelId: string;
+    reason: string;
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"

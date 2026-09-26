@@ -91,6 +91,8 @@ import {
 import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
+import type { ModelSelection } from "@mcpjam/sdk";
+import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
 import {
   countModelSteps,
   isModelFree,
@@ -695,6 +697,33 @@ export function buildGithubCheckServerOverride(args: {
     serverName,
     projectServerId: args.persistedServerRefs[index],
   }));
+}
+
+/**
+ * The saved selection of the case's `models[]` entry this run executes (the
+ * entry whose `model` is the requested id). Invalid or absent ⇒ `undefined`
+ * and the run reads the id as legacy (hosted-first).
+ */
+export function storedSelectionForCaseModel(
+  testCase: unknown,
+  model: string,
+  provider: string,
+): ModelSelection | undefined {
+  const models = (testCase as { models?: unknown } | null)?.models;
+  if (!Array.isArray(models)) return undefined;
+  // A case can list one model id under two providers (`gpt-5.1` under
+  // `openai` and under `azure`); the run must take the entry of the
+  // provider it was asked for. An entry saved without a provider matches on
+  // the model alone.
+  const entry = models.find((candidate) => {
+    if (candidate === null || typeof candidate !== "object") return false;
+    const row = candidate as { model?: unknown; provider?: unknown };
+    return (
+      row.model === model &&
+      (row.provider === undefined || row.provider === provider)
+    );
+  }) as { selection?: unknown } | undefined;
+  return readStoredModelSelection(entry?.selection);
 }
 
 export const RunTestCaseRequestSchema = z.object({
@@ -3095,12 +3124,18 @@ export async function runEvalTestCaseWithManager(
     resolvedServerIds,
     suiteEnvironment,
   });
+  const caseModelSelection = storedSelectionForCaseModel(
+    testCase,
+    model,
+    provider,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    ...(caseModelSelection ? { selection: caseModelSelection } : {}),
     // Freeze the authored analytics label onto the runtime case. The runner
     // carries it into each iteration snapshot; reading it live later would
     // re-attribute historical trials after a case is retagged.
@@ -3528,12 +3563,18 @@ export async function streamEvalTestCaseWithManager(
     resolvedServerIds,
     suiteEnvironment,
   });
+  const caseModelSelection = storedSelectionForCaseModel(
+    testCase,
+    model,
+    provider,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    ...(caseModelSelection ? { selection: caseModelSelection } : {}),
     // Keep quick and streamed single-case runs identical to suite runs: the
     // label is authored metadata, but it must be frozen at iteration create.
     ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),

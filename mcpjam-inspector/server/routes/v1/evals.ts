@@ -43,6 +43,7 @@ import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
+import { toExecutionProjection } from "./eval-execution-projection.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -227,19 +228,35 @@ import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   getCanonicalModelId,
-  hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
+  type ModelDefinition,
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import {
+  hostedCatalogModelDefinitions,
+  isHostedCatalogModel,
+} from "../../services/hosted-model-catalog.js";
 
-// BYOK statics + the hosted snapshot — hosted display rows were removed from
-// SUPPORTED_MODELS, so provider derivation / suggestions read both.
-const MODEL_LOOKUP = [
-  ...SUPPORTED_MODELS,
-  ...hostedModelDefinitionsFromSnapshot(),
-];
+let modelLookupCache: {
+  hosted: ModelDefinition[];
+  rows: ModelDefinition[];
+} | null = null;
+
+/**
+ * BYOK statics, then the hosted catalog (hosted display rows were removed from
+ * SUPPORTED_MODELS, so provider derivation and suggestions read both). The
+ * hosted part is the checked-in snapshot with the live catalog service's ids
+ * after it, so a model the backend added since the snapshot is known here too.
+ * Statics stay first: a `find` keeps preferring them.
+ */
+function modelLookup(): ModelDefinition[] {
+  const hosted = hostedCatalogModelDefinitions();
+  if (modelLookupCache?.hosted !== hosted) {
+    modelLookupCache = { hosted, rows: [...SUPPORTED_MODELS, ...hosted] };
+  }
+  return modelLookupCache.rows;
+}
 
 const evals = new Hono();
 
@@ -1017,13 +1034,17 @@ export function assertInlineTestModelsValid(
     const canonical = getCanonicalModelId(test.model, test.provider);
     if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
-    if (MODEL_LOOKUP.some((model) => String(model.id) === canonical)) continue;
+    if (modelLookup().some((model) => String(model.id) === canonical)) {
+      continue;
+    }
 
-    const hostedIds = MODEL_LOOKUP.filter(
-      (m) =>
-        String(m.provider).toLowerCase() === provider &&
-        isHostedCatalogModel(String(m.id), m.provider),
-    ).map((m) => String(m.id));
+    const hostedIds = modelLookup()
+      .filter(
+        (m) =>
+          String(m.provider).toLowerCase() === provider &&
+          isHostedCatalogModel(String(m.id), m.provider),
+      )
+      .map((m) => String(m.id));
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -2095,6 +2116,11 @@ function toIterationDto(
     // The SUSPECTED condition behind one of those patterns, when step 2's
     // advisory judge ran. Never a cause, never a verdict input.
     ...toSuspectedConditionProjection(iteration.metadata),
+    // What this iteration actually ran on. Re-read through the SDK's reader,
+    // not passed through: known keys only, so nothing the row carries beyond
+    // the contract crosses this boundary. OMITTED on rows written before the
+    // record existed (and on a malformed one) — "not recorded", never a guess.
+    ...toExecutionProjection(iteration.execution),
   };
 }
 
@@ -2728,7 +2754,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
  * take that guess (`providerForModelId`); callers that can defer instead defer.
  */
 function attributedProvider(id: string): string | undefined {
-  const match = MODEL_LOOKUP.find(
+  const match = modelLookup().find(
     (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`),
   );
   if (match) return String(match.provider);
@@ -4991,8 +5017,16 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // freeze, so the dry run and the launch judge one configuration.
       target.namedHostId ?? servers.environmentLaunch?.hostId,
     );
+    // …and the MODEL this target runs, which is the environment's override
+    // when it sets one — not the host's own model. Judging the host model
+    // would admit a harness environment whose override the harness cannot run
+    // (and refuse one whose override fixes a host the harness can't run).
+    const environmentModelOverride =
+      servers.environmentLaunch?.modelId?.trim() || undefined;
     const admission = checkEvalHarnessStaticAdmission({
-      hostConfig,
+      hostConfig: environmentModelOverride
+        ? { ...hostConfig, modelId: environmentModelOverride }
+        : hostConfig,
       serverIds: servers.serverIds,
     });
     if (!admission.ok) {

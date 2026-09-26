@@ -116,6 +116,21 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import { isHostedModelDefinition } from "./hosted-model-catalog.js";
+import type { ModelSelection } from "@mcpjam/sdk";
+import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+  resolveLocalModelSelection,
+} from "../utils/model-resolution-local.js";
+import {
+  resolveEffectiveModelSettings,
+  type DirectProviderOptions,
+  type EffectiveModelSettings,
+  type ModelSettingsRoute,
+} from "../utils/model-selection-settings.js";
+import { buildLocalExecutionRecord } from "../utils/local-execution-record.js";
+import { postLocalUsage } from "../utils/org-model-stream-handler.js";
+import type { LocalModelCallSettled } from "./evals/drive-local-eval-turn.js";
 import {
   hasSkillTools,
   mergeToolCallsByPromptIndex,
@@ -355,6 +370,16 @@ export type EvalTestCase = {
   passThreshold?: number;
   model: string;
   provider: string;
+  /**
+   * The saved selection behind `model` (the case's `models[].selection`), when
+   * the case was saved with one. Present ⇒ it decides the rail: an explicit
+   * `org` / `local` selection never matches the hosted catalog first, and a
+   * connection that cannot be reached refuses the case (`credential_missing`)
+   * instead of running on another credential. Absent ⇒ legacy: `model` is
+   * read hosted-first, exactly as before. Always validated before it gets
+   * here (`readStoredModelSelection`).
+   */
+  selection?: ModelSelection;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -1830,6 +1855,66 @@ async function persistSetupFailedIteration(args: {
 }
 
 /**
+ * The error an iteration row carries when its case's model selection was
+ * refused before execution: the refusal code(s) and reason, in the words the
+ * resolver gave (`credential_missing: the saved org connection …`).
+ */
+export function describeModelRefusalForIteration(
+  refusal: ModelResolutionRefusalError,
+): string {
+  return `Model selection refused — ${refusal.message}`;
+}
+
+/**
+ * Record a case's model refusal on its pre-created rows. The case never
+ * reached a model, so each row finalizes `setup_failed` (the verdict is
+ * withheld, never a server failure) with the refusal as its error. Only the
+ * refused case's PENDING rows are touched; a row another worker already
+ * claimed is left alone.
+ */
+async function persistCaseRefusal(args: {
+  runId: string;
+  convexClient: ConvexHttpClient;
+  recorder: SuiteRunRecorder | null;
+  test: EvalTestCase;
+  refusal: ModelResolutionRefusalError;
+  runStartedAt: number;
+}): Promise<void> {
+  if (!args.test.testCaseId) return;
+  const details = (await args.convexClient.query(
+    "testSuites:getTestSuiteRunDetails" as any,
+    { runId: args.runId },
+  )) as { iterations?: Array<Record<string, unknown>> } | null;
+  const pending = (details?.iterations ?? []).filter(
+    (row) =>
+      row.status === "pending" && row.testCaseId === args.test.testCaseId,
+  );
+  const errorMessage = describeModelRefusalForIteration(args.refusal);
+  await Promise.allSettled(
+    pending.map((row) =>
+      persistSetupFailedIteration({
+        iterationId:
+          typeof row._id === "string"
+            ? row._id
+            : typeof row.iterationId === "string"
+              ? row.iterationId
+              : undefined,
+        runStartedAt: args.runStartedAt,
+        errorMessage,
+        iterationMetadataBase: {},
+        stageCase: buildStageAuthoredCase({
+          test: args.test,
+          turns: args.test.promptTurns,
+          caseNeedsModel: true,
+        }),
+        recorder: args.recorder,
+        convexClient: args.convexClient,
+      }),
+    ),
+  );
+}
+
+/**
  * Un-strand a run that died at run-level connect / tools-list.
  *
  * Pre-created iterations sit `pending` and `blockTerminal` would otherwise
@@ -2023,6 +2108,13 @@ type RunIterationBaseParams = {
   tools: ToolSet;
   /** Server ids the iteration runner hands to `prepareChatV2`. */
   selectedServers: string[];
+  /**
+   * The settings a case with a saved selection runs with, resolved ONCE per
+   * case by `resolveEffectiveModelSettings` (per-run override > saved
+   * selection > host defaults). Replaces the runner's own host/advancedConfig
+   * temperature when present; absent (legacy case) ⇒ unchanged behaviour.
+   */
+  effectiveSettings?: EvalEffectiveSettings;
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   testCaseId?: string;
@@ -2153,6 +2245,21 @@ type RunIterationBaseParams = {
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
+  /**
+   * A local-runtime org connection's writeback context: after every model
+   * turn the iteration posts `/stream/org/local-usage` (the backend never saw
+   * the call), carrying the saved `org` selection and the execution record
+   * when there is one. Absent on every other rail.
+   */
+  orgLocalUsage?: EvalOrgLocalUsageContext;
+};
+
+/** See {@link RunIterationAiSdkParams.orgLocalUsage}. */
+type EvalOrgLocalUsageContext = {
+  projectId: string;
+  providerKey: string;
+  /** The saved `org` selection the case runs under, when it has one. */
+  modelSelection?: ModelSelection;
 };
 
 type RunIterationBackendParams = RunIterationBaseParams & {
@@ -2259,6 +2366,158 @@ function resolveOrgTargetForEval(
   return undefined;
 }
 
+/**
+ * Resolve a case's saved selection to a rail with the local adapter
+ * (`model-resolution-local.ts`), or throw its refusal. Pure apart from the
+ * throw; the org path's own resolution (and the backend's admission of hosted
+ * and org-cloud requests) happens where it always did.
+ */
+export function resolveEvalSelectionRoute(args: {
+  test: EvalTestCase;
+  selection: ModelSelection;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
+}): {
+  rail: "hosted" | "org" | "local";
+  wireModelId: string;
+  modelDefinition: ModelDefinition;
+} {
+  const { selection } = args;
+  const wireModelId = selection.nativeModelId ?? selection.modelId;
+  const base = buildModelDefinition({ ...args.test, model: wireModelId });
+  const selectionModel: ModelDefinition = {
+    ...base,
+    id: wireModelId,
+    hosted: selection.source === "hosted",
+  };
+  const providerKey =
+    selection.source === "org" ? deriveOrgProviderKey(selectionModel) : null;
+  const result = resolveLocalModelSelection({
+    selection,
+    purpose: "evalTarget",
+    ...(providerKey?.ok ? { orgProviderKey: providerKey.key } : {}),
+    hasOrgTarget:
+      !isCredentialFreeGithubExecution() &&
+      resolveOrgTargetForEval(args.test, args.orgModelConfigTarget) !==
+        undefined,
+    ...(args.orgModelConfig
+      ? { orgProviders: args.orgModelConfig.providers }
+      : {}),
+    hasLocalKey: (key) => Boolean(lookupProviderApiKey(args.modelApiKeys, key)),
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError(result.refusals);
+  return {
+    rail: result.plan.rail,
+    wireModelId: result.plan.wireModelId,
+    modelDefinition: selectionModel,
+  };
+}
+
+/** A case's resolved settings plus the provider options they need on a direct call. */
+type EvalEffectiveSettings = EffectiveModelSettings & {
+  providerOptions?: DirectProviderOptions;
+};
+
+/**
+ * The settings a case with a saved selection runs with, resolved ONCE for
+ * all of its iterations, on the route it takes. Precedence, highest first:
+ * the case's own `advancedConfig` (per-run override) > the saved selection's
+ * `settings` > the suite host's defaults. A setting the route cannot honour
+ * throws the refusal (the case fails with that reason) instead of running a
+ * different configuration.
+ */
+export function resolveEvalCaseSettings(args: {
+  test: EvalTestCase;
+  selection: ModelSelection;
+  modelDefinition: ModelDefinition;
+  route: ModelSettingsRoute;
+  suiteHostConfig?: Record<string, unknown> | null;
+}): EvalEffectiveSettings {
+  const { advancedConfig } = resolveEvalTestCase(args.test);
+  const host = resolveExecutionContext({
+    hostConfig: args.suiteHostConfig ?? null,
+    precedence: "override-wins",
+  });
+  const result = resolveEffectiveModelSettings({
+    route: args.route,
+    modelDefinition: args.modelDefinition,
+    override: {
+      ...(typeof advancedConfig?.temperature === "number"
+        ? { temperature: advancedConfig.temperature }
+        : {}),
+    },
+    selection: args.selection,
+    host: {
+      ...(host.temperature !== undefined
+        ? { temperature: host.temperature }
+        : {}),
+    },
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError([result.refusal]);
+  return {
+    ...result.settings,
+    ...(result.providerOptions
+      ? { providerOptions: result.providerOptions }
+      : {}),
+  };
+}
+
+/**
+ * `/stream/org/local-usage` for one model turn of an eval iteration on a
+ * local-runtime org connection: the backend never saw the call, so this is
+ * its usage row, and, under a saved `org` selection, the execution record it
+ * merges onto the iteration (`evalIterationId`). Fire-and-forget, like the
+ * chat and swarm writebacks; an aborted call is not written back (the same
+ * rule those follow: an aborted turn is not billed as completed usage).
+ */
+function postEvalOrgLocalUsage(args: {
+  context: EvalOrgLocalUsageContext;
+  event: LocalModelCallSettled;
+  modelId: string;
+  effectiveSettings: EffectiveModelSettings;
+  iterationId: string | undefined;
+  runId: string | null;
+  convexAuthToken: string | undefined;
+  selectedServers: string[];
+}): void {
+  const { context, event } = args;
+  if (event.outcome === "aborted") return;
+  const execution = buildLocalExecutionRecord({
+    selection: context.modelSelection,
+    providerKey: context.providerKey,
+    wireModelId: args.modelId,
+    effectiveSettings: args.effectiveSettings,
+    outcome:
+      event.outcome === "ok"
+        ? { kind: "ok" }
+        : { kind: "error", ...(event.code ? { code: event.code } : {}) },
+    at: event.at,
+    ...(event.upstreamModel ? { upstreamModel: event.upstreamModel } : {}),
+  });
+  void postLocalUsage({
+    projectId: context.projectId,
+    providerKey: context.providerKey,
+    model: args.modelId,
+    ...(event.usage ? { usage: event.usage } : {}),
+    ...(event.finishReason ? { finishReason: event.finishReason } : {}),
+    sourceType: "eval",
+    ...(args.convexAuthToken
+      ? { authHeader: `Bearer ${args.convexAuthToken}` }
+      : {}),
+    ...(args.selectedServers.length ? { serverIds: args.selectedServers } : {}),
+    ...(args.iterationId ? { evalIterationId: String(args.iterationId) } : {}),
+    ...(args.runId ? { evalRunId: String(args.runId) } : {}),
+    ...(context.modelSelection && execution
+      ? { modelSelection: context.modelSelection, execution }
+      : {}),
+  }).catch((error) => {
+    logger.warn("[evals] Failed to post local usage", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
 async function resolveOrgByokEvalRuntime(args: {
   test: EvalTestCase;
   modelDefinition: ModelDefinition;
@@ -2266,6 +2525,16 @@ async function resolveOrgByokEvalRuntime(args: {
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexAuthToken: string;
+  /**
+   * An explicit `org` selection: the org connection is the choice, so keys the
+   * request happens to carry do not divert it onto the local path.
+   */
+  ignoreExplicitModelApiKeys?: boolean;
+  /**
+   * The saved `org` selection, forwarded to `/stream/org/resolve` so the
+   * backend re-checks its connection before handing back any key.
+   */
+  modelSelection?: ModelSelection;
 }): Promise<
   | {
       kind: "cloud";
@@ -2275,11 +2544,18 @@ async function resolveOrgByokEvalRuntime(args: {
   | {
       kind: "local";
       orgModelConfig: ResolvedOrgModelConfig;
+      /** For the `/stream/org/local-usage` writeback. */
+      providerKey: string;
+      projectId: string;
     }
   | undefined
 > {
   if (isCredentialFreeGithubExecution()) return undefined;
-  if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
+  if (
+    !args.ignoreExplicitModelApiKeys &&
+    hasExplicitModelApiKeys(args.modelApiKeys)
+  )
+    return undefined;
 
   const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!providerKeyResult.ok) return undefined;
@@ -2301,6 +2577,7 @@ async function resolveOrgByokEvalRuntime(args: {
     providerKey,
     String(args.modelDefinition.id),
     { bearerToken: args.convexAuthToken },
+    args.modelSelection ? { modelSelection: args.modelSelection } : undefined,
   );
   if (runtime.runtimeLocation === "cloud") {
     return { kind: "cloud", providerKey: runtime.providerKey, target };
@@ -2309,6 +2586,8 @@ async function resolveOrgByokEvalRuntime(args: {
   return {
     kind: "local",
     orgModelConfig: { providers: [runtime.provider] },
+    providerKey: runtime.provider.providerKey,
+    projectId: target.projectId,
   };
 }
 
@@ -2960,29 +3239,106 @@ const executeTestCase = async (params: {
   // a non-sentinel on an external-account harness and refused a run it had
   // already admitted. A per-case model is normal in evals, so that refusal hit
   // legitimate Cursor suites.
-  const modelDefinition = resolveEvalCaseModelDefinition({
+  const caseModel = buildModelDefinition(test);
+  const promotedModel = resolveEvalCaseModelDefinition({
     hostConfig: suiteHostConfig,
-    caseModel: buildModelDefinition(test),
+    caseModel,
   });
-  const resolvedModelId = getCanonicalModelId(
-    String(modelDefinition.id),
-    modelDefinition.provider,
-  );
-  const isJamModel = isHostedModelDefinition({
-    id: resolvedModelId,
-    provider: modelDefinition.provider,
-    hosted: modelDefinition.hosted,
-  });
-  const orgByokRuntime = isJamModel
-    ? undefined
-    : await resolveOrgByokEvalRuntime({
-        test,
-        modelDefinition,
-        modelApiKeys,
-        orgModelConfig,
-        orgModelConfigTarget,
-        convexAuthToken,
+  // The case's saved selection decides the rail — unless the host promoted
+  // its own runtime-chosen model, in which case the case's model (and so its
+  // selection) describes nothing that runs.
+  const selectionRoute =
+    test.selection && promotedModel === caseModel
+      ? resolveEvalSelectionRoute({
+          test,
+          selection: test.selection,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+        })
+      : undefined;
+  // The same selection, sent to the backend as `modelSelection` so its
+  // resolver re-checks it and records it as the requested selection (not
+  // `legacy`): hosted on `/stream` (carrying its `fallback`), org on
+  // `/stream/org` and `/stream/org/resolve` (carrying its `connectionRef`, which
+  // the backend re-resolves before any key is decrypted). A `local` selection
+  // is never sent. The backends that predate selections read request fields by
+  // name and ignore this one, so it is sent unconditionally.
+  const forwardedSelection = selectionRoute
+    ? backendModelSelection(test.selection)
+    : undefined;
+  const hostedSelection =
+    forwardedSelection?.source === "hosted" ? forwardedSelection : undefined;
+  const orgSelection =
+    forwardedSelection?.source === "org" ? forwardedSelection : undefined;
+  const modelDefinition = selectionRoute?.modelDefinition ?? promotedModel;
+  const resolvedModelId = selectionRoute
+    ? selectionRoute.wireModelId
+    : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
+  const isJamModel = selectionRoute
+    ? selectionRoute.rail === "hosted"
+    : isHostedModelDefinition({
+        id: resolvedModelId,
+        provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
       });
+  const orgByokRuntime =
+    isJamModel || selectionRoute?.rail === "local"
+      ? undefined
+      : await resolveOrgByokEvalRuntime({
+          test,
+          modelDefinition,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+          convexAuthToken,
+          ...(selectionRoute?.rail === "org"
+            ? { ignoreExplicitModelApiKeys: true }
+            : {}),
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        });
+  if (selectionRoute?.rail === "org" && !orgByokRuntime) {
+    // Every reason the org path can be unavailable was refused above; this is
+    // the belt to that brace — an org selection never falls through to the
+    // local keys.
+    throw new ModelResolutionRefusalError([
+      {
+        code: "credential_missing",
+        reason: "the saved org connection cannot be resolved for this run",
+      },
+    ]);
+  }
+  // The case's settings, resolved ONCE for every iteration below on the
+  // route it takes (per-run override > saved selection > host defaults).
+  // Legacy cases (no selection) keep the runners' own host/override rule.
+  const effectiveSettings =
+    selectionRoute && test.selection
+      ? resolveEvalCaseSettings({
+          test,
+          selection: test.selection,
+          modelDefinition,
+          route: isJamModel
+            ? "hosted"
+            : orgByokRuntime?.kind === "cloud"
+              ? "orgCloud"
+              : "direct",
+          suiteHostConfig,
+        })
+      : undefined;
+  // A local-runtime org connection: the iteration writes its usage (and,
+  // under a saved org selection, its execution record) back itself.
+  const orgLocalUsage: EvalOrgLocalUsageContext | undefined =
+    orgByokRuntime?.kind === "local"
+      ? {
+          projectId: orgByokRuntime.projectId,
+          providerKey: orgByokRuntime.providerKey,
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        }
+      : undefined;
+  // A `local` selection runs on this request's own keys only — never on the
+  // org's resolved config.
+  const localOrgModelConfig =
+    selectionRoute?.rail === "local" ? undefined : orgModelConfig;
   // MCPJam-paid models bill an org wallet; backend `/stream` rejects the
   // request without a projectId. Same target the org-BYOK path threads.
   const jamBillingTarget = isJamModel
@@ -3071,6 +3427,7 @@ const executeTestCase = async (params: {
         budgets,
         tools,
         selectedServers,
+        ...(effectiveSettings ? { effectiveSettings } : {}),
         mcpClientManager,
         recorder,
         testCaseId,
@@ -3079,7 +3436,13 @@ const executeTestCase = async (params: {
         convexAuthToken,
         modelId: resolvedModelId,
         modelDefinition,
-        extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
+        extraBodyFields:
+          jamBillingTarget || hostedSelection
+            ? {
+                ...(jamBillingTarget ?? {}),
+                ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+              }
+            : undefined,
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
@@ -3140,6 +3503,7 @@ const executeTestCase = async (params: {
         budgets,
         tools,
         selectedServers,
+        ...(effectiveSettings ? { effectiveSettings } : {}),
         mcpClientManager,
         recorder,
         testCaseId,
@@ -3152,6 +3516,7 @@ const executeTestCase = async (params: {
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
           ...orgByokRuntime.target,
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
         },
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
@@ -3212,6 +3577,8 @@ const executeTestCase = async (params: {
       budgets,
       tools,
       selectedServers,
+      ...(effectiveSettings ? { effectiveSettings } : {}),
+      ...(orgLocalUsage ? { orgLocalUsage } : {}),
       mcpClientManager,
       recorder,
       testCaseId,
@@ -3221,7 +3588,7 @@ const executeTestCase = async (params: {
       orgModelConfig:
         orgByokRuntime?.kind === "local"
           ? orgByokRuntime.orgModelConfig
-          : orgModelConfig,
+          : localOrgModelConfig,
       orgModelConfigTarget,
       convexClient,
       runId,
@@ -3794,7 +4161,7 @@ export const runEvalSuiteWithAiSdk = async ({
     const quickRunOutcomes: EvalIterationOutcome[] = [];
 
     // Aggregate results from all tests
-    for (const result of results) {
+    for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
         for (const { evaluation } of outcomes) {
@@ -3817,6 +4184,37 @@ export const runEvalSuiteWithAiSdk = async ({
         // Count as one failed test
         summary.total += 1;
         summary.failed += 1;
+        // A refused model selection never started an iteration, so without
+        // this its pre-created rows would say nothing about why: the refusal
+        // code and reason go on each of that case's pending rows.
+        const refusedTest = tests[resultIndex];
+        if (
+          runId !== null &&
+          refusedTest &&
+          result.reason instanceof ModelResolutionRefusalError
+        ) {
+          try {
+            await persistCaseRefusal({
+              runId,
+              convexClient,
+              recorder,
+              test: refusedTest,
+              refusal: result.reason,
+              runStartedAt: runSetupStartedAt,
+            });
+          } catch (refusalPersistError) {
+            logger.warn(
+              "[evals] Failed to record a model refusal on its rows",
+              {
+                runId,
+                error:
+                  refusalPersistError instanceof Error
+                    ? refusalPersistError.message
+                    : String(refusalPersistError),
+              },
+            );
+          }
+        }
       }
     }
 
@@ -4009,6 +4407,8 @@ const runLocalIteration = async ({
   toolAnnotations,
   toolPolicyWarnings,
   benchmarkWriteGuard,
+  effectiveSettings,
+  orgLocalUsage,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -4120,7 +4520,11 @@ const runLocalIteration = async ({
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
   );
-  const temperature = resolvedExecution.temperature;
+  // A case with a saved selection runs the settings resolved once for it
+  // (override > selection > host); a legacy case keeps host/override.
+  const temperature = effectiveSettings
+    ? effectiveSettings.temperature
+    : resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   // A case whose turns are ALL pinned tool calls is model-free: every
@@ -4656,6 +5060,34 @@ const runLocalIteration = async ({
       testCaseId,
       abortSignal,
       toolChoice,
+      ...(effectiveSettings?.providerOptions
+        ? { providerOptions: effectiveSettings.providerOptions }
+        : {}),
+      ...(orgLocalUsage
+        ? {
+            onModelCallSettled: (event: LocalModelCallSettled) =>
+              postEvalOrgLocalUsage({
+                context: orgLocalUsage,
+                event,
+                modelId: String(modelDefinition.id),
+                // What the call was sent: the chat pipeline's resolved value
+                // (it omits a temperature the model does not accept).
+                effectiveSettings: {
+                  ...(prepared?.resolvedTemperature != null
+                    ? { temperature: prepared.resolvedTemperature }
+                    : {}),
+                  ...(effectiveSettings?.providerOptions &&
+                  effectiveSettings.reasoningEffort
+                    ? { reasoningEffort: effectiveSettings.reasoningEffort }
+                    : {}),
+                },
+                iterationId,
+                runId,
+                convexAuthToken,
+                selectedServers,
+              }),
+          }
+        : {}),
       toolPolicyGate,
       extractToolCalls: (params) =>
         extractToolCallsExcludingPolicyBlocks(
@@ -5318,6 +5750,7 @@ const runHostedIterationWithBrowser = async (
     toolAnnotations,
     toolPolicyWarnings,
     benchmarkWriteGuard,
+    effectiveSettings,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -5420,7 +5853,13 @@ const runHostedIterationWithBrowser = async (
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
   );
-  const temperature = resolvedExecution.temperature;
+  // A case with a saved selection sends the settings resolved once for it:
+  // the top-level temperature the backend prefers is then the SAME value the
+  // forwarded selection resolves to, never a host default that contradicts
+  // it. A legacy case keeps host/override.
+  const temperature = effectiveSettings
+    ? effectiveSettings.temperature
+    : resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -6093,6 +6532,22 @@ const runHostedIterationWithBrowser = async (
         turnId: string;
       }
     | undefined;
+  // Eval attribution on every `/stream` and `/stream/org` call this iteration
+  // makes: the backend resolves a call that names an eval iteration or run for
+  // the `evalTarget` purpose (no implicit OpenRouter fallback), attaches its
+  // execution record to that iteration row, and stamps both ids on the usage
+  // record. Both are real Convex ids (`testIteration`, `testSuiteRun`); the
+  // usage writer validates them as such, so nothing else may ride here. A
+  // quick run has an iteration but no suite run (`runId === null`), so it
+  // sends the iteration alone.
+  const evalAttributedBodyFields: Record<string, unknown> | undefined =
+    iterationId || runId
+      ? {
+          ...(extraBodyFields ?? {}),
+          ...(iterationId ? { evalIterationId: String(iterationId) } : {}),
+          ...(runId ? { evalRunId: String(runId) } : {}),
+        }
+      : extraBodyFields;
   const hostedHandlers = buildHostedStepHandlers({
     // See the local path: one turn's slice of the run's frozen budget.
     turnTimeoutMs: budgets.turnTimeoutMs,
@@ -6104,7 +6559,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     evalAuthContext,
     endpointPath,
-    extraBodyFields,
+    extraBodyFields: evalAttributedBodyFields,
     ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,

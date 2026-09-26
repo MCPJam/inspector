@@ -32,39 +32,62 @@ const mockContext = {
 const SECRET_HEADER_VALUE = "Bearer victim-header-credential";
 const STORED_OAUTH_TOKEN = "victim-oauth-token";
 
+/** The origin a URL reduces to, for the fake backend's decision below. */
+function originOf(url: string): string {
+  return new URL(url).origin;
+}
+
 /**
- * Authorize + reveal in one fetch mock. `revealHeaders` is what
- * `/web/server/reveal-secrets` hands back, so a test can make the reveal
- * succeed and still expect the connect to be refused — which is the
- * authorize/reveal-window case.
+ * Authorize + reveal in one fetch mock. The reveal stands in for the backend's
+ * broker: it refuses when the declared `targetUrl` is not an origin the stored
+ * headers were saved for (`boundOrigin`), exactly as `/web/server/reveal-secrets`
+ * does, and otherwise answers with the headers and the bound origins. The
+ * inspector no longer compares origins itself — these tests pin that it
+ * declares the target, forwards the refusal, and holds the headers to the
+ * bound origins on the wire.
  */
 function mockBackend(opts: {
   url: string;
-  secretsBoundOrigin?: string;
+  /** Where the stored headers were saved for. Absent ⇒ bound nowhere. */
+  boundOrigin?: string;
   hasHeaders?: boolean;
   oauthAccessToken?: string | null;
   revealHeaders?: Record<string, string>;
-  revealBoundOrigin?: string;
   /** Extra `serverConfig` fields — the XAA rows need `authMethod`/`registrationMode`. */
   serverConfigExtra?: Record<string, unknown>;
+  /** Answers for any other URL (the MCP server itself, in transport tests). */
+  upstream?: (url: string, init?: RequestInit) => Promise<Response>;
 }) {
-  const revealCalls: string[] = [];
-  global.fetch = vi.fn(async (input: any) => {
+  const revealBodies: Array<Record<string, unknown>> = [];
+  global.fetch = vi.fn(async (input: any, init?: RequestInit) => {
     const target = input instanceof Request ? input.url : String(input);
     if (target.includes("/web/server/reveal-secrets")) {
-      revealCalls.push(target);
-      return new Response(
-        JSON.stringify({
-          success: true,
-          env: null,
-          headers: opts.revealHeaders ?? {
-            Authorization: SECRET_HEADER_VALUE,
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      revealBodies.push(body);
+      const targetOrigin =
+        typeof body.targetUrl === "string" ? originOf(body.targetUrl) : null;
+      if (!opts.boundOrigin || targetOrigin !== opts.boundOrigin) {
+        return Response.json(
+          {
+            success: false,
+            code: "credential_origin_mismatch",
+            secretOriginMismatch: true,
+            boundOrigin: opts.boundOrigin ?? null,
+            targetOrigin,
+            error: `Stored credentials were saved for ${opts.boundOrigin ?? "no origin"}, not ${targetOrigin}. Re-enter them for the new address.`,
           },
-          secretsBoundOrigin:
-            opts.revealBoundOrigin ?? opts.secretsBoundOrigin ?? null,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+          { status: 403 },
+        );
+      }
+      return Response.json({
+        success: true,
+        env: null,
+        headers: opts.revealHeaders ?? { Authorization: SECRET_HEADER_VALUE },
+        boundOrigins: [opts.boundOrigin],
+      });
+    }
+    if (!target.includes("example.convex.site") && opts.upstream) {
+      return opts.upstream(target, init);
     }
     return new Response(
       JSON.stringify({
@@ -82,9 +105,6 @@ function mockBackend(opts: {
               url: opts.url,
               headers: {},
               ...(opts.hasHeaders === false ? {} : { hasHeaders: true }),
-              ...(opts.secretsBoundOrigin !== undefined
-                ? { secretsBoundOrigin: opts.secretsBoundOrigin }
-                : {}),
               ...(opts.serverConfigExtra ?? {}),
             },
           },
@@ -93,7 +113,7 @@ function mockBackend(opts: {
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }) as typeof fetch;
-  return { revealCalls };
+  return { revealBodies };
 }
 
 function connect() {
@@ -106,12 +126,15 @@ function connect() {
   );
 }
 
-function outboundHeadersForServer1(): Record<string, string> | undefined {
-  const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
-  return config?.requestInit?.headers;
+function configForServer1(): any {
+  return mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
 }
 
-describe("secret origin binding at connect time", () => {
+function outboundHeadersForServer1(): Record<string, string> | undefined {
+  return configForServer1()?.requestInit?.headers;
+}
+
+describe("stored headers at connect time", () => {
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 
@@ -129,21 +152,23 @@ describe("secret origin binding at connect time", () => {
     }
   });
 
-  it("refuses a credential saved for a different origin after authorize", async () => {
-    mockBackend({
-      url: "https://collector.attacker.example/mcp",
-      secretsBoundOrigin: "https://collector.attacker.example",
-      revealBoundOrigin: "https://owner.example.com",
-      revealHeaders: { Authorization: SECRET_HEADER_VALUE },
+  it("declares the URL it is about to dial on the reveal", async () => {
+    const { revealBodies } = mockBackend({
+      url: "https://owner.example.com/mcp",
+      boundOrigin: "https://owner.example.com",
     });
-    await expect(connect()).rejects.toMatchObject({ status: 403 });
-    expect(mcpClientManagerMock).not.toHaveBeenCalled();
+
+    await connect();
+
+    expect(revealBodies).toEqual([
+      expect.objectContaining({ targetUrl: "https://owner.example.com/mcp" }),
+    ]);
   });
 
-  it("attaches revealed secret headers when the binding matches", async () => {
+  it("attaches revealed secret headers when the backend releases them", async () => {
     mockBackend({
       url: "https://owner.example.com/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
     });
 
     await connect();
@@ -156,23 +181,20 @@ describe("secret origin binding at connect time", () => {
   it("keeps working when only the path moved on the same origin", async () => {
     mockBackend({
       url: "https://owner.example.com/mcp/v2",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
     });
 
     await connect();
 
-    // AC 5: legitimate maintenance by the credential owner still works, and the
-    // backend does not clear on a same-origin edit either — the two halves have
-    // to agree or a saved credential becomes unusable without being cleared.
     expect(outboundHeadersForServer1()).toEqual({
       Authorization: SECRET_HEADER_VALUE,
     });
   });
 
-  it("refuses, and sends nothing, when the row has been repointed", async () => {
+  it("refuses, and builds no transport, when the backend refuses a repointed row", async () => {
     mockBackend({
       url: "https://collector.attacker.example/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
     });
 
     await expect(connect()).rejects.toMatchObject({
@@ -185,13 +207,13 @@ describe("secret origin binding at connect time", () => {
     expect(mcpClientManagerMock).not.toHaveBeenCalled();
   });
 
-  it("names both origins so the refusal is actionable", async () => {
+  it("forwards both origins so the refusal is actionable", async () => {
     mockBackend({
       url: "https://collector.attacker.example/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
     });
 
-    // A bare "forbidden" would read as a permissions bug. The operator needs to
+    // A bare "forbidden" would read as a permissions bug. The client needs to
     // know the server moved and that re-entering the credential is the fix.
     await expect(connect()).rejects.toMatchObject({
       message: expect.stringContaining("https://collector.attacker.example"),
@@ -203,63 +225,134 @@ describe("secret origin binding at connect time", () => {
     });
   });
 
-  it("refuses BEFORE spending a reveal", async () => {
-    const { revealCalls } = mockBackend({
-      url: "https://collector.attacker.example/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+  it("forwards an export-policy refusal", async () => {
+    global.fetch = vi.fn(async (input: any) => {
+      const target = String(input);
+      if (target.includes("/web/server/reveal-secrets")) {
+        return Response.json(
+          {
+            success: false,
+            code: "export_denied",
+            exportDenied: true,
+            policy: "credentialExportPolicy",
+            error: "Your organization's credential export policy is set to deny.",
+          },
+          { status: 403 },
+        );
+      }
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://owner.example.com/mcp",
+              headers: {},
+              hasHeaders: true,
+            },
+          },
+        },
+      });
+    }) as typeof fetch;
+
+    await expect(connect()).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ exportDenied: true }),
     });
-
-    await expect(connect()).rejects.toMatchObject({ status: 403 });
-
-    // Asking Convex to decrypt first would put the plaintext in this process
-    // for no reason, and log a reveal that never needed to happen — which
-    // matters because reveals are audited.
-    expect(revealCalls).toEqual([]);
-  });
-
-  it("treats a missing binding on a credential-bearing row as a refusal", async () => {
-    mockBackend({
-      url: "https://owner.example.com/mcp",
-      secretsBoundOrigin: undefined,
-    });
-
-    // Fail CLOSED on absence. "Absent means allow" is the hole the field exists
-    // to close, and it is why the backend's backfill gates this deploy.
-    await expect(connect()).rejects.toMatchObject({ status: 403 });
     expect(mcpClientManagerMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a scheme downgrade on the same host", async () => {
-    mockBackend({
-      url: "http://owner.example.com/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
-    });
-
-    await expect(connect()).rejects.toMatchObject({ status: 403 });
-  });
-
-  it("refuses a port change on the same host", async () => {
-    mockBackend({
-      url: "https://owner.example.com:8443/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
-    });
-
-    await expect(connect()).rejects.toMatchObject({ status: 403 });
-  });
-
   it("leaves a row with no stored credential alone", async () => {
-    mockBackend({
+    const { revealBodies } = mockBackend({
       url: "https://anything.example.com/mcp",
       hasHeaders: false,
       oauthAccessToken: null,
-      secretsBoundOrigin: undefined,
     });
 
-    // Nothing to bind and nothing to leak, so the gate must not fire — this is
-    // the case that would break every unauthenticated server if the check were
-    // keyed on the binding's absence alone rather than on holding a credential.
+    // Nothing to reveal and nothing to leak.
     await connect();
     expect(outboundHeadersForServer1()).toEqual({});
+    expect(revealBodies).toEqual([]);
+  });
+});
+
+describe("stored headers on the wire", () => {
+  const originalFetch = global.fetch;
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalConvexHttpUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    }
+  });
+
+  async function dialThroughServer1(
+    redirectTo: string,
+    headers: Record<string, string>,
+  ) {
+    const hops: Array<{ url: string; headers: Headers }> = [];
+    mockBackend({
+      url: "https://owner.example.com/mcp",
+      boundOrigin: "https://owner.example.com",
+      revealHeaders: headers,
+      upstream: async (url, init) => {
+        hops.push({ url, headers: new Headers(init?.headers) });
+        if (url === "https://owner.example.com/mcp") {
+          return new Response(null, {
+            status: 302,
+            headers: { Location: redirectTo },
+          });
+        }
+        return new Response("ok", { status: 200 });
+      },
+    });
+    await connect();
+    const config = configForServer1();
+    expect(config.baseFetch).toBeTypeOf("function");
+    const response = await config.baseFetch("https://owner.example.com/mcp", {
+      method: "GET",
+      headers: config.requestInit.headers,
+    });
+    expect(response.status).toBe(200);
+    return hops;
+  }
+
+  it("does not carry a stored header across a redirect to another origin", async () => {
+    // Fetch drops `Authorization` on a cross-origin redirect, but a stored
+    // credential is just as often `x-api-key` — which nothing generic strips.
+    const hops = await dialThroughServer1("https://collector.example/steal", {
+      "x-api-key": "stored-api-key",
+      Authorization: SECRET_HEADER_VALUE,
+    });
+
+    expect(hops.map((hop) => hop.url)).toEqual([
+      "https://owner.example.com/mcp",
+      "https://collector.example/steal",
+    ]);
+    expect(hops[0]!.headers.get("x-api-key")).toBe("stored-api-key");
+    expect(hops[1]!.headers.get("x-api-key")).toBeNull();
+    expect(hops[1]!.headers.get("authorization")).toBeNull();
+  });
+
+  it("keeps the stored header on a same-origin redirect", async () => {
+    const hops = await dialThroughServer1(
+      "https://owner.example.com/mcp/v2",
+      { "x-api-key": "stored-api-key" },
+    );
+
+    expect(hops[1]!.url).toBe("https://owner.example.com/mcp/v2");
+    expect(hops[1]!.headers.get("x-api-key")).toBe("stored-api-key");
   });
 });
 
@@ -295,7 +388,6 @@ describe("credential binding scope — what it must NOT refuse", () => {
       url: "https://owner.example.com/mcp",
       hasHeaders: false,
       oauthAccessToken: STORED_OAUTH_TOKEN,
-      secretsBoundOrigin: undefined,
     });
 
     await connect();
@@ -308,7 +400,7 @@ describe("credential binding scope — what it must NOT refuse", () => {
   it("allows a caller-supplied token against a repointed row", async () => {
     mockBackend({
       url: "https://moved.example.com/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
       hasHeaders: false,
       oauthAccessToken: null,
     });
@@ -337,9 +429,9 @@ describe("credential binding scope — what it must NOT refuse", () => {
     // whose assertion is audience-bound to the endpoint it goes to — so a
     // binding left over from the server's OAuth days is irrelevant and must
     // not refuse the connect.
-    const { revealCalls } = mockBackend({
+    const { revealBodies } = mockBackend({
       url: "https://moved.example.com/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
       hasHeaders: false,
       // Converted from OAuth: the stored token is still on the row.
       oauthAccessToken: "stale-oauth-token",
@@ -358,7 +450,7 @@ describe("credential binding scope — what it must NOT refuse", () => {
       status: 500,
       message: expect.stringContaining("Missing XAA issuer"),
     });
-    expect(revealCalls).toEqual([]);
+    expect(revealBodies).toEqual([]);
   });
 
   it("does not refuse an unbound preregistered or DCR XAA row at the gate", async () => {
@@ -366,10 +458,9 @@ describe("credential binding scope — what it must NOT refuse", () => {
     // bound only after the registration that happens inside the mint. A stored
     // secret without a binding is refused where it is resolved, in the mint.
     for (const registrationMode of ["preregistered", "dcr"]) {
-      const { revealCalls } = mockBackend({
+      const { revealBodies } = mockBackend({
         url: "https://mcp.example.com/mcp",
-        secretsBoundOrigin: undefined,
-        hasHeaders: false,
+          hasHeaders: false,
         serverConfigExtra: { authMethod: "xaa", useXaa: true, registrationMode },
       });
 
@@ -378,26 +469,27 @@ describe("credential binding scope — what it must NOT refuse", () => {
         status: 500,
         message: expect.stringContaining("Missing XAA issuer"),
       });
-      expect(revealCalls).toEqual([]);
+      expect(revealBodies).toEqual([]);
     }
   });
 
-  it("refuses a repointed preregistered XAA row before revealing its secret", async () => {
+  it("leaves a repointed preregistered XAA row to the mint's reveal", async () => {
     // `preregistered` and `dcr` post the row's stored client secret to a token
-    // endpoint discovered from the row's CURRENT url, which the mint's
-    // `resource` pinning does not cover. Repointing the row therefore
-    // redirects the secret, and the gate has to fire before the reveal.
-    const { revealCalls } = mockBackend({
+    // endpoint discovered from the row's CURRENT url. The mint's reveal
+    // declares that url and the backend refuses a secret saved for another
+    // origin (xaa-connect-cimd-mint.test.ts), so the connect path has no gate
+    // of its own to fire: it reaches the issuer check untouched.
+    const { revealBodies } = mockBackend({
       url: "https://collector.attacker.example/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
+      boundOrigin: "https://owner.example.com",
       hasHeaders: false,
       serverConfigExtra: { authMethod: "xaa", useXaa: true },
     });
 
     await expect(connect()).rejects.toMatchObject({
-      status: 403,
-      details: expect.objectContaining({ secretOriginMismatch: true }),
+      status: 500,
+      message: expect.stringContaining("Missing XAA issuer"),
     });
-    expect(revealCalls).toEqual([]);
+    expect(revealBodies).toEqual([]);
   });
 });
