@@ -1,3 +1,4 @@
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { useMemo } from "react";
 import { useMutation, useQuery, useConvexAuth } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -61,6 +62,13 @@ export type ProjectEnvironmentSkillSelection = {
   versionPins?: ProjectEnvironmentSkillVersionPin[];
 };
 
+/** See {@link ProjectEnvironmentView.serverSkillSelection}. */
+export type ProjectEnvironmentServerSkillSelection = {
+  mode: "explicit";
+  serverSkillIds: string[];
+  versionPins?: Array<{ serverSkillId: string; versionId: string }>;
+};
+
 /**
  * THE client mirror of a Project environment row. Every client surface
  * (management route, suite picker, swarms) imports this one — do not add a
@@ -111,8 +119,22 @@ export interface ProjectEnvironmentView {
    * the two could not tell "pinned to X" from "inheriting X".
    */
   modelId?: string;
+  /**
+   * The saved selection behind the `modelId` override (whose credentials run
+   * it). Absent ⇒ the override reads as a legacy id.
+   */
+  modelSelection?: ModelSelection;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * MCP-server skills (SEP-2640) the environment selects, optionally held at
+   * exact captures. Mirrored for DISPLAY and REFUSAL only: no browser editor
+   * writes it, and nothing here may copy it into a new environment — a copy
+   * built from this view would be a client-side reconstruction of a pin the
+   * backend owns. Deriving an environment that carries one goes through the
+   * backend's lossless derivation instead.
+   */
+  serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
   /**
    * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
    * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
@@ -324,6 +346,11 @@ export function useEnsureAdhocEnvironments(): (args: {
     computerEnvironmentId?: string;
     /** Explicit model override. Omit to inherit the client's model. */
     modelId?: string;
+    /**
+     * Saved selection behind `modelId`. Sent only when the backend advertises
+     * the `modelSelections` capability.
+     */
+    modelSelection?: ModelSelection;
   }>;
 }) => Promise<
   Array<{ environment: ProjectEnvironmentView; created?: boolean }>

@@ -36,6 +36,8 @@ export interface HostListItem {
   // treat absent as null/false rather than assume presence.
   ownerScope?: HostOwnerScope;
   hasComputer?: boolean;
+  /** Something still uses it, so `deleteHost` would refuse. Absent = unknown. */
+  inUse?: boolean;
   createdAt: number;
   updatedAt: number;
 }

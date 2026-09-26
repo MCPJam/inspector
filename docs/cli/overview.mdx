@@ -77,12 +77,12 @@ Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (bef
 | [`cloud eval`](/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
 | [`cloud tunnel`](/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
 | [`cloud clients`](/cli/reference#cloud-clients-commands) | Manage clients in your hosted MCPJam projects (`cloud hosts` is a deprecated alias) | `list`, `get`, `create`, `update`, `servers`, `duplicate`, `delete`, `templates` |
-| [`cloud environments`](/cli/reference#cloud-environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
+| [`cloud environments`](/cli/reference#cloud-environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and goals run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
 | [`cloud images`](/cli/reference#cloud-images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
 | [`cloud skills`](/cli/reference#cloud-skills-commands) | List and read Cloud Skills in your hosted MCPJam projects — discover the skill IDs that `--compose-skill` and `--skill` require (read-only; authoring is in the app) | `list`, `get` |
 | [`cloud projects servers`](/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
 
-Also under `mcpjam cloud`: `journeys`, `scenarios`, `personas`, `swarms`, `user-testing`. Full flag tables are in the [command reference](/cli/reference).
+Also under `mcpjam cloud`: `goals` (`journeys` is a deprecated alias), `personas`, `swarms`, and `studies` (which publishes an environment for outside testers and reads what they did; `scenarios` and `user-testing` are deprecated aliases for it). Full flag tables are in the [command reference](/cli/reference).
 
 ## Cloud credentials and API URL
 
@@ -136,7 +136,7 @@ mcpjam cloud link --remove
 |-------|-----------------|
 | `server`, `tools`, `resources`, `prompts` | An **AI client** (`claude`, `chatgpt`, `cursor`, …). The CLI sends that host's `clientInfo`, capabilities, and protocol version in `initialize`. |
 | `compat --host` | Which AI clients to report. Repeatable; default is all. |
-| `cloud eval --host`, `cloud journeys`, `cloud scenarios` | A **saved project Host** (`<id-or-name>`), the client config an eval or journey is stamped with. |
+| `cloud eval --host`, `cloud goals`, `cloud studies` | A **saved project Host** (`<id-or-name>`), the client config an eval or goal run is stamped with. |
 | `cloud environments --host-id` | The project Host id the environment runs as. Distinct from eval's `--host`. |
 
 `--host` on a local command is mutually exclusive with `--client-capabilities`. A Cloud `--host` is mutually exclusive with `--server` / `--environment` when those already supply a closed server set.

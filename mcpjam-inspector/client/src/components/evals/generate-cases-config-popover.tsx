@@ -21,9 +21,17 @@ import {
   saveGenerateConfig,
   totalCases,
 } from "@/lib/evals/eval-generation-config";
+import type { EvalSuiteEnvironmentTarget } from "./types";
+import { EnvironmentTargetPicker } from "./environment-target-picker";
 
 interface GenerateCasesConfigPopoverProps {
   suiteId: string;
+  /**
+   * An environment suite whose environments connect different servers: the
+   * environments to pick from. The pick is saved with the config, so the
+   * one-click Generate uses it too.
+   */
+  environmentChoices?: EvalSuiteEnvironmentTarget[] | null;
   /** Triggers the parent's generate action (reads the persisted config). */
   onGenerate: () => void;
   disabled?: boolean;
@@ -41,6 +49,7 @@ interface GenerateCasesConfigPopoverProps {
  */
 export function GenerateCasesConfigPopover({
   suiteId,
+  environmentChoices,
   onGenerate,
   disabled = false,
   isGenerating = false,
@@ -57,6 +66,12 @@ export function GenerateCasesConfigPopover({
   }, [open, suiteId]);
 
   const total = totalCases(config);
+  const needsEnvironment = Boolean(environmentChoices?.length);
+  const pickedEnvironmentId = environmentChoices?.some(
+    (target) => target.environmentId === config.environmentId,
+  )
+    ? config.environmentId
+    : undefined;
 
   const persist = (next: GenerateCasesConfig) => {
     setConfig(next);
@@ -101,6 +116,18 @@ export function GenerateCasesConfigPopover({
               Choose how many of each kind to create.
             </p>
           </div>
+
+          {environmentChoices?.length ? (
+            <EnvironmentTargetPicker
+              compact
+              idPrefix="generate-popover"
+              targets={environmentChoices}
+              value={pickedEnvironmentId}
+              onChange={(environmentId) =>
+                persist({ ...config, environmentId })
+              }
+            />
+          ) : null}
 
           <div className="space-y-1.5">
             {GENERATE_BUCKET_KEYS.map((key) => (
@@ -174,7 +201,12 @@ export function GenerateCasesConfigPopover({
             type="button"
             size="sm"
             className="h-8 w-full gap-1.5"
-            disabled={disabled || isGenerating || total < 1}
+            disabled={
+              disabled ||
+              isGenerating ||
+              total < 1 ||
+              (needsEnvironment && !pickedEnvironmentId)
+            }
             aria-busy={isGenerating}
             onClick={handleGenerateClick}
           >
