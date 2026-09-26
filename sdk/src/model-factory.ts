@@ -87,9 +87,10 @@ const BUILT_IN_PROVIDERS: LLMProvider[] = [
 
 /**
  * Canonical (OpenRouter-style) hosted-catalog id prefixes whose MCPJam provider
- * key differs from the prefix. Mirrors `HOSTED_PROVIDER_ALIASES` in
- * `mcpjam-inspector/shared/types.ts`: the picker has always known these
- * prefixes are vendor names rather than provider keys, and this parser did not.
+ * key differs from the prefix. Mirrors `MODEL_ID_PREFIX_ALIASES` in
+ * `mcpjam-inspector/shared/model-id-prefix-aliases.ts`: the picker has always
+ * known these prefixes are vendor names rather than provider keys, and this
+ * parser did not.
  *
  * `meta-llama` maps to `meta`, which is not a built-in provider — that entry
  * exists so the two tables stay recognisably the same, and the id resolves

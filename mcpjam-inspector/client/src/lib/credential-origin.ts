@@ -17,10 +17,16 @@
  * stdio trigger is held to the same standard — an `args` value that was absent
  * and is now `[]` runs the same process, so it is not a change.
  *
- * These rules mirror `convex/lib/serverSecretOrigin.ts` in the backend. A copy
- * rather than an import because the renderer cannot import backend code. If the
- * rules diverge, this warns about the wrong saves — either crying wolf, or
- * staying silent while the backend wipes a credential.
+ * These rules mirror `convex/lib/serverSecretOrigin.ts` in the backend, and the
+ * origin itself is `originForCredentialBinding` in `convex/lib/canonicalUrl.ts`
+ * — the same reduction the backend uses when it decides whether a saved
+ * credential may be released for a connection. A copy rather than an import
+ * because the renderer cannot import backend code. If the rules diverge, this
+ * warns about the wrong saves — either crying wolf, or staying silent while
+ * the backend wipes a credential.
+ *
+ * This is a WARNING, never a gate: whether a credential is used is decided by
+ * the backend alone (`client/src/lib/credential-refusal.ts` renders its answer).
  */
 
 /**

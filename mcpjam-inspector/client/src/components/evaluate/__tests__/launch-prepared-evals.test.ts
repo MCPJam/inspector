@@ -47,6 +47,30 @@ describe("prepared suite authoring", () => {
       }),
     );
   });
+  it("creates an environment suite, one environment per client, when the backend can", async () => {
+    const mutate = vi.fn(async (name: string) =>
+      name.endsWith("createTestSuite") ? { _id: "saved-suite" } : "saved-case",
+    );
+    await savePreparedEvalSuites({
+      ...input,
+      clients: [
+        { id: "host", name: "Client" },
+        { id: "host-2", name: "Other" },
+      ],
+      environmentSuites: true,
+      mutate,
+    });
+    const created = (mutate.mock.calls[0] as unknown[])[1] as Record<
+      string,
+      unknown
+    >;
+    expect(created.environmentTargets).toEqual([
+      { hostId: "host", serverIds: ["server"] },
+      { hostId: "host-2", serverIds: ["server"] },
+    ]);
+    expect(created).not.toHaveProperty("hostAttachments");
+    expect(created).not.toHaveProperty("environment");
+  });
   it("rejects an empty selection before writing", async () => {
     const mutate = vi.fn();
     await expect(

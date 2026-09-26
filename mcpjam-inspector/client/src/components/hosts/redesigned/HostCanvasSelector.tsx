@@ -5,12 +5,18 @@ import { toast } from "@/lib/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { useHostList, useHostMutations } from "@/hooks/useClients";
+import {
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+} from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
@@ -27,8 +33,8 @@ import { clientDisplayName } from "@/lib/client-display-name";
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
-const LAST_HOST_DELETE_REASON =
-  "A project needs at least one client. Create another client first.";
+const LAST_HOST_DELETE_REASON = "You need at least one client.";
+const IN_USE_DELETE_REASON = "In use by a test suite.";
 const ANALYTICS_LOCATION = "host_canvas";
 
 // Sits on the nav row's own surface, so no elevation/blur — just a bordered
@@ -112,6 +118,12 @@ export function HostCanvasSelector({
   };
 
   const canDelete = sortedHosts.length > 1;
+  const deleteReasonFor = (host: HostListItem) =>
+    !canDelete
+      ? LAST_HOST_DELETE_REASON
+      : host.inUse
+        ? IN_USE_DELETE_REASON
+        : undefined;
 
   const handleDelete = async (hostId: string) => {
     const host = hosts.find((h) => h.hostId === hostId);
@@ -143,7 +155,7 @@ export function HostCanvasSelector({
       const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent user testing scenarios/evals first`,
+          `${msg} — use force delete or remove dependent user testing studies/evals first`,
         );
       } else {
         toast.error(msg);
@@ -175,9 +187,8 @@ export function HostCanvasSelector({
       className="flex min-w-0 items-center gap-1.5"
       data-testid="host-canvas-selector"
     >
-      {/* Add client — left-most. Carries the quick-add template logos so the
-          add path stays a single control (the switcher menu no longer has its
-          own add action). */}
+      {/* Add client pill — Client view only. Servers hides this pill so the
+          header stays a switcher; Add clients still lives in the menu. */}
       {showAddClient && (
         <div className={cn(PILL_CLASS, "shrink-0")}>
           <button
@@ -281,6 +292,9 @@ export function HostCanvasSelector({
                   key={host.hostId}
                   value={host.hostId}
                   hideIndicator
+                  // The disabled delete can't take focus, so the row carries
+                  // the reason for keyboard and screen reader users.
+                  aria-description={deleteReasonFor(host)}
                   className="group gap-2.5 py-2 pr-1.5"
                 >
                   <img
@@ -299,8 +313,8 @@ export function HostCanvasSelector({
                       type="button"
                       aria-label={`Delete ${clientDisplayName(host)}`}
                       data-testid={`host-canvas-delete-${host.hostId}`}
-                      disabled={isDeleting || !canDelete}
-                      title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
+                      disabled={isDeleting || !canDelete || host.inUse === true}
+                      title={deleteReasonFor(host)}
                       className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
@@ -322,6 +336,20 @@ export function HostCanvasSelector({
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid="host-canvas-menu-add"
+              onSelect={() => {
+                track("connect_host_overlay_add_clicked", {
+                  location: ANALYTICS_LOCATION,
+                  host_count: hosts.length,
+                });
+                openCreateWithTemplate(undefined);
+              }}
+            >
+              <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+              Add clients
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
