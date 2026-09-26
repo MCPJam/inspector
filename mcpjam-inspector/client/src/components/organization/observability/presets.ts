@@ -109,8 +109,8 @@ export const SOURCE_TYPE_OPTIONS = [
   },
   {
     id: "scenario" as const,
-    label: "Scenarios",
-    description: "User-testing scenario sessions.",
+    label: "Studies",
+    description: "User-testing study sessions.",
   },
   {
     id: "direct" as const,

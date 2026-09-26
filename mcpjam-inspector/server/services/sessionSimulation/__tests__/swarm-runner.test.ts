@@ -29,11 +29,12 @@ const fetchPinnedSkillMock = vi.fn();
 
 vi.mock("../../swarm-agent.js", async () => {
   const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
-    "../../swarm-agent.js"
+    "../../swarm-agent.js",
   );
   return {
     ...actual,
-    reportTargetGrounding: (...args: unknown[]) => reportTargetGroundingMock(...args),
+    reportTargetGrounding: (...args: unknown[]) =>
+      reportTargetGroundingMock(...args),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -46,9 +47,8 @@ vi.mock("../../swarm-agent.js", async () => {
 });
 
 vi.mock("../runner.js", async () => {
-  const actual = await vi.importActual<typeof import("../runner.js")>(
-    "../runner.js"
-  );
+  const actual =
+    await vi.importActual<typeof import("../runner.js")>("../runner.js");
   return {
     ...actual,
     runSyntheticHostSession: (...args: unknown[]) =>
@@ -164,7 +164,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     expect(adapter.chatSessionId).toBe("synth_run-1_host-1_0");
     expect(adapter.runtime.modelDefinition.id).toBe(
-      "anthropic/claude-haiku-4.5"
+      "anthropic/claude-haiku-4.5",
     );
     // The swarm pins its own per-turn step cap instead of inheriting the
     // engine's Playground default; a persona turn resends every tool result
@@ -216,7 +216,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     });
     expect(captureWidgetSnapshotsMock).toHaveBeenCalledTimes(2);
     expect(
-      captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds
+      captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds,
     ).toBe(captureWidgetSnapshotsMock.mock.calls[1]![0].capturedToolCallIds);
     // Persona driver routes through the swarm backend client, carrying the
     // full wire identity: the backend bills the turn against (target, session)
@@ -229,7 +229,7 @@ describe("swarm single-host runner — attempt ordering", () => {
         runId: "run-1",
         hostId: "host-1",
         sessionIdx: 0,
-      })
+      }),
     );
   });
 });
@@ -253,6 +253,24 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(failed.chatSessionId).toBe("synth_run-1_host-1_0");
     // Failure of session 0 did not abort the batch.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("stores the engine's failure code as the errorCode, not in the message", async () => {
+    runSyntheticHostSessionMock.mockResolvedValueOnce({
+      outcome: "failed",
+      errorMessage:
+        "A tool on your MCP server has an input schema this model can't accept. (invalid_request)",
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const failed = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status === "failed")!;
+    expect(failed.errorCode).toBe("invalid_request");
+    expect(failed.errorMessage).toBe(
+      "A tool on your MCP server has an input schema this model can't accept.",
+    );
   });
 
   // A connect-time XAA failure is not a crashed session: the thrown route
@@ -311,7 +329,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(terminal.status).toBe("rate_limited");
     expect(terminal.errorCode).toBe("user_rate_limit");
     expect(terminal.errorMessage).toBe(
-      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes."
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.",
     );
   });
 
@@ -328,7 +346,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     // Session 0 never ran; session 1 claimed + ran.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
     expect(
-      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
+      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId,
     ).toBe("synth_run-1_host-1_1");
   });
 
@@ -350,7 +368,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     // Session 0 (applied:false) never executed; only session 1 (applied:true) ran.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
     expect(
-      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
+      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId,
     ).toBe("synth_run-1_host-1_1");
 
     // The lost claim reports NO terminal (only the winning runner does). The one
@@ -377,7 +395,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
 async function waitFor(
   predicate: () => boolean,
   label: string,
-  timeoutMs = 5_000
+  timeoutMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -398,9 +416,9 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
         new Promise((_resolve, reject) => {
           personaSignal = args.signal;
           args.signal?.addEventListener("abort", () =>
-            reject(new Error("aborted"))
+            reject(new Error("aborted")),
           );
-        })
+        }),
     );
 
     const reportTimeline: string[] = [];
@@ -458,7 +476,7 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
     // a session that is already running rather than one that never started.
     await waitFor(
       () => reportAttemptMock.mock.calls.length > 0,
-      "the attempt claim"
+      "the attempt claim",
     );
     await shutdownRunningJourneyRuns(1_000);
     await runPromise;
@@ -485,7 +503,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
 
   it("fans out sessionsPerTarget sessions per host across a 2-host journey (2/host = 4)", async () => {
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(4);
@@ -540,7 +558,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
     );
 
     expect(maxPerHost).toBe(1);
@@ -556,7 +574,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // Every session on both hosts ran — a failure isolates to its attempt.
@@ -582,7 +600,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // host-1: only session 0 EXECUTED; session 1 short-circuited (never ran).
@@ -613,7 +631,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
@@ -637,12 +655,12 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       });
 
       await startJourneyRun(
-        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
       );
 
       expect(
         finalizePendingAttemptsMock,
-        `"${capMessage}" should trip the whole-run spend-cap stop`
+        `"${capMessage}" should trip the whole-run spend-cap stop`,
       ).toHaveBeenCalledTimes(1);
       expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
         errorCode: "spend_cap_exceeded",
@@ -689,12 +707,12 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       });
 
       await startJourneyRun(
-        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
       );
 
       expect(
         finalizePendingAttemptsMock,
-        `"${envelope}" should trip the whole-run account-limit stop`
+        `"${envelope}" should trip the whole-run account-limit stop`,
       ).toHaveBeenCalledTimes(1);
       expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
         errorCode: "spend_cap_exceeded",
@@ -710,7 +728,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     for (const code of USER_OWNED_DENIAL_CODES) {
       expect(
         isAccountLimit(`Limit reached. (${code}, HTTP 403)`),
-        `${code} should stop the whole run`
+        `${code} should stop the whole run`,
       ).toBe(true);
     }
   });
@@ -720,13 +738,16 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     // hosts run on a different key, so the run must not halt.
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
       if (adapter.chatSessionId === "synth_run-1_host-1_0") {
-        return { outcome: "rate_limited", errorMessage: "429 Too Many Requests" };
+        return {
+          outcome: "rate_limited",
+          errorMessage: "429 Too Many Requests",
+        };
       }
       return { outcome: "succeeded" };
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     expect(executedForHost("host-2")).toHaveLength(2);
@@ -747,7 +768,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // No whole-run finalize — it stayed a per-host provider rate-limit.
@@ -769,7 +790,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // The other host completed all its sessions — the pool was not aborted.
@@ -788,7 +809,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
         (a) =>
           a.hostId === "host-1" &&
           a.status === "failed" &&
-          a.errorCode === "host_worker_failed"
+          a.errorCode === "host_worker_failed",
       )
       .map((a) => a.sessionIdx)
       .sort();
@@ -869,7 +890,7 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerTarget: 1 }),
     );
 
     const terminals = reportAttemptMock.mock.calls
@@ -1000,7 +1021,7 @@ describe("swarm single-host runner — heartbeat", () => {
         () =>
           new Promise((resolve) => {
             resolveRun = () => resolve({ outcome: "succeeded" });
-          })
+          }),
       );
 
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
@@ -1108,7 +1129,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 }),
     );
 
     const sessionIds = runSyntheticHostSessionMock.mock.calls
@@ -1148,14 +1169,14 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 }),
     );
 
     const bySession = new Map(
       runSyntheticHostSessionMock.mock.calls.map((c) => [
         (c[0] as any).chatSessionId,
         (c[0] as any).runtime.environmentId,
-      ])
+      ]),
     );
     expect(bySession.get("synth_run-1_env_envA_0")).toBe("envA");
     expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
@@ -1165,14 +1186,14 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 }),
     );
 
     const adapters = runSyntheticHostSessionMock.mock.calls.map(
-      (c) => c[0] as any
+      (c) => c[0] as any,
     );
     const a = adapters.find(
-      (x) => x.chatSessionId === "synth_run-1_env_envA_0"
+      (x) => x.chatSessionId === "synth_run-1_env_envA_0",
     );
     expect(a.runtime.pinnedSkills).toHaveLength(1);
     expect(a.runtime.pinnedSkills[0]).toMatchObject({
@@ -1194,11 +1215,11 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         runId: "run-1",
         targetId: "target-a",
         contentHash: "hash-1",
-      })
+      }),
     );
 
     const b = adapters.find(
-      (x) => x.chatSessionId === "synth_run-1_env_envB_0"
+      (x) => x.chatSessionId === "synth_run-1_env_envB_0",
     );
     // Skill-less env target: authoritative EMPTY array — NEVER undefined
     // (undefined would fall back to the live pool).
@@ -1214,7 +1235,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     };
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerTarget: 1 }),
     );
 
     expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(1);
@@ -1224,16 +1245,16 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
 
   it("a persistent pinned-skill fetch failure finalizes THAT target's attempts failed — never a silent skill-less run — and does not stop the sibling target", async () => {
     fetchPinnedSkillMock.mockRejectedValue(
-      new SwarmAgentError(404, "", "not found")
+      new SwarmAgentError(404, "", "not found"),
     );
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 }),
     );
 
     // Env A (the pinned target) never executed a session.
     const executed = runSyntheticHostSessionMock.mock.calls.map(
-      (c) => (c[0] as any).chatSessionId
+      (c) => (c[0] as any).chatSessionId,
     );
     expect(executed.some((id) => id.includes("env_envA"))).toBe(false);
     // Its attempts were finalized failed via the worker-catch sweep.
@@ -1243,7 +1264,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         (a) =>
           a.targetId === "target-a" &&
           a.status === "failed" &&
-          a.errorCode === "host_worker_failed"
+          a.errorCode === "host_worker_failed",
       )
       .map((a) => a.sessionIdx)
       .sort();
@@ -1268,7 +1289,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       // …but the pinned entries carry NO channel provenance (pre-P0.2).
     };
     await startJourneyRun(
-      baseOpts({ hosts: [preP02Target], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [preP02Target], sessionsPerTarget: 1 }),
     );
     // No session executed; attempts finalized failed.
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
@@ -1299,7 +1320,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
   });
@@ -1322,7 +1343,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerTarget: 1 }),
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
@@ -1349,7 +1370,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 }),
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
   });
@@ -1404,11 +1425,11 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
         () =>
           new Promise((resolve) => {
             resolveRun = () => resolve({ outcome: "succeeded" });
-          })
+          }),
       );
 
       const done = startJourneyRun(
-        baseOpts({ sessionsPerTarget: 1, getBearer })
+        baseOpts({ sessionsPerTarget: 1, getBearer }),
       );
 
       // Let the run reach its first session, so the per-target and per-session
@@ -1420,11 +1441,11 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
       await vi.advanceTimersByTimeAsync(30_000);
       await vi.advanceTimersByTimeAsync(30_000);
       expect(heartbeatJourneyRunMock.mock.calls.length).toBeGreaterThanOrEqual(
-        2
+        2,
       );
 
       const beatTokens = heartbeatJourneyRunMock.mock.calls.map((call) =>
-        String(call[1])
+        String(call[1]),
       );
       // Every beat's token was minted AFTER the run's own startup mints — the
       // assertion a captured bearer cannot satisfy.
