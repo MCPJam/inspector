@@ -96,7 +96,8 @@ export function SuitesOverview({
 
           const servers = suite.environment?.servers ?? [];
           const hasServersConfigured = servers.length > 0;
-          const canRerun = hasServersConfigured;
+          const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+          const canRerun = isEnvironmentSuite || hasServersConfigured;
           const isRerunning = rerunningSuiteId === suite._id;
 
           const latestPassRate = latestRun?.summary

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildConformanceRunReport,
   normalizeConformanceSuites,
@@ -140,6 +140,124 @@ describe("conformance run bundle", () => {
       })
     ).rejects.toThrow(/OAuth is opt-in/);
   });
+});
+
+describe("the protocol suite dials through the server config's transport", () => {
+  // Regression: the protocol suite rebuilt its config from url, token and
+  // headers only, so a fetch attached to the server config never reached it
+  // and `MCPConformanceTest` fell back to the global one. The apps and tasks
+  // suites of the same run used the caller's (guarded) fetch; this one
+  // followed redirects wherever they led.
+  const originalFetch = global.fetch;
+  const unauthorized = () =>
+    vi.fn(async () => new Response("Unauthorized", { status: 401 }));
+  let globalFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    globalFetch = vi.fn(async () => {
+      throw new Error("the global fetch must not be dialled");
+    });
+    global.fetch = globalFetch as never;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  // One selection per path. `server-initialize` is the MCP client connection;
+  // `protocol-invalid-method-error` with a pinned version is raw probes only
+  // (a pin lets the raw runners skip the client connection entirely).
+  const PATHS = [
+    { path: "MCP client", protocol: { checkIds: ["server-initialize"] } },
+    {
+      path: "raw probes",
+      protocol: { checkIds: ["protocol-invalid-method-error"] },
+      protocolVersion: "2025-11-25",
+    },
+  ] as const;
+
+  for (const { path, protocol, protocolVersion } of PATHS) {
+    it(`uses server.baseFetch for the ${path}`, async () => {
+      const baseFetch = unauthorized();
+      await runConformance({
+        server: {
+          url: "https://mcp.example.test/mcp",
+          baseFetch: baseFetch as never,
+        },
+        suites: ["protocol"],
+        protocol: {
+          ...protocol,
+          checkIds: [...protocol.checkIds],
+          checkTimeout: 2_000,
+        },
+        ...(protocolVersion ? { protocolVersion } : {}),
+      });
+      expect(baseFetch).toHaveBeenCalled();
+      for (const [input] of baseFetch.mock.calls as unknown as Array<
+        [unknown]
+      >) {
+        expect(String(input instanceof Request ? input.url : input)).toMatch(
+          /^https:\/\/mcp\.example\.test\//
+        );
+      }
+      expect(globalFetch).not.toHaveBeenCalled();
+    }, 30_000);
+  }
+
+  it("prefers server.fetchFn over server.baseFetch", async () => {
+    const fetchFn = unauthorized();
+    const baseFetch = unauthorized();
+    await runConformance({
+      server: {
+        url: "https://mcp.example.test/mcp",
+        fetchFn: fetchFn as never,
+        baseFetch: baseFetch as never,
+      },
+      suites: ["protocol"],
+      protocol: { checkIds: ["server-initialize"], checkTimeout: 2_000 },
+    });
+    expect(fetchFn).toHaveBeenCalled();
+    expect(baseFetch).not.toHaveBeenCalled();
+    expect(globalFetch).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("keeps an explicit protocol.fetchFn override", async () => {
+    const override = unauthorized();
+    const baseFetch = unauthorized();
+    await runConformance({
+      server: {
+        url: "https://mcp.example.test/mcp",
+        baseFetch: baseFetch as never,
+      },
+      suites: ["protocol"],
+      protocol: {
+        checkIds: ["server-initialize"],
+        checkTimeout: 2_000,
+        fetchFn: override as never,
+      },
+    });
+    expect(override).toHaveBeenCalled();
+    expect(baseFetch).not.toHaveBeenCalled();
+    expect(globalFetch).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("does not let an explicit protocol.fetchFn: undefined unset the server's fetch", async () => {
+    const baseFetch = unauthorized();
+    await runConformance({
+      server: {
+        url: "https://mcp.example.test/mcp",
+        baseFetch: baseFetch as never,
+      },
+      suites: ["protocol"],
+      protocol: {
+        checkIds: ["server-initialize"],
+        checkTimeout: 2_000,
+        fetchFn: undefined,
+      },
+    });
+    expect(baseFetch).toHaveBeenCalled();
+    expect(globalFetch).not.toHaveBeenCalled();
+  }, 30_000);
 });
 
 describe("conformance run reporter", () => {

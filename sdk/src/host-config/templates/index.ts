@@ -16,6 +16,7 @@ export {
   HOST_TEMPLATES,
   HOST_TEMPLATE_IDS,
   DEFAULT_HOST_TEMPLATE_ID,
+  DEFAULT_TEMPLATE_MODEL_ID,
   CLAUDE_CODE_NATIVE_TOOLS,
 } from "./seed-host-template.js";
 export type {

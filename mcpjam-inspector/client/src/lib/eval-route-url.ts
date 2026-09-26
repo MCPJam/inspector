@@ -88,6 +88,9 @@ export function parseEvalRouteFromUrl(
       ...(params.get("fromCommit")
         ? { fromCommit: params.get("fromCommit") || undefined }
         : {}),
+      ...(params.get("importJob")
+        ? { importJob: params.get("importJob") || undefined }
+        : {}),
     };
   }
 

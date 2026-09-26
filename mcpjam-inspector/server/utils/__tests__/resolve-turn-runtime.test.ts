@@ -270,6 +270,29 @@ describe("resolveTurnRuntime — runtime shape", () => {
     expect((rt.runtime as { provider?: string }).provider).toBeUndefined();
   });
 
+  it("local BYOK on a HARNESS host is refused, never run on the direct engine", async () => {
+    // The direct runtime has no `harness` field: returning it would run the
+    // emulated engine on the org's local key under the harness's name.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as never,
+      },
+    });
+
+    await expect(
+      resolveTurnRuntime(
+        baseArgs({ modelDefinition: LOCAL_MODEL, harness: "claude-code" }),
+      ),
+    ).rejects.toThrow(
+      "This host runs the claude-code harness, which isn't available: the " +
+        "Claude Code harness only runs MCPJam-provided models — pick one on " +
+        "this host to run the real runtime.",
+    );
+    expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+
   it("local BYOK + requireToolApproval=true with non-empty tools throws before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
@@ -290,6 +313,104 @@ describe("resolveTurnRuntime — runtime shape", () => {
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
 
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveTurnRuntime: saved selection forwarding", () => {
+  const none = { provider: "none", model: "none" } as const;
+  const HOSTED_SELECTION = {
+    modelId: "anthropic/claude-haiku-4.5",
+    source: "hosted" as const,
+    fallback: { provider: "openrouter" as const, model: "none" as const },
+  };
+  const ORG_SELECTION = {
+    modelId: "anthropic/claude-3-5-sonnet-latest",
+    source: "org" as const,
+    connectionRef: { kind: "orgProvider" as const, id: "orgprov_1" },
+    nativeModelId: "claude-3-5-sonnet-latest",
+    fallback: none,
+  };
+
+  it("a hosted selection rides the /stream body with its fallback", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelSelection: HOSTED_SELECTION }),
+    );
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      extraBodyFields: { modelSelection: HOSTED_SELECTION },
+    });
+    // Not an org selection: nothing to hand the org resolve.
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).not.toHaveProperty(
+      "modelSelection",
+    );
+  });
+
+  it("an org selection rides the /stream/org body and the org resolve", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: ORG_SELECTION,
+        extraBodyFields: { journeyRunId: "run-xyz" },
+      }),
+    );
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream/org",
+      extraBodyFields: {
+        journeyRunId: "run-xyz",
+        providerKey: "anthropic",
+        serverIds: ["server-a"],
+        modelSelection: ORG_SELECTION,
+      },
+    });
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: ORG_SELECTION,
+    });
+  });
+
+  it("a selection is only sent on the rail it names", async () => {
+    // A hosted selection that somehow resolves to an org rail (and the
+    // reverse) is not sent: the backend would refuse it on that route.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const org = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: HOSTED_SELECTION,
+      }),
+    );
+    expect(
+      (org.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("modelSelection");
+
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const hosted = await resolveTurnRuntime(
+      baseArgs({ modelSelection: ORG_SELECTION }),
+    );
+    expect(hosted.runtime).toEqual({ kind: "hosted", endpointPath: "/stream" });
+  });
+
+  it("no selection leaves every body as it was", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: BYOK_MODEL }),
+    );
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("modelSelection");
   });
 });
 
