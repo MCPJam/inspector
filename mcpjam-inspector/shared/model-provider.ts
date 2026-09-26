@@ -26,6 +26,7 @@
  */
 
 import { isBedrockModelId, type ModelProvider } from "./types";
+import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
 
 /**
  * `<prefix>/<model>` → provider, for the prefixes that are NOT already the
@@ -33,22 +34,10 @@ import { isBedrockModelId, type ModelProvider } from "./types";
  *
  * Kept separate from the identity entries below so "which of these is an
  * alias?" is answerable by reading, and so a new alias cannot be mistaken for a
- * new provider.
+ * new provider. Defined in `model-id-prefix-aliases.ts` (see there for why)
+ * and re-exported so existing importers keep one entry point.
  */
-export const MODEL_ID_PREFIX_ALIASES: Record<string, ModelProvider> = {
-  "meta-llama": "meta",
-  // `mistralai/...` is the OpenRouter/HuggingFace spelling of the same vendor
-  // the catalog files under `mistral/...`. Before this map it matched no
-  // prefix and fell through to the bare-id Ollama catch-all.
-  mistralai: "mistral",
-  // The catalog serves the newer Grok models under `spacexai/*`, the same
-  // vendor it files older ones under `x-ai/*`. Missing here it fell through to
-  // the bare-id Ollama catch-all at the bottom of `classifyModelIdProvider`,
-  // so a Grok model classified as Ollama BYOK for provider dispatch and eval
-  // model resolution — the `mistralai` failure above, repeated.
-  spacexai: "xai",
-  "x-ai": "xai",
-};
+export { MODEL_ID_PREFIX_ALIASES };
 
 /** `<prefix>/<model>` where the prefix IS the provider name. */
 const MODEL_ID_PREFIX_IDENTITY = [

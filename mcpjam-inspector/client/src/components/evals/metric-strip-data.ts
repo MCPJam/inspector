@@ -8,6 +8,7 @@ import {
 } from "./helpers";
 import type { CaseRunBatch } from "./runs/group-case-iterations";
 import type { EvalIteration, EvalSuiteRun } from "./types";
+import { poolLatency, type RunMetrics, type RunMetricsByRun } from "./run-metrics";
 
 /** One run's aggregated metrics, in chronological order across the series. */
 export interface MetricStripPoint {
@@ -355,6 +356,129 @@ export function buildAggregateMetricStripData(
 
   const point = pointFromIterations(
     iterations,
+    hasSummary ? { total, passed, failed } : undefined,
+  );
+  return finalizeMetricStripData([point]);
+}
+
+/**
+ * `pointFromIterations` over a run's stored metrics instead of its rows.
+ * Same fields, same meanings: `tokens` is the per-iteration average and
+ * `toolCalls` counts a missing list as zero.
+ */
+function pointFromMetrics(
+  list: readonly RunMetrics[],
+  counts?: { total: number; passed: number; failed: number },
+): MetricStripPoint {
+  let iterationCount = 0;
+  let passedCount = 0;
+  let failedCount = 0;
+  let tokens = 0;
+  let toolCalls = 0;
+  let costUsd: number | null = null;
+  let costedIterations = 0;
+  let hasRunnerReportedCost = false;
+  for (const metrics of list) {
+    iterationCount += metrics.iterationCount;
+    passedCount += metrics.results.passed;
+    failedCount += metrics.results.failed;
+    tokens += metrics.tokensTotal ?? 0;
+    toolCalls += metrics.toolCallsTotal ?? 0;
+    if (metrics.costUsd !== undefined) {
+      costUsd = (costUsd ?? 0) + metrics.costUsd;
+    }
+    costedIterations += metrics.costedIterations;
+    if (metrics.hasRunnerReportedCost) hasRunnerReportedCost = true;
+  }
+  const { passed, failed, total } = counts ?? {
+    passed: passedCount,
+    failed: failedCount,
+    total: iterationCount,
+  };
+  const { latencyP50, latencyP95 } = poolLatency(list);
+  return {
+    passRate: total > 0 ? Math.round((passed / total) * 100) : 0,
+    passed,
+    total,
+    failed,
+    latencyP50,
+    latencyP95,
+    tokens: iterationCount > 0 ? tokens / iterationCount : 0,
+    toolCalls,
+    costUsd,
+    costedIterations,
+    hasRunnerReportedCost,
+  };
+}
+
+/** `buildSuiteMetricStripData`, read from per-run metrics. */
+export function buildSuiteMetricStripDataFromMetrics(
+  allRuns: EvalSuiteRun[],
+  metricsByRun: RunMetricsByRun,
+  labelRun?: (run: EvalSuiteRun) => string,
+): MetricStripData | null {
+  const runs = measuredRuns(allRuns);
+  if (runs.length === 0) return null;
+
+  const chronological = [...runs].sort((a, b) => a.createdAt - b.createdAt);
+  const series: MetricStripPoint[] = [];
+  const runLabels: string[] = [];
+  for (const run of chronological) {
+    const metrics = metricsByRun.get(run._id);
+    if (!metrics || metrics.iterationCount === 0) continue;
+    const runName = labelRun
+      ? labelRun(run)
+      : run.runNumber
+      ? `#${run.runNumber}`
+      : `Run ${run._id.slice(0, 8)}`;
+    runLabels.push(`${runName} · ${new Date(run.createdAt).toLocaleString()}`);
+    series.push(
+      pointFromMetrics([metrics], {
+        total: run.summary?.total ?? metrics.iterationCount,
+        passed: run.summary?.passed ?? metrics.results.passed,
+        failed:
+          run.summary?.failed ??
+          metrics.results.failed + metrics.results.timedOut,
+      }),
+    );
+  }
+
+  const data = finalizeMetricStripData(series);
+  return data ? { ...data, runLabels } : null;
+}
+
+/** `buildAggregateMetricStripData`, read from per-run metrics. */
+export function buildAggregateMetricStripDataFromMetrics(
+  allRuns: EvalSuiteRun[],
+  metricsByRun: RunMetricsByRun,
+): MetricStripData | null {
+  const runs = measuredRuns(allRuns);
+  if (runs.length === 0) return null;
+
+  const list = runs
+    .map((run) => metricsByRun.get(run._id))
+    .filter(
+      (metrics): metrics is RunMetrics =>
+        metrics != null && metrics.iterationCount > 0,
+    );
+  if (list.length === 0) return null;
+
+  let total = 0;
+  let passed = 0;
+  let failed = 0;
+  let hasSummary = true;
+  for (const run of runs) {
+    if (run.summary) {
+      total += run.summary.total;
+      passed += run.summary.passed;
+      failed += run.summary.failed;
+    } else {
+      hasSummary = false;
+    }
+  }
+
+  const point = pointFromMetrics(
+    list,
     hasSummary ? { total, passed, failed } : undefined,
   );
   return finalizeMetricStripData([point]);

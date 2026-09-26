@@ -72,6 +72,17 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     expect(ingestMock).toHaveBeenCalledTimes(1);
   });
 
+  it("passes each row's catalog_observed_at through to the picker", async () => {
+    // The picker footer's "Catalog updated" date is read from this field, so
+    // the proxy must hand rows over untouched rather than pick fields.
+    const row = { id: "openai/gpt-4o", catalog_observed_at: 1_790_000_000_000 };
+    fetchMock.mockResolvedValueOnce(okCatalog([row]));
+
+    const res = await mount().request("/api/mcp/models");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, data: [row] });
+  });
+
   it("returns 500 when CONVEX_HTTP_URL is not configured", async () => {
     delete process.env.CONVEX_HTTP_URL;
     const res = await mount().request("/api/mcp/models");
