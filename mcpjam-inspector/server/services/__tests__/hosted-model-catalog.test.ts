@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  hostedCatalogModelDefinitions,
   isHostedModelDefinition,
   __resetHostedModelCatalogForTests,
   __setHostedCatalogForTests,
@@ -191,5 +192,38 @@ describe("refreshHostedModelCatalog — fetch + fail-soft", () => {
     await expect(refreshHostedModelCatalog()).resolves.toBeUndefined();
     expect(billingSource(SEED_MODEL)).toBe("mcpjam");
     expect(billingSource(CATALOG_ONLY_MODEL)).toBe("byok");
+  });
+});
+
+describe("hostedCatalogModelDefinitions", () => {
+  it("is the snapshot alone before any live catalog arrives", () => {
+    const rows = hostedCatalogModelDefinitions();
+    expect(rows.some((row) => row.id === SEED_MODEL)).toBe(true);
+    expect(rows.some((row) => row.id === CATALOG_ONLY_MODEL)).toBe(false);
+  });
+
+  it("appends live catalog ids beyond the snapshot, once each", () => {
+    __setHostedCatalogForTests([SEED_MODEL, CATALOG_ONLY_MODEL, "x-ai/grok-9"]);
+    const rows = hostedCatalogModelDefinitions();
+    expect(rows.filter((row) => row.id === SEED_MODEL)).toHaveLength(1);
+    expect(rows.find((row) => row.id === CATALOG_ONLY_MODEL)).toEqual({
+      id: CATALOG_ONLY_MODEL,
+      name: expect.any(String),
+      provider: "newvendor",
+      hosted: true,
+    });
+    // Live-only ids take their provider through the shared alias table.
+    expect(rows.find((row) => row.id === "x-ai/grok-9")?.provider).toBe("xai");
+    // Snapshot rows come first, so a `find` still prefers them.
+    expect(rows.at(-1)?.id).toBe("x-ai/grok-9");
+  });
+
+  it("rebuilds when the live catalog changes", () => {
+    const before = hostedCatalogModelDefinitions();
+    expect(hostedCatalogModelDefinitions()).toBe(before);
+    ingestHostedCatalogIds([CATALOG_ONLY_MODEL]);
+    const after = hostedCatalogModelDefinitions();
+    expect(after).not.toBe(before);
+    expect(after.some((row) => row.id === CATALOG_ONLY_MODEL)).toBe(true);
   });
 });

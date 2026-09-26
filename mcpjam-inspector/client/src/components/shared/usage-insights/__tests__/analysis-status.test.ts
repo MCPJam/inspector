@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InsightsAnalysisSummary } from "@/hooks/useUsageInsights";
-import { analysisStatus, themesNote } from "../analysis-status";
+import { analysisStatus, notRunNote, themesNote } from "../analysis-status";
 
 const NOW = 1_000_000;
 const clock = (ms: number) => `T+${(ms - NOW) / 60_000}m`;
@@ -207,5 +207,78 @@ describe("themesNote", () => {
       ),
     ).toBeNull();
     expect(themesNote(summary())).toBeNull();
+  });
+});
+
+/**
+ * #5188: a wave refused at launch drew as 100% "Not analyzed", or as work in
+ * flight while its zero-message sessions sat inside the idle window.
+ */
+describe("sessions that never ran", () => {
+  it("says so when no session ran, ahead of analyzing and waiting", () => {
+    const status = analysisStatus(
+      summary({ total: 3, notRun: 3, owed: 3, pending: 3 }),
+      NOW,
+    );
+    expect(status).toMatchObject({
+      kind: "notRun",
+      title: "These sessions didn't run",
+    });
+    expect(status?.action).toBeUndefined();
+  });
+
+  it("leaves the usual reading alone when some sessions ran", () => {
+    expect(
+      analysisStatus(summary({ total: 3, notRun: 1, running: 2 }), NOW)?.kind,
+    ).toBe("analyzing");
+  });
+
+  it("says there is nothing to read when every transcript was empty", () => {
+    // A backend without `notRun` reads the same refused wave this way.
+    expect(
+      analysisStatus(
+        summary({
+          total: 2,
+          skipped: 2,
+          skips: { empty_transcript: 2 },
+        }),
+        NOW,
+      ),
+    ).toMatchObject({ kind: "noTranscripts", title: "Nothing to analyze" });
+  });
+
+  it("names why when the same sessions are also skipped as empty", () => {
+    // A current backend reports both for a refused wave once analysis has
+    // read the empty transcripts; "didn't run" is the reason, so it wins.
+    expect(
+      analysisStatus(
+        summary({
+          total: 2,
+          notRun: 2,
+          skipped: 2,
+          skips: { empty_transcript: 2 },
+        }),
+        NOW,
+      )?.kind,
+    ).toBe("notRun");
+  });
+});
+
+describe("notRunNote", () => {
+  it("counts the sessions that didn't run beside a drawn flow", () => {
+    expect(notRunNote(summary({ total: 15, notRun: 8 }))).toBe(
+      "8 sessions didn't run, so they have nothing to analyze.",
+    );
+    expect(notRunNote(summary({ total: 15, notRun: 1 }))).toBe(
+      "1 session didn't run, so it has nothing to analyze.",
+    );
+  });
+
+  it("stays silent when every session ran, or none did", () => {
+    expect(notRunNote(summary({ total: 3, notRun: 0 }))).toBeNull();
+    expect(notRunNote(summary({ total: 3 }))).toBeNull();
+    // None ran: the status panel says it, not a note under a diagram.
+    expect(notRunNote(summary({ total: 3, notRun: 3 }))).toBeNull();
+    expect(notRunNote(null)).toBeNull();
   });
 });

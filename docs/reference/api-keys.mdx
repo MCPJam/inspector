@@ -16,6 +16,8 @@ The key for the **[MCPJam API](/reference/public-api)** — programmatic access 
 
 **Where it lives:** [**Settings → API Keys**](https://app.mcpjam.com/settings/api-keys) in the hosted app — open Settings from the account menu in the sidebar, then click the **API Keys** tab. That link also takes you straight there (sign in if prompted; you'll land back on the page). Shown **exactly once** at creation — store it in your own secret manager or an environment variable.
 
+**Who can create one:** by default, an organization's owners and admins. An owner or admin can let members create keys too, from the organization's **Organization keys** settings page.
+
 **When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots, and **saving `@mcpjam/sdk` eval results** (set `MCPJAM_API_KEY` to this key; see [Saving Results](/sdk/concepts/saving-results)).
 
 **Expiry.** Every new key expires. The default is **90 days**; you can pick 7, 30, 60, 90, 180, or 365 days when you create one. The key list shows when each key expires and flags keys expiring within two weeks. Keys created before expiry was introduced keep working until they are revoked — they show as "No expiry". Create a replacement key before the old one expires; revoke the old one once traffic has moved.

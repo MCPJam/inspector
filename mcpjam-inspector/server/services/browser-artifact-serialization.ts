@@ -1,4 +1,3 @@
-import type { ConvexHttpClient } from "convex/browser";
 import type {
   BrowserInteractionStepPayload,
   RunnerBrowserInteractionStep,
@@ -9,6 +8,7 @@ import type {
 } from "@/shared/eval-trace";
 import { logger } from "../utils/logger.js";
 import { uploadScreenshotBlob } from "../utils/mcp-app-widget-capture.js";
+import type { SnapshotUploadTarget } from "../utils/snapshot-upload-target.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 
 /**
@@ -18,8 +18,9 @@ import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
  *
  * Each helper:
  *   - uploads the transient base64 screenshot (`screenshotBase64` →
- *     `screenshotBlobId`) — best-effort: a failed upload drops the blob id but
- *     KEEPS the row (status / timings / console errors stay useful for replay),
+ *     `screenshotBlobId`) as `uploadTarget` — best-effort: a failed upload, or
+ *     no target to upload as, drops the blob id but KEEPS the row (status /
+ *     timings / console errors stay useful for replay),
  *   - runs the record through `sanitizeForConvexTransport` ($-key escaping is
  *     required for the `widgetToolCalls[].args: v.any()` field on steps),
  *   - retains `promptIndex` so per-turn consumers can bucket.
@@ -35,16 +36,16 @@ import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
  */
 export async function serializeRenderObservationsForBackend(
   observations: RunnerWidgetRenderObservation[] | undefined,
-  convexClient: ConvexHttpClient,
+  uploadTarget: SnapshotUploadTarget | undefined,
 ): Promise<SerializedWidgetRenderObservation[]> {
   if (!observations?.length) return [];
   const out: SerializedWidgetRenderObservation[] = [];
   for (const obs of observations) {
     let screenshotBlobId: string | undefined;
-    if (obs.screenshotBase64) {
+    if (obs.screenshotBase64 && uploadTarget) {
       try {
         screenshotBlobId = await uploadScreenshotBlob(
-          convexClient,
+          uploadTarget,
           obs.screenshotBase64,
         );
       } catch (err) {
@@ -69,16 +70,16 @@ export async function serializeRenderObservationsForBackend(
 
 export async function serializeBrowserStepsForBackend(
   steps: RunnerBrowserInteractionStep[] | undefined,
-  convexClient: ConvexHttpClient,
+  uploadTarget: SnapshotUploadTarget | undefined,
 ): Promise<SerializedBrowserInteractionStep[]> {
   if (!steps?.length) return [];
   const out: SerializedBrowserInteractionStep[] = [];
   for (const step of steps) {
     let screenshotBlobId: string | undefined;
-    if (step.screenshotBase64) {
+    if (step.screenshotBase64 && uploadTarget) {
       try {
         screenshotBlobId = await uploadScreenshotBlob(
-          convexClient,
+          uploadTarget,
           step.screenshotBase64,
         );
       } catch (err) {

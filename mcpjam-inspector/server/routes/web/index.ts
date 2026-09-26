@@ -8,8 +8,9 @@ import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
-import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { mcpEgressRateLimitMiddleware, promoteServerCheck } from "../../middleware/mcp-egress-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
+import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -46,6 +47,7 @@ import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
 import browserProfiles from "./browser-profiles.js";
+import clientFlags from "./flags.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
@@ -96,16 +98,8 @@ for (const startsWork of [
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
-// Same reasoning as the conformance ceiling above, one finding later (MJ-001):
-// these two routes open a connection to a URL the caller stored, and the
-// `guestRateLimitMiddleware` on `/servers/*` returns early for anyone who is
-// not a guest — so a signed-in caller was spending our egress unmetered. Keyed
-// per credential rather than per address, because the differential error a
-// scan reads is per request and the accounts are free to create.
-//
-// Listed path-by-path, not as `/servers/*`: the rest of that router is Convex
-// reads and writes with no outbound MCP connection, and metering them on an
-// egress-shaped budget would be the wrong ceiling on the wrong thing.
+web.post("/servers/checks/promote", promoteServerCheck);
+// All hosted checks share ten active slots per verified user across replicas.
 for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
@@ -229,6 +223,18 @@ web.use(
 // real cap stays the backend's org-keyed limits.
 web.use("*", passthroughRateLimitMiddleware);
 
+// MJ-012, per server. The limits above budget a caller across everything it
+// does; this one budgets how often a caller reaches ONE of its servers on the
+// MCP operation routes, keyed on (principal, serverId, route family). See
+// `mcp-operation-rate-limit.ts`.
+//
+// Registered after the per-family `bearerAuthMiddleware` lines, whose verified
+// identity it keys on, and after the passthrough limiter, so a request that
+// limiter refuses is turned away before this one reads the body.
+for (const family of ["tools", "resources", "prompts", "tasks"] as const) {
+  web.use(`/${family}/*`, mcpOperationRateLimit(family));
+}
+
 web.route("/servers", servers);
 web.route("/tools", tools);
 web.route("/resources", resources);
@@ -284,6 +290,10 @@ web.route("/browser-profiles", browserProfiles);
 // Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
 // `/skills` above, which serves the project's durable Convex skills.
 web.route("/server-skills", serverSkills);
+// PostHog flag values for the client's bootstrap (MJ-015). No bearer
+// middleware: anonymous visitors need flags too. The router verifies a bearer
+// itself when one is sent and evaluates only the checked-in allowlist.
+web.route("/flags", clientFlags);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
 web.route("/caniuse", caniuse);
