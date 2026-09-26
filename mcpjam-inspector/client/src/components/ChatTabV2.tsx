@@ -1,4 +1,5 @@
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { resolveRestoredModel } from "@/lib/model-selection";
 import {
   FormEvent,
   useMemo,
@@ -57,6 +58,7 @@ import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link"
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
+import { applyWidgetStateUpdates } from "@/shared/user-context-message";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -70,7 +72,7 @@ import {
   shouldShowStarterPrompts,
   formatErrorMessage,
   buildMcpPromptMessages,
-  buildSkillToolMessages,
+  buildSkillContextMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
@@ -796,8 +798,12 @@ export function ChatTabV2({
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
-        const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId
+        // By `modelSource` as well as id: an OpenRouter id can also be a
+        // hosted row, and this thread must reopen on the one it ran on (#5472).
+        const matchingModel = resolveRestoredModel(
+          availableModels,
+          detail.modelId,
+          detail.modelSource
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -1544,66 +1550,8 @@ export function ChatTabV2({
     onHasMessagesChange?.(effectiveHasMessages);
   }, [effectiveHasMessages, onHasMessagesChange]);
 
-  // Widget state management
-  const applyWidgetStateUpdates = useCallback(
-    (
-      prevMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[]
-    ) => {
-      let nextMessages = prevMessages;
-
-      for (const { toolCallId, state } of updates) {
-        const messageId = `widget-state-${toolCallId}`;
-
-        if (state === null) {
-          const filtered = nextMessages.filter((msg) => msg.id !== messageId);
-          nextMessages = filtered;
-          continue;
-        }
-
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
-          state
-        )}`;
-        const existingIndex = nextMessages.findIndex(
-          (msg) => msg.id === messageId
-        );
-
-        if (existingIndex !== -1) {
-          const existingMessage = nextMessages[existingIndex];
-          const existingText =
-            existingMessage.parts?.[0]?.type === "text"
-              ? (existingMessage.parts[0] as { text?: string }).text
-              : null;
-
-          if (existingText === stateText) {
-            continue;
-          }
-
-          const updatedMessages = [...nextMessages];
-          updatedMessages[existingIndex] = {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          };
-          nextMessages = updatedMessages;
-          continue;
-        }
-
-        nextMessages = [
-          ...nextMessages,
-          {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          },
-        ];
-      }
-
-      return nextMessages;
-    },
-    []
-  );
-
+  // Widget state reaches the model as user-role context (MJ-009); see
+  // `applyWidgetStateUpdates`.
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
@@ -1614,7 +1562,7 @@ export function ChatTabV2({
         setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
       }
     },
-    [status, setMessages, applyWidgetStateUpdates]
+    [status, setMessages],
   );
 
   useEffect(() => {
@@ -1624,7 +1572,7 @@ export function ChatTabV2({
       applyWidgetStateUpdates(prevMessages, widgetStateQueue)
     );
     setWidgetStateQueue([]);
-  }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
+  }, [status, widgetStateQueue, setMessages]);
 
   const handleModelContextUpdate = useCallback(
     (
@@ -2137,7 +2085,9 @@ export function ChatTabV2({
       ) as UIMessage[];
 
       // Build messages from skills
-      const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
+      const skillMessages = buildSkillContextMessages(
+        skillResults,
+      ) as UIMessage[];
       const prependMessages = [...promptMessages, ...skillMessages];
 
       const files =

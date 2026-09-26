@@ -17,6 +17,7 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
+import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
@@ -24,6 +25,7 @@ import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
+import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -53,7 +55,7 @@ const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
  * lost. Returns null for any non-billing error so callers fall through to
  * their normal handling.
  */
-function asBillingRouteError(error: unknown): WebRouteError | null {
+export function asBillingRouteError(error: unknown): WebRouteError | null {
   if (!(error instanceof ConvexError)) {
     return null;
   }
@@ -155,6 +157,11 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
+    /**
+     * The Convex bearer the screenshot and replay uploads authenticate with.
+     * Pure pass-through to `finalizeEvalIteration`.
+     */
+    convexAuthToken?: string;
     /** Explicit harness lifecycle status; never infer it from the verdict. */
     status: IterationStatus;
     startedAt?: number;
@@ -750,58 +757,57 @@ export const startSuiteRunWithRecorder = async ({
 }) => {
   let response: any;
   try {
-    response = await convexClient.mutation(
-      "testSuites:startTestSuiteRun" as any,
-      {
-        suiteId,
-        notes,
-        passCriteria,
-        replayedFromRunId,
-        useCurrentSuiteConfig,
-        ...(environmentOverride ? { environmentOverride } : {}),
-        ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
-        toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
-        toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
-        iterationOverride,
-        ...(caseIds && caseIds.length ? { caseIds } : {}),
-        matchOptionsOverride,
-        ...(namedHostId ? { namedHostId } : {}),
-        ...(runGroupId ? { runGroupId } : {}),
-        ...(environmentId ? { environmentId } : {}),
-        ...(expectedEnvironmentRevision !== undefined
-          ? { expectedEnvironmentRevision }
-          : {}),
-        ...(expectedEnvironmentHostConfigId !== undefined
-          ? { expectedEnvironmentHostConfigId }
-          : {}),
-        ...(expectedEnvironmentServerIds !== undefined
-          ? { expectedEnvironmentServerIds }
-          : {}),
-        ...(source ? { source } : {}),
-        // The capability behind a hidden source. `startTestSuiteRun` refuses
-        // `source: 'benchmark'` without it, so dropping it here would fail
-        // every benchmark child at the mutation — after the claim was already
-        // leased and the MCP session already opened.
-        ...(benchmarkRunId ? { benchmarkRunId } : {}),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-        ...(sourceHash ? { sourceHash } : {}),
-        ...(skillsOverride ? { skillsOverride } : {}),
-        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
-        ...(ephemeralEnvironment === true
-          ? { ephemeralEnvironment: true }
-          : {}),
-        ...(importApprovals && importApprovals.length
-          ? { importApprovals }
-          : {}),
-        // Forwarded only when present. An older backend's `startTestSuiteRun`
-        // validator does not know these args and rejects the whole call for an
-        // unknown field, so sending `launcher: undefined` would break every
-        // launch against a deployment that predates run provenance — including
-        // self-hosted ones this Inspector talks to.
-        ...(launcher ? { launcher } : {}),
-        ...(ciMetadata ? { ciMetadata } : {}),
-        runnerCapabilities: runnerCapabilities(),
-      },
+    const mutationArgs = {
+      suiteId,
+      notes,
+      passCriteria,
+      replayedFromRunId,
+      useCurrentSuiteConfig,
+      ...(environmentOverride ? { environmentOverride } : {}),
+      ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
+      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
+      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      iterationOverride,
+      ...(caseIds && caseIds.length ? { caseIds } : {}),
+      matchOptionsOverride,
+      ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
+      ...(environmentId ? { environmentId } : {}),
+      ...(expectedEnvironmentRevision !== undefined
+        ? { expectedEnvironmentRevision }
+        : {}),
+      ...(expectedEnvironmentHostConfigId !== undefined
+        ? { expectedEnvironmentHostConfigId }
+        : {}),
+      ...(expectedEnvironmentServerIds !== undefined
+        ? { expectedEnvironmentServerIds }
+        : {}),
+      ...(source ? { source } : {}),
+      // The capability behind a hidden source. `startTestSuiteRun` refuses
+      // `source: 'benchmark'` without it, so dropping it here would fail
+      // every benchmark child at the mutation — after the claim was already
+      // leased and the MCP session already opened.
+      ...(benchmarkRunId ? { benchmarkRunId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(sourceHash ? { sourceHash } : {}),
+      ...(skillsOverride ? { skillsOverride } : {}),
+      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+      ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+      ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      // Forwarded only when present. An older backend's `startTestSuiteRun`
+      // validator does not know these args and rejects the whole call for an
+      // unknown field, so sending `launcher: undefined` would break every
+      // launch against a deployment that predates run provenance — including
+      // self-hosted ones this Inspector talks to.
+      ...(launcher ? { launcher } : {}),
+      ...(ciMetadata ? { ciMetadata } : {}),
+      runnerCapabilities: runnerCapabilities(),
+    };
+    response = await retrySuiteStartOnConflict(() =>
+      convexClient.mutation(
+        "testSuites:startTestSuiteRun" as any,
+        mutationArgs,
+      ),
     );
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
@@ -908,11 +914,13 @@ export const startSuiteRunWithRecorder = async ({
     if (billing) {
       throw billing;
     }
+    // `cause` is logged above and recorded on the run; the response carries
+    // only the run id (MJ-020, MJ-021).
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
       "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
-      { runId, cause },
+      { runId },
     );
   }
 
@@ -999,22 +1007,27 @@ export const startSuiteRunWithRecorder = async ({
         ];
       }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
-        return tc.models.map((model: any) => ({
-          title: tc.title,
-          query: tc.query,
-          model: model.model,
-          provider: model.provider,
-          runs: tc.runs || 1,
-          expectedToolCalls: tc.expectedToolCalls || [],
-          isNegativeTest: tc.isNegativeTest,
-          expectedOutput: tc.expectedOutput,
-          steps: tc.steps,
-          advancedConfig: tc.advancedConfig,
-          matchOptions: tc.matchOptions,
-          successPredicates,
-          ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
-          testCaseId: tc._id,
-        }));
+        return tc.models.map((model: any) => {
+          // Saved selection behind this entry; invalid or absent ⇒ legacy.
+          const selection = readStoredModelSelection(model.selection);
+          return {
+            title: tc.title,
+            query: tc.query,
+            model: model.model,
+            provider: model.provider,
+            ...(selection ? { selection } : {}),
+            runs: tc.runs || 1,
+            expectedToolCalls: tc.expectedToolCalls || [],
+            isNegativeTest: tc.isNegativeTest,
+            expectedOutput: tc.expectedOutput,
+            steps: tc.steps,
+            advancedConfig: tc.advancedConfig,
+            matchOptions: tc.matchOptions,
+            successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
+            testCaseId: tc._id,
+          };
+        });
       }
 
       if (tc.model && tc.provider) {

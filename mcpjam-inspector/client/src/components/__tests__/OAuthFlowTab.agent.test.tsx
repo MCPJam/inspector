@@ -68,7 +68,10 @@ vi.mock("@mcpjam/sdk/browser", () => ({
 // the component's own updateState (the synced-ref write path under test).
 const machineCtl = vi.hoisted(() => ({
   onAdvance: null as
-    | ((update: (u: Partial<OAuthFlowState>) => void) => void)
+    | ((
+        update: (u: Partial<OAuthFlowState>) => void,
+        getState: () => OAuthFlowState,
+      ) => void)
     | null,
   updateState: null as ((u: Partial<OAuthFlowState>) => void) | null,
 }));
@@ -76,11 +79,12 @@ const machineCtl = vi.hoisted(() => ({
 vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
   createInspectorOAuthStateMachine: (opts: {
     updateState: (u: Partial<OAuthFlowState>) => void;
+    getState: () => OAuthFlowState;
   }) => {
     machineCtl.updateState = opts.updateState;
     return {
       proceedToNextStep: async () => {
-        machineCtl.onAdvance?.(opts.updateState);
+        machineCtl.onAdvance?.(opts.updateState, opts.getState);
       },
     };
   },
@@ -91,12 +95,21 @@ vi.mock("@/components/oauth/OAuthSequenceDiagram", () => ({
 }));
 
 const captureAuthModalProps = vi.hoisted(() => vi.fn());
-vi.mock("@/components/oauth/OAuthAuthorizationModal", () => ({
-  OAuthAuthorizationModal: (props: unknown) => {
-    captureAuthModalProps(props);
-    return null;
-  },
-}));
+// Called once per mount: the real modal opens its popup only on mount or an
+// `open` false->true transition, so a remount is what guarantees a new popup.
+const captureAuthModalMount = vi.hoisted(() => vi.fn());
+vi.mock("@/components/oauth/OAuthAuthorizationModal", async () => {
+  const { useEffect } = await import("react");
+  return {
+    OAuthAuthorizationModal: (props: unknown) => {
+      useEffect(() => {
+        captureAuthModalMount(props);
+      }, []);
+      captureAuthModalProps(props);
+      return null;
+    },
+  };
+});
 
 const captureProfileModalProps = vi.hoisted(() => vi.fn());
 vi.mock("../oauth/OAuthProfileModal", () => ({
@@ -106,9 +119,21 @@ vi.mock("../oauth/OAuthProfileModal", () => ({
   },
 }));
 
+const captureLoggerProps = vi.hoisted(() => vi.fn());
 vi.mock("../oauth/OAuthFlowLogger", () => ({
-  OAuthFlowLogger: () => <div data-testid="oauth-flow-logger" />,
+  OAuthFlowLogger: (props: unknown) => {
+    captureLoggerProps(props);
+    return <div data-testid="oauth-flow-logger" />;
+  },
 }));
+
+type LoggerActions = {
+  onContinue?: () => Promise<void>;
+  continueLabel?: string;
+};
+const latestLoggerActions = (): LoggerActions =>
+  (captureLoggerProps.mock.lastCall?.[0] as { actions: LoggerActions })
+    .actions;
 vi.mock("../oauth/RefreshTokensConfirmModal", () => ({
   RefreshTokensConfirmModal: () => null,
 }));
@@ -280,6 +305,206 @@ describe("OAuthFlowTab — advanceOauthFlow", () => {
       status: "error",
       error: { code: "invalid_request" },
     });
+  });
+});
+
+// The AS rejected the exchange (expired/used code): the SDK machine clears the
+// spent code and stays on token_request with the rejection as the error.
+const REJECTED_EXCHANGE: Partial<OAuthFlowState> = {
+  currentStep: "token_request",
+  authorizationUrl: "https://auth.example.com/authorize?x=1",
+  authorizationCode: undefined,
+  error: "Token request failed: 400 Bad Request: invalid_grant: Grant code expired",
+  lastResponse: {
+    status: 400,
+    statusText: "Bad Request",
+    headers: {},
+    body: { error: "invalid_grant" },
+  },
+  // The PKCE and URL steps log under fixed ids; a rewind must drop those two.
+  infoLogs: [
+    { id: "client-registration", level: "info" },
+    { id: "pkce-generation", level: "info" },
+    { id: "auth-url", level: "info" },
+  ] as OAuthFlowState["infoLogs"],
+};
+
+const FRESH_AUTHORIZATION_URL = "https://auth.example.com/authorize?x=2";
+
+describe("OAuthFlowTab, after the AS rejects the authorization code", () => {
+  // Scripts the machine's two regeneration steps and records the step each
+  // advance started from, so tests can pin that recovery restarts BEFORE PKCE
+  // generation rather than reusing the spent verifier, state and URL.
+  async function renderAtRejectedExchange(
+    regeneration: Partial<OAuthFlowState>[] = [
+      { currentStep: "generate_pkce_parameters", state: "fresh-state" },
+      {
+        currentStep: "authorization_request",
+        authorizationUrl: FRESH_AUTHORIZATION_URL,
+      },
+    ],
+  ) {
+    renderTab();
+    machineCtl.onAdvance = (update) => update(REJECTED_EXCHANGE);
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+    const startedFrom: Array<{ step: string; url?: string }> = [];
+    const rewoundTo: OAuthFlowState[] = [];
+    machineCtl.onAdvance = (update, getState) => {
+      if (startedFrom.length === 0) rewoundTo.push(getState());
+      startedFrom.push({
+        step: getState().currentStep,
+        url: getState().authorizationUrl,
+      });
+      const next = regeneration[startedFrom.length - 1];
+      if (next) update(next);
+    };
+    return { startedFrom, rewoundState: () => rewoundTo[0] };
+  }
+
+  it("rewinds with the spent transaction's logs and HTTP response dropped", async () => {
+    const { rewoundState } = await renderAtRejectedExchange();
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect((rewoundState().infoLogs ?? []).map((log) => log.id)).toEqual([
+      "client-registration",
+    ]);
+    expect(rewoundState().lastResponse).toBeUndefined();
+  });
+
+  it("reports the rejected-code step to agents as awaiting human sign-in", async () => {
+    await renderAtRejectedExchange();
+    const snapshot = JSON.stringify(await readSurfaceSnapshot("oauth-flow"));
+    expect(snapshot).toContain('"currentStep":"token_request"');
+    expect(snapshot).toContain('"awaitingHumanAuthorization":true');
+  });
+
+  it("remounts the auth modal so the popup reopens even if it never closed", async () => {
+    // Electron fallback: the callback arrives by IPC, which the modal does not
+    // hear, so it can still be open when the token exchange is rejected.
+    renderTab();
+    machineCtl.onAdvance = (update) =>
+      update({ currentStep: "generate_pkce_parameters" });
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+    machineCtl.onAdvance = (update) =>
+      update({
+        currentStep: "authorization_request",
+        authorizationUrl: "https://auth.example.com/authorize?x=1",
+      });
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+    await act(async () => {
+      machineCtl.updateState?.(REJECTED_EXCHANGE);
+    });
+    expect(captureAuthModalProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ open: true }),
+    );
+    const mountsBefore = captureAuthModalMount.mock.calls.length;
+
+    const regeneration: Partial<OAuthFlowState>[] = [
+      { currentStep: "generate_pkce_parameters" },
+      {
+        currentStep: "authorization_request",
+        authorizationUrl: FRESH_AUTHORIZATION_URL,
+      },
+    ];
+    let step = 0;
+    machineCtl.onAdvance = (update) => update(regeneration[step++] ?? {});
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(captureAuthModalMount.mock.calls.length).toBe(mountsBefore + 1);
+    expect(captureAuthModalMount).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        open: true,
+        authorizationUrl: FRESH_AUTHORIZATION_URL,
+      }),
+    );
+  });
+
+  it("does not blame a regeneration failure on the earlier token rejection", async () => {
+    await renderAtRejectedExchange([
+      { error: "Missing authorization endpoint or client ID" },
+    ]);
+    const response = await dispatch({ type: "advanceOauthFlow", payload: {} });
+    expect(response.status).toBe("success");
+    const result = (response as { result: Record<string, unknown> }).result;
+    expect(result).toMatchObject({ status: "advanced", ok: false });
+    expect(result).not.toHaveProperty("httpStatus");
+    expect(result).not.toHaveProperty("oauthErrorCode");
+  });
+
+  it("Continue reads Authorize and reopens the popup with a freshly generated URL", async () => {
+    const { startedFrom } = await renderAtRejectedExchange();
+    expect(latestLoggerActions().continueLabel).toBe("Authorize");
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(startedFrom).toEqual([
+      { step: "received_client_credentials", url: undefined },
+      { step: "generate_pkce_parameters", url: undefined },
+    ]);
+    await waitFor(() => {
+      expect(captureAuthModalProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          open: true,
+          authorizationUrl: FRESH_AUTHORIZATION_URL,
+        }),
+      );
+    });
+  });
+
+  it("the agent advance regenerates too and hands off to the human popup", async () => {
+    const { startedFrom } = await renderAtRejectedExchange();
+    const response = await dispatch({ type: "advanceOauthFlow", payload: {} });
+    expect(response).toMatchObject({
+      status: "success",
+      result: {
+        status: "authorization_modal_opened",
+        currentStep: "authorization_request",
+      },
+    });
+    expect(startedFrom.map((entry) => entry.step)).toEqual([
+      "received_client_credentials",
+      "generate_pkce_parameters",
+    ]);
+  });
+
+  it("keeps the popup closed when regenerating the request fails", async () => {
+    const { startedFrom } = await renderAtRejectedExchange([
+      { error: "Missing authorization endpoint or client ID" },
+    ]);
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(startedFrom).toHaveLength(1);
+    expect(captureAuthModalProps).not.toHaveBeenCalledWith(
+      expect.objectContaining({ open: true }),
+    );
+  });
+
+  it("a token_request that still holds a code advances normally", async () => {
+    renderTab();
+    machineCtl.onAdvance = (update) =>
+      update({ currentStep: "token_request", authorizationCode: "fresh-code" });
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+    let advances = 0;
+    machineCtl.onAdvance = () => {
+      advances += 1;
+    };
+    expect(latestLoggerActions().continueLabel).toBe("Continue");
+
+    await act(async () => {
+      await latestLoggerActions().onContinue?.();
+    });
+
+    expect(advances).toBe(1);
   });
 });
 

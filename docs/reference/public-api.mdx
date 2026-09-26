@@ -296,7 +296,8 @@ plugin pins whose version no longer exists.
 | `POST .../eval-ingest/runs/start` | Chunked flow: create (or idempotently reuse) a run by `externalRunId` |
 | `POST .../eval-ingest/runs/iterations` | Append an iteration batch to a started run |
 | `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
-| `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (JUnit XML, Jest/Vitest JSON) |
+| `POST .../eval-ingest/artifacts` | Store one artifact's raw bytes (widget HTML too large to send inline) and return its `storageId` |
+| `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (used by older SDK releases) |
 
 **Agent** (`/projects/{projectId}/agent`) — a headless assistant turn for
 building conversational surfaces (the MCPJam Slack app is the first consumer):

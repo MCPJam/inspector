@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CaptureResult } from "posthog-js";
 import {
   detectEnvironment,
+  dropInjectedScriptException,
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
@@ -485,5 +487,168 @@ describe("PosthogUtils", () => {
       expect(opts.capture_pageview).toBe("history_change");
       expect(opts.capture_pageleave).toBe(true);
     });
+  });
+
+  describe("server-evaluated feature flags (MJ-015)", () => {
+    const serverFlags = {
+      "computers-enabled": true,
+      "guest-credit-wall-copy": "treatment",
+    };
+
+    it("bootstraps the server flags and turns remote flag loading off", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions(serverFlags) as Record<string, any>;
+
+      expect(opts.bootstrap.featureFlags).toEqual(serverFlags);
+      expect(opts.advanced_disable_feature_flags).toBe(true);
+      expect(opts.advanced_disable_feature_flags_on_first_load).toBe(true);
+      // Remote config (replay, surveys, ...) still loads.
+      expect(opts.advanced_disable_flags).toBeUndefined();
+      expect(opts.advanced_disable_decide).toBeUndefined();
+    });
+
+    it("keeps the guest identity bootstrap and the capture-surface getters", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      vi.doMock("../guest-session", async (importOriginal) => ({
+        ...(await importOriginal<typeof import("../guest-session")>()),
+        getCachedGuestSession: () => ({
+          guestId: "guest_bootstrap_1",
+          token: "guest-token",
+          expiresAt: Date.now() + 60_000,
+        }),
+      }));
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions(serverFlags) as Record<string, any>;
+
+      expect(opts.bootstrap).toEqual({
+        distinctID: "guest_bootstrap_1",
+        isIdentifiedID: false,
+        featureFlags: serverFlags,
+      });
+      expect(
+        Object.getOwnPropertyDescriptor(opts, "capture_exceptions")?.get,
+      ).toBeTypeOf("function");
+      vi.doUnmock("../guest-session");
+    });
+
+    it("leaves flags out of the bootstrap when the server returned none", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      for (const none of [undefined, null, {}]) {
+        const opts = getPostHogOptions(none) as Record<string, any>;
+        expect(opts.bootstrap?.featureFlags).toBeUndefined();
+        expect(opts.advanced_disable_feature_flags).toBe(true);
+      }
+    });
+
+    it("applies the same flag options in the capture-disabled branch", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions(serverFlags) as Record<string, any>;
+
+      expect(opts.opt_out_capturing_by_default).toBe(true);
+      expect(opts.bootstrap.featureFlags).toEqual(serverFlags);
+      expect(opts.advanced_disable_feature_flags).toBe(true);
+      expect(opts.advanced_disable_feature_flags_on_first_load).toBe(true);
+    });
+  });
+});
+
+describe("dropInjectedScriptException", () => {
+  const exceptionEvent = (frames: { filename?: string }[] | undefined) =>
+    ({
+      uuid: "01a0cf09-c6fe-7ec5-9756-c5a4f4597a43",
+      event: "$exception",
+      properties: {
+        $exception_list: [
+          {
+            type: "RangeError",
+            value: "Maximum call stack size exceeded.",
+            stacktrace: frames ? { type: "raw", frames } : undefined,
+          },
+        ],
+      },
+    }) as unknown as CaptureResult;
+
+  // The frames carry the app's own origin, so the fixtures derive from the
+  // test document rather than hard-coding app.mcpjam.com — otherwise these
+  // would pass for being cross-origin, which is not what is under test.
+  const origin = window.location.origin;
+
+  // The shape PostHog recorded on 2026-09-23: the browser stamps injected code
+  // with the document URL because it has no script file of its own. Absolute
+  // and route-relative both appear in the wild, hence both cases.
+  it.each([
+    ["an absolute document URL", `${origin}/p/v97d1szz`],
+    ["a route-relative one", "/p/v97d1szz"],
+  ])("drops a RangeError whose every frame is %s", (_label, prefix) => {
+    const event = exceptionEvent([
+      { filename: `${prefix}/playground` },
+      { filename: `${prefix}/tasks` },
+      { filename: `${prefix}/tasks` },
+    ]);
+    expect(dropInjectedScriptException(event)).toBeNull();
+  });
+
+  // The markdown lexer has blown the stack for real. That one must still page.
+  it("keeps a stack overflow raised inside our own bundle", () => {
+    const event = exceptionEvent([
+      { filename: `${origin}/assets/index-Ct2CwjTH.js` },
+      { filename: `${origin}/p/v97d1szz/playground` },
+    ]);
+    expect(dropInjectedScriptException(event)).toBe(event);
+  });
+
+  it.each([
+    ["a Vite dev module with a cache-busting query", "/src/main.tsx?t=1730"],
+    // An extension test alone would have swallowed every failure on the
+    // payment path: seat-payment-stripe.ts loads this exact URL.
+    ["extensionless Stripe.js", "https://js.stripe.com/v3/"],
+    ["an engine-synthesised frame", "<anonymous>"],
+  ])("keeps an exception from %s", (_label, filename) => {
+    const event = exceptionEvent([{ filename }]);
+    expect(dropInjectedScriptException(event)).toBe(event);
+  });
+
+  // No stack means no attribution. Guessing here would hide real errors.
+  it.each([
+    ["an empty frame list", [] as { filename?: string }[]],
+    ["no stacktrace at all", undefined],
+  ])("keeps an exception with %s", (_label, frames) => {
+    const event = exceptionEvent(frames);
+    expect(dropInjectedScriptException(event)).toBe(event);
+  });
+
+  // @posthog/core turns an Error.cause into its own $exception_list entry,
+  // with no stacktrace when the cause is a string. That entry is unattributed,
+  // so it keeps the event even though the other entry is all document frames.
+  it("keeps a chained exception whose string cause has no stacktrace", () => {
+    const event = exceptionEvent([{ filename: `${origin}/p/v97d1szz/tasks` }]);
+    const exceptions = event.properties.$exception_list as unknown[];
+    exceptions.push({ type: "Error", value: "string cause" });
+    expect(dropInjectedScriptException(event)).toBe(event);
+  });
+
+  it("leaves other events and a null capture alone", () => {
+    const pageview = {
+      uuid: "1",
+      event: "$pageview",
+      properties: {},
+    } as unknown as CaptureResult;
+    expect(dropInjectedScriptException(pageview)).toBe(pageview);
+    expect(dropInjectedScriptException(null)).toBeNull();
+  });
+
+  it("is wired into the app options", () => {
+    expect(options.before_send).toBe(dropInjectedScriptException);
   });
 });

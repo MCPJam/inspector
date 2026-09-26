@@ -1,4 +1,5 @@
 import { describeEvalIterationError } from "@/lib/eval-iteration-error";
+import { ExecutionProvenance } from "./execution-provenance";
 import { ErrorCard } from "@/components/ui/error-card";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
@@ -12,6 +13,10 @@ import {
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+import {
+  registerArtifactUrls,
+  useArtifactUrlEpoch,
+} from "@/lib/artifact-urls";
 // One copy, deliberately. This module used to carry a byte-identical
 // `resolveTraceModel` (plus its own hand-copied `KNOWN_MODEL_PROVIDERS`), so a
 // provider added to the union had to be remembered in two places or the trace
@@ -429,6 +434,7 @@ export function IterationDetails({
         // otherwise reads from `iteration.blob`. Both paths return the
         // same envelope shape to `TraceViewer`.
         const data = await getBlob({ iterationId: iteration._id });
+        registerArtifactUrls(data);
         if (!cancelled) setLoadedBlob({ identity: traceIdentity, data });
       } catch (e: any) {
         if (!cancelled) {
@@ -444,6 +450,40 @@ export function IterationDetails({
       cancelled = true;
     };
   }, [traceSourceKey, traceIdentity, getBlob, blobRetryTick]);
+
+  // The trace's widget HTML and screenshots arrive as short-lived artifact
+  // links. When one expires anywhere on the page, re-read the trace in the
+  // background and swap the fresh links in without blanking the view.
+  const artifactUrlEpoch = useArtifactUrlEpoch();
+  const handledArtifactUrlEpochRef = useRef(artifactUrlEpoch);
+  useEffect(() => {
+    if (artifactUrlEpoch === handledArtifactUrlEpochRef.current) return;
+    handledArtifactUrlEpochRef.current = artifactUrlEpoch;
+    if (!traceSourceKey) return;
+    let cancelled = false;
+    getBlob({ iterationId: iteration._id })
+      .then((data) => {
+        registerArtifactUrls(data);
+        if (cancelled) return;
+        setLoadedBlob((current) =>
+          current?.identity === traceIdentity
+            ? { identity: traceIdentity, data }
+            : current,
+        );
+      })
+      .catch(() => {
+        // Keep what is shown; the next expired link retries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    artifactUrlEpoch,
+    traceSourceKey,
+    traceIdentity,
+    iteration._id,
+    getBlob,
+  ]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -1191,6 +1231,14 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
+      {/* What this trial ran on, and whether that deviated from the request.
+          Above the tabs, so the Scorecard, Steps and Trace views all sit under
+          it. Nothing for a trial recorded before the record existed. */}
+      <ExecutionProvenance
+        execution={iteration.execution}
+        className={layoutMode === "full" ? "shrink-0 px-3" : undefined}
+        testIdPrefix="iteration-execution"
+      />
       {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
 
       {!hasTrace && !scorecard && !isProbe && (

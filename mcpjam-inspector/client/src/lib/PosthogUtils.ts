@@ -1,3 +1,6 @@
+import type { CaptureResult } from "posthog-js";
+import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
+import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
@@ -53,12 +56,33 @@ export function getPostHogApiHost(): string {
 // A returning user with existing persistence keeps their stored id either
 // way — bootstrap only seeds when persistence is empty. Local/npm has no
 // blob, so this returns {} and the async identify path is unchanged.
-function getPostHogBootstrap() {
+//
+// `serverFlags` are the values GET /api/web/flags evaluated for this visitor
+// (lib/server-feature-flags.ts). They are only bootstrapped when present: an
+// empty `featureFlags` object would make posthog-js/react report every flag
+// as unresolved instead of falling back to the persisted values.
+function getPostHogBootstrap(serverFlags?: ClientFeatureFlagValues | null) {
   const guestId = getCachedGuestSession()?.guestId;
-  return guestId
-    ? { bootstrap: { distinctID: guestId, isIdentifiedID: false } }
-    : {};
+  const featureFlags =
+    serverFlags && Object.keys(serverFlags).length > 0
+      ? serverFlags
+      : undefined;
+  if (!guestId && !featureFlags) return {};
+  return {
+    bootstrap: {
+      ...(guestId ? { distinctID: guestId, isIdentifiedID: false } : {}),
+      ...(featureFlags ? { featureFlags } : {}),
+    },
+  };
 }
+
+// Flag values come only from our server (MJ-015): posthog-js never requests
+// them from PostHog. Remote config (/array/<token>/config) still loads, so
+// replay and the other remotely configured features are unaffected.
+const SERVER_EVALUATED_FLAG_OPTIONS = {
+  advanced_disable_feature_flags: true,
+  advanced_disable_feature_flags_on_first_load: true,
+} as const;
 
 /**
  * A score result link is a bearer credential — the token in `/results/<token>`
@@ -167,6 +191,41 @@ export function sanitizeAnalyticsProperties(
   }
   if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
+}
+
+/**
+ * Drop exceptions raised entirely by code the browser injected into the page.
+ *
+ * The rule, and the evidence behind it, lives in
+ * shared/injected-script-frames.ts. Sentry's client config applies the same
+ * one, so the two reporters cannot disagree about what counts as ours.
+ *
+ * Matching on frames rather than on the message is the point: a genuine stack
+ * overflow in our own code — the markdown lexer has produced one — still has
+ * app frames, and still reports.
+ */
+export function dropInjectedScriptException(
+  event: CaptureResult | null,
+): CaptureResult | null {
+  if (event?.event !== "$exception") return event;
+  if (typeof window === "undefined") return event;
+
+  const exceptions: unknown = event.properties?.$exception_list;
+  if (!Array.isArray(exceptions)) return event;
+
+  const stacks = exceptions.map((exception) => {
+    const frames = (exception as { stacktrace?: { frames?: unknown } })
+      ?.stacktrace?.frames;
+    return Array.isArray(frames)
+      ? frames.map(
+          (frame) => (frame as { filename?: unknown } | null)?.filename,
+        )
+      : [];
+  });
+
+  return isInjectedScriptException(stacks, window.location.origin)
+    ? null
+    : event;
 }
 
 // Public vanity landings (caniuse.dev host-compare, score.mcpjam.com score
@@ -332,8 +391,10 @@ export const options = {
   ui_host: "https://us.posthog.com",
   ...getPostHogBootstrap(),
   ...getPageviewCaptureOptions(),
+  ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
+  before_send: dropInjectedScriptException,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
@@ -402,18 +463,43 @@ export function isPostHogBooleanFlagOn(value: unknown): boolean {
   return false;
 }
 
+// `options` with the server-evaluated flags bootstrapped. Copied by property
+// descriptor so the capture-surface getters above stay getters.
+function withServerFlags(
+  serverFlags: ClientFeatureFlagValues | null | undefined,
+): typeof options {
+  const bootstrap = getPostHogBootstrap(serverFlags);
+  if (!("bootstrap" in bootstrap)) return options;
+  return Object.defineProperties(
+    {},
+    {
+      ...Object.getOwnPropertyDescriptors(options),
+      bootstrap: {
+        value: bootstrap.bootstrap,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      },
+    },
+  ) as typeof options;
+}
+
 // Conditional PostHog key and options
-// Always use the real PostHog key so feature flags evaluate properly via /decide
+// Always use the real PostHog key; flag values arrive as `serverFlags`, the
+// GET /api/web/flags answer for this visitor (lib/server-feature-flags.ts).
 export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
-export const getPostHogOptions = () =>
+export const getPostHogOptions = (
+  serverFlags?: ClientFeatureFlagValues | null,
+) =>
   isPostHogDisabled
     ? {
-        // Same relay host as the enabled branch — otherwise dev-mode /flags
-        // calls hit us.i.posthog.com directly and stay ad-blocked.
+        // Same relay host as the enabled branch, so dev-mode requests are not
+        // ad-blocked either.
         api_host: getPostHogApiHost(),
         ui_host: "https://us.posthog.com",
-        ...getPostHogBootstrap(),
+        ...getPostHogBootstrap(serverFlags),
         ...getPageviewCaptureOptions(),
+        ...SERVER_EVALUATED_FLAG_OPTIONS,
         person_profiles: "always" as const,
         // Explicitly off in the opt-out branch too. `opt_out_capturing_by_default`
         // suppresses event SENDING but the recorder and the exception handlers
@@ -421,15 +507,12 @@ export const getPostHogOptions = () =>
         // every page load for events that are then discarded.
         disable_session_recording: true,
         capture_exceptions: false,
-        // Disable event capture but keep /decide enabled for feature flag evaluation.
+        // Disable event capture; flags still arrive through the server bootstrap.
         // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
-        // This branch keeps /decide ON for flag evaluation, so it needs the flag
-        // PERSON properties too — otherwise a `deployment = self_hosted` rule
-        // targets nobody in exactly the local build someone would use to test
-        // that rollout.
+        // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({
             ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
@@ -438,7 +521,7 @@ export const getPostHogOptions = () =>
           });
         },
       }
-    : options;
+    : withServerFlags(serverFlags);
 
 export function detectPlatform() {
   // Check if running in hosted/web mode

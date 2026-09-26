@@ -123,6 +123,12 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "account/suspended": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
+  "provider/mcpjam_limit_insufficient": "user_config",
+  // The provider failed and the saved selection forbids a fallback. Whose
+  // failure it was is not settled by the refusal itself — MCPJam's Gateway,
+  // the upstream model provider, or a transient network fault — so it never
+  // pages and never blames the user's key.
+  "provider/fallback_prohibited": "ambiguous",
   // The MCP server under test throttled US. That is the server's own
   // behaviour, so it belongs to the server being inspected — not to the
   // user's provider settings, which is what `provider/quota` claims.
@@ -145,6 +151,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // --- Ours ----------------------------------------------------------------
   "sdk/not_yet_supported_in_stateless": "mcpjam",
   "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
+  // The hosted AI gateway refused the provider because MCPJam's own gateway
+  // team has not enabled it. No user input can change that; the fix is ours.
+  "provider/not_allowlisted": "mcpjam",
 
   // A missing challenge alone does not establish who must act.
   "oauth/no_bearer_challenge": "ambiguous",
@@ -793,6 +802,24 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "provider-auth-error",
   ),
+  // The backend's `provider_not_allowlisted` code: the hosted gateway's
+  // provider allowlist, not a key, refused the request. Deliberately carries
+  // no API-key remedy — the user's keys were never involved, and retrying
+  // sends the same request into the same refusal.
+  "provider/not_allowlisted": entry(
+    "provider/not_allowlisted",
+    "Model provider not enabled on MCPJam",
+    "This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. Retrying or changing your API key won't help.",
+    [
+      "MCPJam's hosted gateway does not have this model's provider on its provider allowlist.",
+    ],
+    [
+      "Choose a model from a different provider.",
+      "Add your own key for this provider under Settings → LLM Providers (BYOK) to run the model on your key instead of MCPJam's gateway.",
+    ],
+    "provider-not-allowlisted",
+    "warning",
+  ),
   // The backend refuses on one of two allowances and says which in its own
   // copy, so these are two slugs rather than one that lists both and makes the
   // reader pick. The unlabelled slug below stays as the net for copy that
@@ -828,6 +855,35 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
     ],
     "out-of-mcpjam-credits",
+    "warning",
+  ),
+  "provider/mcpjam_limit_insufficient": entry(
+    "provider/mcpjam_limit_insufficient",
+    "Not enough MCPJam credits",
+    "Your organization has MCPJam credits left, but not enough for this request.",
+    [
+      "MCPJam reserves a request's worst-case cost before it runs, so an expensive model or a long conversation can need more than the remaining balance.",
+    ],
+    [
+      "Try a cheaper model or a shorter conversation.",
+      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+    ],
+    "out-of-mcpjam-credits",
+    "warning",
+  ),
+  "provider/fallback_prohibited": entry(
+    "provider/fallback_prohibited",
+    "Provider failed, fallback not permitted",
+    "The model's provider failed and this model selection does not allow a fallback provider, so the request stopped rather than running somewhere other than where it was asked to.",
+    [
+      "The provider serving this model returned an error or was unreachable, and the selection's fallback policy is \"none\" — the default for evals, swarms and judges, so a result never silently comes from a different provider.",
+    ],
+    [
+      "Retry — the provider's failure may be temporary.",
+      "Pick a different model, or a model on a connection you control.",
+    ],
+    "provider-failed-fallback-not-permitted",
     "warning",
   ),
   "provider/mcpjam_platform_budget": entry(

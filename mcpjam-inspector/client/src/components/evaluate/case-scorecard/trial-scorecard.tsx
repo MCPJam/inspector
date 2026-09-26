@@ -24,6 +24,11 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
  * default check and an authored one grade the same stage, so they file
  * together.
  *
+ * Every stage the chain reports has at least one row. Selection has the route
+ * and User value the judge; the other four lead with their built-in runner
+ * check, which restates the stage's own verdict and reason. So a stage nothing
+ * authored still has a row saying what happened there, not a bare heading.
+ *
  * The rail needs a verified chain to be a rail — six links whose states came
  * from somewhere. Without one there is nothing to hang the sections on and no
  * break to open at, so they stack instead, which is also what the authoring
@@ -54,9 +59,11 @@ import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { EvalIteration } from "@/components/evals/types";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
 import type { CaseScorecardInput } from "./case-scorecard-model";
-import { buildCaseScorecard } from "./case-scorecard-model";
+import { buildCaseScorecard, withRunnerChecks } from "./case-scorecard-model";
 import {
   joinTrialResults,
+  rubricCheckTrialRows,
+  type JoinedScorecardGroup,
   type JoinedScorecardRow,
 } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
@@ -80,6 +87,66 @@ function chainReasonSentence(row: StageResultRow | undefined): string | null {
   if (!row || row.state !== "failed" || !row.reason) return null;
   const reason = STAGE_REASON_LABELS[row.reason];
   return reason ? `Failed because ${reason}.` : null;
+}
+
+/** The row without its quoted floor, for a section that must not show one. */
+function withoutFloor(row: JoinedScorecardRow): JoinedScorecardRow {
+  if (!row.evidence?.floor) return row;
+  const { floor: _floor, ...rest } = row.evidence;
+  return {
+    ...row,
+    evidence: Object.keys(rest).length > 0 ? rest : undefined,
+  };
+}
+
+/**
+ * The groups without the runner checks the chain called not applicable, and
+ * without a group those were all it held.
+ *
+ * The case can foresee a runner check the run's chain then rules out (a call
+ * the case expected on a stage the analysis found nothing to decide at); the
+ * rail says "not applicable" for that stage already.
+ */
+export function withoutInapplicableRunnerChecks(
+  groups: JoinedScorecardGroup[],
+): JoinedScorecardGroup[] {
+  return groups.flatMap((group) => {
+    const rows = group.rows.filter(
+      (row) =>
+        !(row.provenance === "builtin" && row.result.state === "notApplicable"),
+    );
+    if (rows.length === group.rows.length) return [group];
+    return rows.length > 0 ? [{ ...group, rows }] : [];
+  });
+}
+
+/**
+ * The trial's rubric-check rows, filed under User value after the judge.
+ *
+ * Kept out of `joinTrialResults`: those rows are the trial's own facts, not a
+ * join against authored ones, and the case spine keys that join by authored
+ * row, where a row with no authored twin has nowhere to go.
+ */
+export function withRubricCheckRows(
+  groups: JoinedScorecardGroup[],
+  rows: JoinedScorecardRow[],
+): JoinedScorecardGroup[] {
+  if (rows.length === 0) return groups;
+  const existing = groups.find((group) => group.stage === "userValue");
+  if (existing) {
+    return groups.map((group) =>
+      group === existing ? { ...group, rows: [...group.rows, ...rows] } : group,
+    );
+  }
+  return [
+    ...groups,
+    {
+      stage: "userValue",
+      label: USER_VALUE_STAGE_LABELS.userValue,
+      question: USER_VALUE_STAGE_QUESTIONS.userValue,
+      rows,
+    },
+  ];
 }
 
 /**
@@ -167,15 +234,31 @@ export function TrialScorecard({
 }) {
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
-    return joinTrialResults(card.groups, {
-      report,
-      iteration,
-      steps,
-      chain,
-      judgeCase,
-      envelope,
-      liveStepStatusById,
-    });
+    // Every stage the verified chain measured gets its runner check, including
+    // one the configuration could not foresee (an observed tool error turns
+    // `response` on). A stage the chain calls not applicable gets none: the
+    // rail already says so, and a row saying it again is noise.
+    const chainStages =
+      chain?.status === "verified"
+        ? chain.stages
+            .filter((row) => row.state !== "notApplicable")
+            .map((row) => row.stage)
+        : [];
+    return withRubricCheckRows(
+      withoutInapplicableRunnerChecks(
+        joinTrialResults(withRunnerChecks(card.groups, chainStages), {
+          report,
+          iteration,
+          steps,
+          chain,
+          judgeCase,
+          envelope,
+          liveStepStatusById,
+          trace,
+        }),
+      ),
+      rubricCheckTrialRows(iteration),
+    );
     // Keyed on the FIELDS, not the input object: callers build that object in
     // render, so an identity dep would rebuild — and re-digest every criterion
     // id — on each keystroke in the prompt box.
@@ -201,6 +284,7 @@ export function TrialScorecard({
     judgeCase,
     envelope,
     liveStepStatusById,
+    trace,
   ]);
 
   /**
@@ -286,10 +370,21 @@ export function TrialScorecard({
         ? report.stageNotes?.find((note) => note.stage === stage)
         : undefined;
     if (note) return { text: note.actual, source: "ai" };
-    const floor = judgeHidden ? null : stageFloor(stage, chain, trace);
+    // A failed runner check already quotes the floor as its ACTUAL; saying it
+    // again here would read as a second failure. One its stage's evaluators
+    // decided quotes nothing, so the stage keeps the floor.
+    const quotedByRow = rows.some(
+      (row) => row.provenance === "builtin" && row.evidence?.floor,
+    );
+    const floor =
+      judgeHidden || quotedByRow ? null : stageFloor(stage, chain, trace);
     if (floor) return { text: floor.actual, source: "recorded" };
+    // Advisory rubric checks describe the trial; they never explain why a
+    // stage failed, so they must not displace the chain's own sentence.
     const explained = rows.some(
-      (row) => row.result.state === "failed" || row.result.state === "error",
+      (row) =>
+        row.provenance !== "rubricCheck" &&
+        (row.result.state === "failed" || row.result.state === "error"),
     );
     if (explained) return null;
     const reason = chainReasonSentence(chainRows.get(stage));
@@ -300,7 +395,10 @@ export function TrialScorecard({
   const userValuePassRows = groups
     .flatMap((group) => group.rows)
     .filter(
-      (row) => row.stage === "userValue" && row.result.state === "passed",
+      (row) =>
+        row.stage === "userValue" &&
+        row.provenance !== "rubricCheck" &&
+        row.result.state === "passed",
     );
   const userValueEvidence = [
     ...new Set(
@@ -324,8 +422,10 @@ export function TrialScorecard({
     (userValueStage?.state === "passed" || userValuePassRows.length > 0);
 
   // One section per stage that has rows or a chain row, in chain order. A
-  // stage the chain measured but nothing grades still gets its heading, so a
-  // failure there has somewhere to be read.
+  // stage the chain reports but nothing on the card covers (Selection or User
+  // value with nothing graded, a stage the chain calls not applicable) still
+  // gets its heading, so the rail keeps every link and a failure there has
+  // somewhere to be read.
   const sections = USER_VALUE_STAGES.flatMap((stage) => {
     const group = groups.find((candidate) => candidate.stage === stage);
     const chainRow = chainRows.get(stage);
@@ -399,6 +499,12 @@ export function TrialScorecard({
 
   function renderSection(section: (typeof sections)[number]) {
     const sentence = stageSentence(section.stage, section.rows);
+    // A runner check quotes the recorded floor as part of its ACTUAL. It
+    // yields that quote to an AI explanation of the stage, as the stage
+    // sentence always has, and blind review withholds it like every other
+    // narrative.
+    const quoteFloor = !judgeHidden && sentence?.source !== "ai";
+    const rows = quoteFloor ? section.rows : section.rows.map(withoutFloor);
     return (
       <ScorecardGroupSection
         key={section.stage}
@@ -437,7 +543,7 @@ export function TrialScorecard({
           ) : undefined
         }
       >
-        {section.rows.map((row) => (
+        {rows.map((row) => (
           <TrialScorecardRow
             key={row.key}
             layout="report"

@@ -391,6 +391,17 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
+/**
+ * Public origin a SELF-HOSTED deployment is reached at, for links the server
+ * puts in API replies (e.g. an import's `reviewUrl`).
+ *
+ * Without it those links name `localhost`, which is right for the local
+ * inspector and wrong for a deployment someone else opens. Hosted mode uses
+ * `MCPJAM_HOSTED_ORIGIN` instead. Never derived from a request.
+ */
+export const MCPJAM_PUBLIC_ORIGIN =
+  process.env.MCPJAM_PUBLIC_ORIGIN?.replace(/\/+$/, "") || null;
+
 // Admin-controlled host allowlist (comma-separated), honored in BOTH hosted
 // and self-hosted modes. In addition to localhost, these hosts may receive the
 // session token / guest bootstrap and are accepted as request Origins: hosted

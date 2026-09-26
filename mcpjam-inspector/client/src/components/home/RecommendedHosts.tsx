@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { Loader2, Plus } from "lucide-react";
+import { useConvexAuth } from "convex/react";
 import { useAppNavigate, buildHostsPath } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
+import {
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+  useCanManageProjectClients,
+} from "@/hooks/useProjects";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -21,6 +26,12 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
   const [creatingId, setCreatingId] = useState<string | null>(null);
+  const { isAuthenticated } = useConvexAuth();
+  // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
+  const { canManage: canManageClients } = useCanManageProjectClients({
+    isAuthenticated,
+    projectId,
+  });
 
   const recommended =
     catalogState.status === "live"
@@ -87,11 +98,16 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
               <button
                 type="button"
                 disabled={
-                  isCreating || !projectId || !canCreateFromLiveTemplate
+                  isCreating ||
+                  !projectId ||
+                  !canManageClients ||
+                  !canCreateFromLiveTemplate
                 }
                 onClick={() => handleCreate(host.id)}
                 title={
-                  canCreateFromLiveTemplate
+                  !canManageClients
+                    ? PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE
+                    : canCreateFromLiveTemplate
                     ? `Create ${host.label}`
                     : "Live client template unavailable"
                 }

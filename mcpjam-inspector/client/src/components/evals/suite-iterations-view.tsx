@@ -43,6 +43,7 @@ import {
   EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
 } from "@/components/computer/CloudUnreachableNotice";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
@@ -50,6 +51,7 @@ import {
   buildHostNamesById,
   compareRunsBySequence,
   evalSuitePinsSandboxImage,
+  generationEnvironmentChoices,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -67,7 +69,11 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
-import { isRubricValid } from "./judge-rubric-editor";
+import {
+  isRubricValid,
+  RUBRIC_CHECK_ROW_IDENTITY_HINT,
+} from "./judge-rubric-editor";
+import { areRubricChecksValid } from "./rubric-checks-model";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
@@ -107,7 +113,10 @@ import {
   useSuiteDataFromMetrics,
   useRunDetailData,
 } from "./use-suite-data";
-import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  hasRubricChecksCapability,
+  useSuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   CAPABILITY_REASON_COPY,
@@ -129,8 +138,10 @@ import {
   committedSuiteSettingsValues,
   describeDraft,
   dirtyKeys,
+  environmentImageSaveBlock,
   initSuiteSettingsDraft,
   readSuiteSettingsValues,
+  suiteImageSetting,
   suiteSettingsReducer,
   type SuiteSettingsKey,
 } from "./suite-settings-draft";
@@ -827,7 +838,8 @@ export function SuiteIterationsView({
     // a rubric the platform rejects takes the settings beside it down with it.
     () =>
       canCommit(draft, areAllChecksValid) &&
-      isRubricValid(draft.current.judgeRubric),
+      isRubricValid(draft.current.judgeRubric) &&
+      areRubricChecksValid(draft.current.judgeConfig?.rubricChecks),
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
@@ -857,7 +869,9 @@ export function SuiteIterationsView({
     ? { message: "A criterion is missing a label" }
     : !areAllChecksValid(draftDefaultPredicates)
       ? { message: "An assertion is incomplete" }
-      : undefined;
+      : !areRubricChecksValid(draft.current.judgeConfig?.rubricChecks)
+        ? { message: "A rubric-check question is incomplete" }
+        : undefined;
   // Which criterion SCOPE the sheet is editing, and therefore which field and
   // which units each grading row shows. Read from the DRAFT rather than the
   // suite so the rows follow a scope change the moment it is drafted; this
@@ -867,6 +881,9 @@ export function SuiteIterationsView({
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
   const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const { capable: composeCapable } = useEvalComposeCapable(projectId);
+  // Whether the backend carries an environment suite's settings onto its
+  // environments (`environmentSettings`) instead of a legacy suite field.
+  const environmentCapabilities = useEnvironmentCapabilities(projectId);
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   // Discarding is what the person just agreed to when they confirmed the
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
@@ -898,6 +915,16 @@ export function SuiteIterationsView({
 
   const handleCommitSettings = useCallback(async () => {
     if (!draftCanCommit || isCommitting || editingDisabled) return;
+    const runsEnvironments = Boolean(suite.environmentIds?.length);
+    const imageBlock = environmentImageSaveBlock({
+      runsEnvironments,
+      dirtyKeys: dirtySettingKeys,
+      capabilities: environmentCapabilities,
+    });
+    if (imageBlock) {
+      toast.error(imageBlock);
+      return;
+    }
     const outcome = await commit({
       draft,
       suiteId: suite._id,
@@ -909,6 +936,9 @@ export function SuiteIterationsView({
         : undefined,
       expectedRevisionNumber: suite.revisionNumber,
       liveEnvironment: suite.environment,
+      environmentSuite:
+        runsEnvironments &&
+        environmentCapabilities?.environmentSuiteSettings === true,
     });
     if (outcome.status === "saved") {
       // What the save actually WROTE: the normalized form of the keys it
@@ -948,6 +978,7 @@ export function SuiteIterationsView({
     isCommitting,
     dirtySettingKeys,
     draftChanges,
+    environmentCapabilities,
   ]);
 
   // Save the same validated draft from the button or keyboard shortcut.
@@ -1464,7 +1495,10 @@ export function SuiteIterationsView({
       : (featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined)));
+          : undefined))) ??
+    (suiteImageSetting(suite).mixed
+      ? "These environments pin different images. Change each one's image on the Environments page."
+      : undefined);
   const subsectionOptions = useMemo(
     () => ({
       isVerdictPolicyV2,
@@ -1839,6 +1873,7 @@ export function SuiteIterationsView({
           onOpenChange={setImportOpen}
           projectId={projectId}
           suiteId={suite._id}
+          environmentChoices={generationEnvironmentChoices(suite)}
         />
       )}
       {/* Header */}
@@ -2226,6 +2261,14 @@ export function SuiteIterationsView({
                   metricsByRun={metricsByRun ?? NO_METRICS}
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
+                  importJobId={
+                    route.type === "suite-overview"
+                      ? (route.importJob ?? null)
+                      : null
+                  }
+                  onClearImportJob={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
@@ -2877,8 +2920,14 @@ export function SuiteIterationsView({
                           value: next,
                         })
                       }
+                      rowIdentityHint={
+                        hasRubricChecksCapability(capabilities)
+                          ? RUBRIC_CHECK_ROW_IDENTITY_HINT
+                          : undefined
+                      }
                     />
                   }
+                  judgeRubric={draft.current.judgeRubric}
                   groundednessEvidence={{
                     result: groundedness.result ?? null,
                     pending: groundedness.pending,

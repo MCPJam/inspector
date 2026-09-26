@@ -623,6 +623,19 @@ Your LLM provider rejected the API key for this request.
 - Add or update your API key under **Settings → LLM Providers**.
 - Verify the key in the provider's dashboard.
 
+### Provider not allowlisted
+
+`provider/not_allowlisted`
+
+This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. This is a setting on MCPJam's side, not a problem with your API key. Retrying or changing your key won't help.
+
+**Likely causes**
+- MCPJam's hosted gateway does not have this model's provider on its provider allowlist.
+
+**Next steps**
+- Choose a model from a different provider.
+- Add your own key for this provider under **Settings → LLM Providers** (BYOK) to run the model on your key instead of MCPJam's gateway.
+
 ### Provider quota
 
 `provider/quota`
@@ -656,12 +669,19 @@ A frontier model was selected but the request requires a signed-in account.
 
 ### Out of MCPJam credits
 
-`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit`
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
 
-MCPJam refused the call before it reached a provider, because the account's own
-allowance is spent. Which allowance depends on the plan: free accounts share a
-daily bucket per organization, paid plans spend a monthly allowance that renews
-with the billing period.
+MCPJam refused the call before it reached a provider. For the daily, monthly,
+and general codes, the account's own allowance is spent.
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. Which allowance depends on the plan: free accounts
+share a daily bucket per organization, paid plans spend a monthly allowance that
+renews with the billing period.
+
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. MCPJam reserves a request's worst-case cost before
+it runs, so a cheaper model or a shorter conversation can fit where this one did
+not.
 
 **Next steps**
 - **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
@@ -679,6 +699,19 @@ When credits run out during a Swarm or Eval run, blocked work stops and you rece
   turns are always billed to MCPJam and have no BYOK path, so adding a key does
   not lift this limit for a swarm.
 </Warning>
+
+### Provider failed fallback not permitted
+
+`provider/fallback_prohibited`
+
+The model's provider failed and the saved model selection does not allow a
+fallback provider, so the request stopped instead of running somewhere other
+than where it was asked to. Evals, swarms and judges default to no fallback, so
+a result never silently comes from a different provider than the one recorded.
+
+**Next steps**
+- Retry — the provider's failure may be temporary.
+- Pick a different model, or a model on a connection you control.
 
 ### MCPJam platform budget
 

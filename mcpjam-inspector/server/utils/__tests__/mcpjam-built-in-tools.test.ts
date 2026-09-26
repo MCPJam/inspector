@@ -1,12 +1,21 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { ALL_OPERATIONS, PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
+  ALWAYS_APPROVAL_TOOL_IDS,
   buildMcpjamTool,
   EXCLUDED_FROM_WORKSPACE,
   isMcpjamToolId,
+  isWorkspaceToolOfferable,
   MCPJAM_TOOL_IDS,
   WORKSPACE_INPUT_CLAMPS,
+  withoutServerVerifiedApprovalTools,
+  workspaceApprovalFloor,
 } from "../built-in-tools/mcpjam";
+import {
+  AGENT_OP_REGISTRY,
+  EXCLUDED_FROM_AGENT,
+} from "../../routes/v1/agent-op-registry";
+import { requiresServerVerifiedApproval } from "../tool-approval-token";
 
 // The workspace tools ARE the shared platform operations, executed against a
 // PlatformApiClient. Build a real client over a stubbed fetch and exercise
@@ -552,7 +561,7 @@ describe("live server operations", () => {
     expect(result.preview!.length).toBeLessThan(25_000);
   });
 
-  it("honors requireToolApproval on connection-opening ops only", () => {
+  it("pauses connection-opening reads when the workspace approval setting is on", () => {
     const { client } = makeClient({});
     const approval = (id: string) =>
       (
@@ -610,5 +619,174 @@ describe("live server operations", () => {
     expect(approval("start_eval_description_experiment")).toBe(true);
     // The read closes the loop and spends nothing.
     expect(approval("get_eval_description_experiment")).toBe(false);
+  });
+});
+
+describe("approval floors (MJ-008)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const advertised = new Set<string>(MCPJAM_TOOL_IDS);
+  const readOnly = new Set(
+    ALL_OPERATIONS.filter((op) => op.readOnly === true).map((op) => op.name),
+  );
+  const writes = MCPJAM_TOOL_IDS.filter((name) => !readOnly.has(name));
+  const catalogGated = AGENT_OP_REGISTRY.filter(
+    (entry) => entry.tier === "gated",
+  )
+    .map((entry) => entry.operation.name)
+    .filter((name) => advertised.has(name));
+  const agentExcludedWrites = Object.keys(EXCLUDED_FROM_AGENT).filter(
+    (name) => advertised.has(name) && !readOnly.has(name),
+  );
+  const directTierWrites = AGENT_OP_REGISTRY.filter(
+    (entry) => entry.tier === "direct",
+  )
+    .map((entry) => entry.operation.name)
+    .filter((name) => advertised.has(name) && !readOnly.has(name));
+
+  function approval(id: string, requireToolApproval: boolean) {
+    const { client } = makeClient({});
+    return (
+      buildMcpjamTool(id, { ...toolOpts, client, requireToolApproval }) as {
+        needsApproval?: boolean;
+      }
+    ).needsApproval;
+  }
+
+  it("asks before every advertised operation that changes state, whatever the setting", () => {
+    expect(writes.length).toBeGreaterThan(0);
+    for (const name of writes) {
+      expect(workspaceApprovalFloor(name), name).toBe("always");
+      expect(approval(name, false), name).toBe(true);
+      expect(approval(name, true), name).toBe(true);
+    }
+  });
+
+  it("covers the catalog's gated operations, its excluded writes and its direct-tier writes", () => {
+    for (const group of [catalogGated, agentExcludedWrites, directTierWrites]) {
+      expect(group.length).toBeGreaterThan(0);
+      for (const name of group) {
+        expect(ALWAYS_APPROVAL_TOOL_IDS.has(name), name).toBe(true);
+      }
+    }
+  });
+
+  it("puts exactly the writes on the always floor, and no read", () => {
+    expect([...ALWAYS_APPROVAL_TOOL_IDS].sort()).toEqual([...writes].sort());
+    for (const name of ALWAYS_APPROVAL_TOOL_IDS) {
+      expect(readOnly.has(name), name).toBe(false);
+    }
+  });
+
+  it("asks before the authoring, dismissal, backtest and cancel writes", () => {
+    for (const name of [
+      "create_persona",
+      "update_persona",
+      "create_goal",
+      "update_goal",
+      "create_swarm",
+      "update_swarm",
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "backtest_eval_run",
+      "cancel_readiness_run",
+      "cancel_project_server_connection",
+      "start_conformance_run",
+      "run_eval_case",
+      "run_eval_suite",
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
+    ]) {
+      expect(approval(name, false), name).toBe(true);
+    }
+  });
+
+  it("lets the setting decide only the reads that open a connection", () => {
+    for (const name of MCPJAM_TOOL_IDS.filter((id) => readOnly.has(id))) {
+      const floor = workspaceApprovalFloor(name);
+      expect(floor, name).not.toBe("always");
+      expect(approval(name, false), name).toBe(false);
+      expect(approval(name, true), name).toBe(floor === "setting");
+    }
+    expect(workspaceApprovalFloor("diagnose_server")).toBe("setting");
+    expect(workspaceApprovalFloor("list_server_tools")).toBe("setting");
+    expect(workspaceApprovalFloor("list_projects")).toBe("never");
+    expect(workspaceApprovalFloor("list_project_servers")).toBe("never");
+  });
+
+  it("marks exactly the tools that pause as needing a server-verified approval", () => {
+    const { client } = makeClient({});
+    for (const requireToolApproval of [false, true]) {
+      for (const id of MCPJAM_TOOL_IDS) {
+        const built = buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval,
+        });
+        expect(requiresServerVerifiedApproval(built), id).toBe(
+          (built as { needsApproval?: boolean }).needsApproval === true,
+        );
+      }
+    }
+  });
+
+  it("withholds only the tools that pause from an engine that cannot resume them", () => {
+    const { client } = makeClient({});
+    const tools = Object.fromEntries(
+      ["run_eval_suite", "list_project_servers", "diagnose_server"].map(
+        (id) => [id, buildMcpjamTool(id, { ...toolOpts, client })!],
+      ),
+    );
+    const { tools: kept, removed } = withoutServerVerifiedApprovalTools(
+      tools as never,
+    );
+    expect(removed).toEqual(["run_eval_suite"]);
+    expect(Object.keys(kept).sort()).toEqual([
+      "diagnose_server",
+      "list_project_servers",
+    ]);
+
+    const asking = Object.fromEntries(
+      ["diagnose_server", "list_project_servers"].map((id) => [
+        id,
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        })!,
+      ]),
+    );
+    expect(withoutServerVerifiedApprovalTools(asking as never).removed).toEqual(
+      ["diagnose_server"],
+    );
+  });
+
+  it("leaves out every tool that would pause on a hosted deployment with no approval signing key", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const { client, calls } = makeClient({});
+    const build = (id: string, requireToolApproval: boolean) =>
+      buildMcpjamTool(id, { ...toolOpts, client, requireToolApproval });
+
+    for (const name of writes) {
+      expect(build(name, false), name).toBeNull();
+      expect(isWorkspaceToolOfferable(name, false), name).toBe(false);
+    }
+    expect(build("create_project_server", false)).toBeNull();
+    expect(build("diagnose_server", true)).toBeNull();
+    // What would not pause is still offered, and still does not pause.
+    expect(
+      (build("diagnose_server", false) as { needsApproval?: boolean })
+        .needsApproval,
+    ).toBe(false);
+    expect(
+      (build("list_project_servers", true) as { needsApproval?: boolean })
+        .needsApproval,
+    ).toBe(false);
+    expect(calls).toEqual([]);
   });
 });

@@ -1,13 +1,16 @@
 import oauthConnections from "./oauth-connections.js";
 import { Hono } from "hono";
-import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
+import { mapWebBoundaryError } from "./boundary-error.js";
+import { webError, webErrorFromRoute } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
-import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
+import { mcpEgressRateLimitMiddleware, promoteServerCheck } from "../../middleware/mcp-egress-rate-limit.js";
+import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
+import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -35,8 +38,8 @@ import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
 import score from "./score.js";
 import bench from "./bench.js";
-import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
+import authSession from "./auth-session.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
@@ -44,6 +47,7 @@ import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
 import browserProfiles from "./browser-profiles.js";
+import clientFlags from "./flags.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
@@ -65,6 +69,9 @@ web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // route fronts; client exposure is gated by the `project-environments-enabled`
 // flag. Read-only and narrowly projected (never the full runtime spec).
 web.use("/environments/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Export opens an ephemeral MCP connection per call. It had no bearer
+// middleware of its own, so no limiter below could see who was calling.
+web.use("/export/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
@@ -91,16 +98,8 @@ for (const startsWork of [
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
-// Same reasoning as the conformance ceiling above, one finding later (MJ-001):
-// these two routes open a connection to a URL the caller stored, and the
-// `guestRateLimitMiddleware` on `/servers/*` returns early for anyone who is
-// not a guest — so a signed-in caller was spending our egress unmetered. Keyed
-// per credential rather than per address, because the differential error a
-// scan reads is per request and the accounts are free to create.
-//
-// Listed path-by-path, not as `/servers/*`: the rest of that router is Convex
-// reads and writes with no outbound MCP connection, and metering them on an
-// egress-shaped budget would be the wrong ceiling on the wrong thing.
+web.post("/servers/checks/promote", promoteServerCheck);
+// All hosted checks share ten active slots per verified user across replicas.
 for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
@@ -117,7 +116,6 @@ for (const memberGated of [
 ]) {
   web.use(memberGated, bearerAuthMiddleware, guestRateLimitMiddleware);
 }
-web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Org-registry derivation carries a per-IP ceiling on top of the per-guest
 // one. The route consumes that bucket only after it asks the backend whether
 // this caller may add to the project's organization and before any egress.
@@ -197,6 +195,46 @@ web.use(
   guestRateLimitMiddleware,
 );
 
+// MJ-012. The one credential class this family never metered.
+//
+// `guestRateLimitMiddleware` returns early when there is no `guestId`, and a
+// signed-in AuthKit JWT has none — so every route above reached its handler
+// with no budget attached to that caller at all. `/api/v1/*` has metered the
+// same class since it was mounted; this is the twin that was missed.
+//
+// Registered here, after the per-family `bearerAuthMiddleware` lines rather
+// than inside each of them: the middleware reads the `authMethod` label auth
+// sets, so it has to run behind it. On a path with no bearer middleware the
+// label is absent and this is a no-op. Order against the guest limiter is
+// immaterial — the two meter disjoint credential classes.
+//
+// It covers exactly the families labelled ABOVE. A sub-router that brings its
+// own `bearerAuthMiddleware` sets the label only after this mount has already
+// run, so it is NOT metered from here and has to mount the limiter alongside
+// its own bearer middleware. Labelling at the `web` level instead would double
+// charge every family above — nothing in this chain is idempotent.
+//
+// The routers that do that today: `/api-keys`, `/oauth`, `/oauth/connections`.
+// `/xaa` is mounted on the root app beside this router, so it carries the
+// limiter in its own protected chain as well.
+//
+// PER-REPLICA and in memory, like every limiter in this directory: the fleet
+// ceiling is 120/min times the replica count. A spike brake, not a budget; the
+// real cap stays the backend's org-keyed limits.
+web.use("*", passthroughRateLimitMiddleware);
+
+// MJ-012, per server. The limits above budget a caller across everything it
+// does; this one budgets how often a caller reaches ONE of its servers on the
+// MCP operation routes, keyed on (principal, serverId, route family). See
+// `mcp-operation-rate-limit.ts`.
+//
+// Registered after the per-family `bearerAuthMiddleware` lines, whose verified
+// identity it keys on, and after the passthrough limiter, so a request that
+// limiter refuses is turned away before this one reads the body.
+for (const family of ["tools", "resources", "prompts", "tasks"] as const) {
+  web.use(`/${family}/*`, mcpOperationRateLimit(family));
+}
+
 web.route("/servers", servers);
 web.route("/tools", tools);
 web.route("/resources", resources);
@@ -237,7 +275,6 @@ web.route("/server-connections", serverConnectionsWeb);
 web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
-web.route("/checks", checks);
 web.route("/mrtr", mrtrContinuation);
 web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in
@@ -253,6 +290,10 @@ web.route("/browser-profiles", browserProfiles);
 // Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
 // `/skills` above, which serves the project's durable Convex skills.
 web.route("/server-skills", serverSkills);
+// PostHog flag values for the client's bootstrap (MJ-015). No bearer
+// middleware: anonymous visitors need flags too. The router verifies a bearer
+// itself when one is sent and evaluates only the checked-in allowlist.
+web.route("/flags", clientFlags);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
 web.route("/caniuse", caniuse);
@@ -275,6 +316,9 @@ web.route("/shared", sharedResources);
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are
 // explicitly rejected with 403 inside the router).
 web.route("/api-keys", apiKeys);
+// Sign-out's session revocation (MJ-011). Brings its own bearer middleware for
+// the same reason `/api-keys` does.
+web.route("/auth-session", authSession);
 
 // Public guest JWKS compatibility endpoint.
 web.get("/guest-jwks", async (c) => {
@@ -300,7 +344,7 @@ web.onError((error, c) => {
   // passing only `normalized` here discarded it at the very last step — for
   // every handler on /api/web/* that throws rather than returns. That drop
   // was the single largest reason `origin=mcpjam` never appeared in Axiom.
-  const routeError = mapRuntimeError(error);
+  const routeError = mapWebBoundaryError(error);
   return webErrorFromRoute(c, routeError);
 });
 
