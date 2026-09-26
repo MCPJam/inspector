@@ -630,13 +630,13 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+      fireEvent.click(screen.getByTestId("error-card-details"));
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
     });
 
     it("renders long error messages via the ErrorCard", () => {
       // The ErrorCard owns details disclosure. On the server card that
-      // disclosure is an info glyph; Learn more lives in the panel so the
+      // disclosure is the error title; Learn more lives in the panel so the
       // failed card stays one row.
       const longError = "A".repeat(150);
       const server = createServer({
@@ -646,7 +646,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.queryByText("Learn more")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+      fireEvent.click(screen.getByTestId("error-card-details"));
       expect(screen.getByText("Learn more")).toBeInTheDocument();
     });
 
