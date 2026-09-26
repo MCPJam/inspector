@@ -235,6 +235,71 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     expect(body.message).toMatch(/not bound to an organization/i);
   });
 
+  it("returns 401 with details.reason EXPIRED_KEY once the binding's expiry has passed", async () => {
+    // WorkOS is given the same expiry and normally refuses the key first; this
+    // is MCPJam's own record, so expiry holds even if WorkOS did not.
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_expired", owner: { id: "user_expired" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
+      mcpjamOrganizationId: "org_expired",
+      expiresAt: Date.now() - 1_000,
+    });
+
+    const res = await createApp().request("/test", {
+      headers: { authorization: "Bearer sk_expired" },
+    });
+
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string };
+    };
+    expect(body.code).toBe("UNAUTHORIZED");
+    expect(body.details?.reason).toBe("EXPIRED_KEY");
+    expect(body.message).toMatch(/expired/i);
+  });
+
+  it("admits a key whose binding expiry is still ahead", async () => {
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_fresh", owner: { id: "user_fresh" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
+      mcpjamOrganizationId: "org_fresh",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const res = await createApp().request("/test", {
+      headers: { authorization: "Bearer sk_fresh" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(
+      ((await res.json()) as { mcpjamOrganizationId: unknown })
+        .mcpjamOrganizationId,
+    ).toBe("org_fresh");
+  });
+
+  it("admits a key minted before expiry existed — no retroactive expiry", async () => {
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_legacy", owner: { id: "user_legacy" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
+      mcpjamOrganizationId: "org_legacy",
+      expiresAt: null,
+    });
+
+    const res = await createApp().request("/test", {
+      headers: { authorization: "Bearer sk_legacy" },
+    });
+
+    expect(res.status).toBe(200);
+  });
+
   it("returns 500 when the org binding lookup throws", async () => {
     validateApiKeyMock.mockResolvedValueOnce({
       apiKey: { id: "api_key_err", owner: { id: "user_err" } },

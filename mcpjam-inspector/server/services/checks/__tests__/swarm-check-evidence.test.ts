@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { swarmCheckInventory } from "../swarm-check-evidence";
 import { extractTranscriptEvidence } from "../../evals/transcript-evidence";
-import { extractToolCallsFromEnvelopeMessages } from "../run-predicates-on-chat-session";
+import { extractToolCallsFromEnvelopeMessages } from "../chat-session-envelope";
 import {
   buildIterationTranscript,
   evaluatePredicates,

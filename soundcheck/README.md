@@ -25,6 +25,8 @@ feature lands in a follow-up commit.
 
 ## Running locally
 
+Use Node.js 22.11.0 or later (required by AuthKit). Confirm the Railway builder and runtime use a supported version before promoting an AuthKit upgrade.
+
 From the repo root:
 
 ```bash
@@ -110,3 +112,7 @@ No sentimental tools.
 - DORA metrics.
 - Customer-facing surfaces.
 - Triggering releases from the dashboard. Separate product decision for v2.
+
+### Authentication regression checks
+
+Run `npm run test:auth -w @mcpjam/soundcheck` to check the actual Next.js middleware and callback with synthetic credentials and a local mock WorkOS endpoint. This verifies anonymous-route protection, non-cacheable responses, and callback validation. It does not replace a staging sign-in, refresh, and logout check with the deployed WorkOS configuration.

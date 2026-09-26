@@ -1,7 +1,7 @@
 /**
  * The archive-confirm dialog reports BOTH consumer counts (Phase 4). Before,
- * it named only suites and disclaimed that journeys weren't scanned; now the
- * copy states the suite AND journey counts, still hedged as advisory.
+ * it named only suites and disclaimed that goals weren't scanned; now the
+ * copy states the suite AND goal counts, still hedged as advisory.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -91,31 +91,31 @@ beforeEach(() => {
 });
 
 describe("archive-confirm consumer counts", () => {
-  it("names both the suite and the journey counts", () => {
+  it("names both the suite and the goal counts", () => {
     mockConsumers.value = { suiteCount: 2, journeyCount: 3, scenarioCount: 0 };
     renderAndOpenArchiveConfirm();
 
     const summary = screen.getByText(/reference it/i);
     expect(summary.textContent).toMatch(/2 suites/);
-    expect(summary.textContent).toMatch(/3 journeys/);
+    expect(summary.textContent).toMatch(/3 goals/);
   });
 
-  it("reports zero of each (not 'journeys aren't scanned') when nothing references it", () => {
+  it("reports zero of each (not 'goals aren't scanned') when nothing references it", () => {
     mockConsumers.value = { suiteCount: 0, journeyCount: 0, scenarioCount: 0 };
     renderAndOpenArchiveConfirm();
 
     expect(
-      screen.getByText(/no referencing suites or journeys found/i)
+      screen.getByText(/no referencing suites or goals found/i)
     ).toBeInTheDocument();
     expect(screen.queryByText(/aren't scanned/i)).not.toBeInTheDocument();
   });
 
-  it("singularizes a single journey reference", () => {
+  it("singularizes a single goal reference", () => {
     mockConsumers.value = { suiteCount: 0, journeyCount: 1, scenarioCount: 0 };
     renderAndOpenArchiveConfirm();
 
     const summary = screen.getByText(/reference it/i);
-    expect(summary.textContent).toMatch(/0 suites and 1 journey\b/);
+    expect(summary.textContent).toMatch(/0 suites and 1 goal\b/);
   });
 
   it("shows a checking state until both scans settle", () => {

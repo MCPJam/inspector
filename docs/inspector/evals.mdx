@@ -94,6 +94,8 @@ A case can hold steps this form has no section for — a second prompt, or a pin
 
 The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. The scorecard is one column of stage sections, in user-value chain order. Each section is headed by the stage name and a state chip (passed, failed, or a neutral label); under the heading sits at most one sentence about the stage as a whole — the AI note when one exists, else the recorded floor, else the chain's own reason for a failure no row explains. Then every evaluator that grades that stage appears as an **Expected / Actual** pair separated by hairlines. **Expected** is the configured criterion; **Actual** is the AI-generated narrative when one is current, else the recorded reason and evidence, else the formatted value, else "No observation recorded."
 
+Connection, Discovery, Tool call, and Response each lead with a **Built-in** runner check row — a locked row that reports what the stage analysis decided, in the same Expected / Actual form as your evaluators. It never gates a trial and is not counted in the summary line. Tool call and Response runner checks appear only when the case gives the runner a call or response to measure.
+
 The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
 
 The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
@@ -265,6 +267,20 @@ Judge results are also accessible outside the app. `mcpjam cloud eval status` re
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+### Rubric checks
+
+**Data sent for rubric checks:** when a suite has grading criteria or rubric-check questions, every trial the goal-completion judge grades is also sent to TypeSafe AI's Jev classifier through Vercel AI Gateway: the request, the expected outcome, the final answer and a clipped trajectory, with credentials redacted. If Jev can't be reached, the same questions go to a fallback model through Vercel AI Gateway or OpenRouter. Turn rubric checks off in suite settings if that isn't appropriate for your data.
+
+Rubric checks ask each of the suite's grading criteria on its own, as a yes or no question, and record the classifier's probability of yes. A suite can add up to ten questions of its own, each either a **choice** (pick one of several options; you mark which ones pass) or a **score** (an ordered scale; you pick the lowest level that passes).
+
+- **Advisory, always.** A rubric check never fails a trial, never gates a run, and never decides the User value link. There's no model, threshold or role to pick.
+- **Runs with the goal judge.** Rubric checks grade exactly the trials the goal-completion judge grades, in the same job. While that judge is off, they're paused.
+- **Uncertain is not a pass.** A criterion answered with a probability of yes from 0.4 up to 0.6 shows as **Uncertain** on the trial scorecard, beside its value. The stored row still passes at 0.5 or more.
+- **Wording is identity.** Editing a criterion's or question's wording, options, levels or pass line starts a new rubric-check row, so a baseline comparison shows the old row removed and the new one added.
+- **App only, for now.** Rubric-check settings are edited in the app, and the API refuses `settings.judge.rubricChecks`. The criteria they ask come from `settings.judge.rubric`, which the API does accept.
+
+Each answer appears on the trial scorecard under User value, after the goal judge, and under **Score rows** as `judge:rubricChecks:c:<criterion id>` or `judge:rubricChecks:q:<question id>`.
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
@@ -277,12 +293,12 @@ When a swarm session uses MCP App tools that return widgets, the session viewer 
 
 A run needs three things, all picked from the suite header:
 
-1. **Servers** — one or more attached to the suite. Cases can attach their own subsets if they only need part of the surface.
+1. **Servers** — for environment suites, servers come from the server group selected on the environment (plus any explicit plugin pins). If no group is picked, the suite bar shows a notice and the run starts with zero servers — cases that expect tool calls will fail. For non-environment suites, one or more servers must be attached directly to the suite.
 2. **Models** — the multi-model picker is the whole point. Each model produces its own iteration per case, so you can see where Claude passes and ChatGPT trips.
 3. **Run all** — kicks off every case × every model. **Run one** from a case row runs just that case.
 
 <Tip>
-  If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
+  If **Run all** is disabled, no models are selected or a run for that suite is already in progress. For non-environment suites, a missing connected server also disables it. The header pickers will tell you which condition applies.
 </Tip>
 
 ### Run review
@@ -420,7 +436,7 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
 - **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
-- **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
+- **Server selection** — Servers are not configured here. They come from the suite's environment. Specifically, an eval run connects the **server group selected on the environment** plus any explicit plugin pins — not the client's own stored servers. If the environment has no server group and no plugin pins, the run starts with zero servers and cases that expect tool calls will fail. The server picker is intentionally hidden in this editor.
 - **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
@@ -487,7 +503,7 @@ Two ways forward, both offered on the suite:
   never target it.
 
 Everything that is not a configuration edit is unchanged: run it, replay a run,
-compare runs, waive a gate, read every setting.
+compare runs, waive a gate, read every setting — and delete the suite.
 
 ### CI-synced test cases
 
@@ -495,7 +511,17 @@ Test cases written by a CI report carry a **CI** chip next to their name in the 
 
 ### Suite deletion
 
-The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
+A CI-managed suite can be deleted, from the suite switcher, the suite card and
+the suite page, by anyone whose role lets them delete a suite they can see.
+Deleting is not editing: it says what this workspace keeps, and it makes no
+claim about what CI runs.
+
+The confirmation names the two consequences, because neither is visible from
+the button: the run history stored here goes with the suite, and the next CI
+run or SDK report creates the suite again. A suite the SDK reports into is
+identified by **name**, so renaming `suiteName` in your code does not rename
+the suite — it creates a second one and leaves the first behind. Deleting the
+one you no longer report into is how you clean that up.
 
 ## Reading results
 
@@ -506,7 +532,7 @@ Opening the Evaluate tab lands on the **Overview** view by default, showing run 
 ### Suite view
 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
-- **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole. The model pass is **included with MCPJam and consumes no credits**; it counts against a daily insight quota shared with swarm wave and user-testing insights.
+- **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole. The model pass is **included with MCPJam and consumes no credits**; it counts against a daily insight quota shared with swarm wave and user-testing insights. Guests browsing without a signed-in account will see a **Sign in** prompt in the insights band — signing in unlocks the feature without losing your place.
 - **Overview tab** — every run with its summary metrics, plus a Suite Health chart whose bars link to individual run rows. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**, with separate **Client**, **Model**, **Platform**, **Commit**, **Rate**, **Latency**, **Tokens**, and **Calls** columns. The Client column counts unique clients; when there are more than two, a **+N** badge appears — hover it to see all clients in a tooltip.
 - **Cases tab** — every case with its latest verdict and a quick replay button. To delete a case, hover its row and click the trash icon; a confirmation dialog appears before the case is removed. The trash icon is hidden for CI-managed suites and read-only configurations. You can also delete the open case from the case editor header using the same trash icon — it is hidden for unsaved drafts.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
@@ -576,7 +602,7 @@ rather than as a pass.
 
 While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for each client/model pairing to indicate the current trajectory. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client not yet on track to pass, and a **SHIP** pill lists every client on track to pass. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. Once a run finishes, these pills are removed from the header. The **Compare runs** and **Run again** buttons are visible directly in the header.
 
-**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite header when any run in the suite is still going.
+**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite header when any run in the suite is still going. On the **Evals** tab, where the run detail is folded into the suite body rather than shown with a full header, the **Cancel run** button appears in the run-level action row (alongside Share, Export, and Submission report) instead.
 
 Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists and the current run has finished, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. Deltas are hidden while a run is still in progress. The first launch of a suite shows no deltas.
 
@@ -599,7 +625,7 @@ For CI-managed (SDK) suites, clicking a test name still opens the definition in 
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
-- **User-value chain** — when you expand a trial, the scorecard shows one section per measured stage in chain order: Session connected → Tools discovered → Tool selected → Tool called → Response returned → Request satisfied. Each section heading carries the stage's state word (passed, failed, or a neutral label such as "never ran"). A failed stage whose evaluator rows do not already explain the failure shows the chain's own reason under the heading. This is shown for every trial — passing and failing alike. A trial that delivered end to end reads as the full delivery story; a failing trial shows the break in its stage section. During blind review (before you label a trial whose User value stage was decided by the judge), all six stage sections are shown; the User value section omits its state word, stage sentence, and tally line until you submit your label. The other five stages — decided by the runner, not the judge — remain fully readable.
+- **User-value chain** — when you expand a trial with a verified decision chain, the scorecard shows a two-column layout: a stage rail on the left lists all six user-value stages (Session connected → Tools discovered → Tool selected → Tool called → Response returned → Request satisfied) as a column of clickable links, and the selected stage's detail opens on the right. The scorecard opens on the stage where the chain broke; click any other stage in the rail to read it. Each open section's heading carries the stage's state word (passed, failed, or a neutral label such as "never ran"). A failed stage whose evaluator rows do not already explain the failure shows the chain's own reason under the heading. When no verified chain exists (for example, before a run has completed), the sections stack in chain order instead. During blind review (before you label a trial whose User value stage was decided by the judge), the rail opens on User value — where the label control lives — so you always label the same section regardless of which stage the judge decided. The User value section omits its state word, stage sentence, and tally line until you submit your label; the other five stages remain fully readable.
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn. The user-value chain also appears above the transcript in the trace pane, so the answer to "where did this trial stop" is on the same screen as the evidence.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.

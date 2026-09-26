@@ -153,10 +153,17 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
     {
       name: "ui_generate_eval_tests",
       description:
-        "Generate suggested test cases for an existing eval suite using an LLM over the suite's connected servers. SPENDS MONEY and adds the generated cases to the suite. Generation runs in the background; new cases appear in the suite's case list (check with ui_snapshot_app).",
+        "Generate suggested test cases for an existing eval suite using an LLM over the suite's connected servers. SPENDS MONEY and adds the generated cases to the suite. Generation runs in the background; new cases appear in the suite's case list (check with ui_snapshot_app). A suite that runs several environments with different servers generates for one of them: pass 'environment'.",
       inputSchema: {
         type: "object",
-        properties: { suite: SUITE_PROPERTY },
+        properties: {
+          suite: SUITE_PROPERTY,
+          environment: {
+            type: "string",
+            description:
+              "For a suite whose environments connect different servers: the environment to generate for, by id or by name as ui_snapshot_app lists it under selectedSuite.environments. Omit otherwise.",
+          },
+        },
         required: ["suite"],
         additionalProperties: false,
       },
@@ -176,9 +183,10 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         if (!suite) {
           return errorResult("Missing required 'suite' string.");
         }
+        const environment = asOptionalString(args.environment);
         const response = await dispatchInspectorCommand({
           type: "generateEvalTests",
-          payload: { suite },
+          payload: { suite, ...(environment ? { environment } : {}) },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },

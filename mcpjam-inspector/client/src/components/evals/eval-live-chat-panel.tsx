@@ -49,6 +49,10 @@ import {
 } from "@/components/chat-v2/thread/thread-helpers";
 import type { PromptTurnToolCall } from "@/shared/steps";
 import {
+  getUserContextBlocks,
+  startsUserTurn,
+} from "@/shared/user-context-message";
+import {
   PlaygroundStateProvider,
   usePlaygroundState,
 } from "@/components/ui-playground/hooks/use-playground-state";
@@ -95,6 +99,11 @@ export type CapturedTurn = {
  * Fold the live chat's messages into per-user-turn capture: each `user` message
  * starts a turn (its text = prompt); the assistant tool calls that follow (until
  * the next user message) become that turn's expected tool calls, deduped by name.
+ *
+ * Context the user added (`shared/user-context-message.ts`) is not a prompt
+ * they typed: a skill, a widget's state or a prompt's example turn starts no
+ * turn (`startsUserTurn`), and a tool run by hand starts one as
+ * `Execute <tool>`.
  */
 export function messagesToCapturedTurns(messages: UIMessage[]): CapturedTurn[] {
   const turns: CapturedTurn[] = [];
@@ -102,11 +111,19 @@ export function messagesToCapturedTurns(messages: UIMessage[]): CapturedTurn[] {
   const seenForCurrent = new Set<string>();
   for (const message of messages) {
     if (message.role === "user") {
-      const text = (message.parts ?? [])
-        .filter((p): p is { type: "text"; text: string } => p.type === "text")
-        .map((p) => p.text)
-        .join("")
-        .trim();
+      if (!startsUserTurn(message)) continue;
+      const toolRun = getUserContextBlocks(message)?.find(
+        (block) => block.kind === "tool-run",
+      );
+      const text = toolRun
+        ? `Execute \`${toolRun.subject}\``
+        : (message.parts ?? [])
+            .filter(
+              (p): p is { type: "text"; text: string } => p.type === "text",
+            )
+            .map((p) => p.text)
+            .join("")
+            .trim();
       current = { prompt: text, expectedToolCalls: [] };
       seenForCurrent.clear();
       turns.push(current);

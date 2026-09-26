@@ -39,12 +39,7 @@ import {
 import { isAbortError } from "../../../shared/abort-errors.js";
 import { isAccountLimit } from "../../../shared/swarm-attempt-error.js";
 import { classifyTurnFailure } from "../turn-failure-classification.js";
-import {
-  abortableSleep,
-  backoffDelayMs,
-  clampDelay,
-  type Jitter,
-} from "./backoff.js";
+import { abortableSleep, backoffDelayMs, type Jitter } from "./backoff.js";
 import {
   deadlineClockOf,
   withDeadline,
@@ -188,17 +183,29 @@ export function retryAfterMsOf(
   }
   const headers = (record.response as { headers?: unknown } | undefined)
     ?.headers;
-  const raw =
+  const header =
     headers && typeof (headers as Headers).get === "function"
       ? (headers as Headers).get("retry-after")
       : undefined;
+  // MCPClientManager preserves the wire header in SdkHttpError.data before
+  // the transport discards it. Unlike normalized top-level values, this is
+  // a string in seconds or HTTP-date format, not milliseconds.
+  const sdkRetryAfter = errorRecord(record.data)?.retryAfter;
+  const raw =
+    header ?? (typeof sdkRetryAfter === "string" ? sdkRetryAfter : undefined);
   if (!raw) return undefined;
   const seconds = Number(raw);
   if (Number.isFinite(seconds)) {
     // Numeric but negative is a malformed header, not a date: answering
     // `undefined` is right, and falling through would let `Date.parse` read
     // something like "-5" as a year.
-    return seconds >= 0 ? Math.round(seconds * 1_000) : undefined;
+    const delayMs = Math.round(seconds * 1_000);
+    // Reject overflow and deadlines that the shared coordinator cannot represent.
+    return seconds >= 0 &&
+      Number.isSafeInteger(delayMs) &&
+      Number.isSafeInteger(now() + delayMs)
+      ? delayMs
+      : undefined;
   }
   const retryAt = Date.parse(raw);
   if (!Number.isFinite(retryAt)) return undefined;
@@ -271,6 +278,7 @@ export interface WithRetryPolicy {
   /** Total attempts including the first. 1 disables retrying. */
   maxAttempts: number;
   baseDelayMs: number;
+  /** Cap on computed backoff; an upstream Retry-After is a minimum wait. */
   maxDelayMs: number;
   /** Wall-clock ceiling over ALL attempts and all the waiting between them. */
   totalBudgetMs: number;
@@ -337,7 +345,8 @@ export async function withRetry<T>(
   // `onRetry`. Jitter is random: computing it in both places would check the
   // budget against one number and then sleep a different one.
   let pending:
-    { classification: RetryClassification; delayMs: number } | undefined;
+    | { classification: RetryClassification; delayMs: number }
+    | undefined;
 
   return retryWithPolicy<T>({
     policy: sdkPolicy,
@@ -447,23 +456,12 @@ function nextDelayMs(
   classification: RetryClassification,
   policy: WithRetryPolicy,
 ): number | undefined {
-  if (classification.class === "rate_limited") {
-    if (classification.retryAfterMs === undefined) return undefined;
-    return clampDelay(
-      classification.retryAfterMs,
-      policy.baseDelayMs,
-      policy.maxDelayMs,
-    );
-  }
   if (classification.retryAfterMs !== undefined) {
-    // `Retry-After` overrides the computed backoff, clamped to [base, max] so
-    // a control plane cannot talk us into a wait outside the policy.
-    return clampDelay(
-      classification.retryAfterMs,
-      policy.baseDelayMs,
-      policy.maxDelayMs,
-    );
+    // Never shorten the server's minimum wait to our backoff cap. The total
+    // budget check declines the retry if that wait leaves no time for work.
+    return Math.max(classification.retryAfterMs, policy.baseDelayMs);
   }
+  if (classification.class === "rate_limited") return undefined;
   return backoffDelayMs(attempt, policy);
 }
 

@@ -61,6 +61,7 @@ import {
   emitToolInput,
   emitToolOutput,
   emitToolOutputDenied,
+  emitToolOutputError,
   safelyInvoke,
 } from "./chat-stream-chunks.js";
 import { z } from "zod";
@@ -77,6 +78,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -100,10 +102,41 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import {
   mergeMcpToolOriginMetadata,
+  mergeMcpToolConnectionMetadata,
+  toolConnectionAttribution,
   mergePageToolBindingMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 import { isWebmcpPageToolName } from "@/shared/declared-tools";
 import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  isMarkedUnverifiedCall,
+  presentHistoryForModel,
+  toolCallLookupFor,
+  type HistoryPresentation,
+} from "./history-provenance.js";
+import {
+  claimToolApprovalUse,
+  EXPIRED_APPROVAL_RESULT,
+  mintToolApprovalId,
+  requiresServerVerifiedApproval,
+  toolApprovalBindingFor,
+  UNAPPROVED_HISTORY_CALL_RESULT,
+  UNVERIFIED_APPROVAL_RESULT,
+  USED_APPROVAL_RESULT,
+  verifyToolApprovalId,
+  type ToolApprovalBinding,
+} from "./tool-approval-token.js";
+
+export {
+  EXPIRED_APPROVAL_RESULT,
+  UNAPPROVED_HISTORY_CALL_RESULT,
+  UNVERIFIED_APPROVAL_RESULT,
+  USED_APPROVAL_RESULT,
+};
+
+let warnedLegacyUnsignedApproval = false;
 
 function unwrapJsonEnvelope(value: unknown): unknown {
   let current = value;
@@ -147,31 +180,6 @@ function isModelVisibleImageOutput(value: unknown): boolean {
       partRecord.mediaType.startsWith("image/")
     );
   });
-}
-
-/**
- * Whether a tool-call name is one of this turn's discovery meta-tools.
- *
- * Its one remaining job is the DRAIN filter: before pausing for approval on a
- * real tool, the step runs any meta-tool calls the model made in the same
- * assistant message, so the resumed turn does not lose the discovery side
- * effect. Approval itself no longer consults this — the meta-tools declare a
- * `never` floor like every other family, and the gate reads declarations.
- *
- * Still name-plus-plan rather than name alone: when progressive mode is off
- * there are no meta-tools in the toolset, and a real MCP server is free to
- * expose a tool literally named `search_mcp_tools`. Draining that one would
- * execute a real tool while the turn was paused waiting to ask about it.
- * `progressivePlan?.enabled` is the only mode in which the orchestrator mints
- * the meta-tools, and it fails fast on real-tool name collisions in
- * `prepareChatV2`, so a matching name truly is one of ours.
- */
-function isApprovalFreeMetaToolName(
-  name: string,
-  progressivePlan: ProgressiveToolPlan | undefined,
-): boolean {
-  if (!progressivePlan?.enabled) return false;
-  return META_TOOL_NAMES.includes(name);
 }
 
 /**
@@ -588,6 +596,25 @@ export interface MCPJamEngineErrorEvent {
  */
 const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
 
+/**
+ * Backend code (convex `stream/routes.ts` `categorizeError`) for a 401/403
+ * whose upstream detail is the hosted gateway's provider-allowlist refusal:
+ * the model's provider is not enabled on MCPJam's gateway. Read by status it
+ * would become `provider/auth_error` and tell the user to fix their API key,
+ * which was never involved; retrying cannot help either.
+ */
+export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
+
+/**
+ * Backend refusal code (convex `stream/routes.ts` `categorizeError`): the
+ * provider failed and the request's model selection forbids the OpenRouter
+ * fallback (`fallback.provider === "none"`, the eval/swarm/judge default). It
+ * keeps the provider's status and retryability, so read by status alone a 401
+ * would become "the provider rejected your key" and a 502 an MCPJam outage —
+ * neither is the fix. Its own slug says what happened and never pages.
+ */
+const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -605,6 +632,21 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  // Ask MCPJam's refusals. Read by status alone these would be badly wrong in
+  // both directions: the 429s would become `provider/quota` (somebody else's
+  // rate limit) and the 403 `provider/auth_error` ("the provider rejected the
+  // key"), when what actually happened is MCPJam's own budget, MCPJam's own
+  // turn cap, and MCPJam's own attestation. The platform-budget slug already
+  // carries the right copy and a `user_config` origin, so none of them pages.
+  if (isAgentRefusalCode(code)) {
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  }
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
+  if (code === FALLBACK_PROHIBITED_CODE)
+    return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -655,6 +697,15 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
   if (code === "account_suspended")
     return describeAsSlug("account/suspended", detail);
+  if (isAgentRefusalCode(code)) {
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  }
+  // Before the owned-code rule, which would keep the status slug and its
+  // "update your API key" advice. The catalog origin is already `mcpjam`.
+  if (code === PROVIDER_NOT_ALLOWLISTED_CODE)
+    return describeAsSlug("provider/not_allowlisted", detail);
+  if (code === FALLBACK_PROHIBITED_CODE)
+    return describeAsSlug("provider/fallback_prohibited", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -1047,6 +1098,31 @@ export interface MCPJamHandlerOptions {
    */
   approvalMode?: "prompt" | "auto-deny";
   /**
+   * `messages` came from the REQUEST BODY rather than from state the server
+   * holds (MJ-008).
+   *
+   * When true, a tool call already in that history with no result is a
+   * CLAIM, and it runs only if a verified server-issued approval covers it;
+   * any other such call is answered with {@link UNAPPROVED_HISTORY_CALL_RESULT}
+   * before the first model step. Browser-facing chat routes set it. Omitted ⇒
+   * the history is the server's own (durable agent jobs, eval and swarm
+   * runners), whose unresolved calls keep running as before.
+   */
+  clientSuppliedHistory?: boolean;
+  /**
+   * Who and where this turn's approvals are bound to. Defaults to the bearer's
+   * subject + `projectId` + `chatSessionId`, which is right for every caller
+   * today; the override exists for tests.
+   */
+  approvalBinding?: ToolApprovalBinding;
+  /**
+   * Present the history to the model as `history-provenance.ts` describes
+   * (MJ-009): tool results fenced, content the server could not verify left
+   * out. Applied to what each step SENDS; the history itself, and so the
+   * persisted transcript, is unchanged. Browser-facing chat sets it.
+   */
+  historyPresentation?: HistoryPresentation;
+  /**
    * Hosted MRTR (§12.5, PR5) resume descriptor. Present only on a fresh request
    * that resumes a suspended tool call: the engine drives one retry leg BEFORE
    * the first model call, splices the driven result into the identified
@@ -1263,6 +1339,10 @@ interface StepContext {
   selectedServers?: string[];
   /** One approval decision per tool call, shared across the whole turn. */
   approvalDecisions: ApprovalDecisionCache;
+  /** What this turn's approval ids are bound to (see `tool-approval-token`). */
+  approvalBinding: ToolApprovalBinding;
+  /** See `MCPJamHandlerOptions.historyPresentation`. */
+  historyPresentation?: HistoryPresentation;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
@@ -1564,7 +1644,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : metadata ?? usage;
+      : (metadata ?? usage);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -1756,6 +1836,17 @@ export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex free-allowance model gate — the caller's plan, not our fault; see
   // `describeBackendStreamFailure` for the slug it maps to.
   FREE_TIER_MODEL_RESTRICTED_CODE,
+  // Ask MCPJam's own refusals (convex `stream/agentBilling.ts` +
+  // `generationRateLimit.ts`). "User-owned" here means only "not an outage" —
+  // the boundary this set governs is whether an unrecognized 200-with-a-code is
+  // captured as a FAULT. A spent platform budget, a per-user turn cap and a
+  // claim that did not hold are all a backend working exactly as designed, so
+  // none of them should page. `platform_generation_unavailable` is deliberately
+  // ABSENT: that one IS the guard failing closed, and it arrives as a 5xx we
+  // want counted as ours.
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
 ]);
 
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
@@ -1786,11 +1877,34 @@ const MCPJAM_OWNED_FAILURE_CODES = new Set<string>([
   "mcpjam_rate_limit",
   "mcpjam_api_error",
   "mcpjam_config_error",
+  // The provider is not enabled on MCPJam's gateway allowlist — our setting.
+  PROVIDER_NOT_ALLOWLISTED_CODE,
 ]);
 
 /** See {@link MCPJAM_OWNED_FAILURE_CODES}. */
 export function isMcpjamOwnedFailureCode(code: string | undefined): boolean {
   return MCPJAM_OWNED_FAILURE_CODES.has(code ?? "");
+}
+
+/**
+ * Ask MCPJam's three refusals: MCPJam's daily budget for the feature, the
+ * per-user turn cap, and a platform-billing claim that did not hold.
+ *
+ * Kept separate from {@link MCPJAM_OWNED_FAILURE_CODES} because these are not
+ * outages — the backend is working correctly and saying no. They share a slug
+ * with the platform-budget refusal, whose copy ("MCPJam's budget for this is
+ * used up, nothing was charged") is the accurate thing to tell a user on a
+ * surface they were told is free.
+ */
+const AGENT_REFUSAL_CODES = new Set<string>([
+  "platform_capacity",
+  "agent_turn_limit",
+  "agent_billing_rejected",
+]);
+
+/** See {@link AGENT_REFUSAL_CODES}. */
+export function isAgentRefusalCode(code: string | undefined): boolean {
+  return AGENT_REFUSAL_CODES.has(code ?? "");
 }
 
 /**
@@ -1851,6 +1965,37 @@ function attachedNormalized(error: unknown): NormalizedError | undefined {
   if (!error || typeof error !== "object") return undefined;
   const candidate = (error as { normalized?: unknown }).normalized;
   return isNormalizedError(candidate) ? candidate : undefined;
+}
+
+/**
+ * The client-facing error chunk text for a mid-stream `provider_not_allowlisted`
+ * failure. Every other mid-stream chunk reaches the client as its bare
+ * sentence, but the client can only choose the allowlist banner (no retry, no
+ * API-key advice) from the code, so this one keeps the structured shape the
+ * non-OK path already delivers.
+ */
+function providerNotAllowlistedErrorText(
+  parsed: ReturnType<typeof parseStreamErrorChunkText>,
+): string {
+  return JSON.stringify({
+    code: PROVIDER_NOT_ALLOWLISTED_CODE,
+    message: parsed.message,
+    ...(parsed.statusCode !== undefined
+      ? { statusCode: parsed.statusCode }
+      : {}),
+    isRetryable: false,
+    ...(parsed.details ? { details: parsed.details } : {}),
+  });
+}
+
+/**
+ * Error chunk text a thrower prepared for the client, when the bare message
+ * would lose what the client needs to render the failure.
+ */
+function attachedClientErrorText(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const text = (error as { clientErrorText?: unknown }).clientErrorText;
+  return typeof text === "string" ? text : undefined;
 }
 
 /** Guardrail code a thrower attached alongside {@link attachedNormalized}. */
@@ -1961,6 +2106,9 @@ async function processStream(
   // prevent, and it would do so silently.
   approvalDecisions: ApprovalDecisionCache,
   messageHistory: ModelMessage[],
+  // Who and where a pill minted here is bound to (MJ-008). Required: an
+  // approval id minted without it could not be verified on resume.
+  approvalBinding: ToolApprovalBinding,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
@@ -2043,9 +2191,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-              parseErr !== null &&
-              "message" in parseErr &&
-              typeof (parseErr as { message?: unknown }).message === "string"
+                parseErr !== null &&
+                "message" in parseErr &&
+                typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2183,7 +2331,14 @@ async function processStream(
           const providerMetadata = mergePageToolBindingMetadata(
             mergeMcpToolOriginMetadata(
               withPageToolAttributionMetadata(
-                chunk.providerMetadata,
+                mergeMcpToolConnectionMetadata(
+                  chunk.providerMetadata,
+                  toolConnectionAttribution(
+                    tools[chunk.toolName],
+                    chunk.input,
+                    toolCallId,
+                  ),
+                ),
                 tools[chunk.toolName],
               ),
               serverIdForToolCall,
@@ -2246,8 +2401,22 @@ async function processStream(
               decisions: approvalDecisions,
             })
           ) {
+            // THE APPROVAL ID IS THE PROOF (MJ-008): an HMAC over this exact
+            // call, verified when the answer comes back in the next request.
+            // Unsignable only on a hosted deployment with no key, where the
+            // tools that must verify were already built to refuse (see
+            // `built-in-tools/mcpjam.ts`); everything else keeps the legacy
+            // random id and the legacy trust in the answer.
             emitToolApprovalRequest(writer, {
-              approvalId: generateToolCallId(),
+              approvalId:
+                mintToolApprovalId({
+                  call: {
+                    toolCallId,
+                    toolName: chunk.toolName,
+                    input: chunk.input ?? {},
+                  },
+                  binding: approvalBinding,
+                }) ?? generateToolCallId(),
               toolCallId,
             });
           }
@@ -2304,6 +2473,9 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
+              ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
+              : {}),
           });
         }
 
@@ -2379,7 +2551,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : part.output ?? rawResult;
+              : (part.output ?? rawResult);
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2392,7 +2564,8 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -2412,6 +2585,7 @@ async function emitToolResults(
           emitToolOutput(writer, {
             toolCallId: part.toolCallId,
             output: outputForUi,
+            providerMetadata: part.providerOptions,
           });
 
           if (traceTurn && typeof stepIndex === "number") {
@@ -2507,7 +2681,10 @@ function emitInheritedToolCalls(
       for (const part of assistantMsg.content) {
         if (
           part.type === "tool-call" &&
-          !existingResultIds.has(part.toolCallId)
+          !existingResultIds.has(part.toolCallId) &&
+          // Not issued by this server (MJ-009): the browser is never asked to
+          // run it, whichever path re-introduces calls.
+          !isMarkedUnverifiedCall(part.providerOptions)
         ) {
           emitToolInput(writer, {
             toolCallId: part.toolCallId,
@@ -2552,6 +2729,22 @@ function emitInheritedToolCalls(
  * When the client responds with approval/denial decisions, this function
  * processes them: executes approved tools and emits denied notifications.
  *
+ * AN APPROVAL IS HONORED ONLY IF THE SERVER ISSUED IT (MJ-008). Every part of
+ * the pause arrives in client-sent history — the call, its arguments, the
+ * request and the answer — so "approved" is checked against the approval id
+ * the server minted for exactly that call, caller and conversation
+ * (`tool-approval-token.ts`). An approval that does not verify is a DENIAL,
+ * logged and answered with {@link UNVERIFIED_APPROVAL_RESULT}. And only the
+ * calls a verified approval covers are executed here: a sibling sitting
+ * unresolved in the same history is not the approval's to authorize.
+ *
+ * On a client-sent history an approval also runs its call only ONCE: it is
+ * claimed immediately before the call runs, and an approval that was already
+ * claimed is answered with {@link USED_APPROVAL_RESULT} instead of running
+ * the call again. One that comes back after its lifetime is answered with
+ * {@link EXPIRED_APPROVAL_RESULT}. Both reach the user as an error on the
+ * tool card with that reason, not as a bare denial.
+ *
  * Returns true if approvals were found and handled (agentic loop should continue).
  */
 async function handlePendingApprovals(
@@ -2559,6 +2752,7 @@ async function handlePendingApprovals(
   messageHistory: ModelMessage[],
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
+  approvalBinding: ToolApprovalBinding,
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
   abortSignal?: AbortSignal,
@@ -2570,12 +2764,17 @@ async function handlePendingApprovals(
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The history came from the request body (MJ-008): each verified approval
+  // runs its call once.
+  singleUseApprovals?: boolean,
 ): Promise<boolean> {
-  // Build approvalId → toolCallId map, toolCallId → toolName map,
+  // Build approvalId → toolCallId map, toolCallId → tool call map,
   // and toolCallId → assistant message index map from assistant messages
   const approvalIdToToolCallId = new Map<string, string>();
-  const toolCallIdToToolName = new Map<string, string>();
+  const toolCallById = new Map<string, { toolName: string; input: unknown }>();
   const toolCallIdToAssistantIdx = new Map<string, number>();
+  // Calls the history marks as not issued by this server (MJ-009).
+  const unissuedToolCallIds = new Set<string>();
   for (let i = 0; i < messageHistory.length; i++) {
     const msg = messageHistory[i];
     if (msg?.role === "assistant") {
@@ -2586,40 +2785,20 @@ async function handlePendingApprovals(
           approvalIdToToolCallId.set(part.approvalId, part.toolCallId);
         }
         if (part.type === "tool-call" && part.toolCallId) {
-          toolCallIdToToolName.set(part.toolCallId, part.toolName);
+          toolCallById.set(part.toolCallId, {
+            toolName: part.toolName,
+            input: part.input,
+          });
           toolCallIdToAssistantIdx.set(part.toolCallId, i);
-        }
-      }
-    }
-  }
-
-  if (approvalIdToToolCallId.size === 0) return false;
-
-  // Scan tool messages for approval responses
-  const approvedToolCallIds = new Set<string>();
-  const deniedToolCallIds = new Set<string>();
-
-  for (const msg of messageHistory) {
-    if (msg?.role === "tool") {
-      const toolMsg = msg as ToolModelMessage;
-      for (const part of toolMsg.content) {
-        if (part.type === "tool-approval-response" && part.approvalId) {
-          const toolCallId = approvalIdToToolCallId.get(part.approvalId);
-          if (!toolCallId) continue;
-
-          if (part.approved) {
-            approvedToolCallIds.add(toolCallId);
-          } else {
-            deniedToolCallIds.add(toolCallId);
+          if (isMarkedUnverifiedCall(part.providerOptions)) {
+            unissuedToolCallIds.add(part.toolCallId);
           }
         }
       }
     }
   }
 
-  if (approvedToolCallIds.size === 0 && deniedToolCallIds.size === 0) {
-    return false;
-  }
+  if (approvalIdToToolCallId.size === 0) return false;
 
   // Collect existing tool-result IDs once to avoid re-processing approvals
   const existingResultIds = new Set<string>();
@@ -2634,6 +2813,128 @@ async function handlePendingApprovals(
     }
   }
 
+  // Scan tool messages for approval responses
+  const approvedToolCallIds = new Set<string>();
+  const deniedToolCallIds = new Set<string>();
+  // Denials the SERVER made because an approval did not verify, and the
+  // model-visible reason for each. A user's own denial keeps its old text.
+  const unverifiedToolCallIds = new Set<string>();
+  // Approvals the server issued for exactly this call that it still did not
+  // run — expired, or already used — with the reason. The user approved these,
+  // so the reason is shown to them as well as the model, not a bare denial.
+  const refusedApprovalReasons = new Map<string, string>();
+  const answeredApprovalIds = new Set<string>();
+
+  for (const msg of messageHistory) {
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-approval-response" && part.approvalId) {
+          const toolCallId = approvalIdToToolCallId.get(part.approvalId);
+          if (!toolCallId) continue;
+          // A call this server did not issue is neither approved nor denied
+          // here: nothing about it goes to the browser, and
+          // `settleUnapprovedHistoryToolCalls` answers it silently.
+          if (unissuedToolCallIds.has(toolCallId)) continue;
+          // One answer per approval: a repeated response is not a second use.
+          if (answeredApprovalIds.has(part.approvalId)) continue;
+          answeredApprovalIds.add(part.approvalId);
+
+          if (!part.approved) {
+            deniedToolCallIds.add(toolCallId);
+            continue;
+          }
+          // Already answered in the history: nothing here runs it again, so
+          // there is nothing to check. Checking would re-refuse, and re-log,
+          // every past approval once its lifetime ends, on every later turn.
+          if (existingResultIds.has(toolCallId)) {
+            approvedToolCallIds.add(toolCallId);
+            continue;
+          }
+
+          const call = toolCallById.get(toolCallId);
+          const verdict = call
+            ? verifyToolApprovalId({
+                approvalId: part.approvalId,
+                call: {
+                  toolCallId,
+                  toolName: call.toolName,
+                  input: call.input,
+                },
+                binding: approvalBinding,
+              })
+            : ({ ok: false, reason: "malformed" } as const);
+          if (verdict.ok) {
+            // ONCE (MJ-008). Claimed only for a call this server is about to
+            // run: a browser-fulfilled tool is run by the browser.
+            const runsHere =
+              typeof (
+                tools as Record<string, { execute?: unknown } | undefined>
+              )[call?.toolName ?? ""]?.execute === "function";
+            if (
+              singleUseApprovals &&
+              runsHere &&
+              !claimToolApprovalUse(part.approvalId)
+            ) {
+              logger.warn(
+                "[mcpjam-stream-handler] approval already used; not running the call again",
+                { toolCallId, toolName: call?.toolName },
+              );
+              deniedToolCallIds.add(toolCallId);
+              refusedApprovalReasons.set(toolCallId, USED_APPROVAL_RESULT);
+              continue;
+            }
+            approvedToolCallIds.add(toolCallId);
+            continue;
+          }
+          // The server issued it for exactly this call, but the answer came
+          // back after its lifetime ended. Nothing runs, and the reason says
+          // so rather than reading as a denial.
+          if (verdict.reason === "expired") {
+            logger.info(
+              "[mcpjam-stream-handler] approval expired before it came back; not running the call",
+              { toolCallId, toolName: call?.toolName },
+            );
+            deniedToolCallIds.add(toolCallId);
+            refusedApprovalReasons.set(toolCallId, EXPIRED_APPROVAL_RESULT);
+            continue;
+          }
+          // A deployment that cannot sign keeps the legacy trust for the
+          // tools that allow it — nothing that must verify is ever built
+          // there with an approval to answer.
+          if (
+            verdict.reason === "no_key" &&
+            call &&
+            !requiresServerVerifiedApproval(tools[call.toolName])
+          ) {
+            if (!warnedLegacyUnsignedApproval) {
+              warnedLegacyUnsignedApproval = true;
+              logger.warn(
+                "[mcpjam-stream-handler] no tool-approval signing key on this deployment; honoring approvals unverified",
+              );
+            }
+            approvedToolCallIds.add(toolCallId);
+            continue;
+          }
+          logger.warn(
+            "[mcpjam-stream-handler] approval did not verify; treating it as denied",
+            {
+              toolCallId,
+              toolName: call?.toolName,
+              reason: verdict.reason,
+            },
+          );
+          deniedToolCallIds.add(toolCallId);
+          unverifiedToolCallIds.add(toolCallId);
+        }
+      }
+    }
+  }
+
+  if (approvedToolCallIds.size === 0 && deniedToolCallIds.size === 0) {
+    return false;
+  }
+
   // RE-INTRODUCE EVERY UNRESOLVED CALL BEFORE ANY ANSWER GOES OUT.
   //
   // This response is a NEW one. The client's reducer looks for a tool part on
@@ -2643,22 +2944,15 @@ async function handlePendingApprovals(
   // the client throws `No tool invocation found for tool call ID "…"` and ends
   // the turn with a red banner, after the tools have already run.
   //
-  // EVERY unresolved call, not only the approved ones. Two of the three
-  // reasons a call is sitting here unresolved are not "it was approved":
-  //
-  //   - A DENIED call. Its `tool-output-denied` is written below, and nothing
-  //     had introduced it.
-  //   - A SIBLING that never needed approval. The approval pause is
-  //     whole-step: it drains only approval-free meta tools, so an ordinary
-  //     tool the model emitted in the same assistant message waits here too —
-  //     and `executeToolCallsFromMessages` below runs EVERY unresolved call,
-  //     so a result for that sibling is written whether or not anyone approved
-  //     anything.
-  //
-  // A MIXED STEP IS ORDINARY, and does not need two families on two floors to
-  // happen: the model emits several calls in one assistant message all the
-  // time, an `app_*` or read-only `ui_*` among them never pauses, and one
-  // gated call is enough to park every sibling here.
+  // EVERY unresolved call this server issued, not only the approved ones —
+  // a call the history marks as not issued is never re-introduced: a DENIED call's
+  // `tool-output-denied` is written below, and nothing had introduced it. A
+  // SIBLING that never needed approval is re-introduced too — though since
+  // MJ-008 it is no longer RUN here. The pause now drains the step's
+  // approval-free calls before it stops (see `processOneStep`), so a sibling
+  // still unresolved at this point is one this server never scheduled, and an
+  // approval for a different call is not its authorization. A client-sent
+  // history answers it with `UNAPPROVED_HISTORY_CALL_RESULT` right after this.
   //
   // Idempotent by construction: the helper skips any call that already has a
   // result, so a second pass over the same history emits nothing.
@@ -2684,8 +2978,19 @@ async function handlePendingApprovals(
 
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
-      const toolName = toolCallIdToToolName.get(toolCallId) ?? "unknown";
-      emitToolOutputDenied(writer, { toolCallId });
+      const toolName = toolCallById.get(toolCallId)?.toolName ?? "unknown";
+      const refusal = refusedApprovalReasons.get(toolCallId);
+      const denialText =
+        refusal ??
+        (unverifiedToolCallIds.has(toolCallId)
+          ? UNVERIFIED_APPROVAL_RESULT
+          : "Tool execution denied by user.");
+      if (refusal) {
+        // The user approved this call: the card shows why it did not run.
+        emitToolOutputError(writer, { toolCallId, errorText: refusal });
+      } else {
+        emitToolOutputDenied(writer, { toolCallId });
+      }
 
       if (traceTurn && typeof stepIndex === "number") {
         writeTraceEvent(writer, {
@@ -2697,9 +3002,9 @@ async function handlePendingApprovals(
           toolName,
           output: {
             type: "error-text",
-            value: "Tool execution denied by user.",
+            value: denialText,
           },
-          errorText: "Tool execution denied by user.",
+          errorText: denialText,
         });
         // PR 5b-pre review fix (Cursor Medium "Denied approval skips
         // onToolResult"): the denial path writes the trace event
@@ -2717,7 +3022,7 @@ async function handlePendingApprovals(
               toolName,
               output: {
                 type: "error-text",
-                value: "Tool execution denied by user.",
+                value: denialText,
               },
               isError: true,
               stepIndex,
@@ -2741,7 +3046,7 @@ async function handlePendingApprovals(
         toolName,
         output: {
           type: "error-text",
-          value: "Tool execution denied by user.",
+          value: denialText,
         },
       };
 
@@ -2782,6 +3087,10 @@ async function handlePendingApprovals(
       tools: tools as Record<string, any>,
       modelVisibleMcpToolResults,
       readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
+      // ONLY the calls a verified approval covers (MJ-008). Every other
+      // unresolved call in this history arrived from the client with nothing
+      // the server issued behind it.
+      filterToolCall: ({ toolCallId }) => approvedToolCallIds.has(toolCallId),
       // Defense-in-depth for client-fulfilled tools (app_*/ui_*): the client
       // resolves an APPROVED ui_* call by executing it and shipping the
       // tool-result directly, so an approval response without a result
@@ -2804,6 +3113,180 @@ async function handlePendingApprovals(
   }
 
   return didHandle;
+}
+
+/** Ids of the tool calls that already have a result in a history. */
+function collectToolResultIds(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "tool") continue;
+    for (const part of (msg as ToolModelMessage).content) {
+      if (part.type === "tool-result") ids.add(part.toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Tool-call ids present in a history, whatever their state. Taken from the
+ * turn's INITIAL messages, it names every call this request inherited rather
+ * than produced.
+ */
+function collectToolCallIds(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call" && part.toolCallId)
+        ids.add(part.toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Answer, without running, every server-executable tool call a CLIENT-SENT
+ * history carried in unresolved and no verified approval covered (MJ-008).
+ *
+ * Runs after `handlePendingApprovals`, so what is left is exactly the set the
+ * server never authorized: a call invented in the history, an approved
+ * call's unapproved sibling, a call stranded by a stopped turn. Before this
+ * the loop ran all of them after its first model step, with whatever
+ * arguments the history held.
+ *
+ * Answered rather than left unresolved: an unanswered call is an invalid
+ * history for the next model request and would be re-introduced on every
+ * step. Client-fulfilled tools (`ui_*`, `page_*`, app tools) are left alone —
+ * the browser, not this server, runs those, and it answers them itself.
+ *
+ * Except a call the history marks as not issued by this server (MJ-009): the
+ * browser has nothing to answer for it, so it is answered here too, whatever
+ * its tool, and SILENTLY — re-sending it would ask the browser to run it. The
+ * model is never shown it or its answer (`presentHistoryForModel`).
+ */
+async function settleUnapprovedHistoryToolCalls(args: {
+  writer: StepContext["writer"];
+  messageHistory: ModelMessage[];
+  inheritedToolCallIds: ReadonlySet<string>;
+  tools: ToolSet;
+  mcpClientManager: MCPClientManager;
+  traceTurn: LiveTraceTurnContext;
+  stepIndex: number;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+}): Promise<void> {
+  const { messageHistory, tools } = args;
+  const resultIds = new Set<string>();
+  for (const msg of messageHistory) {
+    if (msg?.role !== "tool") continue;
+    for (const part of (msg as ToolModelMessage).content) {
+      if (part.type === "tool-result") resultIds.add(part.toolCallId);
+    }
+  }
+
+  const byAssistantIdx = new Map<number, ToolCallPart[]>();
+  // Answered without a word to the browser; see the doc comment.
+  const unissued = new Set<string>();
+  for (let i = 0; i < messageHistory.length; i++) {
+    const msg = messageHistory[i];
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (
+        part.type !== "tool-call" ||
+        !args.inheritedToolCallIds.has(part.toolCallId) ||
+        resultIds.has(part.toolCallId) ||
+        // The provider ran it and answered it inside the assistant message.
+        part.providerExecuted === true
+      ) {
+        continue;
+      }
+      if (isMarkedUnverifiedCall(part.providerOptions)) {
+        unissued.add(part.toolCallId);
+      } else {
+        // A registered tool without `execute` is fulfilled by the browser.
+        const registered = (tools as Record<string, { execute?: unknown }>)[
+          part.toolName
+        ];
+        if (registered && typeof registered.execute !== "function") continue;
+      }
+      const bucket = byAssistantIdx.get(i) ?? [];
+      bucket.push(part as ToolCallPart);
+      byAssistantIdx.set(i, bucket);
+    }
+  }
+  if (byAssistantIdx.size === 0) return;
+
+  const settled = [...byAssistantIdx.values()].flat();
+  logger.warn(
+    "[mcpjam-stream-handler] client-sent history carried unresolved tool calls with no verified approval; answering without running them",
+    {
+      count: settled.length,
+      notIssued: unissued.size,
+      toolNames: [...new Set(settled.map((part) => part.toolName))],
+    },
+  );
+
+  // Re-introduce each call on THIS response before answering it — the
+  // client's reducer needs a part to attach the answer to.
+  for (const part of settled) {
+    if (unissued.has(part.toolCallId)) continue;
+    emitToolInput(args.writer, {
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      input: part.input ?? {},
+      ...(part.providerOptions
+        ? { providerMetadata: part.providerOptions }
+        : {}),
+    });
+    if (args.onToolCall) {
+      try {
+        args.onToolCall({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+          stepIndex: args.stepIndex,
+          promptIndex: args.traceTurn.promptIndex,
+          serverId: readToolServerId(tools, part.toolName),
+        });
+      } catch (error) {
+        logger.warn(
+          "[mcpjam-stream-handler] onToolCall callback failed (unapproved history call)",
+          { error: error instanceof Error ? error.message : String(error) },
+        );
+      }
+    }
+  }
+
+  const answers: ModelMessage[] = [];
+  const sortedKeys = [...byAssistantIdx.keys()].sort((a, b) => b - a);
+  for (const idx of sortedKeys) {
+    const content = byAssistantIdx.get(idx)!.map((part): ToolResultPart => ({
+      type: "tool-result",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      output: { type: "error-text", value: UNAPPROVED_HISTORY_CALL_RESULT },
+    }));
+    messageHistory.splice(idx + 1, 0, {
+      role: "tool",
+      content,
+    } as ModelMessage);
+    const emitted = content.filter((part) => !unissued.has(part.toolCallId));
+    if (emitted.length > 0) {
+      answers.unshift({ role: "tool", content: emitted } as ModelMessage);
+    }
+  }
+  await emitToolResults(
+    args.writer,
+    args.mcpClientManager,
+    answers,
+    args.traceTurn,
+    args.stepIndex,
+    args.onToolResult,
+  );
 }
 
 /**
@@ -2830,6 +3313,8 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     approvalDecisions,
+    approvalBinding,
+    historyPresentation,
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
@@ -2923,13 +3408,16 @@ async function processOneStep(
   // Scrub messages before sending to backend. Preserve reasoning on
   // assistant messages added during the current turn so thinking models can
   // see their own scratchpad across tool steps.
-  const scrubbedMessages = scrubMessagesForBackend(
+  const backendMessages = scrubMessagesForBackend(
     messageHistory,
     tools,
     mcpClientManager,
     selectedServers,
     traceTurn.promptMessageStartIndex,
   );
+  const scrubbedMessages = historyPresentation
+    ? presentHistoryForModel(backendMessages, tools, historyPresentation)
+    : backendMessages;
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
@@ -2998,6 +3486,38 @@ async function processOneStep(
   if (scenarioId && scenarioServiceToken) {
     convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
   }
+  // A platform-billing claim is only ever honoured with this token, and
+  // `guestIpForwardHeaders` only attaches it ALONGSIDE an IP hash — so a turn
+  // with no resolvable client IP would send the claim bare and be refused at
+  // every step. Attach it unconditionally instead.
+  //
+  // Fail loudly rather than sending a claim that cannot be honoured: without
+  // the token the backend answers 403 for every step, which reads to the user
+  // as the agent being broken with no clue why. A deployment that asks for
+  // platform billing and has no service token is misconfigured, and that is
+  // the sentence worth putting in the log.
+  const billingFeature = extraBodyFields?.billingFeature;
+  if (billingFeature !== undefined) {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+    if (!serviceToken) {
+      throw new Error(
+        "INSPECTOR_SERVICE_TOKEN is not set, so this server cannot attest an " +
+          "MCPJam-paid agent turn. Set it, or run the agent without " +
+          "billingFeature.",
+      );
+    }
+    convexHeaders["x-inspector-service-token"] = serviceToken;
+  }
+  // A claimed turn goes to the PLATFORM route and NEVER falls back to the
+  // ordinary one. Falling back is the whole failure being fixed: the ordinary
+  // route bills the customer, and on a backend that ignores `billingFeature`
+  // it does so while answering a perfectly normal 200.
+  //
+  // This also overrides a BYOK `endpointPath` on purpose. `/stream/org` runs on
+  // the organization's own provider key, which by definition is not MCPJam
+  // paying, so a claim there is incoherent rather than merely misrouted.
+  const dispatchPath =
+    billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -3005,7 +3525,7 @@ async function processOneStep(
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
   try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
+    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3058,6 +3578,76 @@ async function processOneStep(
       data: { usingCredits: true },
       transient: true,
     });
+  }
+  // The backend does not implement the platform route: a deployment older than
+  // it, or a rollback mid-session.
+  //
+  // This is the case the response header could never cover. A 404 or 405 means
+  // the request was REFUSED BY THE ROUTER — no admission ran, no provider was
+  // called, nothing was billed to anybody — so this is the one place the
+  // "stopped rather than charged" promise is actually true. Checked before the
+  // confirmation check below because an unimplemented route obviously carries
+  // no confirmation header, and the generic message would misdescribe it.
+  if (
+    billingFeature !== undefined &&
+    (res.status === 404 || res.status === 405)
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment does not support MCPJam-paid Ask MCPJam " +
+          "turns yet, so the request was refused before it reached a model " +
+          "and nothing was charged to your organization. This usually means " +
+          "the backend is still rolling out.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+  }
+  // A claimed turn must come back CONFIRMED platform-paid.
+  //
+  // This is now an ASSERTION, not the mechanism. The platform route is what
+  // guarantees no customer was charged, because a backend without it 404s above
+  // before any provider work. Reaching this branch means a backend that DOES
+  // serve the platform route answered without confirming — a bug or a partial
+  // deploy — and by then it has already admitted and billed the step. So the
+  // refusal stands, but the copy must NOT claim nothing was charged: unlike the
+  // 404 above, that is precisely what cannot be known from here.
+  //
+  // Swapping in a synthetic denial rather than hand-rolling the failure here
+  // keeps one failure path: the branch below already writes the spans, fires
+  // `onEngineError` and classifies the code, and `agent_billing_rejected` is
+  // already the code for "the claim did not hold" and already renders as "Ask
+  // MCPJam is temporarily unavailable." The body is cancelled unread — it is a
+  // real model stream, so draining it would only put noise in the log.
+  if (
+    billingFeature !== undefined &&
+    res.ok &&
+    res.headers?.get("x-mcpjam-platform-paid") !== billingFeature
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Already closed or never a real stream; nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment did not confirm that the turn was billed " +
+          "to MCPJam, so Ask MCPJam stopped. If your organization was " +
+          "charged for it, contact support — this should not happen and we " +
+          "want to know about it.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
   }
   const isJsonDenial =
     res.ok &&
@@ -3206,6 +3796,7 @@ async function processOneStep(
     tools,
     approvalDecisions,
     messageHistory,
+    approvalBinding,
     onLiveTextDelta,
     abortSignal,
     onToolCall,
@@ -3250,6 +3841,40 @@ async function processOneStep(
       typeof firstChunkAt === "number"
         ? Math.max(0, firstChunkAt - llmStartAbs)
         : undefined,
+  };
+
+  // The tool map this step EXECUTES from: trace-wrapped, then gated to what the
+  // step actually advertised. Shared by the pre-pause drain and the normal
+  // execution path so the two can never run a call the other would refuse.
+  const buildStepExecutableTools = () => {
+    const tracedTools = wrapBackendToolsForTrace(tools as Record<string, any>, {
+      runStartedAt: traceTurn.turnStartedAt,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      spans: traceTurn.turnSpans,
+    });
+    // Progressive mode: gate execution to the active subset. Visibility
+    // is already narrowed by `activeToolDefs`, but a model can still
+    // emit a remembered/hallucinated call to a non-active name; gating
+    // turns that into a structured error the model can recover from
+    // via `load_mcp_tools` instead of executing an ungated tool.
+    let executableTools = gateToolsToActiveSubset(
+      tracedTools as Record<string, unknown>,
+      progressivePlan,
+      () => discoveryState,
+    );
+    // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
+    // set (`activeToolDefs`), gate execution to it too so a remembered /
+    // hallucinated call to a hidden tool (e.g. `computer` before a widget
+    // renders) becomes a recoverable tool-error instead of executing.
+    if (prepareAdvertisedTools) {
+      const advertised = new Set(activeToolDefs.map((def) => def.name));
+      executableTools = gateToolsToAdvertisedSubset(
+        executableTools,
+        () => advertised,
+      );
+    }
+    return executableTools;
   };
 
   // Check for unresolved tool calls and execute them
@@ -3372,35 +3997,84 @@ async function processOneStep(
     }
 
     if (hasUnresolvedApprovalRequiredToolCall && approvalMode !== "auto-deny") {
-      // Drain any unresolved meta-tool calls (search/load) before pausing
-      // for approval on real tools. Otherwise mixed-step turns (model
-      // emits a load_mcp_tools + a real tool in one assistant message)
-      // leave the meta-tool unresolved through the approval pause, and
-      // the resumed turn loses the discovery side effect — the loaded
-      // tools never get promoted into `discoveryState.loadedToolIds`,
-      // so the next step still only shows meta-tools.
-      const metaTracedTools = wrapBackendToolsForTrace(
-        tools as Record<string, any>,
-        {
-          runStartedAt: traceTurn.turnStartedAt,
-          promptIndex: traceTurn.promptIndex,
-          stepIndex,
-          spans: traceTurn.turnSpans,
-        },
-      );
-      const metaMessages = await executeToolCallsFromMessages(messageHistory, {
-        tools: metaTracedTools as Record<string, any>,
-        filterToolName: (name) =>
-          isApprovalFreeMetaToolName(name, progressivePlan),
-        modelVisibleMcpToolResults,
-        readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
-        ...(abortSignal ? { abortSignal } : {}),
-      });
-      if (metaMessages.length > 0) {
+      // DRAIN THIS STEP'S APPROVAL-FREE CALLS BEFORE PAUSING — the AI SDK's
+      // own semantics, and since MJ-008 a requirement rather than a courtesy.
+      //
+      // The pause used to be whole-step: only meta-tools (search/load) ran
+      // before it, and every other sibling waited for the resume, which then
+      // ran EVERY unresolved call in the resent history. That last part is
+      // what let a client-sent history run calls the server never scheduled,
+      // so the resume now runs only what a verified approval covers — and a
+      // sibling left for it would never run at all. So the siblings run here:
+      // calls THIS step's model produced (never an inherited one), that need
+      // no approval, and that this server executes (client-fulfilled tools
+      // stay for the browser). Meta-tools are among them, which keeps the
+      // original reason for this drain: a `load_mcp_tools` beside a real tool
+      // must promote its ids before the pause, or the resumed step still sees
+      // only meta-tools. Calls in one step are independent by contract.
+      const stepCallIds = new Set<string>();
+      const stepCallsNeedingApproval = new Set<string>();
+      for (const part of contentParts) {
+        if (part.type !== "tool-call") continue;
+        stepCallIds.add(part.toolCallId);
+        if (
+          await toolCallNeedsApproval({
+            name: part.toolName,
+            input: part.input ?? {},
+            toolCallId: part.toolCallId,
+            tools,
+            messages: messageHistory,
+            decisions: approvalDecisions,
+          })
+        ) {
+          stepCallsNeedingApproval.add(part.toolCallId);
+        }
+      }
+      const resultIdsBeforeDrain = collectToolResultIds(messageHistory);
+      let drainedMessages: ModelMessage[] = [];
+      try {
+        drainedMessages = await executeToolCallsFromMessages(messageHistory, {
+          tools: buildStepExecutableTools() as Record<string, any>,
+          filterToolCall: ({ toolCallId }) =>
+            stepCallIds.has(toolCallId) &&
+            !stepCallsNeedingApproval.has(toolCallId),
+          skipNonExecutableTools: true,
+          modelVisibleMcpToolResults,
+          readLinkedResource:
+            readLinkedMcpResourceWithManager(mcpClientManager),
+          ...(abortSignal ? { abortSignal } : {}),
+        });
+      } catch (error) {
+        // A sibling that SUSPENDED (hosted MRTR / scope step-up) has already
+        // emitted its own pause part; the turn is pausing anyway. Anything
+        // else keeps its old path to the outer handler.
+        if (
+          !isMrtrSuspendSignalShape(error) &&
+          !isScopeStepUpSuspendSignal(error)
+        ) {
+          throw error;
+        }
+        // The executor spliced the siblings that COMPLETED into the history
+        // before it rethrew — their side effects happened. They are emitted
+        // below like any other drained result: a result the client never
+        // receives is missing from the history it sends back, where the
+        // resume would find the call unresolved.
+        drainedMessages = messageHistory.filter(
+          (msg) =>
+            msg?.role === "tool" &&
+            (msg as ToolModelMessage).content.some(
+              (part) =>
+                part.type === "tool-result" &&
+                stepCallIds.has(part.toolCallId) &&
+                !resultIdsBeforeDrain.has(part.toolCallId),
+            ),
+        );
+      }
+      if (drainedMessages.length > 0) {
         await emitToolResults(
           writer,
           mcpClientManager,
-          metaMessages,
+          drainedMessages,
           traceTurn,
           stepIndex,
           onToolResult,
@@ -3458,37 +4132,7 @@ async function processOneStep(
 
     const toolsStartAbs = Date.now();
     try {
-      const tracedTools = wrapBackendToolsForTrace(
-        tools as Record<string, any>,
-        {
-          runStartedAt: traceTurn.turnStartedAt,
-          promptIndex: traceTurn.promptIndex,
-          stepIndex,
-          spans: traceTurn.turnSpans,
-        },
-      );
-
-      // Progressive mode: gate execution to the active subset. Visibility
-      // is already narrowed by `activeToolDefs`, but a model can still
-      // emit a remembered/hallucinated call to a non-active name; gating
-      // turns that into a structured error the model can recover from
-      // via `load_mcp_tools` instead of executing an ungated tool.
-      let executableTools = gateToolsToActiveSubset(
-        tracedTools as Record<string, unknown>,
-        progressivePlan,
-        () => discoveryState,
-      );
-      // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
-      // set (`activeToolDefs`), gate execution to it too so a remembered /
-      // hallucinated call to a hidden tool (e.g. `computer` before a widget
-      // renders) becomes a recoverable tool-error instead of executing.
-      if (prepareAdvertisedTools) {
-        const advertised = new Set(activeToolDefs.map((def) => def.name));
-        executableTools = gateToolsToAdvertisedSubset(
-          executableTools,
-          () => advertised,
-        );
-      }
+      const executableTools = buildStepExecutableTools();
 
       // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` and
       // `page_*` tools)
@@ -4039,6 +4683,25 @@ export async function runChatEngineLoop(
     }
   }
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
+  // Every call this request INHERITED rather than produced — the set that,
+  // from a client-sent history, needs a verified approval before it runs.
+  const inheritedToolCallIds = collectToolCallIds(messageHistory);
+  // What this turn's approval ids bind to (MJ-008): the caller, the project
+  // and the conversation, so a minted id verifies nowhere else.
+  const approvalBinding =
+    options.approvalBinding ??
+    toolApprovalBindingFor({ authHeader, projectId, chatSessionId });
+  // Sign what this turn streams as the server's own (MJ-009): assistant text
+  // as it streams, reasoning at its end, the calls the model issues and the
+  // results they get — never for a call the history marks as not issued. A
+  // no-op where nothing can be signed (local mode, or no signing key).
+  const provenanceContext = historyProvenanceContextFor(projectId);
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messageHistory),
+      )
+    : undefined;
   // Per TURN, not per step: the emit gate runs on one step and the unresolved
   // / auto-deny re-scans re-walk the whole history on later ones, and all
   // three must reach the same answer about the same call — once.
@@ -4109,7 +4772,7 @@ export async function runChatEngineLoop(
         lastWriteAt = Date.now();
         if (streamClosed) return;
         try {
-          writer.write(chunk);
+          writer.write(signChunk ? signChunk(chunk) : chunk);
         } catch (writeError) {
           // The SDK closes the underlying controller on client
           // disconnect; subsequent writes throw. Treat this as a
@@ -4139,25 +4802,28 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(() => {
-        if (streamClosed || aborted) return;
-        const sinceLastWrite = Date.now() - lastWriteAt;
-        if (sinceLastWrite < resolvedHeartbeatMs) return;
-        try {
-          writeTraceEvent(safeWriter, {
-            type: "heartbeat",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-          });
-        } catch (error) {
-          // Should not happen — safeWriter swallows write errors —
-          // but a final guard here keeps a misbehaving writeTraceEvent
-          // from killing the loop.
-          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
+      heartbeatTimer = setInterval(
+        () => {
+          if (streamClosed || aborted) return;
+          const sinceLastWrite = Date.now() - lastWriteAt;
+          if (sinceLastWrite < resolvedHeartbeatMs) return;
+          try {
+            writeTraceEvent(safeWriter, {
+              type: "heartbeat",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+            });
+          } catch (error) {
+            // Should not happen — safeWriter swallows write errors —
+            // but a final guard here keeps a misbehaving writeTraceEvent
+            // from killing the loop.
+            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
+      );
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4216,7 +4882,10 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
-      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+      if (
+        options.durableCheckpoint &&
+        hasUnresolvedApprovalResponses(messageHistory)
+      ) {
         await options.durableCheckpoint({
           phase: "tools",
           messages: messageHistory,
@@ -4228,13 +4897,38 @@ export async function runChatEngineLoop(
         messageHistory,
         tools,
         mcpClientManager,
+        approvalBinding,
         traceTurn,
         effectiveSteps(),
         abortSignal,
         modelVisibleMcpToolResults,
         onToolResult,
         onToolCall,
+        options.clientSuppliedHistory === true,
       );
+
+      // CLIENT-SENT HISTORY RUNS NOTHING THE SERVER DID NOT AUTHORIZE (MJ-008).
+      // Anything still unresolved from that history is answered, not run.
+      // Skipped on an MRTR / step-up resume: those name a suspended call the
+      // server holds a durable continuation for, and a sibling continuation
+      // may legitimately still be pending. The resume pre-phase below owns
+      // them, and it never runs the model — or any tool after it — while any
+      // call in the history is unresolved, so nothing planted beside the
+      // resumed call can run on that path either; it only keeps the turn
+      // paused.
+      if (options.clientSuppliedHistory && !(scopeStepUpResume ?? mrtrResume)) {
+        await settleUnapprovedHistoryToolCalls({
+          writer: safeWriter,
+          messageHistory,
+          inheritedToolCallIds,
+          tools,
+          mcpClientManager,
+          traceTurn,
+          stepIndex: effectiveSteps(),
+          onToolResult,
+          onToolCall,
+        });
+      }
 
       // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
       // A fresh request resuming a suspended tool call drives ONE retry leg
@@ -4341,6 +5035,10 @@ export async function runChatEngineLoop(
           mcpClientManager,
           selectedServers,
           approvalDecisions,
+          approvalBinding,
+          ...(options.historyPresentation
+            ? { historyPresentation: options.historyPresentation }
+            : {}),
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),
@@ -4374,8 +5072,8 @@ export async function runChatEngineLoop(
           phase: shouldContinue
             ? "ready"
             : didEmitFinish
-            ? "complete"
-            : "model",
+              ? "complete"
+              : "model",
           messages: messageHistory,
           step: effectiveSteps(),
         });
@@ -4533,7 +5231,7 @@ export async function runChatEngineLoop(
           promptIndex: traceTurn.promptIndex,
           usage: traceTurn.turnUsage,
         });
-        emitError(safeWriter, errorText);
+        emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.
