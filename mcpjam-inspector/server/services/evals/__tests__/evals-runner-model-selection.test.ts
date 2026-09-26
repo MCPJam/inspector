@@ -32,6 +32,12 @@ const createLlmModelMock = vi.hoisted(() =>
   ),
 );
 
+const admittedFactory = vi.hoisted(() => vi.fn(() => ({ id: "freshly-admitted-model" })));
+vi.mock("@mcpjam/sdk/model-factory", async (importActual) => ({
+  ...await importActual<typeof import("@mcpjam/sdk/model-factory")>(),
+  buildOrgModelFromResolvedConfig: admittedFactory,
+}));
+
 vi.mock("ai", async () => {
   // Keep the real exports (`createUIMessageStream`,
   // `createUIMessageStreamResponse`, `parseJsonEventStream`, `pruneMessages`,
@@ -905,6 +911,22 @@ describe("eval runner reads saved model selections", () => {
       ]);
       expect(streamTextMock).not.toHaveBeenCalled();
       expect(requestTo("/stream/org/local-usage")).toBeNull();
+    });
+
+    it("executes the provider config returned by turn admission after a rotation", async () => {
+      admittedFactory.mockClear();
+      const fresh = { providerKey: "ollama", apiKey: "new-key", baseUrl: "http://localhost:22434", modelIds: ["llama3"] };
+      fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+        if (url.endsWith("/stream/org/resolve")) {
+          const request = JSON.parse(String(init.body));
+          return Response.json({ ok: true, runtimeLocation: "local", provider: request.modelWorkload ? fresh : { ...fresh, apiKey: "old-key", baseUrl: "http://localhost:11434" } });
+        }
+        return Response.json({ ok: true });
+      });
+      await run({ model: "llama3", provider: "ollama", selection: ORG_OLLAMA_LOCAL }, { orgModelConfigTarget: { projectId: "project-local-rotation" } });
+      expect(admittedFactory).toHaveBeenCalledWith(fresh, "llama3");
+      expect(streamTextMock).toHaveBeenCalledOnce();
+      expect((streamTextMock.mock.calls[0][0] as any).model).toEqual({ id: "freshly-admitted-model" });
     });
 
     it("posts /stream/org/local-usage naming the iteration, with the selection and its record", async () => {

@@ -1,3 +1,7 @@
+import {
+  assertOrgModelAllowed,
+  buildOrgModelFromResolvedConfig,
+} from "@mcpjam/sdk/model-factory";
 import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -5088,6 +5092,10 @@ const runLocalIteration = async ({
                   "Organization runtime changed before the eval turn. Restart the run.",
                 );
               }
+              // Execute the config this admission returned, including rotations
+              // and endpoint changes since the iteration's initial setup.
+              assertOrgModelAllowed(admitted.provider, String(modelDefinition.id));
+              return buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id));
             },
             onModelCallSettled: (event: LocalModelCallSettled) =>
               postEvalOrgLocalUsage({

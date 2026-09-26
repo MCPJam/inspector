@@ -117,6 +117,30 @@ describe("streamWebChatTurn model dispatch", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each([false, true])("forwards local chat workload and stops on refusal (%s)", async (refused) => {
+    const config = await import("../org-model-config.js");
+    const orchestration = await import("../chat-v2-orchestration.js");
+    const conversion = await import("../mcp-tool-result-model-output.js");
+    vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({ ok: true, key: "ollama" });
+    vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
+    vi.mocked(orchestration.prepareChatV2).mockResolvedValueOnce({
+      allTools: { search: { description: "search", inputSchema: {} } },
+      enhancedSystemPrompt: "", scrubMessages: (m: unknown[]) => m,
+    } as never);
+    vi.mocked(conversion.convertToMcpjamModelMessages).mockResolvedValueOnce([
+      { role: "user", content: [{ type: "image", image: "private-image" }] },
+    ]);
+    if (refused) vi.mocked(config.resolveOrgProviderRuntime).mockRejectedValueOnce(new Error("tools unsupported"));
+    else vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({ runtimeLocation: "local", provider: { providerKey: "ollama", baseUrl: "http://localhost:11434", modelIds: ["llama3"] } });
+    const pending = streamWebChatTurn(args({ id: "llama3", provider: "ollama", hosted: false }, null) as never);
+    if (refused) await expect(pending).rejects.toThrow("tools unsupported");
+    else await pending;
+    expect(config.resolveOrgProviderRuntime).toHaveBeenLastCalledWith("p1", "ollama", "llama3", expect.anything(), {
+      modelWorkload: { purpose: "chat", hasTools: true, hasUserImages: true },
+    });
+    expect(handlers.localOrg).toHaveBeenCalledTimes(refused ? 0 : 1);
+  });
+
   it("routes a BARE MCPJam-hosted id + provider to the MCPJam path (harness runs)", async () => {
     await streamWebChatTurn(
       args({ id: "gpt-5-nano", provider: "openai" }) as never,
