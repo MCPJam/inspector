@@ -189,6 +189,7 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
@@ -701,6 +702,10 @@ app.route("/tlm", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
+// PR previews only (no-op unless PREVIEW_EDGE_SECRET is set): lets the
+// *.mcpjam.dev preview router verify it's talking to one of our previews.
+// Not mirrored in server/app.ts: Electron is never a PR preview.
+registerPreviewIdentityRoute(app);
 
 // Health check
 app.get("/health", (c) => {
