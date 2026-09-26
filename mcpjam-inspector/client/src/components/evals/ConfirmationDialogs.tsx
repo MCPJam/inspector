@@ -13,6 +13,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import type { EvalSuite } from "./types";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 const SKIP_DELETE_TEST_CASE_CONFIRMATION_KEY = "skipDeleteTestCaseConfirmation";
 
@@ -52,6 +53,29 @@ export function ConfirmationDialogs({
 }: ConfirmationDialogsProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
+  /**
+   * A CI-owned suite is deletable — removing a row is not editing what CI
+   * runs — but the two things a person cannot see before clicking belong
+   * here rather than in a refusal: the runs go with it, and the suite comes
+   * BACK on the next report, under a new id, because the SDK reporter
+   * identifies a suite by name (issue #5381).
+   *
+   * `lastSdkRunAt` gets its OWN sentence rather than being folded into
+   * `isCiOwnedSuite`, which deliberately excludes it. A UI-authored suite CI
+   * merely reports INTO is not CI-owned — its cases are this workspace's, and
+   * nothing recreates them — but deleting it still destroys CI's run history.
+   * That is the fact the suite switcher used to state by withholding the
+   * button; now that the button is offered, the dialog has to say it, or the
+   * switcher's "a reason to confirm, not to withhold" is true of nothing.
+   */
+  const ciDeleteNotice = !suiteToDelete
+    ? null
+    : isCiOwnedSuite(suiteToDelete)
+      ? "This suite is managed by CI. Deleting it removes the run history stored here; the next CI run or SDK report creates the suite again."
+      : suiteToDelete.lastSdkRunAt != null
+        ? "CI has reported runs into this suite. Deleting it removes that run history, and the cases authored here do not come back."
+        : null;
+
   // Auto-confirm test case deletion if user chose to skip confirmation
   useEffect(() => {
     if (testCaseToDelete) {
@@ -89,8 +113,16 @@ export function ConfirmationDialogs({
             </DialogTitle>
             <DialogDescription>
               Are you sure you want to delete the test suite?
-              <br />
-              <br />
+              {/* The blank lines belong to the notice. Left outside the
+                  condition they were two empty rows above the buttons on
+                  every ordinary suite. */}
+              {ciDeleteNotice ? (
+                <>
+                  <br />
+                  <br />
+                  {ciDeleteNotice}
+                </>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

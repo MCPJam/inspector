@@ -26,8 +26,10 @@ import {
 import { SignJWT, generateKeyPair } from "jose";
 import { createWebTestApp, expectJson } from "./helpers/test-app.js";
 import {
+  authorizeOrganizationKeyRevoke,
   createWorkosKeyBinding,
   lookupWorkosKeyBinding,
+  removeOrganizationKeyBinding,
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
 } from "../../../services/workos-key-bindings.js";
@@ -41,6 +43,8 @@ vi.mock("../../../services/workos-key-bindings.js", async (importOriginal) => {
       .fn()
       .mockResolvedValue({ mcpjamOrganizationId: "org_convex_1" }),
     removeWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
+    authorizeOrganizationKeyRevoke: vi.fn().mockResolvedValue(undefined),
+    removeOrganizationKeyBinding: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -75,17 +79,47 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 import {
   SEED,
+  emulatorSeed,
   listUserApiKeys,
   loginWithPkce,
+  mintUserApiKey,
   startWorkosEmulator,
   type WorkosEmulatorHandle,
 } from "../../../test/support/workos-emulator.js";
+
+/** A second member of the seeded organization, who holds keys of their own. */
+const MEMBER = {
+  id: "user_01EMULATORMEMBER000000000000",
+  email: "member@emulator.test",
+};
 
 let h: WorkosEmulatorHandle;
 let bearer: string;
 
 beforeAll(async () => {
-  h = await startWorkosEmulator();
+  const seed = emulatorSeed();
+  h = await startWorkosEmulator({
+    seed: {
+      ...seed,
+      users: [
+        ...(seed.users ?? []),
+        {
+          id: MEMBER.id,
+          email: MEMBER.email,
+          first_name: "Member",
+          password: "test123",
+          email_verified: true,
+        },
+      ],
+      organizations: [
+        {
+          id: SEED.org.id,
+          name: SEED.org.name,
+          memberships: [{ email: SEED.user.email }, { email: MEMBER.email }],
+        },
+      ],
+    },
+  });
   const session = await loginWithPkce(h, { email: SEED.user.email });
   bearer = session.accessToken;
 }, 30_000);
@@ -100,9 +134,17 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ mcpjamOrganizationId: "org_convex_1" });
   vi.mocked(removeWorkosKeyBinding).mockReset().mockResolvedValue(undefined);
+  vi.mocked(authorizeOrganizationKeyRevoke)
+    .mockReset()
+    .mockResolvedValue(undefined);
+  vi.mocked(removeOrganizationKeyBinding)
+    .mockReset()
+    .mockResolvedValue(undefined);
   mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
     ready: true,
     workosOrganizationId: SEED.org.id,
+    mintAllowed: true,
+    mintMinimumRole: "member",
   });
 });
 
@@ -115,13 +157,15 @@ function app() {
   return createWebTestApp().app;
 }
 
-async function mint(name = "ci key") {
+async function mint(name = "ci key", extra: Record<string, unknown> = {}) {
   return app().request("/api/web/api-keys", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeader() },
-    body: JSON.stringify({ name, organizationId: "org_convex_1" }),
+    body: JSON.stringify({ name, organizationId: "org_convex_1", ...extra }),
   });
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("mint", () => {
   it("creates a key at WorkOS and binds it to the caller's organization", async () => {
@@ -136,6 +180,7 @@ describe("mint", () => {
       workosApiKeyId: data.id,
       mcpjamOrganizationId: "org_convex_1",
       mintedByUserId: "mcpjam_user_1",
+      expiresAt: expect.any(Number),
     });
 
     // WorkOS agrees the key exists and belongs to this user — the fixture
@@ -160,6 +205,57 @@ describe("mint", () => {
     expect(data.code).toBe("CONFLICT");
     const after = await listUserApiKeys(h, SEED.user.id);
     expect(after).toHaveLength(before.length);
+  }, 30_000);
+
+  it("gives the WorkOS key a 90-day expiry by default, matching the binding", async () => {
+    const before = Date.now();
+    const { status, data } = await expectJson<{
+      id: string;
+      expires_at: string;
+    }>(await mint("expires by default"));
+    expect(status).toBe(200);
+
+    // WorkOS itself recorded the expiry — the emulator refuses a key past it.
+    const stored = (await listUserApiKeys(h, SEED.user.id)).find(
+      (k) => k.id === data.id,
+    );
+    const expiresAt = Date.parse(String(stored?.expires_at));
+    expect(expiresAt - before).toBeGreaterThanOrEqual(90 * DAY_MS - 1_000);
+    expect(expiresAt - before).toBeLessThanOrEqual(90 * DAY_MS + 60_000);
+    expect(Date.parse(data.expires_at)).toBe(expiresAt);
+    expect(vi.mocked(createWorkosKeyBinding).mock.calls[0][0].expiresAt).toBe(
+      expiresAt,
+    );
+  }, 30_000);
+
+  it("gives the WorkOS key the lifetime the caller chose", async () => {
+    const before = Date.now();
+    const { status, data } = await expectJson<{ id: string }>(
+      await mint("one week", { expiresInDays: 7 }),
+    );
+    expect(status).toBe(200);
+
+    const stored = (await listUserApiKeys(h, SEED.user.id)).find(
+      (k) => k.id === data.id,
+    );
+    const expiresAt = Date.parse(String(stored?.expires_at));
+    expect(expiresAt - before).toBeGreaterThanOrEqual(7 * DAY_MS - 1_000);
+    expect(expiresAt - before).toBeLessThanOrEqual(7 * DAY_MS + 60_000);
+  }, 30_000);
+
+  it("mints nothing at WorkOS for a member the org does not let mint", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: true,
+      workosOrganizationId: SEED.org.id,
+      mintAllowed: false,
+      mintMinimumRole: "admin",
+    });
+    const before = await listUserApiKeys(h, SEED.user.id);
+
+    const { status } = await expectJson(await mint("not allowed"));
+
+    expect(status).toBe(403);
+    expect(await listUserApiKeys(h, SEED.user.id)).toHaveLength(before.length);
   }, 30_000);
 
   it("maps a WorkOS rate limit to a rate-limit response", async () => {
@@ -212,8 +308,9 @@ describe("list and revoke", () => {
   }, 30_000);
 
   it("reports an unknown key as not found rather than calling WorkOS", async () => {
-    // The ownership walk is the authorization check: an id the caller does not
-    // own must read as absent, whether it never existed or belongs elsewhere.
+    // Not in the caller's own list and bound to no organization, so no one
+    // could authorize revoking it.
+    vi.mocked(lookupWorkosKeyBinding).mockResolvedValueOnce(null);
     const res = await app().request("/api/web/api-keys/api_key_not_yours", {
       method: "DELETE",
       headers: authHeader(),
@@ -222,6 +319,117 @@ describe("list and revoke", () => {
     const { status, data } = await expectJson<{ code: string }>(res);
     expect(status).toBe(404);
     expect(data.code).toBe("NOT_FOUND");
+  }, 30_000);
+});
+
+describe("organization admin revoke", () => {
+  function adminRevoke(keyId: string) {
+    return app().request(
+      `/api/web/api-keys/organization/org_convex_1/${keyId}`,
+      { method: "DELETE", headers: authHeader() },
+    );
+  }
+
+  it("revokes a key at WorkOS once the backend authorizes, then again as a no-op", async () => {
+    // Minted straight at WorkOS, not through the route: the admin path never
+    // consults the caller's own key list, so whose key it is does not matter
+    // to WorkOS — the backend's authorization is the only gate.
+    const target = await mintUserApiKey(h, {
+      userId: SEED.user.id,
+      organizationId: SEED.org.id,
+      name: "someone else's key",
+    });
+
+    const first = await expectJson(await adminRevoke(target.id));
+    expect(first.status).toBe(200);
+    expect(first.data).toEqual({ ok: true, alreadyRevoked: false });
+    const remaining = await listUserApiKeys(h, SEED.user.id);
+    expect(remaining.map((k) => k.id)).not.toContain(target.id);
+    expect(removeOrganizationKeyBinding).toHaveBeenCalledWith({
+      organizationId: "org_convex_1",
+      actorUserId: "mcpjam_user_1",
+      workosApiKeyId: target.id,
+    });
+
+    // WorkOS really 404s the second delete; that is "already revoked".
+    const second = await expectJson(await adminRevoke(target.id));
+    expect(second.status).toBe(200);
+    expect(second.data).toEqual({ ok: true, alreadyRevoked: true });
+  }, 30_000);
+
+  it("leaves the key alive at WorkOS when the backend refuses", async () => {
+    const target = await mintUserApiKey(h, {
+      userId: SEED.user.id,
+      organizationId: SEED.org.id,
+      name: "survives",
+    });
+    vi.mocked(authorizeOrganizationKeyRevoke).mockRejectedValueOnce(
+      new WorkosKeyBindingError(403, "Revoke authorization refused (403)"),
+    );
+
+    const { status } = await expectJson(await adminRevoke(target.id));
+
+    expect(status).toBe(403);
+    const remaining = await listUserApiKeys(h, SEED.user.id);
+    expect(remaining.map((k) => k.id)).toContain(target.id);
+    expect(removeOrganizationKeyBinding).not.toHaveBeenCalled();
+  }, 30_000);
+});
+
+describe("revoke by id as an organization admin", () => {
+  function revokeById(keyId: string) {
+    return app().request(`/api/web/api-keys/${keyId}`, {
+      method: "DELETE",
+      headers: authHeader(),
+    });
+  }
+
+  it("revokes another member's key at WorkOS once the backend authorizes", async () => {
+    const target = await mintUserApiKey(h, {
+      userId: MEMBER.id,
+      organizationId: SEED.org.id,
+      name: "member's ci key",
+    });
+
+    const { status, data } = await expectJson(await revokeById(target.id));
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ ok: true, alreadyRevoked: false });
+    expect(authorizeOrganizationKeyRevoke).toHaveBeenCalledWith({
+      organizationId: "org_convex_1",
+      actorUserId: "mcpjam_user_1",
+      workosApiKeyId: target.id,
+    });
+    expect(removeOrganizationKeyBinding).toHaveBeenCalledWith({
+      organizationId: "org_convex_1",
+      actorUserId: "mcpjam_user_1",
+      workosApiKeyId: target.id,
+    });
+    expect(removeWorkosKeyBinding).not.toHaveBeenCalled();
+    // Gone at WorkOS from the member's own list.
+    const remaining = await listUserApiKeys(h, MEMBER.id);
+    expect(remaining.map((k) => k.id)).not.toContain(target.id);
+  }, 30_000);
+
+  it("leaves another member's key alive and answers 404 when the backend refuses", async () => {
+    const target = await mintUserApiKey(h, {
+      userId: MEMBER.id,
+      organizationId: SEED.org.id,
+      name: "stays",
+    });
+    vi.mocked(authorizeOrganizationKeyRevoke).mockRejectedValueOnce(
+      new WorkosKeyBindingError(403, "Revoke authorization refused (403)"),
+    );
+
+    const { status, data } = await expectJson<{ code: string }>(
+      await revokeById(target.id),
+    );
+
+    expect(status).toBe(404);
+    expect(data.code).toBe("NOT_FOUND");
+    const remaining = await listUserApiKeys(h, MEMBER.id);
+    expect(remaining.map((k) => k.id)).toContain(target.id);
+    expect(removeOrganizationKeyBinding).not.toHaveBeenCalled();
   }, 30_000);
 });
 

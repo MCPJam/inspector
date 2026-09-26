@@ -45,7 +45,7 @@ export function TrialChainPanel({
   nextAction?: string;
   /**
    * A line under each card saying what GRADES that link on this case — "2
-   * gates · 1 warn", "Observed by the runner", or, when a gap has something
+   * gates · 1 warn", "Built-in runner check", or, when a gap has something
    * that would fill it, "Nothing checks this · N suggested".
    *
    * Merged on top of the card views rather than computed inside

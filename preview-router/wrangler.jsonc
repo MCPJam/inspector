@@ -1,0 +1,23 @@
+{
+  // Preview router for *.mcpjam.dev — see src/index.ts for why it exists and
+  // how it decides a Railway upstream is really one of our previews.
+  //
+  // Deployed by .github/workflows/deploy-preview-router.yml on changes to
+  // this directory. The one secret, PREVIEW_EDGE_SECRET, is set with
+  // `wrangler secret put PREVIEW_EDGE_SECRET` and must equal the GitHub
+  // Actions secret of the same name that pr-preview.yml gives each preview.
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "mcpjam-preview-router",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "*.mcpjam.dev/*", "zone_name": "mcpjam.dev" }],
+  "vars": {
+    "PREVIEW_ZONE": "mcpjam.dev",
+    "UPSTREAM_PREFIX": "mcp-inspector-",
+    "UPSTREAM_SUFFIX": ".up.railway.app"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
