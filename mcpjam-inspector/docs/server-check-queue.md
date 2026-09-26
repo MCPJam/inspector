@@ -34,9 +34,9 @@ The hosted browser sends ten validations at a time, keeps remaining work locally
 and follows saved card order for automatic work. Manual work goes first; if all
 browser slots are busy, one automatic attempt is aborted and its promise must
 settle before a manual attempt can dispatch. Backend admission still waits for
-actual connection cleanup. “Connect next” promotes queued work; “Keep connecting”
-protects an active check. Queued cards can be cancelled; changing card order
-reprioritizes pending checks. The browser only retries the two queue-specific 429s,
+actual connection cleanup. Waiting and active checks reuse the existing
+“Finishing setup...” status, with no extra priority buttons. The connection
+switch can cancel checks; changing card order reprioritizes pending checks. The browser only retries the two queue-specific 429s,
 with positive jitter and a two-minute retry budget. Existing failure handling is
 used for other errors except HTTP 409 `SERVER_CHECK_PREEMPTED`: the original
 browser job stays pending and restarts with a fresh attempt ID and signal after a

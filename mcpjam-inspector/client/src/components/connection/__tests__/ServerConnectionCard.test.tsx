@@ -127,17 +127,15 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("rendering", () => {
-    it("shows Queued without disconnecting a connected card and allows cancellation", async () => {
+    it.each(["queued", "connecting"] as const)("reuses Finishing setup for a %s check without adding priority buttons", async (state) => {
       const promises: Promise<unknown>[] = [];
       await act(async () => {
-        for (let i = 0; i < 11; i++) promises.push(serverCheckQueue.run({ projectId: "queue-project", serverName: i === 10 ? "test-server" : `busy-${i}`, identity: "host" }, signal => new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)))).catch(() => undefined));
+        const busyCount = state === "queued" ? 10 : 0;
+        for (let i = 0; i <= busyCount; i++) promises.push(serverCheckQueue.run({ projectId: "queue-project", serverName: i === busyCount ? "test-server" : `busy-${i}`, identity: "host" }, signal => new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)))).catch(() => undefined));
       });
       render(<ServerConnectionCard server={createServer()} projectId="queue-project" {...defaultProps} />);
-      expect(screen.getByText("Queued")).toBeInTheDocument();
-      const promote = vi.spyOn(serverCheckQueue, "markManual");
-      fireEvent.click(screen.getByRole("button", { name: "Connect next" }));
-      expect(promote).toHaveBeenCalledWith("queue-project", "test-server");
-      promote.mockRestore();
+      expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
+      expect(screen.queryByText(/^(Queued|Connecting|Connect next|Keep connecting)$/)).not.toBeInTheDocument();
       const toggle = screen.getByRole("switch");
       expect(toggle).toHaveAttribute("aria-checked", "true");
       fireEvent.click(toggle);
