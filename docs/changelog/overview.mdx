@@ -127,6 +127,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
+- **Ask MCPJam is now on MCPJam** — turns in the Ask MCPJam panel, and the web searches the agent runs, no longer consume your organization's credits or its free daily allowance. You do not need credits or a paid plan to use the agent; signing in is enough. Playground chat, evals, and swarms are unchanged and still spend your credits or your own API key. The out-of-credits dialog no longer opens from the agent panel, because there is no balance involved to top up. The same applies to the agent in Slack and Discord.
+
+- **The agent runs on a fixed model** — Ask MCPJam no longer follows the model selected in the Playground. It runs on a model MCPJam chooses, so switching the Playground to a frontier or BYOK model no longer changes what the agent uses. There is no agent model picker; the Playground picker is unaffected.
+
+- **Two new agent limits, neither of which credits can lift** — after a large number of turns in one UTC day, or when MCPJam's own daily budget for the feature is spent, the panel shows one line: "Ask MCPJam has reached today's limit. It resets at 00:00 UTC." An infrastructure problem on our side shows "Ask MCPJam is temporarily unavailable." Neither offers to sell credits, and nothing is charged in either case.
+
 - **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. (The chip's single-status display was further refined in the 2026-09-24 release.)
 
 - **Live pane no longer shows goal result, value chain, or advisory copy** — while a run is in progress, the session detail pane no longer displays a `Goal result:` line, a `User value chain` disclosure, or advisory check rows. Chat and Trace sit directly under the session header. The Sessions tab still shows the full `SwarmSessionReport` details for a selected completed thread.

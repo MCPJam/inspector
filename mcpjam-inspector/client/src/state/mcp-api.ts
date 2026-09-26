@@ -19,6 +19,10 @@ import {
   getHostedOAuthToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
+import {
+  readCredentialRefusal,
+  withCredentialRefusal,
+} from "@/lib/credential-refusal";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
@@ -160,11 +164,18 @@ async function safeValidateHostedServer(
     const oauthRequired =
       error instanceof WebApiError &&
       error.details?.oauthRequired === true;
+    // Same threading for a saved credential the backend refused to release
+    // (a moved server, or the org's export policy).
+    const credentialRefusal =
+      error instanceof WebApiError
+        ? readCredentialRefusal(error.details)
+        : null;
     return {
       success: false,
       error: normalizeHostedValidationError(error),
       ...(normalized ? { normalized } : {}),
       ...(oauthRequired ? { oauthRequired: true } : {}),
+      ...(credentialRefusal ? { credentialRefusal } : {}),
     };
   }
 }
@@ -255,10 +266,13 @@ export async function testConnection(
 ) {
   return observeDesktopOperation("connect", async (setStatus) => {
     if (HOSTED_MODE) {
-      return safeValidateHostedServer(
-        serverId,
-        serverConfig,
-        buildHostedValidationContext(serverId, options),
+      return withCredentialRefusal(
+        await safeValidateHostedServer(
+          serverId,
+          serverConfig,
+          buildHostedValidationContext(serverId, options),
+        ),
+        options?.serverName,
       );
     }
 
@@ -284,7 +298,7 @@ export async function testConnection(
       20000, // 20 second timeout
     );
     setStatus(res.status);
-    return res.json();
+    return withCredentialRefusal(await res.json(), options?.serverName);
   });
 }
 
@@ -368,10 +382,13 @@ export async function reconnectServer(
 ) {
   return observeDesktopOperation("reconnect", async (setStatus) => {
     if (HOSTED_MODE) {
-      return safeValidateHostedServer(
-        serverId,
-        serverConfig,
-        buildHostedValidationContext(serverId, options),
+      return withCredentialRefusal(
+        await safeValidateHostedServer(
+          serverId,
+          serverConfig,
+          buildHostedValidationContext(serverId, options),
+        ),
+        options?.serverName,
       );
     }
 
@@ -397,7 +414,7 @@ export async function reconnectServer(
       20000, // 20 second timeout
     );
     setStatus(res.status);
-    return res.json();
+    return withCredentialRefusal(await res.json(), options?.serverName);
   });
 }
 
