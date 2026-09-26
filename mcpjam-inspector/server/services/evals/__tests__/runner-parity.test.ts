@@ -19,7 +19,7 @@ const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
 const createLlmModelMock = vi.hoisted(() =>
-  vi.fn((..._args: unknown[]) => ({ id: "mock-model" }))
+  vi.fn((..._args: unknown[]) => ({ id: "mock-model" })),
 );
 
 // Deterministic browser-session facts. The real `createBrowserSessionContext`
@@ -163,7 +163,7 @@ function scrub(value: unknown): unknown {
         // snapshot pins, not the clock.
         out[k] = v.replace(
           /trace_turn_\d+_[a-z0-9]+/g,
-          "trace_turn_<scrubbed>"
+          "trace_turn_<scrubbed>",
         );
       } else if (
         k === "id" &&
@@ -171,10 +171,7 @@ function scrub(value: unknown): unknown {
         /^eval-ai-err-\d+$/.test(v)
       ) {
         out[k] = "eval-ai-err-<scrubbed>";
-      } else if (
-        typeof v === "string" &&
-        /^pinned-\d+-\d+$/.test(v)
-      ) {
+      } else if (typeof v === "string" && /^pinned-\d+-\d+$/.test(v)) {
         // Synthetic pinned toolCallIds embed Date.now().
         out[k] = "pinned-<scrubbed>";
       } else {
@@ -192,7 +189,7 @@ function scrub(value: unknown): unknown {
 
 /** The persisted contract: each Convex write the runner made, normalized. */
 function summarizeConvexActions(
-  action: ReturnType<typeof vi.fn>
+  action: ReturnType<typeof vi.fn>,
 ): Array<{ ref: string; payload: unknown }> {
   return action.mock.calls.map((call) => ({
     ref: String(call[0]),
@@ -202,12 +199,12 @@ function summarizeConvexActions(
 
 /** The SSE contract: the type sequence (step_status carries kind+status). */
 function summarizeEvents(
-  events: EvalStreamEvent[]
+  events: EvalStreamEvent[],
 ): Array<string | { type: string; kind?: string; status?: string }> {
   return events.map((e) =>
     e.type === "step_status"
       ? { type: e.type, kind: e.kind, status: e.status }
-      : e.type
+      : e.type,
   );
 }
 
@@ -238,7 +235,13 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     convexClient.mutation.mockResolvedValue({ iterationId: "iter-1" });
     convexClient.query.mockResolvedValue({ status: "running" });
-    convexClient.action.mockResolvedValue(undefined);
+    // The quick-run start is an ACTION now, so it is this mock — not the
+    // mutation one above — that hands back the iteration id.
+    convexClient.action.mockImplementation(async (name: string) =>
+      name === "testSuites:startQuickRunIteration"
+        ? { iterationId: "iter-1" }
+        : undefined,
+    );
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
     mcpClientManager.listTools.mockResolvedValue({ tools: [] });
     mcpClientManager.getConnectionStatus.mockReturnValue("connected");
@@ -396,7 +399,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeEvents(emitted)).toMatchSnapshot("events");
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -428,7 +431,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeEvents(emitted)).toMatchSnapshot("events");
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -439,7 +442,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       promptTurns: PROMPT_ONLY,
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -453,7 +456,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeEvents(emitted)).toMatchSnapshot("events");
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -461,7 +464,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     fetchMock.mockResolvedValue(backendStreamResponse());
     await batchSuite({ model: HOSTED_MODEL, promptTurns: PROMPT_ONLY });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -518,7 +521,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       ],
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -555,7 +558,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeEvents(emitted)).toMatchSnapshot("events");
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -566,7 +569,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     // The pinned turn never touches the backend; only the prompt turn streams.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -583,7 +586,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeEvents(emitted)).toMatchSnapshot("events");
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -611,7 +614,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -627,7 +630,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
     expect(summarizeEvents(emitted)).toMatchSnapshot("events");
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -638,7 +641,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       promptTurns: MULTI_TURN,
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -648,7 +651,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     fetchMock.mockImplementation(async () => backendStreamResponse());
     await batchSuite({ model: HOSTED_MODEL, promptTurns: MULTI_TURN });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -679,7 +682,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       fullStream: (async function* () {})(),
       response: Promise.resolve({ modelId: "gpt-5-mini", messages }),
       steps: Promise.resolve(
-        opts.toolCalls ? [{ toolCalls: opts.toolCalls }] : []
+        opts.toolCalls ? [{ toolCalls: opts.toolCalls }] : [],
       ),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -709,7 +712,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       },
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -717,7 +720,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     streamTextMock.mockReturnValue(
       localStreamResult({
         toolCalls: [{ toolName: "search", args: { q: "x" } }],
-      })
+      }),
     );
     await batchSuite({
       model: LOCAL_MODEL,
@@ -731,7 +734,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       ],
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -744,7 +747,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       extra: { advancedConfig: { failOnToolError: true } },
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -757,7 +760,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       extra: { advancedConfig: { failOnToolError: false } },
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -785,7 +788,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       extra: { successPredicates: [{ type: "widgetRendered" }] },
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -831,7 +834,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       ],
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -850,7 +853,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       promptTurns: PROMPT_ONLY,
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 
@@ -1002,7 +1005,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       extra: { isNegativeTest: true },
     });
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
-      "convex"
+      "convex",
     );
   });
 });

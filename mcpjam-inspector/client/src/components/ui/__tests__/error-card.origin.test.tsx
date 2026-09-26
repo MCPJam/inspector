@@ -10,18 +10,18 @@ function normalizedFor(slug: string): NormalizedError {
 }
 
 describe("ErrorCard origin badge", () => {
-  it("tells the user a user-config failure is not an MCPJam outage", () => {
+  it("never shows a not-our-outage chip on a user-config failure", () => {
     render(<ErrorCard error={normalizedFor("transport/econnrefused")} />);
 
-    expect(screen.getByTestId(BADGE)).toHaveTextContent("Not an MCPJam outage");
+    expect(screen.queryByTestId(BADGE)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MCPJam outage/i)).not.toBeInTheDocument();
   });
 
-  it("uses the same badge for a user_server failure", () => {
-    // The user_server/user_config split drives capture policy, not copy: both
-    // mean "waiting on MCPJam will not fix this".
+  it("never shows a not-our-outage chip on a user_server failure", () => {
     render(<ErrorCard error={normalizedFor("jsonrpc/internal_error")} />);
 
-    expect(screen.getByTestId(BADGE)).toHaveTextContent("Not an MCPJam outage");
+    expect(screen.queryByTestId(BADGE)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MCPJam outage/i)).not.toBeInTheDocument();
   });
 
   it("owns an MCPJam-origin failure out loud", () => {

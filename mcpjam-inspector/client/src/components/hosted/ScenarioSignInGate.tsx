@@ -24,10 +24,10 @@ export function ScenarioSignInGate({
           id="scenario-sign-in-title"
           className="text-2xl font-semibold tracking-tight text-card-foreground"
         >
-          Sign in to preview this scenario
+          Sign in to preview this study
         </h1>
         <p className="mt-4 text-sm leading-6 text-foreground">
-          Sign in or create an account to view the scenario and take part in the
+          Sign in or create an account to view the study and take part in the
           test.
         </p>
         <div className="mt-7 flex flex-col gap-3">

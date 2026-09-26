@@ -5,9 +5,11 @@ import {
   describeChange,
   describeDraft,
   dirtyKeys,
+  environmentImageSaveBlock,
   initSuiteSettingsDraft,
   normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
+  suiteImageSetting,
   SUITE_SETTINGS_KEYS,
   suiteSettingsReducer,
   toUpdateArgs,
@@ -199,6 +201,104 @@ describe("clearing a setting is not the same as omitting it", () => {
     };
     expect(args.environment.servers).toEqual(["alpha"]);
     expect("computerEnvironmentId" in args.environment).toBe(false);
+  });
+
+  test("an environment suite sets its environments' image, and a clear is explicit", () => {
+    const pinned = edit(draftOf(), "computerEnvironmentId", "env_1");
+    const set = toUpdateArgs(
+      pinned,
+      "s",
+      { servers: ["alpha"] },
+      {
+        environmentSuite: true,
+      },
+    );
+    expect(set.environmentSettings).toEqual({ computerEnvironmentId: "env_1" });
+    expect(set.environment).toBeUndefined();
+
+    const cleared = edit(
+      draftOf({ computerEnvironmentId: "env_1" }),
+      "computerEnvironmentId",
+      undefined,
+    );
+    expect(
+      toUpdateArgs(cleared, "s", undefined, { environmentSuite: true })
+        .environmentSettings,
+    ).toEqual({ computerEnvironmentId: null });
+  });
+});
+
+describe("suiteImageSetting", () => {
+  test("a legacy suite shows its own pin", () => {
+    expect(
+      suiteImageSetting({ environment: { computerEnvironmentId: "img" } }),
+    ).toEqual({ value: "img", mixed: false });
+  });
+
+  test("an environment suite shows its environments' shared image, never the stale pin", () => {
+    expect(
+      suiteImageSetting({
+        environment: { computerEnvironmentId: "stale" },
+        environmentIds: ["a", "b"],
+        environmentTargets: [
+          { computerEnvironmentId: "img" },
+          { computerEnvironmentId: "img" },
+          { unavailable: "archived" },
+        ],
+      }),
+    ).toEqual({ value: "img", mixed: false });
+    expect(
+      suiteImageSetting({
+        environmentIds: ["a", "b"],
+        environmentTargets: [{ computerEnvironmentId: "img" }, {}],
+      }),
+    ).toEqual({ value: undefined, mixed: true });
+  });
+});
+
+describe("environmentImageSaveBlock", () => {
+  const image = new Set(["computerEnvironmentId"] as const);
+
+  test("holds an environment suite's image edit until the backend confirms", () => {
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: undefined,
+      }),
+    ).toMatch(/Still checking/);
+    // A failed probe is not a legacy suite: the legacy pin never applies.
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: null,
+      }),
+    ).toMatch(/cannot set a sandbox image/);
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: image,
+        capabilities: { environmentSuiteSettings: true },
+      }),
+    ).toBeNull();
+  });
+
+  test("never holds a legacy suite or a save that leaves the image alone", () => {
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: false,
+        dirtyKeys: image,
+        capabilities: null,
+      }),
+    ).toBeNull();
+    expect(
+      environmentImageSaveBlock({
+        runsEnvironments: true,
+        dirtyKeys: new Set(["name"] as const),
+        capabilities: null,
+      }),
+    ).toBeNull();
   });
 });
 

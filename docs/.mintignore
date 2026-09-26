@@ -1,3 +1,6 @@
 # Internal program contracts live beside the published pages but are not documentation.
 # Mintlify publishes every page file it finds, navigation or not, so exclude them explicitly.
 evals-vocabulary-consolidation.md
+public-api-vocabulary-consolidation.md
+# The ledger of every API reference URL ever published; a test reads it, readers never should.
+reference/published-api-pages.json
